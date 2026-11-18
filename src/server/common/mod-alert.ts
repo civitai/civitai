@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 /**
  * Post a title/description alert to the moderator Discord channel.
@@ -47,7 +48,8 @@ export async function postDiscordAlert(
 ): Promise<ModAlertOutcome> {
   if (!webhookUrl) return 'unconfigured';
 
-  return fetch(webhookUrl, {
+  return outboundFetch(webhookUrl, {
+    timeoutMs: 10_000,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

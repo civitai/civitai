@@ -1,7 +1,10 @@
 import dayjs from '~/shared/utils/dayjs';
+import type { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
-import { linkifyOptions } from '~/components/Chat/util';
+import { chatLinkifyOptions } from '~/components/Chat/util';
+import { serverDomainMap } from '~/server/utils/server-domain';
+import { getOwnHosts } from '~/utils/current-domain-href';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -18,7 +21,7 @@ import { getChatRedesignRecipients } from '~/server/services/chat-redesign-recip
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
-import { decideDmRouting } from '~/server/utils/chat';
+import { decideDmRouting, inReadWindow, memberPreviewWindow } from '~/server/utils/chat';
 import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { truncateAuditValue, type ChatAuditRow } from '~/server/common/chat-audit.constants';
@@ -34,6 +37,7 @@ import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker
 import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
@@ -198,11 +202,52 @@ export const signalChatMembersUpdated = async ({
   await Promise.all(
     urls.map((url) =>
       withSignals(() =>
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        outboundFetch(url, {
+          timeoutMs: 10_000,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        })
       ).catch(() => undefined)
     )
   );
 };
+
+/**
+ * Trims each chat's `latestChat` preview to what the caller may read. The
+ * selector cannot be scoped per member, and only a Left or Kicked caller needs
+ * their exit time read, so that is one extra query for those chats alone.
+ */
+export async function scopeChatPreviews<
+  T extends {
+    id: number;
+    messages: { createdAt: Date }[];
+    chatMembers: { userId: number; status: ChatMemberStatus; clearedAt: Date | null }[];
+  }
+>(chats: T[], userId: number): Promise<T[]> {
+  const exited = chats
+    .filter((chat) => {
+      const status = chat.chatMembers.find((cm) => cm.userId === userId)?.status;
+      return status === ChatMemberStatus.Left || status === ChatMemberStatus.Kicked;
+    })
+    .map((chat) => chat.id);
+  // A replica that lags a fresh exit returns no time, which withholds the preview.
+  const exits = exited.length
+    ? await dbRead.chatMember.findMany({
+        where: { userId, chatId: { in: exited } },
+        select: { chatId: true, leftAt: true, kickedAt: true },
+      })
+    : [];
+  const exitByChat = new Map(exits.map((e) => [e.chatId, e]));
+  return chats.map((chat) => {
+    const me = chat.chatMembers.find((cm) => cm.userId === userId);
+    const window = memberPreviewWindow(me && { ...me, ...exitByChat.get(chat.id) });
+    return {
+      ...chat,
+      messages: chat.messages.filter((msg) => inReadWindow(window, msg.createdAt)),
+    };
+  });
+}
 
 export const upsertChat = async ({
   userIds,
@@ -264,17 +309,10 @@ export const upsertChat = async ({
       for (const cm of toFilter) cm.filteredAt = filteredAt;
     }
 
-    // The preview rides along on `latestChat` unfiltered. Re-opening a chat the
-    // caller cleared would hand back a message from before their watermark —
-    // the one path that broke the clean slate.
-    const callerClearedAt = existing.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-    if (callerClearedAt) {
-      return {
-        ...existing,
-        messages: existing.messages.filter((msg) => msg.createdAt > callerClearedAt),
-      };
-    }
-    return existing;
+    // The preview rides along on `latestChat` unfiltered; re-opening must not
+    // hand back a message the caller may not read.
+    const [scoped] = await scopeChatPreviews([existing], userId);
+    return scoped;
   }
 
   const canBypassLimits = isModerator || isSupporter;
@@ -335,7 +373,8 @@ export const upsertChat = async ({
   if (isModerator) {
     for (const cmId of userIds) {
       withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+          timeoutMs: 10_000,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${createdChat.id}`),
@@ -345,7 +384,8 @@ export const upsertChat = async ({
   } else {
     // - add self to group
     withSignals(() =>
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        timeoutMs: 10_000,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(`chat:${createdChat.id}`),
@@ -449,7 +489,8 @@ export const upsertDealChat = async ({
 
   for (const userId of userIds)
     withSignals(() =>
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        timeoutMs: 10_000,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(`chat:${created.id}`),
@@ -458,6 +499,117 @@ export const upsertDealChat = async ({
 
   return { id: created.id };
 };
+
+const signalNewMessage = (chatId: number, message: ChatAllMessages[number]) =>
+  withSignals(() =>
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(message),
+      }
+    )
+  ).catch(() => undefined);
+
+/**
+ * Moves an Invited sender to Joined and writes the "joined" notice, inside the
+ * send's transaction so the notice takes the lower id. Guarded on Invited: a
+ * concurrent first send posts no second notice, and a member kicked or gone
+ * since the caller's read is refused rather than rejoined.
+ */
+async function joinInvitedSender(
+  tx: Prisma.TransactionClient,
+  { chatId, memberId, username }: { chatId: number; memberId: number; username: string }
+) {
+  const notice = await joinChatMember(tx, {
+    chatId,
+    memberId,
+    username,
+    from: ChatMemberStatus.Invited,
+  });
+  if (notice) return notice;
+  const now = await tx.chatMember.findUnique({
+    where: { id: memberId },
+    select: { status: true },
+  });
+  if (now?.status !== ChatMemberStatus.Joined)
+    throw throwBadRequestError(`Unable to post in this chat`);
+  return null;
+}
+
+/**
+ * After a join commits: into the realtime group first, so the joiner receives
+ * their own notice, then the notice. Awaited, because clients append in arrival
+ * order and anything sent after it must land after it.
+ */
+export async function signalJoined({
+  chatId,
+  userId,
+  notice,
+}: {
+  chatId: number;
+  userId: number;
+  notice: ChatAllMessages[number];
+}) {
+  await withSignals(() =>
+    outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      timeoutMs: 10_000,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(`chat:${chatId}`),
+    })
+  ).catch(() => undefined);
+  await signalNewMessage(chatId, notice);
+}
+
+/**
+ * The status changes a member may make to their own row. Kicked is the owner's
+ * call and Invited is only ever set by an invite, so neither is reachable here.
+ */
+const SELF_STATUS_CHANGES: Partial<Record<ChatMemberStatus, readonly ChatMemberStatus[]>> = {
+  [ChatMemberStatus.Invited]: [ChatMemberStatus.Joined, ChatMemberStatus.Ignored],
+  [ChatMemberStatus.Joined]: [ChatMemberStatus.Left, ChatMemberStatus.Ignored],
+  // "Unarchive" and "Rejoin": both undo the member's own choice.
+  [ChatMemberStatus.Ignored]: [ChatMemberStatus.Joined],
+  [ChatMemberStatus.Left]: [ChatMemberStatus.Joined],
+};
+
+export const canSetOwnChatStatus = (from: ChatMemberStatus, to: ChatMemberStatus) =>
+  SELF_STATUS_CHANGES[from]?.includes(to) ?? false;
+
+/**
+ * Joins a member and writes the "joined" notice. Guarded on `from`, the status
+ * the caller read: returns null, writing nothing, when the row has moved since.
+ */
+export async function joinChatMember(
+  tx: Prisma.TransactionClient,
+  {
+    chatId,
+    memberId,
+    username,
+    from,
+  }: { chatId: number; memberId: number; username: string; from: ChatMemberStatus }
+) {
+  const joinedAt = new Date();
+  const { count } = await tx.chatMember.updateMany({
+    where: { id: memberId, status: from },
+    // Accepting is what ends a request; leaving the mark set would strand the
+    // conversation in Requests forever.
+    data: { status: ChatMemberStatus.Joined, joinedAt, filteredAt: null },
+  });
+  if (count === 0) return null;
+  return tx.chatMessage.create({
+    data: {
+      chatId,
+      userId: -1,
+      contentType: ChatMessageType.Markdown,
+      content: `${username} joined`,
+      createdAt: joinedAt,
+    },
+    include: { referenceMessage: { select: chatReferenceMessageSelect } },
+  });
+}
 
 /**
  * Create a message (direct)
@@ -492,6 +644,7 @@ export const createMessage = async ({
           user: {
             select: {
               isModerator: true,
+              username: true,
             },
           },
         },
@@ -586,77 +739,85 @@ export const createMessage = async ({
     }
   }
 
-  // Answering a request accepts it. Without this the sender's reply left their
-  // own membership marked, so the conversation stayed in their Requests tab with
-  // no way out but the Accept button they had already implicitly used.
-  if (userId !== -1) {
-    const me = chat.chatMembers.find((cm) => cm.userId === userId);
-    if (me?.filteredAt) {
-      await dbWrite.chatMember.update({ where: { id: me.id }, data: { filteredAt: null } });
+  // Sending is joining: an API client never sees the Join button.
+  const sender = userId !== -1 ? chat.chatMembers.find((cm) => cm.userId === userId) : undefined;
+  // Only a join needs the writes below to roll back together; every other send skips the transaction.
+  const inTx = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    sender?.status === ChatMemberStatus.Invited ? dbWrite.$transaction(fn) : fn(dbWrite);
+  const { resp, joinNotice } = await inTx(async (tx) => {
+    const joinNotice =
+      sender?.status === ChatMemberStatus.Invited
+        ? await joinInvitedSender(tx, {
+            chatId,
+            memberId: sender.id,
+            username: sender.user.username ?? `User ${userId}`,
+          })
+        : null;
+    // The join runs first, so a refused join leaves none of the writes below.
+
+    // Answering a request accepts it. Without this the sender's reply left their
+    // own membership marked, so the conversation stayed in their Requests tab with
+    // no way out but the Accept button they had already implicitly used.
+    if (sender?.filteredAt) {
+      await tx.chatMember.update({ where: { id: sender.id }, data: { filteredAt: null } });
     }
-  }
 
-  // Someone who deleted this conversation asked not to have it. The first
-  // message that reaches them afterwards is a new approach, not a continuation,
-  // so it re-enters the request flow regardless of their policy — the delete is
-  // the stronger signal. Only the first: once they accept, later messages land
-  // normally.
-  if (userId !== -1 && !isModerator) {
-    const clearedMembers = chat.chatMembers.filter(
-      (cm) =>
-        cm.userId !== userId &&
-        !!cm.clearedAt &&
-        !cm.filteredAt &&
-        // Never reopen a membership the user closed: re-arming a Left, Kicked or
-        // Ignored member would undo their own decision — or an owner's kick.
-        (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
-    );
-    for (const member of clearedMembers) {
-      // findFirst, not count: this asks whether anything exists, and the answer
-      // is permanently "yes" once they accept — `clearedAt` is never unset, so a
-      // count would re-scan the whole conversation on every send forever.
-      // Scoped to real messages: an embed or a "X left" system row landing after
-      // the clear would otherwise consume the first-message slot and let the next
-      // real approach skip Requests entirely.
-      const since = await dbWrite.chatMessage.findFirst({
-        where: {
-          chatId,
-          createdAt: { gt: member.clearedAt as Date },
-          deletedAt: null,
-          userId: { not: -1 },
-          contentType: { not: ChatMessageType.Embed },
-        },
-        select: { id: true },
-      });
-      if (since) continue;
+    // Someone who deleted this conversation asked not to have it. The first
+    // message that reaches them afterwards is a new approach, not a continuation,
+    // so it re-enters the request flow regardless of their policy — the delete is
+    // the stronger signal. Only the first: once they accept, later messages land
+    // normally.
+    if (userId !== -1 && !isModerator) {
+      const clearedMembers = chat.chatMembers.filter(
+        (cm) =>
+          cm.userId !== userId &&
+          !!cm.clearedAt &&
+          !cm.filteredAt &&
+          // Never reopen a membership the user closed: re-arming a Left, Kicked or
+          // Ignored member would undo their own decision — or an owner's kick.
+          (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
+      );
+      for (const member of clearedMembers) {
+        // findFirst, not count: this asks whether anything exists, and the answer
+        // is permanently "yes" once they accept — `clearedAt` is never unset, so a
+        // count would re-scan the whole conversation on every send forever.
+        // Scoped to real messages: an embed or a "X left" system row landing after
+        // the clear would otherwise consume the first-message slot and let the next
+        // real approach skip Requests entirely.
+        const since = await tx.chatMessage.findFirst({
+          where: {
+            chatId,
+            createdAt: { gt: member.clearedAt as Date },
+            deletedAt: null,
+            userId: { not: -1 },
+            contentType: { not: ChatMessageType.Embed },
+          },
+          select: { id: true },
+        });
+        if (since) continue;
 
-      await dbWrite.chatMember.update({
-        where: { id: member.id },
-        data: { filteredAt: new Date() },
-      });
+        await tx.chatMember.update({
+          where: { id: member.id },
+          data: { filteredAt: new Date() },
+        });
+      }
     }
-  }
 
-  const resp = await dbWrite.chatMessage.create({
-    data: { chatId, contentType, content, referenceMessageId, userId },
-    // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
-    // signal payload both carry the quote a reply needs to render immediately.
-    include: { referenceMessage: { select: chatReferenceMessageSelect } },
+    const resp = await tx.chatMessage.create({
+      data: { chatId, contentType, content, referenceMessageId, userId },
+      // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
+      // signal payload both carry the quote a reply needs to render immediately.
+      include: { referenceMessage: { select: chatReferenceMessageSelect } },
+    });
+    return { resp, joinNotice };
   });
 
-  withSignals(() =>
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(resp as ChatAllMessages[number]),
-      }
-    )
-  ).catch(() => undefined);
+  if (joinNotice) await signalJoined({ chatId, userId, notice: joinNotice });
+  signalNewMessage(chatId, resp);
+  if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
 
   if (userId !== -1) {
-    const links = findLinks(content, linkifyOptions);
+    const links = findLinks(content, chatLinkifyOptions(getOwnHosts(serverDomainMap)));
     for (let { href } of links) {
       if (!href) continue;
       try {
@@ -678,16 +839,7 @@ export const createMessage = async ({
               },
             })
             .then((embedResp) => {
-              withSignals(() =>
-                fetch(
-                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                  {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                  }
-                )
-              ).catch(() => undefined);
+              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
             });
         } else {
           safeUnfurl(href)
@@ -711,16 +863,7 @@ export const createMessage = async ({
                 include: { referenceMessage: { select: chatReferenceMessageSelect } },
               });
 
-              withSignals(() =>
-                fetch(
-                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                  {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                  }
-                )
-              ).catch(() => undefined);
+              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
             })
             .catch(() => undefined);
         }
@@ -734,7 +877,7 @@ export const createMessage = async ({
             user: userId,
           },
           'civitai-prod'
-        ).catch();
+        );
       }
     }
   }

@@ -25,12 +25,16 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../profile-picture-cache', () => ({ bustProfilePictures: vi.fn(async () => undefined) }));
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
 
 const { resolveIngestionError } = await import('../ingestion.service');
+const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TABLE "User" (
@@ -51,7 +55,8 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
   "scannedAt" TIMESTAMP(3)
 );
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 `;
 
 const IMAGE_ID = 41;
@@ -194,5 +199,29 @@ describe('spoke resolveIngestionError publishing', () => {
 
     expect((await imageRow()).ingestion).toBe('Scanned');
     expect(await purgeRows()).toBe(1);
+  });
+});
+
+describe('spoke resolveIngestionError: models index', () => {
+  it('hands the re-rated post image over', async () => {
+    await seed({});
+    await db.exec(`
+      CREATE FUNCTION update_post_nsfw_levels(ids int[]) RETURNS void LANGUAGE sql AS $$ SELECT $$;
+      UPDATE "Image" SET "postId" = 5 WHERE "id" = ${IMAGE_ID};
+    `);
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+
+    await resolve();
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+  });
+
+  it('skips an image on no post', async () => {
+    await seed({});
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+
+    await resolve();
+
+    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
   });
 });

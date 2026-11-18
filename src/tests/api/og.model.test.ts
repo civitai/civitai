@@ -20,6 +20,7 @@ type Row = {
   index: number;
   url: string;
   post: { userId: number; availability: string };
+  nsfwLevel?: number;
 };
 
 // Evaluates the parts of the query that decide WHICH image is picked: the mocked client
@@ -33,6 +34,9 @@ function fakeFindFirst(rows: Row[]) {
     const hit = rows
       .filter((r) => p.userId === undefined || r.post.userId === p.userId)
       .filter((r) => p.availability === undefined || r.post.availability === p.availability)
+      .filter(
+        (r) => where.nsfwLevel?.in === undefined || where.nsfwLevel.in.includes(r.nsfwLevel ?? 1)
+      )
       .sort((a, b) => {
         for (const key of keys) {
           const [field, dir] = Object.entries(key)[0] as [keyof Row, 'asc' | 'desc'];
@@ -41,7 +45,9 @@ function fakeFindFirst(rows: Row[]) {
         }
         return 0;
       })[0];
-    return hit ? { url: hit.url, nsfwLevel: 1, type: 'image', width: 100, height: 100 } : null;
+    return hit
+      ? { url: hit.url, nsfwLevel: hit.nsfwLevel ?? 1, type: 'image', width: 100, height: 100 }
+      : null;
   };
 }
 
@@ -64,11 +70,16 @@ const pickedUrl = () => {
   return url.match(/(owner|other)-[a-z0-9-]+/)?.[0] ?? null;
 };
 
-const mockModel = (userId: number, extra: { mode?: string; coverImageId?: number } = {}) =>
+const mockModel = (
+  userId: number,
+  extra: { mode?: string; coverImageId?: number; minor?: boolean; gallerySettings?: unknown } = {}
+) =>
   dbMock.dbRead.model.findFirst.mockResolvedValue({
     name: 'M',
     description: '',
     meta: null,
+    minor: false,
+    sfwOnly: false,
     ...extra,
     userId,
     user: { username: 'creator', settings: null },
@@ -200,5 +211,43 @@ describe('/api/og?type=model cover image', () => {
     );
     await render();
     expect(fetchImageAsDataUri).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/og?type=model on a minor or SFW-only model', () => {
+  // PG = 1, PG13 = 2. The gallery settings read shares the model mock, so its row carries both.
+  const rows: Row[] = [
+    {
+      id: 1,
+      postId: 5,
+      index: 0,
+      url: 'owner-pg13',
+      nsfwLevel: 2,
+      post: { userId: OWNER_ID, availability: 'Public' },
+    },
+    {
+      id: 2,
+      postId: 6,
+      index: 0,
+      url: 'owner-pg',
+      nsfwLevel: 1,
+      post: { userId: OWNER_ID, availability: 'Public' },
+    },
+  ];
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findFirst.mockImplementation(fakeFindFirst(rows));
+  });
+
+  it('picks the image within the gallery level the owner stored', async () => {
+    mockModel(OWNER_ID, { minor: true, gallerySettings: { level: 1 } });
+    await render();
+    expect(pickedUrl()).toBe('owner-pg');
+  });
+
+  it('picks the earliest image of an unflagged model whatever its stored level', async () => {
+    mockModel(OWNER_ID, { gallerySettings: { level: 1 } });
+    await render();
+    expect(pickedUrl()).toBe('owner-pg13');
   });
 });

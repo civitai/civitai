@@ -1,3 +1,6 @@
+import { childBrowsingTagIds } from './browsing-addon-tags';
+import { NsfwLevel } from './browsing-levels';
+
 /**
  * Serving review-queue media to moderators from storage rather than the public image CDN. Shared by
  * the moderator app's `/api/held-media` and the main app's `/api/mod/held-media`, so the two routes
@@ -7,14 +10,43 @@
 /** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
 const PLACEHOLDER_OWNER_ID = -1;
 
+/** An alias (`i`) or an aliased column (`m."userId"`), checked because the SQL splices it as written. */
+export function sqlRef(ref: string): string {
+  if (!/^[a-z_][a-z0-9_]*(\."[a-z_][a-z0-9_]*")?$/i.test(ref))
+    throw new Error(`Bad SQL reference: ${ref}`);
+  return ref;
+}
+
+/**
+ * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
+ * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
+ * fails the statement, which refuses.
+ */
+export function heldUserSql(column: string): string {
+  const user = sqlRef(column);
+  return `(
+      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
+      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
+      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
+      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
+      -- NULL user.
+      OR COALESCE(${user} IN (
+        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+                    THEN (hs.details ->> 'secondaryUserId')::bigint END
+        FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      ), false)
+      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
+    )`;
+}
+
 /**
  * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
- * is named on any CsamReport (subject or secondary user) or has an active evidence hold. The one
- * definition both routes run, as plain SQL so each app wraps it in its own builder.
+ * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
+ * its own builder.
  *
  * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the
- * placeholder owner, whose content a report naming it would otherwise open. Names the
- * "EvidenceHeldUser" view, so a database without it fails the statement, which refuses.
+ * placeholder owner, whose content a report naming it would otherwise open.
  */
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
@@ -23,18 +55,103 @@ export function heldImageSql(image: string): string {
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
-      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${owner})
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
-        -- every request.
-        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${owner}
-      )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${owner})
-    ))
+      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
+}
+
+const SUSPECT_VOTE_REASONS = ['csam-realistic', 'school-nsfw'];
+
+/**
+ * Whether the "Image" row aliased `image` carries a CSAM or minor signal: everything `heldImageSql`
+ * holds, plus the minor flags and the minor review queue, a child-type tag on an image rated R or above (the same tags and
+ * levels the default browsing add-on hides from mature browsing), a CSAM hash block, a scan flag
+ * reporting CSAM or a minor, a moderator vote naming one, or a CSAM hold on its label item.
+ *
+ * `Image.blockedFor` beyond 'CSAM' and the scanner's ClickHouse labels are not here: the first is
+ * matched against private patterns (`blockedForSignal`), the second lives in another store.
+ */
+export function suspectImageSql(image: string): string {
+  const held = heldImageSql(image);
+  const id = `${image}.id`;
+  return `(
+    ${held}
+    OR ${image}."minor" = TRUE OR ${image}."acceptableMinor" = TRUE OR ${image}."needsReview" = 'minor'
+    OR ((${image}."nsfwLevel" = 0 OR ${image}."nsfwLevel" >= ${NsfwLevel.R}) AND EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" st
+      WHERE st."imageId" = ${id} AND st."tagId" IN (${childBrowsingTagIds.join(', ')})
+        AND st."disabled" = FALSE
+    ))
+    OR EXISTS (
+      SELECT 1 FROM "BlockedImage" sb WHERE sb.hash = ${image}."pHash" AND sb.reason = 'CSAM'
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ScanLabelItem" si
+      WHERE si."imageId" = ${id} AND (
+        si."voidReason" = 'csam-hold'
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" sf
+          WHERE sf."itemId" = si.id
+            AND (sf.snapshot ->> 'csam' = 'true' OR sf.snapshot ->> 'minorDetected' = 'true')
+        )
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelVote" sv
+          WHERE sv."itemId" = si.id
+            AND (sv.reason IN (${SUSPECT_VOTE_REASONS.map((r) => `'${r}'`).join(', ')})
+              OR sv.reason LIKE 'minor-%')
+        )
+      )
+    )
+  )`;
+}
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/** A signed 64-bit integer as SQL literal text; throws on anything else, since the text is spliced. */
+function int64Literal(value: bigint | string): string {
+  const text = String(value);
+  if (!/^-?\d{1,19}$/.test(text)) throw new Error('Bad int64');
+  const n = BigInt(text);
+  if (n < INT64_MIN || n > INT64_MAX) throw new Error('Bad int64');
+  return n.toString();
+}
+
+/**
+ * Copies blocklist CSAM entries into "BlockedImage", the table `suspectImageSql` reads; a row of
+ * another reason becomes CSAM. Never deletes: no unblock ends a live CSAM entry, and a stale row only
+ * sends an image to the CSAM review tier. `null` for no hashes. Starts with @civitai/db's REDACT_LOG_MARKER
+ * marker, so the slow-query log never records the hashes.
+ */
+export function mirrorBlockedHashesSql(hashes: (bigint | string)[]): string | null {
+  const values = [...new Set(hashes.map(int64Literal))];
+  if (!values.length) return null;
+  return `/* log:redact */ INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
+    .map((hash) => `(${hash}, 'CSAM')`)
+    .join(', ')} ON CONFLICT (hash) DO UPDATE SET reason = EXCLUDED.reason`;
+}
+
+/** Whether the scan of the "Image" row aliased `image` has not finished, so its signals cannot be
+ *  read. A Blocked image finished its scan. */
+export function unreadableImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."ingestion"::text NOT IN ('Scanned', 'Blocked'))`;
+}
+
+/** Every image id listed on any CsamReport, whatever its state, as text. */
+export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
+
+/** The review-batch routing's suspect leg: `suspectImageSql`, or the image listed on a CsamReport.
+ *  Never NULL, so a negated use cannot read an unknown as clean. */
+export function reviewSuspectImageSql(image: string): string {
+  const suspect = suspectImageSql(image);
+  return `COALESCE((${suspect} OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
 }
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);

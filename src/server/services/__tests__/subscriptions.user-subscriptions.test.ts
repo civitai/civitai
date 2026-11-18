@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import {
@@ -5,6 +6,7 @@ import {
   getCapTier,
   getHighestPaidTierSubscription,
   getHighestTierSubscription,
+  getUserMembershipHistory,
 } from '~/server/services/subscriptions.service';
 
 /**
@@ -208,5 +210,158 @@ describe('getAllUserSubscriptions', () => {
     ] as never);
     expect(await getCapTier(7)).toBeNull();
     expect((await getHighestTierSubscription(7))?.id).toBe('incomplete-gold');
+  });
+});
+
+describe('getUserMembershipHistory', () => {
+  const historyFindMany = dbMock.dbRead.customerSubscriptionHistory.findMany;
+  const liveFindMany = dbMock.dbRead.customerSubscription.findMany;
+  const productFindMany = dbMock.dbRead.product.findMany;
+
+  const historyRow = (
+    id: number,
+    productId: string,
+    {
+      status = 'active',
+      closedReason = null,
+      metadata = {},
+      buzzType = 'yellow',
+      currentPeriodEnd = new Date('2026-11-01'),
+    }: {
+      status?: string;
+      closedReason?: string | null;
+      metadata?: Record<string, unknown>;
+      buzzType?: string;
+      currentPeriodEnd?: Date;
+    } = {}
+  ) => ({
+    id,
+    subscriptionId: `sub-${id}`,
+    buzzType,
+    productId,
+    status,
+    metadata,
+    cancelAtPeriodEnd: false,
+    cancelAt: null,
+    canceledAt: null,
+    startedAt: new Date('2026-01-01'),
+    currentPeriodStart: new Date('2026-10-01'),
+    currentPeriodEnd,
+    endedAt: closedReason ? new Date('2026-09-01') : null,
+    closedReason,
+  });
+
+  beforeEach(() => {
+    productFindMany.mockResolvedValue([
+      { id: 'prod-gold', name: 'Gold', metadata: { tier: 'gold' }, provider: 'Civitai' },
+      { id: 'prod-silver', name: 'Silver', metadata: { tier: 'silver' }, provider: 'Stripe' },
+    ] as never);
+  });
+
+  it("lists the caller's past memberships that the live table no longer holds", async () => {
+    historyFindMany.mockResolvedValue([
+      historyRow(1, 'prod-silver', { closedReason: 'replaced', buzzType: 'green' }),
+      historyRow(2, 'prod-gold', {
+        metadata: { tokens: [{ id: 't1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }] },
+      }),
+    ] as never);
+    liveFindMany.mockResolvedValue([row('sub-2', { tier: 'gold' })] as never);
+
+    const history = await getUserMembershipHistory({ userId: 7 });
+
+    expect(historyFindMany.mock.calls[0][0]?.where).toEqual({ userId: 7 });
+    expect(liveFindMany.mock.calls[0][0]?.where).toEqual({ userId: 7 });
+    // The open (current) membership first, then the replaced one; no duplicate of the live row.
+    expect(history.map((membership) => membership.id)).toEqual(['history-2', 'history-1']);
+    expect(history[0]).toMatchObject({
+      tier: 'gold',
+      paymentMethod: 'prepaid',
+      prepaidTokens: { total: 1, claimed: 1 },
+    });
+    expect(history[1]).toMatchObject({
+      tier: 'silver',
+      paymentMethod: 'card',
+      closedReason: 'replaced',
+    });
+    for (const membership of history) expect(membership).not.toHaveProperty('metadata');
+  });
+
+  it('lists ended memberships newest first', async () => {
+    historyFindMany.mockResolvedValue([
+      historyRow(1, 'prod-silver', {
+        closedReason: 'replaced',
+        currentPeriodEnd: new Date('2025-06-01'),
+      }),
+      historyRow(2, 'prod-silver', {
+        closedReason: 'removed',
+        currentPeriodEnd: new Date('2026-03-01'),
+      }),
+    ] as never);
+    liveFindMany.mockResolvedValue([] as never);
+
+    const history = await getUserMembershipHistory({ userId: 7 });
+
+    expect(history.map((membership) => membership.id)).toEqual(['history-2', 'history-1']);
+  });
+
+  it('falls back to a live row with no open history row, described from its own product', async () => {
+    productFindMany.mockResolvedValue([
+      {
+        id: 'prod-live-gold',
+        name: 'Gold Membership',
+        metadata: { tier: 'gold' },
+        provider: 'Stripe',
+      },
+      { id: 'prod-silver', name: 'Silver', metadata: { tier: 'silver' }, provider: 'Stripe' },
+    ] as never);
+    historyFindMany.mockResolvedValue([
+      historyRow(1, 'prod-silver', { closedReason: 'removed' }),
+    ] as never);
+    liveFindMany.mockResolvedValue([row('live-gold', { tier: 'gold' })] as never);
+
+    const history = await getUserMembershipHistory({ userId: 7 });
+
+    expect(history.map((membership) => membership.id)).toEqual(['live-live-gold', 'history-1']);
+    expect(history[0]).toMatchObject({
+      productName: 'Gold Membership',
+      tier: 'gold',
+      paymentMethod: 'card',
+      startedAt: new Date('2026-10-01'),
+    });
+  });
+
+  it('still shows a live subscription when its slot holds a stale open row for another one', async () => {
+    historyFindMany.mockResolvedValue([historyRow(1, 'prod-silver')] as never);
+    liveFindMany.mockResolvedValue([row('sub-new', { tier: 'gold' })] as never);
+
+    const history = await getUserMembershipHistory({ userId: 7 });
+
+    expect(history.map((membership) => membership.id).sort()).toEqual([
+      'history-1',
+      'live-sub-new',
+    ]);
+  });
+
+  it('shows the live rows when the history table does not exist yet', async () => {
+    historyFindMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('missing table', {
+        code: 'P2021',
+        clientVersion: 'test',
+      })
+    );
+    liveFindMany.mockResolvedValue([row('sub-2', { tier: 'gold' })] as never);
+
+    const history = await getUserMembershipHistory({ userId: 7 });
+
+    expect(history.map((membership) => membership.id)).toEqual(['live-sub-2']);
+  });
+
+  it('does not hide any other database error', async () => {
+    historyFindMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('timeout', { code: 'P1008', clientVersion: 'test' })
+    );
+    liveFindMany.mockResolvedValue([] as never);
+
+    await expect(getUserMembershipHistory({ userId: 7 })).rejects.toThrow('timeout');
   });
 });

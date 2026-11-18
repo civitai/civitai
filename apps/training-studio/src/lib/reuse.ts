@@ -15,6 +15,8 @@ export interface ReuseItem {
   /** A starting image the run also rendered samples from: the URL it sent then, which a new run's
    *  samples and helpers can send again. */
   url?: string;
+  /** How many times the run trained this blob, when more than once (per-image repeats). */
+  repeats?: number;
 }
 
 /** Dev-preview stand-ins are plain fetchable URLs; anything blob-backed needs the authenticated
@@ -40,6 +42,7 @@ export function toReuseItems(
   sampleImages: string[] = []
 ): ReuseItem[] {
   const sampleUrls = new Map(sampleImages.map((url) => [trainingBlobKey(url), url]));
+  if (!isPairDataset(dataset)) return foldRepeats(dataset, workflowId);
   return dataset.map((item, i) => {
     const url = item.path ? sampleUrls.get(trainingBlobKey(item.air)) : undefined;
     return {
@@ -53,8 +56,23 @@ export function toReuseItems(
   });
 }
 
-/** An edit run's dataset: pairs placed by path, which only the edit Data step can take. */
-export const isPairDataset = (dataset: { path?: string }[]) => dataset.some((i) => !!i.path);
+/** A repeated image went out as one copy per repeat (`expandRepeats`); fold them back into one item. */
+function foldRepeats(dataset: DatasetItem[], workflowId: string): ReuseItem[] {
+  const byKey = new Map<string, ReuseItem>();
+  dataset.forEach((item, i) => {
+    const key = trainingBlobKey(item.air);
+    const have = byKey.get(key);
+    if (have) have.repeats = (have.repeats ?? 1) + 1;
+    else
+      byKey.set(key, { air: item.air, caption: item.caption, name: `image ${i + 1}`, workflowId });
+  });
+  return [...byKey.values()];
+}
+
+/** An edit run's dataset: pairs placed by path, which only the edit Data step can take. A repeat
+ *  copy's path (`repeat_…`) is not a pair. */
+export const isPairDataset = (dataset: { path?: string }[]) =>
+  dataset.some((i) => /^(control_1|main)\//.test(i.path ?? ''));
 
 /** Store the dataset for the new-flow hand-off and navigate there (the Select→Data flow pre-fills it). */
 export function handoffReuse(items: ReuseItem[]) {

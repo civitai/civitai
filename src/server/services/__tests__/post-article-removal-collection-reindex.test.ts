@@ -29,7 +29,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: mockArticlesQueueUpdate },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/search-index/articles.search-index', () => ({

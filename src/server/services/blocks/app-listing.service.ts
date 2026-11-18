@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import {
   matureRatingsAllowed,
@@ -53,6 +52,7 @@ import {
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
+  listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import {
   listingMediaImageSelect,
@@ -80,6 +80,9 @@ import {
   isMissingColumnError,
   readListingSourceRepoUrl,
 } from '~/server/services/blocks/app-listing-source-repo.service';
+// The no-type `issue_tracker_url` column, raw SQL only — see its module header.
+import { readListingIssueTrackerUrlForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
+import { readLiveActionsRunSourceForListing } from '~/server/services/blocks/actions-run-source.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -237,8 +240,21 @@ export function decodeListingCursor(cursor: string | undefined): {
 // ---------------------------------------------------------------------------
 
 /**
+ * The fewest counted reviews (moderator-excluded ones are already left out of the
+ * counters) at which a listing shows a recommend PERCENTAGE. Below it the counts still
+ * travel and `recommendPct` is `null`, so one review never reads "100% recommend (1)".
+ *
+ * 🔴 The only place this rule lives. Clients branch on `recommendPct == null` and
+ * `reviewCount === 0`, never on the number, so a client must not compare a review count
+ * against a threshold of its own. Nothing enforces that mechanically. The top-rated sort
+ * (`listingBayesianSortKey`) is independent.
+ */
+export const LISTING_RECOMMEND_PCT_MIN_REVIEWS = 5;
+
+/**
  * Compute the recommend rollup from an `AppListingMetric` row (or null when the
  * P5 rollup job hasn't populated one yet — every count reads 0, pct null).
+ * `recommendPct` is also null below {@link LISTING_RECOMMEND_PCT_MIN_REVIEWS}.
  */
 export function recommendRollup(
   metric: { thumbsUpCount: number; thumbsDownCount: number } | null | undefined
@@ -249,7 +265,7 @@ export function recommendRollup(
   return {
     recommendedCount: up,
     notRecommendedCount: down,
-    recommendPct: total > 0 ? up / total : null,
+    recommendPct: total >= LISTING_RECOMMEND_PCT_MIN_REVIEWS ? up / total : null,
   };
 }
 
@@ -769,12 +785,15 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
   // shows what the approve will apply.
   // The Official flag is keyed on the PARENT too: the moderator write targets the live listing
   // only (`revision_of_id IS NULL`), so a shadow's own column is never the source of truth.
-  const [sourceRepo, beta, levels, red, isOfficial] = await Promise.all([
+  const [sourceRepo, beta, levels, red, isOfficial, issueTracker] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
     readListingBetaForRender(betaSourceId, dbRead),
     readListingVisibilityManyForRender([betaSourceId], dbRead),
     readListingRedMediaManyForRender(dbWrite, [args.listingId]),
     readListingOfficialForRender(betaSourceId, dbRead),
+    // THIS row's link (the shadow's, for a revision): it is staged on the shadow and is exactly
+    // what approving publishes, so the moderator must see it.
+    readListingIssueTrackerUrlForRender(args.listingId, dbRead),
   ]);
   // The caller is `moderatorProcedure`, so the viewer IS a moderator — who may always know
   // the level. Stated through the shared rule rather than by passing the raw level through.
@@ -789,22 +808,25 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
     // 🔴 MODERATOR_REVIEW_MEDIA: the reviewer sees what is attached — including media the
     // public gate would hide (still scanning, flagged, above the rating) — so it can be rejected.
     card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA, isOfficial),
-    detail: projectListingDetail(
-      row,
-      [],
-      sourceRepo.value,
-      beta,
-      row.connectRequestedScopes,
-      restrictedAudience,
-      MODERATOR_REVIEW_MEDIA,
-      isOfficial
-    ),
+    detail: {
+      ...projectListingDetail(
+        row,
+        [],
+        sourceRepo.value,
+        beta,
+        row.connectRequestedScopes,
+        restrictedAudience,
+        MODERATOR_REVIEW_MEDIA,
+        isOfficial
+      ),
+      issueTrackerUrl: issueTracker.value,
+    },
     media: {
       ...listingReviewMedia(row, red.get(args.listingId)),
       screenshots: row.screenshots.flatMap((s) => {
         const image = s.image?.url
           ? reviewImage(s.image, (i) =>
-              i.url ? getEdgeUrl(i.url, { width: LISTING_SCREENSHOT_WIDTH }) : null
+              i.url ? listingMediaEdgeUrl(i.url, LISTING_SCREENSHOT_WIDTH) : null
             )
           : null;
         return image ? [{ ...image, caption: s.caption ?? null }] : [];
@@ -909,6 +931,13 @@ export function projectListingDetail(
     // (`validateRepositoryUrl`), so what reaches the wire is always
     // `https://<allowlisted-host>/<owner>/<repo>`.
     sourceRepoUrl: sourceRepoUrl ?? null,
+    // Issue-tracker / support link. A no-type column (raw SQL only), so this projection carries
+    // `null` and the callers that read it (`getListingDetail`, the moderator preview) override it.
+    issueTrackerUrl: null,
+    // The submitting GitHub Actions run (no-type columns, raw SQL only). `null` here;
+    // `getListingDetail` overrides it for an on-site listing whose serving version has one from a
+    // public repository. The moderator preview shows none.
+    actionsRunSource: null,
     screenshots: gallery.screenshots,
     kindData: detailKindData(row),
     // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
@@ -1027,7 +1056,7 @@ export function projectListingDetail(
       row.kind === 'offsite' &&
       Boolean(row.connectClientId) &&
       typeof connectRequestedScopes === 'number'
-        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
         : [],
   };
 }
@@ -1140,10 +1169,28 @@ function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Pri
 }
 
 /**
+ * The account behind a store row is still active: not banned, not deleted. The one owner rule
+ * for every store arm — the listing owner (`al.user_id`, inside {@link storeEligibilityWhere})
+ * and a sub-listing's author (`s.author_user_id`) — so a banned or deleted account's apps and
+ * items leave the store together. An `EXISTS`, not a join, so it can sit in any WHERE.
+ */
+export function storeOwnerEligibleWhere(userIdColumn: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+        SELECT 1 FROM "User" store_owner
+        WHERE store_owner.id = ${userIdColumn}
+          AND store_owner."bannedAt" IS NULL AND store_owner."deletedAt" IS NULL
+      )`;
+}
+
+/**
  * Every condition that makes a LISTING eligible for the store grid, over the aliases `al`
  * (the listing) and `ab` (its backing block). The parent arm and the sub-listing arm of the
  * catalog statement both apply this to the parent row, so a child can never be visible while
  * its parent is not. Do not copy any of it into either arm.
+ *
+ * `userId` narrows it to one developer's listings (the "More by this developer" rail, the
+ * profile Apps tab and the developer track record). It only ever adds a term, and when it is
+ * absent the statement is byte-identical to the grid's, so existing cache entries keep their keys.
  */
 export function storeEligibilityWhere(args: {
   levelFilter: Prisma.Sql;
@@ -1152,17 +1199,22 @@ export function storeEligibilityWhere(args: {
   /** Which mature ratings this request may see — `matureRatingsAllowed(redCapable, level)`. */
   mature: MatureRatingsAllowed;
   scope: StoreVisibilityScope;
+  userId?: number | null;
 }): Prisma.Sql {
+  const ownerTerm =
+    args.userId != null ? Prisma.sql`\n      AND al.user_id = ${args.userId}` : Prisma.empty;
   return Prisma.sql`${args.levelFilter}
       -- A shadow revision is status='draft' and the level gate can admit a draft, so this is
       -- what keeps a shadow's un-reviewed content out of the store.
       AND al.revision_of_id IS NULL
+      -- A banned or deleted owner's listings leave the store with them.
+      AND ${storeOwnerEligibleWhere(Prisma.sql`al.user_id`)}
       -- An onsite listing appears only once its block has deployed successfully at least once.
       AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
       AND (${args.kind}::text IS NULL OR al.kind = ${args.kind}::text)
       AND (${args.category}::text IS NULL OR al.category = ${args.category}::text)
       AND ${listingMatureFilter(args.mature)}
-      AND ${listingPublicVisibilityFilter(args.scope)}`;
+      AND ${listingPublicVisibilityFilter(args.scope)}${ownerTerm}`;
 }
 
 /**
@@ -1395,7 +1447,7 @@ function noteSubListingTableMissing(err: unknown): void {
     name: 'app-sub-listing-table-missing',
     type: 'warning',
     message: err instanceof Error ? err.message : String(err),
-  }).catch(() => null);
+  });
 }
 
 /**
@@ -1408,6 +1460,8 @@ function noteSubListingTableMissing(err: unknown): void {
  * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
  * statement reads
  * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `al.user_id` (developer-filtered pages only — an ownership move, e.g. `claimListing`,
+ * shifts which developer's rail and record a listing counts toward),
  * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
  * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
  * nothing else. Every other column on the card is hydrated live below the cache and can
@@ -1529,7 +1583,7 @@ export async function listAvailableListings(
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts = {}
 ): Promise<{ items: StoreGridItem[]; nextCursor?: string }> {
-  const { kind, category, sort, cursor, limit } = input;
+  const { kind, category, sort, cursor, limit, userId } = input;
   const redCapable = opts.redCapable ?? false;
   const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
@@ -1566,6 +1620,9 @@ export async function listAvailableListings(
       category: category ?? null,
       mature,
       scope,
+      // A bound parameter, so it is in the statement hash, not the literal key: a per-user key
+      // segment would make the `cache_name` metric label unbounded.
+      userId: userId ?? null,
     });
 
   // 1 = the cursor sits on a child row: children sort after their parent on the same key.
@@ -1588,8 +1645,10 @@ export async function listAvailableListings(
   // deliberately outside the statement hash. See
   // {@link catalogPageCache}.
   //
-  // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
-  // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
+  // TTL = `CacheTTL.sm` (180s). Moderator and owner actions on a listing call
+  // `bustAppListingCatalogCache()`. Banning or deleting the owner (or a sub-listing's
+  // author) also removes rows, through `storeOwnerEligibleWhere`, and those paths bust
+  // nothing: they are bounded by the TTL alone.
   //
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
@@ -1652,11 +1711,11 @@ export async function listAvailableListings(
       FROM app_sub_listings s
       JOIN app_listings al ON al.id = s.parent_listing_id
       JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
-      -- A banned or deleted author's items leave the store with them.
-      JOIN "User" au ON au.id = s.author_user_id AND au."bannedAt" IS NULL AND au."deletedAt" IS NULL
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
       WHERE ${eligibility(levelFilter)}
+        -- A banned or deleted author's items leave the store with them.
+        AND ${storeOwnerEligibleWhere(Prisma.sql`s.author_user_id`)}
         AND sp.enabled
         AND s.status = 'approved'
         -- An on-site child opens under the parent's run route, which serves only an approved
@@ -1843,7 +1902,16 @@ export async function getListingDetail(
   // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
   // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red, forkProvenance, isOfficial] = await Promise.all([
+  const [
+    collaborators,
+    sourceRepo,
+    beta,
+    red,
+    forkProvenance,
+    isOfficial,
+    issueTracker,
+    actionsRunSource,
+  ] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),
     readListingBetaForRender(row.id, dbRead),
@@ -1854,6 +1922,14 @@ export async function getListingDetail(
     readListingForkProvenanceForRender(row.id, dbRead),
     // The Official badge (no-type column; degrades to "not official" on any error).
     readListingOfficialForRender(row.id, dbRead),
+    // The Support link (no-type column; degrades to "no link" on any error).
+    readListingIssueTrackerUrlForRender(row.id, dbRead),
+    // The GitHub Actions run that submitted the serving version, public repositories only
+    // (no-type columns; degrades to none on any error). On-site apps only: an off-site
+    // listing has no submitted bundle.
+    row.kind === 'onsite' && row.appBlockId
+      ? readLiveActionsRunSourceForListing(dbRead, row.appBlockId)
+      : Promise.resolve(null),
   ]);
   // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
   // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
@@ -1885,7 +1961,13 @@ export async function getListingDetail(
   );
   // The opt-in is only meaningful for an app whose source is hosted here; an off-site listing
   // never offers a Fork action whatever its column says.
-  return { ...detail, forkable: row.kind === 'onsite' && forkProvenance.forkable, forkOf };
+  return {
+    ...detail,
+    issueTrackerUrl: issueTracker.value,
+    actionsRunSource,
+    forkable: row.kind === 'onsite' && forkProvenance.forkable,
+    forkOf,
+  };
 }
 
 /**

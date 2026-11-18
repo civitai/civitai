@@ -18,6 +18,12 @@ export type ClickhouseLogFn = (message: string, ...args: unknown[]) => void;
 export type CreateClickhouseClientOptions = Partial<ClickhouseConfig> & {
   /** Debug logger (app-defined). Defaults to a no-op. */
   log?: ClickhouseLogFn;
+  /**
+   * The socket idle timeout (`request_timeout`). Defaults to 300 s. Raise it only for a client
+   * whose every query bounds itself (`max_execution_time` and an `abort_signal`): a query whose
+   * server goes quiet for this long is dropped by the client while the server runs on.
+   */
+  requestTimeoutMs?: number;
 };
 
 function formatSqlType(value: any): string {
@@ -46,7 +52,7 @@ function formatSqlType(value: any): string {
 export function createClickhouseClient(
   options: CreateClickhouseClientOptions = {}
 ): CustomClickHouseClient {
-  const { log: logOption, ...envOverrides } = options;
+  const { log: logOption, requestTimeoutMs = 300_000, ...envOverrides } = options;
   const config = { ...loadClickhouseEnv(), ...envOverrides };
   const log: ClickhouseLogFn = logOption ?? (() => {});
 
@@ -82,7 +88,7 @@ export function createClickhouseClient(
     // (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS). Above 60_000 and without
     // `send_progress_in_http_headers`, 1.x warns at construction that a long request_timeout can
     // itself surface as a socket hang up past a load balancer's idle timeout.
-    request_timeout: 300_000,
+    request_timeout: requestTimeoutMs,
     // 1.x normalizes an unset value to disabled; 0.2.x defaulted it on.
     compression: { response: true },
     clickhouse_settings: {

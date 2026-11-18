@@ -21,9 +21,11 @@ import {
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  getDeveloperTrackRecordSchema,
   myAppsHideInputSchema,
   startForkSchema,
   type ListingForksPage,
+  type DeveloperTrackRecord,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
 import {
@@ -459,6 +461,8 @@ function mapSubListingError(err: unknown): TRPCError {
  */
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'PublishRequestHeldError')
+    return new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message, cause: err });
   if (
     err instanceof Error &&
     (err.name === 'OffsiteRequestError' ||
@@ -934,6 +938,7 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           userId: ctx.user.id,
           isModerator: actsAsModerator(ctx),
+          readOnly: input.readOnly,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1450,6 +1455,8 @@ export const appListingsRouter = router({
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
           mediaSplit: input.mediaSplit,
+          holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -2250,6 +2257,37 @@ export const appListingsRouter = router({
         appListingId: input.appListingId,
         isOfficial: input.isOfficial,
         moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * A developer's store track record for the listing page ("4 apps · 12 reviews"): their
+   * listings this viewer could find in the store, and the counted reviews on those. Same
+   * store gates as `listAvailable` (scope + audience floor + host + browsing level); a dark
+   * scope answers `null` without reading. Public data only — a count over store-visible rows.
+   */
+  getDeveloperTrackRecord: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getDeveloperTrackRecordSchema)
+    .query(async ({ ctx, input }): Promise<DeveloperTrackRecord | null> => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-track-record');
+      if (scope === 'none') return null;
+      const { getDeveloperTrackRecord } = await import(
+        '~/server/services/blocks/app-listing-track-record.service'
+      );
+      return getDeveloperTrackRecord({
+        userId: input.userId,
+        scope,
+        floor,
+        redCapable: isRedCapableRequest(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 

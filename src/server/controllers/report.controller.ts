@@ -11,6 +11,7 @@ import type {
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
+import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   assertLockReviewAllowed,
@@ -57,9 +58,10 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    // Gated like reacting. A pre-flip comment keeps its id in both tables, so the old type is too.
-    if (input.type === ReportEntity.CommentV2 || input.type === ReportEntity.CommentV3)
-      await assertCommentActionable(input.id, ctx);
+    // Gated like reacting.
+    if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
+    // Only a text the reporter is shown can be reported: the flag, its post's gate and its rating.
+    if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
@@ -229,6 +231,7 @@ export async function createEntityAppealHandler({
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
       skipFee,
+      idempotencyKey: input.idempotencyKey,
     });
 
     return appeal;

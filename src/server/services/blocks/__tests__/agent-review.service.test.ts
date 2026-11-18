@@ -550,6 +550,23 @@ describe('startAgentReview — targeted re-run', () => {
     });
   });
 
+  it("🔴 a carried security audit does NOT carry the old run's impersonation record", async () => {
+    // The impersonation check runs again when this run reports; until then the new row must
+    // have no record, so the submission cannot sit in the fast lane on the old run's check.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      ...latestPartial,
+      securityAudit: {
+        findings: [{ severity: 'low' }],
+        impersonationCheck: { status: 'complete' },
+      },
+    });
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+
+    expect(createdRow().securityAudit).toEqual({ findings: [{ severity: 'low' }] });
+  });
+
   it('a section that previously failed is not carried even when it is NOT the one being retried', async () => {
     // Retry the SCOPES analysis on a report whose CODE review had failed: scopes is
     // excluded because it is being re-run, and codeReview because it is a failure marker —

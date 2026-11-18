@@ -12,8 +12,17 @@
  */
 export const REGISTRY_NAMESPACE = 'apps.civitai.com';
 
-/** The registry's own schema of schemas: every schema entity claims it. Not ours. */
-export const REGISTRY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';
+/**
+ * The namespace of a URN as the spec defines it: `{ns}` in `urn:{ns}:…`, or in `urn:schema:{ns}:…`
+ * for a schema, with `{ns}` and what follows it non-empty. Null for a string of neither shape.
+ */
+export function urnNamespace(urn: string): string | null {
+  const m = /^urn:(?:schema:)?([^:]+):.+$/.exec(urn);
+  if (!m) return null;
+  // `urn:schema:` alone names no namespace: `schema` is reserved for schemas.
+  if (m[1] === 'schema') return null;
+  return m[1];
+}
 
 /**
  * The schemas of the app, release and runtime entities. This adapter defines them

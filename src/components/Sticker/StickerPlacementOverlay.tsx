@@ -286,8 +286,7 @@ export function StickerPlacementOverlay({
   }, []);
 
   const measureSticker = useCallback(
-    (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
-      const placementId = placement.id;
+    (placementId: number) => (node: HTMLDivElement | null) => {
       const existing = disposers.current.get(placementId);
       if (existing) {
         existing();
@@ -336,6 +335,25 @@ export function StickerPlacementOverlay({
     },
     []
   );
+
+  // A pending sticker is measured for the owner's controls and still plays its track. One stable
+  // ref per sticker, so a re-render does not rebuild its animation.
+  const pendingRef = useMemo(() => {
+    const byId = new Map<number, (node: HTMLDivElement | null) => void>();
+    return (id: number) => {
+      let ref = byId.get(id);
+      if (!ref) {
+        const measure = measureSticker(id);
+        const pose = bindPose?.(id);
+        ref = (node) => {
+          measure(node);
+          pose?.(node);
+        };
+        byId.set(id, ref);
+      }
+      return ref;
+    };
+  }, [measureSticker, bindPose]);
 
   const [replayed, setReplayed] = useState(false);
   useEffect(() => {
@@ -504,7 +522,7 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement) : bindPose?.(placement.id)}
+              ref={placement.isPending ? pendingRef(placement.id) : bindPose?.(placement.id)}
               className={clsx(
                 'absolute',
                 interactive && 'pointer-events-auto',

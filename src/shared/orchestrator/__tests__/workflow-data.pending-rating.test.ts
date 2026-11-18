@@ -139,12 +139,15 @@ describe('WorkflowData unrated outputs', () => {
     const held = (wf: WorkflowData) => wf.steps[0].output[0].pendingRating;
     const video = blob({ type: 'video' });
 
-    it.each(['Grok', 'Kling', 'Veo3', 'Vidu'])('shows %s video unrated', (ecosystem) => {
-      const wf = buildStep('videoGen', video, { params: { ecosystem } });
+    it.each(['GeminiOmni', 'Grok', 'Kling', 'Veo3', 'Vidu'])(
+      'shows %s video unrated',
+      (ecosystem) => {
+        const wf = buildStep('videoGen', video, { params: { ecosystem } });
 
-      expect(held(wf)).toBe(false);
-      expect(wf.succeededOutput.map((x) => x.id)).toEqual(['blob-1']);
-    });
+        expect(held(wf)).toBe(false);
+        expect(wf.succeededOutput.map((x) => x.id)).toEqual(['blob-1']);
+      }
+    );
 
     it('reads the ecosystem from the workflow when the step has no params', () => {
       expect(held(buildStep('videoGen', video, {}, { ecosystem: 'Kling' }))).toBe(false);

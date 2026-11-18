@@ -287,7 +287,18 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
 
-  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values);
+  // `writeModeratorBlock`'s state read, after its UPDATE (which goes through `writeExec`).
+  if (sql.includes(' AS held')) {
+    const ids = (values.findLast(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => ids.includes(i.id))
+      .map((i) => ({
+        id: i.id,
+        held: i.blockedFor === BlockedReason.CSAM,
+        removedForCsam: i.blockedFor === BlockedReason.CSAM,
+        underReview: i.needsReview === 'csam',
+      }));
+  }
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
@@ -371,6 +382,45 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 
 function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
+
+  // `blockImageFromRating`, the orchestrator content-rating block.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
+    const [, ingestion, nsfwLevel, kept, keepAny, reason, id] = values as [
+      unknown,
+      string,
+      number,
+      string,
+      boolean,
+      string | null,
+      number
+    ];
+    const row = store.images.find((i) => i.id === id);
+    if (!row) return 0;
+    row.ingestion = ingestion;
+    row.nsfwLevel = nsfwLevel;
+    if (!keepAny && row.blockedFor !== kept) row.blockedFor = reason;
+    fireQueueTrigger(row);
+    return 1;
+  }
+
+  // `blockBannedUserImages`, the ban's whole-library block.
+  if (sql.includes('UPDATE "Image"') && sql.includes('WHERE "userId" = ? AND ingestion <>')) {
+    const [nsfwLevel, kept, reason, userId] = values as [number, string, string, number];
+    let count = 0;
+    for (const row of store.images) {
+      if (row.userId !== userId || row.ingestion === 'Blocked') continue;
+      row.ingestion = 'Blocked';
+      row.nsfwLevel = nsfwLevel;
+      if (row.blockedFor !== kept) row.blockedFor = reason;
+      fireQueueTrigger(row);
+      count++;
+    }
+    return count;
+  }
+
+  // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
+    return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
     const [userId, entityType, activity] = values as [number, string, string];
@@ -1019,7 +1069,7 @@ describe('who can reach blob retraction, driven through the real block writers',
 
 /**
  * The orchestrator content-rating block, driven through the exported webhook entry point rather
- * than the module-private `blockImageFromRating`. The scan continues past the block into tag
+ * than `blockImageFromRating` itself. The scan continues past the block into tag
  * processing, which this fixture does not model; the throw is swallowed because the block write
  * has already happened by then and is what the assertions read.
  */

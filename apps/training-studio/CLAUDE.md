@@ -7,9 +7,13 @@ for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actio
 The Training Studio is the LoRA training UI — a slicker replacement for the in-app trainer
 (`src/components/Training/**`), built as a **separate app** that can be extracted later. Its training
 **data** comes from the orchestrator, not the repo DB. It follows the moderator app's spoke shape:
-`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis` used
-for ONE thing — minting the user's short-lived orchestrator token in-app (a `System` `ApiKey` row +
-a redis get-or-mint cache; see `src/lib/server/{db,redis,orchestrator-token}.ts`). No `@civitai/clickhouse`.
+`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis`. The
+redis shim (`src/lib/server/redis.ts`) builds only a sys client, and these key families are on it: the
+session revocation check (`auth.ts`), the orchestrator token get-or-mint cache (`orchestrator-token.ts`,
+`GENERATION.TOKENS` and `GENERATION.ORCHESTRATOR_TOKENS`), the from-price cache (`pricing.ts`,
+`TRAINING.STUDIO_FROM_PRICES`), and the dataset-rating cache and daily allowances (`dataset-rating.ts`,
+`TRAINING.STUDIO_DATASET_RATING*`). The caches among them predate the store rule and are not a pattern:
+new cached data goes on a cache client (`createCacheRedis`), never the sys client. No `@civitai/clickhouse`.
 
 ## The flow (build to this)
 
@@ -42,7 +46,7 @@ enters the flow.
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
-- **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
+- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1 and Chroma behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
@@ -56,8 +60,9 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
-A card's `flagKey` (its per-model Flipt gate) is evaluated by the shell in `/new`'s load, but the
-main-app embed can't ask Flipt: every key must also be in `studioModelFlagFeatures`
+A card's `flagKey` (its per-model Flipt gate), the Kohya gate and the Manage tags find-replace gate — together `hostFlagKeys()` — are
+evaluated by the shell in `/new`'s load, but the main-app embed can't ask Flipt: every key must also be
+in `studioModelFlagFeatures`
 (`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
 `src/utils/__tests__/new-training-models.test.ts` in the **root** unit suite — this app's own `test`
 does not run it.
@@ -78,7 +83,9 @@ Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 `hooks.server.ts` has a **dev-only** bypass: in `vite dev` with `TRAINING_STUDIO_DEV_LOGIN=1` (set in
 `.env`) it injects a stub user and skips the guard (dead code in the built server). `pnpm dev:training-studio`
-→ http://localhost:5173. Screenshot with a headless browser to iterate.
+→ http://localhost:5173. Screenshot with a headless browser to iterate. To sign in for real through the
+local auth hub instead, leave that unset and run `node .claude/skills/dev-server/cli.mjs start --app
+training-studio` (port 5176; the hub holds 5173).
 
 ## Deltas
 

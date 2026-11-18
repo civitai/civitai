@@ -24,7 +24,7 @@ import type { SessionUser } from '~/types/session';
 const createCaller = createCallerFactory(appRouter);
 
 type RequestContext = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'> & {
-  tokenScope?: number;
+  tokenScope?: bigint;
 };
 
 export function createPlannerCaller(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {

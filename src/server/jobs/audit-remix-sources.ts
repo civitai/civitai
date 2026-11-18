@@ -5,6 +5,7 @@ import { extModeration } from '~/server/integrations/moderation';
 import { auditPromptEnriched, isBlankAuditInput } from '~/utils/metadata/audit';
 import { imageMetaOutput } from '~/server/schema/image.schema';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { createJob } from './job';
 
 const DEDUP_TTL = 60 * 60 * 24; // 24 hours — don't re-audit the same source image within a day
@@ -91,14 +92,29 @@ export const auditRemixSourcesJob = createJob(
         let isProblematic = false;
 
         // Regex-based audit
-        const { success } = auditPromptEnriched(prompt ?? '', negativePrompt, false);
+        const regex = auditPromptEnriched(prompt ?? '', negativePrompt, false);
+        let success = regex.success;
+        let classified = false;
+        const [firstTrigger] = regex.triggers;
+        if (!success && firstTrigger?.category === 'minor_age' && prompt) {
+          const decision = await decideAgeRegexHit({
+            surface: 'remix-source',
+            age: Number(firstTrigger.matchedWord),
+            prompt,
+            source: 'remixAudit',
+          });
+          if (!decision.block) {
+            classified = true;
+            ({ success } = auditPromptEnriched(decision.withoutAge, negativePrompt, false));
+          }
+        }
         if (!success) {
           isProblematic = true;
         }
 
         // External moderation (only if regex passed). It is sent the prompt alone, so there is
         // nothing to send when the prompt is empty.
-        if (!isProblematic && prompt?.trim()) {
+        if (!isProblematic && !classified && prompt?.trim()) {
           try {
             // 'remixAudit' is observability only — it keeps this batch job's latency out of the
             // request-path population on the external-moderation histogram. Nobody is waiting on
@@ -116,11 +132,13 @@ export const auditRemixSourcesJob = createJob(
 
         // 5. Flag for moderator review if problematic
         if (isProblematic) {
-          const updated = await dbWrite.image.update({
-            where: { id: imageId },
+          // Re-checked in the write: a flag set since the read above is kept.
+          const [updated] = await dbWrite.image.updateManyAndReturn({
+            where: { id: imageId, needsReview: null },
             data: { needsReview: 'remixSource' },
             select: { postId: true },
           });
+          if (!updated) continue;
           // Flagged images need to disappear from the model-version showcase.
           if (updated.postId) await bustCachesForPosts(updated.postId);
           flagged++;

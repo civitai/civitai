@@ -28,6 +28,7 @@
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const rows = $derived(data.engagement ?? []);
+  const needAttention = $derived(rows.filter((m) => m.comments > 0 || m.downvotes > 0).length);
   const sortValue = (m: NonNullable<PageData['engagement']>[number], key: string): number =>
     key === 'comments' ? m.comments : key === 'upvotes' ? m.upvotes : m.downvotes;
   const sorted = $derived.by(() => {
@@ -46,8 +47,8 @@
   <div class="placeholder">Engagement is temporarily unavailable — please try again shortly.</div>
 {:else if rows.length === 0}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Nothing to review</strong> — none of your published models have downvotes
-    or comments.
+    <strong class="text-dark-2">No published models yet</strong> — they will show up here once you publish
+    one.
   </div>
 {:else}
   <div class="cs-panel p-4">
@@ -80,7 +81,13 @@
     {/snippet}
 
     <div class="mb-3">
-      <Pagination total={sorted.length} noun="model" {curPage} {totalPages} />
+      <Pagination
+        total={sorted.length}
+        noun="model"
+        {curPage}
+        {totalPages}
+        note="{num(needAttention)} with comments or downvotes"
+      />
     </div>
     <Table.Root>
       <Table.Header>

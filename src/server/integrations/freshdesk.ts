@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { toBase64 } from '~/utils/string-base64-helpers';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export async function createFreshdeskToken(
   user: { id?: number; username?: string; email?: string },
@@ -48,7 +49,8 @@ export async function createContact(user: FreshdeskUserInput) {
   }
 
   try {
-    const response = await fetch(`${env.FRESHDESK_DOMAIN}/api/v2/contacts`, {
+    const response = await outboundFetch(`${env.FRESHDESK_DOMAIN}/api/v2/contacts`, {
+      timeoutMs: 10_000,
       method: 'POST',
       headers: {
         Authorization: `Basic ${toBase64(`${env.FRESHDESK_TOKEN}:X`)}`,
@@ -105,19 +107,23 @@ export async function updateContact(user: FreshdeskUserInput & { contactId: numb
   if (!env.FRESHDESK_TOKEN || !env.FRESHDESK_DOMAIN) return;
 
   try {
-    const response = await fetch(`${env.FRESHDESK_DOMAIN}/api/v2/contacts/${user.contactId}`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Basic ${toBase64(`${env.FRESHDESK_TOKEN}:X`)}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: user.username,
-        custom_fields: {
-          sla: user.tier,
+    const response = await outboundFetch(
+      `${env.FRESHDESK_DOMAIN}/api/v2/contacts/${user.contactId}`,
+      {
+        timeoutMs: 10_000,
+        method: 'PUT',
+        headers: {
+          Authorization: `Basic ${toBase64(`${env.FRESHDESK_TOKEN}:X`)}`,
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          name: user.username,
+          custom_fields: {
+            sla: user.tier,
+          },
+        }),
+      }
+    );
 
     if (!response.ok) {
       if (response.status === 429) {

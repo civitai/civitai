@@ -44,6 +44,7 @@ describe('servedPages', () => {
       '/api/live',
       '/api/health',
       '/api/ready',
+      '/api/readyz',
       '/api/metrics',
     ]);
   });
@@ -57,5 +58,32 @@ describe('servedPages', () => {
 
   it('throws on an unknown profile rather than serving a default', () => {
     expect(() => served.servedPages('nope', manifest)).toThrow(/unknown standalone server profile/);
+  });
+});
+
+describe('matchRequestPage', () => {
+  // The real matcher the server builds at boot, over a static and a dynamic API page.
+  const compat = require('../next-compat.cjs');
+  const matchPage = compat.createPageMatcher(['/api/live', '/api/v1/models/[id]']);
+  const KEY = Symbol.for(served.API_ROUTE_PAGE_REQ_KEY);
+
+  it('stores the matched page on req for the per-route request counter', () => {
+    const dynamic: Record<string | symbol, unknown> = { url: '/api/v1/models/123?x=1' };
+    expect(served.matchRequestPage(matchPage, dynamic)).toEqual({ page: '/api/v1/models/[id]' });
+    expect(dynamic[KEY]).toBe('/api/v1/models/[id]');
+
+    const fixed: Record<string | symbol, unknown> = { url: '/api/live' };
+    expect(served.matchRequestPage(matchPage, fixed)).toEqual({ page: '/api/live' });
+    expect(fixed[KEY]).toBe('/api/live');
+  });
+
+  it('leaves req unmarked for an unmatched or undecodable path', () => {
+    const unmatched: Record<string | symbol, unknown> = { url: '/api/v1/nope?x=1' };
+    expect(served.matchRequestPage(matchPage, unmatched)).toEqual({ notFound: true });
+    expect(KEY in unmatched).toBe(false);
+
+    const undecodable: Record<string | symbol, unknown> = { url: '/api/v1/models/%E0%A4%A' };
+    expect(served.matchRequestPage(matchPage, undecodable)).toEqual({ decodeError: true });
+    expect(KEY in undecodable).toBe(false);
   });
 });

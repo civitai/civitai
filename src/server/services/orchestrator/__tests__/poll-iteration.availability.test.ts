@@ -123,7 +123,7 @@ describe('pollIterationWorkflow availability', () => {
 
     const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
     expect(key).toEqual(expect.any(String));
-    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+    expect(redisMock.redis.set).toHaveBeenCalledExactlyOnceWith(
       `system:upload-key-owner:${key}`,
       '7',
       { EX: 30 * 24 * 60 * 60 }

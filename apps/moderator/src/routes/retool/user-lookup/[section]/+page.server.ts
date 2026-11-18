@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { isInt4Id } from '$lib/server/users.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -534,6 +535,8 @@ export const actions: Actions = {
           .transform(() => undefined)
           .or(z.coerce.number().int().positive().max(2_147_483_647))
           .optional(),
+        // One per form (the panel mints it); the ledger key that makes a resubmit recognisable.
+        submissionId: z.string().regex(/^[0-9a-f]{16,64}$/),
       }),
       await request.formData()
     );
@@ -552,6 +555,7 @@ export const actions: Actions = {
       entityType: input.entityType || undefined,
       entityId: input.entityId,
       moderatorId: locals.user.id,
+      submissionId: input.submissionId,
     });
     if (!result.ok) return buzzFail(result.error);
     // The parsed input, not the raw form: the confirmation the panel shows has to name what was
@@ -763,7 +767,7 @@ export const actions: Actions = {
       form
         .getAll(name)
         .map((v) => Number(v))
-        .filter((n) => Number.isInteger(n) && n > 0);
+        .filter(isInt4Id);
 
     if (input.kind === 'comments') {
       if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')

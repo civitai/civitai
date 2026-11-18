@@ -81,6 +81,19 @@ vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) =>
   syncReviewsOfMovedPosts,
 }));
 
+const { refreshShowcases, postServiceLoad } = vi.hoisted(() => ({
+  refreshShowcases: vi.fn(async (_userId: number) => undefined),
+  postServiceLoad: { fail: false },
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  // A getter so a test can make loading the export throw, as a failed lazy import would.
+  get refreshShowcasesForUserModels() {
+    if (postServiceLoad.fail) throw new Error('post.service failed to load');
+    return refreshShowcases;
+  },
+}));
+
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -97,13 +110,10 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
-const commentV2Updates = () =>
+const oldCommentTableWrites = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
-    .map(([strings, ...values]) => ({
-      sql: (strings as unknown as string[]).join('?').replace(/\s+/g, ' '),
-      values,
-    }))
-    .filter((c) => c.sql.includes('UPDATE "CommentV2"'));
+    .map(([strings]) => (strings as unknown as string[]).join('?'))
+    .filter((sql) => /"Comment(V2)?"/.test(sql));
 
 const call = () =>
   toggleBan({
@@ -185,10 +195,7 @@ describe('toggleBan -> user search index', () => {
   });
 });
 
-/**
- * A ban can flag the account's comments in both tables — the ToS flag, not `hidden`; see
- * `commentsv2.service.ts` for why the flag is what removes a comment and `hidden` is not.
- */
+/** A ban can flag the account's comments for ToS (`setUserCommentsV3Tos`), not hide them. */
 describe('toggleBan -> removeComments', () => {
   const ban = (removeComments?: boolean) =>
     toggleBan({
@@ -208,20 +215,11 @@ describe('toggleBan -> removeComments', () => {
     });
   });
 
-  it('flags the author’s comments when asked, and does not touch the author-owned hide', async () => {
+  it('flags the author’s comments when asked, in CommentV3 only', async () => {
     await ban(true);
 
-    const [v2] = commentV2Updates();
-    expect(v2.sql).toContain('SET "tosViolation" = true');
-    expect(v2.sql).not.toContain('hidden');
-    expect(v2.values[0]).toBe(USER_ID);
-    // A comment on a CommentV3-write surface is left to the CommentV3 pass, which locks that table
-    // first as every write there does.
-    expect(v2.sql).toContain('AND NOT ?');
     expect(v3Tos.mock.calls).toEqual([[USER_ID]]);
-    expect((v2.values[1] as { sql: string }).sql).toContain(
-      'EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = c2.id'
-    );
+    expect(oldCommentTableWrites()).toEqual([]);
   });
 
   it('finishes the ban and logs it when flagging the CommentV3 comments fails', async () => {
@@ -236,7 +234,6 @@ describe('toggleBan -> removeComments', () => {
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
-    expect(commentV2Updates()).toEqual([]);
     expect(v3Tos).not.toHaveBeenCalled();
   });
 });
@@ -308,14 +305,17 @@ describe('toggleBan -> removeMedia', () => {
       removeMedia,
     } as Parameters<typeof toggleBan>[0]);
 
-  // The Moderated block's own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
+  // `blockBannedUserImages`' own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
   const moderatedBlocks = () =>
-    imageUpdateMany.mock.calls.filter(
-      ([args]) =>
-        JSON.stringify(args?.where) ===
-          JSON.stringify({ userId: USER_ID, ingestion: { not: 'Blocked' } }) &&
-        args?.data?.blockedFor === 'moderated'
-    ).length;
+    dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings, ...values]) => {
+      const text = (strings as unknown as string[]).join('?');
+      return (
+        text.includes('UPDATE "Image"') &&
+        text.includes('WHERE "userId" = ? AND ingestion <>') &&
+        values.includes('moderated') &&
+        values.includes(USER_ID)
+      );
+    }).length;
 
   beforeEach(() => {
     userFindUnique.mockResolvedValue({
@@ -343,6 +343,35 @@ describe('toggleBan -> removeMedia', () => {
     expect(moderatedBlocks()).toBe(n);
   });
 
+  it("requeues the account's own models after the media block, and not without one", async () => {
+    await ban('Harassment', true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+
+    refreshShowcases.mockClear();
+    await ban('Harassment', false);
+    expect(refreshShowcases).not.toHaveBeenCalled();
+  });
+
+  it('finishes the ban when the model requeue fails', async () => {
+    refreshShowcases.mockRejectedValueOnce(new Error('redis down'));
+    await expect(ban('Harassment', true)).resolves.toBeDefined();
+    expect(moderatedBlocks()).toBe(1);
+  });
+
+  it('finishes the ban when loading the model requeue fails', async () => {
+    postServiceLoad.fail = true;
+    try {
+      await expect(ban('Harassment', true)).resolves.toBeDefined();
+    } finally {
+      postServiceLoad.fail = false;
+    }
+    expect(moderatedBlocks()).toBe(1);
+    // A throw here would abort the rest of the content removal (marker clear, avatar refresh).
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-remove-content' })
+    );
+  });
+
   // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
   // block right after `toggleBan`, so a Moderated block first is a wasted write over the whole
   // library. It skips it with `mediaBlockedByCaller`, which no request input can set.
@@ -355,6 +384,7 @@ describe('toggleBan -> removeMedia', () => {
       imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
   });
 });
 

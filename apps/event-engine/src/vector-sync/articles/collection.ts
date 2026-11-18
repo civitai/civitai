@@ -1,6 +1,5 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { ArticlePayload } from './source';
 
 /**
@@ -9,6 +8,7 @@ import type { ArticlePayload } from './source';
  * docHash are stored, never filtered.
  */
 export const ARTICLE_COLLECTION: CollectionSpec<ArticlePayload> = {
+  ...SITE_REPLICATION,
   quantile: 0.99,
   indexes: [
     ['title_normalized', { type: 'keyword', on_disk: true, enable_hnsw: false }],
@@ -33,10 +33,9 @@ export const ARTICLE_COLLECTION: CollectionSpec<ArticlePayload> = {
 };
 
 export function articleVectorStore() {
-  const { qdrantUrl, qdrantApiKey, articleCollection } = config.vectorSync;
   return new VectorStore<ArticlePayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    articleCollection,
+    qdrantClient(),
+    config.vectorSync.articleCollection,
     ARTICLE_COLLECTION
   );
 }

@@ -8,12 +8,15 @@
   pointer-events: none;
   z-index: 1;
 
+  // `--bulb` is the bulb's colour in the full string; `--bulb-sm` its colour when every other bulb is
+  // dropped on a phone, so a short string still cycles through all the team colours.
   span {
+    --c: var(--bulb);
     width: 8px;
     height: 11px;
     border-radius: 0 0 5px 5px;
-    background: var(--bulb);
-    box-shadow: 0 0 8px 1px var(--bulb);
+    background: var(--c);
+    box-shadow: 0 0 8px 1px var(--c);
     opacity: 0.8;
     animation: twinkle 2.4s ease-in-out infinite alternate;
 
@@ -29,7 +32,7 @@
 @keyframes twinkle {
   to {
     opacity: 0.45;
-    box-shadow: 0 0 3px 0 var(--bulb);
+    box-shadow: 0 0 3px 0 var(--c);
   }
 }
 
@@ -37,4 +40,19 @@
   .bulbs span {
     animation: none;
   }
+}
+
+// A phone keeps every other bulb: each running animation forces a frame, so cost grows with the count.
+@media (max-width: 480px) {
+  .bulbs span {
+    --c: var(--bulb-sm);
+
+    &:nth-child(even) {
+      display: none;
+    }
+  }
+}
+
+.bulbs[data-offscreen='true'] span {
+  animation-play-state: paused;
 }

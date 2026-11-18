@@ -210,13 +210,13 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 });
 
 describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (parity)', () => {
-  const UserRead = 1;
-  const VaultWrite = 1 << 24;
+  const UserRead = 1n;
+  const VaultWrite = 1n << 24n;
 
   it('forces UserRead into the granted scope even if not requested', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
-      { allowedScopes: 33554431 } as any,
+      { allowedScopes: 33554431n } as any,
       ['0'] // requested nothing
     );
     expect(granted).toEqual([String(UserRead)]);
@@ -231,6 +231,15 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
     expect(granted).toEqual([String(VaultWrite | UserRead)]);
   });
 
+  it('grants AppsRead and AppDataRead (bits 31, 32) within the client allowlist', async () => {
+    const granted = await oauthModel.validateScope(
+      { id: 1 } as any,
+      { allowedScopes: 6442450945n } as any,
+      ['6442450944']
+    );
+    expect(granted).toEqual(['6442450945']);
+  });
+
   it('rejects a scope outside the client allowlist', async () => {
     const granted = await oauthModel.validateScope(
       { id: 1 } as any,
@@ -242,9 +251,9 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
 });
 
 describe('oauthModel — client_credentials (the client acting as itself)', () => {
-  const UserRead = 1;
-  const AIServicesWrite = 1 << 15;
-  const Catalog = 1 << 28;
+  const UserRead = 1n;
+  const AIServicesWrite = 1n << 15n;
+  const Catalog = 1n << 28n;
   const ceiling = { allowedScopes: UserRead | AIServicesWrite | Catalog } as any;
   const ccClient = {
     userId: 9,

@@ -976,6 +976,19 @@ export async function isAppBlocksAgenticReviewAutostartEnabled(): Promise<boolea
 }
 
 /**
+ * The ONE switch pair for AUTOMATIC agent reviews: the autostart flag AND the agent-review flag's
+ * base value (both evaluated with no user). Read by the automatic start on a settled review build
+ * and by the impersonation check on an approved app's listing edit, so the two cannot drift.
+ */
+export async function isAgentReviewAutomationEnabled(): Promise<boolean> {
+  const [autostart, base] = await Promise.all([
+    isAppBlocksAgenticReviewAutostartEnabled(),
+    isAppBlocksAgenticReviewEnabled(),
+  ]);
+  return autostart && base;
+}
+
+/**
  * GLOBAL flag: publish review previews to the shared static server instead of rendering a
  * per-preview Deployment/Service/route. ON: the review apply Job runs the smoke test then the
  * review-lane publish; reachability is an origin probe through the shared route; teardown runs
@@ -986,6 +999,22 @@ export const APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG = 'app-blocks-review-shared-se
 
 export async function isAppBlocksReviewSharedServerEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG);
+}
+
+/**
+ * GLOBAL flag: a review build publishes its preview to the shared static server ITSELF, with no
+ * per-preview image. ON, and only while APP_BLOCKS_REVIEW_SHARED_SERVER_FLAG is also on: the
+ * review trigger asks for a direct publish, and its success callback (which then says
+ * `directPublish: true`) skips the review apply Job and goes straight to the shared-route
+ * probe. OFF: the review build pushes a review image and the apply Job publishes it, unchanged.
+ * Read when the build is triggered; the callback trusts what the signed callback body says, so
+ * flipping the flag mid-build does not change how that build is served. Base-value evaluation
+ * (no user), like the other machine-side flags.
+ */
+export const APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG = 'app-blocks-review-direct-publish';
+
+export async function isAppBlocksReviewDirectPublishEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_REVIEW_DIRECT_PUBLISH_FLAG);
 }
 
 /**
@@ -1183,6 +1212,27 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
   user: SessionUser;
 }): Promise<boolean> {
   return isFlipt(APP_BLOCKS_APP_REACTIONS_FLAG, String(opts.user.id), buildFliptContext(opts.user));
+}
+
+/**
+ * Dedicated fail-closed flag for BATCH PRIVATE UPLOADS — `OPEN_MEDIA_UPLOAD_BATCH` and the three
+ * `blocks.*MediaUploadBatch*` procedures behind it (`media-upload-batch.service.ts`). A batch puts
+ * up to a day's quota of files into the viewer's account in one confirm, so it is armed on its own
+ * rather than by the runtime flag widening. The single-file `OPEN_MEDIA_UPLOAD` is not gated by it.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, already proven to be the session user.
+ *
+ * 🔴 SHIPS OFF. The flag is created separately in Flipt, base `enabled: false`; until it exists,
+ * `isFlipt` turns the failed evaluation into `false`, so batches stay off.
+ */
+export const APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG = 'app-blocks-batch-media-upload';
+
+export async function isAppBlocksBatchMediaUploadEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**
@@ -1542,8 +1592,108 @@ function reportSilentStoreGate(user: SessionUser): void {
       message: 'store read scope resolved `none` for a logged-in viewer who holds a store flag',
       userId: user.id,
       heldFlags: [...held],
-    }).catch(() => null);
+    });
   } catch {
     /* never throw from telemetry — a detection net must not break the read path */
+  }
+}
+
+/**
+ * The user-visible half of membership-tiered app limits: at the plan's daily app Buzz cap the
+ * running app shows a paused notice with an upgrade prompt and the option to continue on the
+ * viewer's own Buzz for the rest of the UTC day (`user.optInAppBuzzToday`). Off, nobody can opt
+ * in, and `resolveUserAppCaps` ignores any opt-in already recorded, so the cap enforced is the
+ * plan's. The per-tier caps themselves are NOT behind it.
+ *
+ * No user → `false`: an opt-in belongs to a viewer, and there is no subject to ask for. An
+ * absent flag and an unreachable Flipt evaluate `false` too. Mirrors `appLimitsUpgradePrompt`
+ * in `feature-flags.service.ts`, which carries it to the client.
+ */
+export const APP_LIMITS_UPGRADE_PROMPT_FLAG = 'app-limits-upgrade-prompt';
+
+export async function isAppLimitsUpgradePromptEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_LIMITS_UPGRADE_PROMPT_FLAG, String(user.id), buildFliptContext(user))) ===
+      true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * APP HIBERNATE ("Sleeping" apps): the sandbox service archives an idle or LRU app into the
+ * archive store instead of deleting it, and the owner can list, wake or delete it
+ * (`src/server/services/app-hibernation/`). Off, every hibernation endpoint and procedure refuses,
+ * so nothing is archived and nothing is listed; account deletion still removes what exists.
+ *
+ * Evaluated per user (the internal routes look the user up from the request's `userId`), so a
+ * segment rollout reaches the sandbox service's calls and the user's own procedures alike. No
+ * user, an absent flag and an unreachable Flipt all evaluate `false`.
+ */
+export const APP_HIBERNATE_FLAG = 'app-hibernate';
+
+export async function isAppHibernateEnabled(opts: { user?: SessionUser | null }): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_HIBERNATE_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The in-app raise of a viewer's own per-app daily Buzz limit: the host's daily-limit dialog
+ * offers "Raise limit", and `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit` answer.
+ * Checked on the server as well as the client so turning it off reaches tabs that loaded the
+ * client flags while it was on. No user, an absent flag or an unreachable Flipt: `false`.
+ * Mirrors `appDailyLimitRaise` in `feature-flags.service.ts`.
+ */
+export const APP_DAILY_LIMIT_RAISE_FLAG = 'app-daily-limit-raise';
+
+export async function isAppDailyLimitRaiseEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_DAILY_LIMIT_RAISE_FLAG, String(user.id), buildFliptContext(user))) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A viewer may opt in, per app, to running its above-budget confirmed-step jobs without a
+ * per-job confirm while each fits their daily limit for it. Server only: the step preview
+ * offers the opt-in and reports a standing consent, and the standing consent and the submit
+ * each check it again, so turning it off stops unprompted jobs within the flag cache. No
+ * user, an absent flag or an unreachable Flipt: `false`.
+ */
+export const APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG = 'app-confirmed-step-within-limit';
+
+export async function isAppConfirmedStepWithinLimitEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(
+        APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG,
+        String(user.id),
+        buildFliptContext(user)
+      )) === true
+    );
+  } catch {
+    return false;
   }
 }

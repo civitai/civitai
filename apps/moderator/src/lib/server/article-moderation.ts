@@ -345,12 +345,6 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
 
-    // Same lock order as the main app's deleteArticleById: CommentV3 before the cascade reaches
-    // CommentV2.
-    await sql`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`.execute(
-      trx
-    );
-
     await trx
       .deleteFrom('File')
       .where('entityId', '=', id)
@@ -411,7 +405,7 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       message: 'images kept by a hold',
       articleId: id,
       kept: rows.refused,
-    }).catch(() => undefined);
+    });
   await finishImageDeletes(rows);
   return rows.refused;
 }

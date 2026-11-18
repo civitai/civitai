@@ -9,13 +9,19 @@ import {
   registerInstrumentationMetric,
   redisCommandsInflight,
   redisCommandDuration,
+  REDIS_COMMAND_DURATION_BUCKETS,
   packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } from '@civitai/telemetry/client';
+import {
+  batchedDurationHistogram,
+  batchedInflightGauge,
+} from '@civitai/telemetry/redis-command-metrics';
 // Type-only: the CONSUMER's view of the bridge object published below. A `import type` cannot pull
 // any of @civitai/redis's runtime into this module's graph — it is erased at build.
 import type { RedisMetricsBridge } from '@civitai/redis';
@@ -52,15 +58,25 @@ export * from '@civitai/telemetry/client';
 //
 // So: add a field to `RedisMetricsBridge` in @civitai/redis without adding it here and this file
 // stops compiling. That is the intended failure — wire the handle, do not widen the type below.
+//
+// The two per-command handles are the cheaper wrappers from @civitai/telemetry/redis-command-metrics:
+// same metrics, same labels, same values at every scrape. Both follow the
+// `redis-command-metrics-batched` Flipt flag (wired at boot by src/instrumentation.node.ts): the
+// duration histogram batches while it reads on; the in-flight gauge is counted locally only if the
+// flag was on at the process's first Redis command, a mode latched for the life of the process.
 const redisMetricsBridge = {
-  redisCommandsInflight,
-  redisCommandDuration,
+  redisCommandsInflight: batchedInflightGauge(redisCommandsInflight),
+  redisCommandDuration: batchedDurationHistogram(
+    redisCommandDuration,
+    REDIS_COMMAND_DURATION_BUCKETS
+  ),
   packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } satisfies RedisMetricsBridge & Record<keyof RedisMetricsBridge, unknown>;
 
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
@@ -660,26 +676,6 @@ export const restrictedImageReconcileLastSuccessGauge = registerInstrumentationM
     new client.Gauge({
       name: PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
       help: 'Unix seconds at which the restricted-base-model reconcile last completed',
-      registers: [instrumentationRegistry],
-    })
-);
-
-/**
- * Base models the code licence data and the `RestrictedBaseModels` table disagree about.
- *
- * `missing_in_db` is the failure that produced the 2025-10 exposure: a licence
- * restricting NSFW was added in code, nobody added the DB row, and every Postgres
- * read path went on treating that base model as unrestricted while search hid it.
- * Nothing reconciles the two by design — restricting a base model hides live
- * creator content, so it stays a deliberate act rather than a deploy artifact.
- */
-export const restrictedBaseModelDivergenceGauge = registerInstrumentationMetric(
-  PROM_PREFIX + 'restricted_base_model_divergence',
-  () =>
-    new client.Gauge({
-      name: PROM_PREFIX + 'restricted_base_model_divergence',
-      help: 'Base models present in one restricted list and not the other',
-      labelNames: ['direction'],
       registers: [instrumentationRegistry],
     })
 );

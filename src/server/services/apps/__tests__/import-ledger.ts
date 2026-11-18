@@ -89,3 +89,34 @@ export function importersOf(module: string, name?: string): string[] {
     .map((u) => u.file);
   return [...new Set(files)].sort();
 }
+
+const parsedFiles = new Map<string, ts.SourceFile>();
+function parsed(file: string): ts.SourceFile {
+  let src = parsedFiles.get(file);
+  if (!src) {
+    src = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    parsedFiles.set(file, src);
+  }
+  return src;
+}
+
+/**
+ * The files whose code names the identifier `name` anywhere — a declaration, an import, or a
+ * use in the file that declares it — sorted. AST identifiers, so comments and strings do not
+ * count. The import ledger alone cannot see a same-file use: a constant read only beside its own
+ * declaration has no importer.
+ */
+export function identifierUsers(name: string): string[] {
+  const files: string[] = [];
+  for (const file of walk(SRC, [])) {
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found) return;
+      if (ts.isIdentifier(node) && node.text === name) found = true;
+      else ts.forEachChild(node, visit);
+    };
+    visit(parsed(file));
+    if (found) files.push(path.relative(SRC, file).split(path.sep).join('/'));
+  }
+  return files.sort();
+}

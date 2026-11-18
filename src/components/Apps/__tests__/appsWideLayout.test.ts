@@ -159,8 +159,8 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(8); // …plus Deploy
     expect(APPS_MINE_COLUMNS).toHaveLength(4); // App Cover Status Updated
     expect(APPS_MOD_LISTINGS_COLUMNS).toHaveLength(5); // App Owner Category Reviews actions
-    expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(7); // Date App Scope Buzz Gross Share Status
-    expect(APPS_REVENUE_COLUMNS.scoped).toHaveLength(6); // …minus App
+    expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(5); // Date App Fee BuzzType Status
+    expect(APPS_REVENUE_COLUMNS.scoped).toHaveLength(4); // …minus App
     expect(APPS_ACTIVE_PREVIEWS_COLUMNS).toHaveLength(5); // App Version State Age actions
     expect(APPS_AGENT_REPORT_SCOPE_COLUMNS).toHaveLength(6); // Scope Used Justified Sensitive Evidence Notes
     expect(APPS_CUSTOM_EVENTS_COLUMNS).toHaveLength(4); // Event Events Signed-in Signed-out
@@ -190,7 +190,7 @@ describe('every shipped ledger is valid', () => {
       'my apps': 0, // App — icon + name + slug
       'moderation listings': 0, // App — slug + kind/status chips
       'revenue (unscoped)': 1, // App — link to the per-app page
-      'revenue (scoped)': 1, // Scope — there is no App column
+      'revenue (scoped)': 3, // Status — there is no App column
       'active previews': 4, // actions — case (b), no cell can use the room
       'agent report scopes': 5, // Notes — uncapped reviewer prose
       'custom events': 0, // Event — the only non-numeric column

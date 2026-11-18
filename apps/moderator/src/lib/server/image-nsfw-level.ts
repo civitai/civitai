@@ -3,10 +3,12 @@ import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { bustAfterWrite } from './bust-after-write';
+import { bustPostGalleryCaches } from './image-moderation-effects';
 import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -84,8 +86,13 @@ export async function updateImageNsfwLevel({
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
   await bustAfterWrite('image-nsfw-level-cache-bust', () =>
-    bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id)
+    Promise.all([
+      bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+      // The version showcase is cached for a day and filtered by level when it is built.
+      bustPostGalleryCaches(image.postId != null ? [image.postId] : []),
+    ])
   );
 
+  if (image.postId != null) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
   void syncKonoFinalize(id, nsfwLevel);
 }

@@ -7,7 +7,6 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
-import { useEffect, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import classes from './CreatorCard.module.scss';
 import clsx from 'clsx';
@@ -36,16 +35,17 @@ const linkQuery: Record<string, string> = {
 export function CreatorCard({
   data: { position, user, metrics, score, delta },
   index,
+  highlighted = false,
 }: {
   data: LeaderboardGetModel;
   index: number;
+  highlighted?: boolean;
 }) {
   const { ref, inView } = useInView();
   const router = useRouter();
   const theme = useMantineTheme();
 
   const { id: leaderboardId } = router.query as { id: string };
-  const [hashPosition, setHashPosition] = useState<number | null>(null);
 
   const isTop3 = position <= 3;
   const iconColor = [
@@ -57,30 +57,12 @@ export function CreatorCard({
   let link = `/user/${user.username}`;
   if (leaderboardId && typeof leaderboardId === 'string') link += linkQuery[leaderboardId] ?? '';
 
-  useEffect(() => {
-    const read = () => {
-      const h = window.location.hash.replace(/^#/, '');
-      const n = Number(h);
-      setHashPosition(Number.isFinite(n) && n > 0 ? n : null);
-    };
-    read();
-    window.addEventListener('hashchange', read);
-    return () => window.removeEventListener('hashchange', read);
-  }, []);
-
-  useEffect(() => {
-    if (hashPosition !== null && position === hashPosition)
-      document
-        .getElementById(String(hashPosition))
-        ?.scrollIntoView({ block: 'center', inline: 'center' });
-  }, [hashPosition, position]);
-
   return (
     <div className={classes.wrapper} ref={ref} id={position.toString()}>
       {inView && (
         <Link href={link}>
           <Paper
-            className={clsx(classes.creatorCard, hashPosition === position && 'active')}
+            className={clsx(classes.creatorCard, highlighted && 'active')}
             p="sm"
             radius="md"
             shadow="xs"

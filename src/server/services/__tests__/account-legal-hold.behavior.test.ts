@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ModelVersionService from '~/server/services/model-version.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -14,14 +15,27 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+const versionCaches = vi.hoisted(() => ({
+  bustMvCache: vi.fn<(ids: number[]) => Promise<void>>(),
+  bustPublicModelResponseCache: vi.fn<(ids: number[]) => Promise<void>>(),
+}));
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelVersionService>()),
+  ...versionCaches,
+}));
+
 import {
+  areAccountsUnderLegalHold,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
+import { modelsSearchIndex } from '~/server/search-index';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { deleteUser } from '~/server/services/user.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -50,6 +64,7 @@ const BIG_IMAGE_ID = 10_000_000_019;
 const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
+const OTHER_OWNERS_MODEL = 102;
 const ALL_USERS = Array.from({ length: 22 }, (_, i) => i + 1);
 
 let failQueries = false;
@@ -91,7 +106,16 @@ beforeAll(async () => {
       "subscriptionId" text
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-    INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN});
+    INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN}), (${OTHER_OWNERS_MODEL}, ${RECENTLY_SENT});
+    CREATE TYPE "ModelStatus" AS ENUM
+      ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation',
+       'GatherInterest', 'Deleted');
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY,
+      "modelId" int NOT NULL,
+      status "ModelStatus" NOT NULL,
+      "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+    );
   `);
   await holder.db.exec(
     readFileSync(
@@ -155,21 +179,22 @@ beforeEach(async () => {
       else await holder.db.exec(sql.text);
       return 1;
     })) as never);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
-  ) => {
-    if (failQueries) throw new Error('connection reset');
-    const sql = Array.isArray(first)
-      ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
-      : (first as Prisma.Sql);
-    const { rows } = await holder.db.query<Row>(sql.text, sql.values);
-    if (answer) return answer(sql.text, rows);
-    // Every column comes back as something other than a boolean.
-    return unreadable
-      ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
-      : rows;
-  }) as never);
+  ) =>
+    lazy(async () => {
+      if (failQueries) throw new Error('connection reset');
+      const sql = Array.isArray(first)
+        ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
+        : (first as Prisma.Sql);
+      const { rows } = await holder.db.query<Row>(sql.text, sql.values);
+      if (answer) return answer(sql.text, rows);
+      // Every column comes back as something other than a boolean.
+      return unreadable
+        ? rows.map((row) => Object.fromEntries(Object.keys(row).map((k) => [k, null])))
+        : rows;
+    })) as never);
 
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
@@ -324,6 +349,33 @@ describe('isAccountUnderLegalHold', () => {
     expect(await isAccountUnderLegalHold(CLEAN)).toBe(false);
     failQueries = true;
     expect(await isAccountUnderLegalHold(CLEAN)).toBeNull();
+  });
+});
+
+describe('areAccountsUnderLegalHold (one batched lookup)', () => {
+  it('answers each user from the real hold SQL', async () => {
+    expect(await areAccountsUnderLegalHold([CLEAN, PENDING_REPORT, RECENTLY_SENT])).toEqual(
+      new Map([
+        [CLEAN, false],
+        [PENDING_REPORT, true],
+        [RECENTLY_SENT, true],
+      ])
+    );
+  });
+
+  it('a failed lookup holds EVERY user in the batch, the clean one included', async () => {
+    failQueries = true;
+    expect(await areAccountsUnderLegalHold([CLEAN, PENDING_REPORT])).toEqual(
+      new Map([
+        [CLEAN, true],
+        [PENDING_REPORT, true],
+      ])
+    );
+  });
+
+  it('an unreadable answer (no boolean) holds the user', async () => {
+    unreadable = true;
+    expect(await areAccountsUnderLegalHold([CLEAN])).toEqual(new Map([[CLEAN, true]]));
   });
 });
 
@@ -526,6 +578,90 @@ describe('deleteUser under a legal hold', () => {
         details: { userId: IMAGE_IN_REVIEW, legs: ['image-review'] },
       })
     );
+  });
+
+  describe('versions of the models it deletes', () => {
+    const statuses = async () =>
+      Object.fromEntries(
+        (
+          await holder.db.query<{ id: number; status: string }>(
+            `SELECT id, status FROM "ModelVersion" ORDER BY id`
+          )
+        ).rows.map((r) => [r.id, r.status])
+      );
+
+    beforeEach(async () => {
+      vi.spyOn(modelsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
+      vi.spyOn(dataForModelsCache, 'refresh').mockResolvedValue(undefined as never);
+      dbMock.dbWrite.model.findMany.mockImplementation(
+        (async (args: { where: { userId: number } }) =>
+          (
+            await holder.db.query<{ id: number }>(`SELECT id FROM "Model" WHERE "userId" = $1`, [
+              args.where.userId,
+            ])
+          ).rows) as never
+      );
+      await holder.db.exec(`
+        TRUNCATE "ModelVersion";
+        INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+          (1, ${CLEAN_MODEL}, 'Published'),
+          (2, ${CLEAN_MODEL}, 'Scheduled'),
+          (3, ${CLEAN_MODEL}, 'Draft'),
+          (4, ${CLEAN_MODEL}, 'Unpublished'),
+          (5, ${OTHER_OWNERS_MODEL}, 'Published');
+      `);
+    });
+
+    it('deletes its published and scheduled versions with the models', async () => {
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
+
+      expect(await statuses()).toEqual({
+        1: 'Deleted',
+        2: 'Deleted',
+        3: 'Draft',
+        4: 'Unpublished',
+        5: 'Published',
+      });
+      // The generator reads versions through these caches; a stale entry still serves them.
+      expect(versionCaches.bustMvCache).toHaveBeenCalledTimes(1);
+      expect([...versionCaches.bustMvCache.mock.calls[0][0]].sort()).toEqual([1, 2]);
+      expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
+      expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
+        { id: CLEAN_MODEL, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
+      expect(versionCaches.bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
+      expect(versionCaches.bustPublicModelResponseCache).toHaveBeenCalledWith([CLEAN_MODEL]);
+      expect(dataForModelsCache.refresh).toHaveBeenCalledTimes(1);
+      expect(dataForModelsCache.refresh).toHaveBeenCalledWith([CLEAN_MODEL]);
+    });
+
+    it('leaves the versions alone when the models are kept', async () => {
+      await deleteUser({ id: CLEAN, username: 'someone', removeModels: false });
+
+      expect(await statuses()).toEqual({
+        1: 'Published',
+        2: 'Scheduled',
+        3: 'Draft',
+        4: 'Unpublished',
+        5: 'Published',
+      });
+      expect(versionCaches.bustMvCache).not.toHaveBeenCalled();
+      expect(versionCaches.bustPublicModelResponseCache).not.toHaveBeenCalled();
+      expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+      expect(dataForModelsCache.refresh).not.toHaveBeenCalled();
+    });
+
+    // The mocked transaction stops at the scrub's abort, so this pins the version write inside the
+    // transaction and after the scrub; it does not exercise a real rollback.
+    it('leaves the versions published when a hold stops the deletion', async () => {
+      beforeScrub = () =>
+        holder.db.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (${CLEAN}, '{}')`);
+
+      await expect(
+        deleteUser({ id: CLEAN, username: 'someone', removeModels: true })
+      ).rejects.toBeInstanceOf(LegalHoldError);
+      expect((await statuses())[1]).toBe('Published');
+    });
   });
 });
 

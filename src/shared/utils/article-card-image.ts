@@ -1,9 +1,23 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
+
 /**
- * A banner standing in for a missing cover on a card, only once it is servable: the article page
- * hides a banner that is not scanned or awaits review from readers, so a card must not show it.
+ * An image (an article cover or banner, a profile cover) as anyone but its owner and moderators
+ * may see it: only once it is scanned, rated and not awaiting review, and never a mature image made
+ * with a restricted base model.
  */
-export function servableBanner<T extends { ingestion: string; needsReview: string | null }>(
-  banner: T | null | undefined
-): T | null {
-  return banner && banner.ingestion === 'Scanned' && !banner.needsReview ? banner : null;
+export function servableArticleImage<
+  T extends Pick<
+    Selectable<DB['Image']>,
+    'ingestion' | 'needsReview' | 'nsfwLevel' | 'modelRestricted'
+  >
+>(image: T | null | undefined): T | null {
+  return image &&
+    image.ingestion === 'Scanned' &&
+    image.nsfwLevel !== 0 &&
+    !image.needsReview &&
+    !isRestrictedImage(image)
+    ? image
+    : null;
 }

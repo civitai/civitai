@@ -25,6 +25,12 @@ function getClient(): Transporter | null {
         port: env.EMAIL_PORT,
         secure: env.EMAIL_SECURE,
         auth: { user: env.EMAIL_USER!, pass: env.EMAIL_PASS! },
+        // Nodemailer waits 2 min to connect, 30 s for the greeting and 10 min of socket silence by
+        // default, and callers (the auth hub's sign-in) await the send. A healthy relay greets in
+        // milliseconds. EMAIL_TIMEOUTS=off (or 0 / false, any case) restores nodemailer's defaults.
+        ...(['off', '0', 'false'].includes((env.EMAIL_TIMEOUTS ?? '').trim().toLowerCase())
+          ? {}
+          : { connectionTimeout: 5_000, greetingTimeout: 5_000, socketTimeout: 30_000 }),
       })
     : null;
   return _client;
@@ -32,26 +38,68 @@ function getClient(): Transporter | null {
 
 export interface SendEmailInput {
   to: string | string[] | null;
+  cc?: string | string[] | null;
   from?: string;
   subject: string;
   text?: string;
   html: string;
+  headers?: Record<string, string>;
 }
 
-export async function sendEmail({ to, from, text, ...data }: SendEmailInput): Promise<void> {
-  const client = getClient();
-  if (!client || !to) return;
+function compose(
+  client: Transporter,
+  { to, cc, from, text, ...data }: SendEmailInput & { to: string | string[] }
+) {
   const env = loadEmailEnv();
-  const info = await client.sendMail({
+  return client.sendMail({
     to: Array.isArray(to) ? to.join(', ') : to,
+    ...(cc ? { cc: Array.isArray(cc) ? cc.join(', ') : cc } : {}),
     from: from ?? env.EMAIL_FROM,
     text: text ?? removeTags(data.html),
     ...data,
   });
+}
+
+export async function sendEmail(input: SendEmailInput): Promise<void> {
+  const client = getClient();
+  if (!client || !input.to) return;
+  const info = await compose(client, { ...input, to: input.to });
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) {
     throw new Error(`Email(s) (${failed.join(', ')}) could not be sent`);
   }
+}
+
+export interface SendEmailStrictInput extends SendEmailInput {
+  to: string | string[];
+  replyTo?: string;
+}
+
+/** Thrown by sendEmailStrict when EMAIL_* is not configured, so a send that cannot happen is never silent. */
+export class EmailNotConfiguredError extends Error {
+  constructor() {
+    super('Email is not configured');
+    this.name = 'EmailNotConfiguredError';
+  }
+}
+
+/**
+ * sendEmail for senders that keep a record of each message: it throws instead of returning when
+ * nothing can be sent, and returns the relay's message id. Its errors name no address, so they can
+ * be stored and logged.
+ */
+export async function sendEmailStrict(input: SendEmailStrictInput): Promise<{ messageId: string }> {
+  const client = getClient();
+  if (!client) throw new EmailNotConfiguredError();
+  const recipients = Array.isArray(input.to)
+    ? input.to.filter(Boolean)
+    : [input.to].filter(Boolean);
+  if (!recipients.length) throw new Error('Email has no recipient');
+  const info = await compose(client, { ...input, to: recipients });
+  const failed = (info.rejected ?? []).filter(Boolean);
+  if (failed.length) throw new Error(`${failed.length} recipient(s) could not be sent to`);
+  if (!info.messageId) throw new Error('Email relay returned no message id');
+  return { messageId: info.messageId };
 }
 
 /** True when SMTP creds are present (the transport will actually send). */

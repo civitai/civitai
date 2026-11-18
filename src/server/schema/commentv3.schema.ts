@@ -6,6 +6,11 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
+import { usageLimits } from '~/shared/constants/usage-limits';
+
+export const commentRateLimits = usageLimits('comments.hourly', 'comments.daily');
+/** Shared by every comment write surface and the usage-limits read. */
+export const COMMENT_V3_RATE_LIMIT_KEY = 'commentv3:write';
 
 /** What a comment can be written against: a section's entity, or the comment it replies to. */
 export type CommentTargetType = CommentEntityType | 'comment';

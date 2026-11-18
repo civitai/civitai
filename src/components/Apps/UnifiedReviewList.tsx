@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconHandStop,
   IconCheck,
   IconChevronRight,
   IconClock,
@@ -40,13 +41,18 @@ import {
   PREVIEW_CHIP_LABELS,
   sensitiveChipLabel,
 } from '~/components/Apps/reviewQueueSignals';
-import { agentReviewDisplay } from '~/shared/utils/agent-review-findings';
+import {
+  agentReviewDisplay,
+  AGENT_REVIEW_LANE_BADGES,
+  listingEditCheckBadge,
+} from '~/shared/utils/agent-review-findings';
 import classes from './UnifiedReviewList.module.scss';
 import {
   failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  reviewRowLane,
   type CombinedReviewPayload,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
@@ -186,7 +192,10 @@ export function UnifiedReviewList({
       : onsiteItems;
     const onsiteRows = visibleOnsite.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
-    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
+    // The pending queue (the tab that shows signals) puts agent-clean submissions first.
+    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview, {
+      fastLane: showSignals,
+    });
   }, [
     onsiteItems,
     offsiteItems,
@@ -195,6 +204,7 @@ export function UnifiedReviewList({
     openOffsiteReview,
     openCombinedReview,
     hideIds,
+    showSignals,
   ]);
 
   // The Deploy column exists only where a retrigger handler was supplied (the
@@ -394,9 +404,76 @@ export const FULL_LABEL_BADGE_STYLES = {
  * many sensitive permissions it asks for. Listing-only rows (no code) have none and show `—`.
  * The AI chip is absent — not "not run" — when the viewer has no agentic surface.
  */
+function ListingEditCheckBadge({ row }: { row: UnifiedReviewRow }) {
+  const badge = listingEditCheckBadge(row.listingEditCheck);
+  if (!badge) return null;
+  return (
+    <Badge
+      size="sm"
+      variant="light"
+      color={badge.color}
+      styles={FULL_LABEL_BADGE_STYLES}
+      data-signal="listing-impersonation"
+      data-state={row.listingEditCheck?.status ?? 'none'}
+      title={badge.title}
+    >
+      {badge.label}
+    </Badge>
+  );
+}
+
+function HoldBadge({ row }: { row: UnifiedReviewRow }) {
+  if (row.openHoldCount === null) {
+    return (
+      <Badge
+        size="sm"
+        variant="light"
+        color="yellow"
+        styles={FULL_LABEL_BADGE_STYLES}
+        leftSection={<IconHandStop size={11} />}
+        data-signal="hold"
+        data-state="unknown"
+        title="This app's review holds could not be read. Open it before approving."
+      >
+        Holds unknown
+      </Badge>
+    );
+  }
+  const n = row.openHoldCount ?? 0;
+  if (n === 0) return null;
+  return (
+    <Badge
+      size="sm"
+      variant="filled"
+      color="orange"
+      styles={FULL_LABEL_BADGE_STYLES}
+      leftSection={<IconHandStop size={11} />}
+      data-signal="hold"
+      data-state={String(n)}
+      title="Approving needs an override reason while a review hold is open"
+    >
+      On hold · {n}
+    </Badge>
+  );
+}
+
 function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const signals = row.signals;
   if (!signals) {
+    // A listing-only row: no code signals, but an approved app's listing edit may carry an
+    // impersonation-check badge. Nothing to show → the dash, exactly as before.
+    if (
+      listingEditCheckBadge(row.listingEditCheck) ||
+      row.openHoldCount === null ||
+      (row.openHoldCount ?? 0) > 0
+    ) {
+      return (
+        <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+          <HoldBadge row={row} />
+          <ListingEditCheckBadge row={row} />
+        </Group>
+      );
+    }
     return (
       <Text size="xs" c="dimmed" data-testid={`apps-unified-review-signals-${row.key}`}>
         —
@@ -406,8 +483,25 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
   const preview = previewChipState(signals.previewState);
   // Finding COUNTS, never a verdict ("AI: 1 high · 2 medium" / "AI: no findings").
   const ai = signals.agentReview === undefined ? null : agentReviewDisplay(signals.agentReview);
+  // The lane says what to do next — never that the submission "passed".
+  const lane = reviewRowLane(row);
+  const laneBadge = lane.lane === 'waiting' ? null : AGENT_REVIEW_LANE_BADGES[lane.lane];
   return (
     <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+      <HoldBadge row={row} />
+      {laneBadge && (
+        <Badge
+          size="sm"
+          variant="light"
+          color={laneBadge.color}
+          styles={FULL_LABEL_BADGE_STYLES}
+          data-signal="lane"
+          data-state={lane.lane}
+          title={lane.reasons.length > 0 ? lane.reasons.join('; ') : undefined}
+        >
+          {laneBadge.label}
+        </Badge>
+      )}
       <Badge
         size="sm"
         variant="light"
@@ -442,6 +536,7 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
       >
         {sensitiveChipLabel(signals.sensitiveCount)}
       </Badge>
+      <ListingEditCheckBadge row={row} />
     </Group>
   );
 }

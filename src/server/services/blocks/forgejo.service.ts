@@ -10,7 +10,10 @@
  * All calls auth as the admin token (FORGEJO_ADMIN_TOKEN) — Forgejo's
  * Authorization: token <PAT> scheme. At v0 the writer set is
  * civitai-team-only, so the admin scope is acceptable; v1 (W5 + W11)
- * tightens to per-user OAuth tokens.
+ * tightens to per-user OAuth tokens. A PR preview's FORGEJO_ADMIN_TOKEN is NOT
+ * an admin: it is a bot that can write only the preview's own orgs
+ * (`forgejo-orgs.ts`), so the site-admin calls (per-developer identities under
+ * /admin/users) fail there, and so does deleting a repo (org-owner only).
  *
  * Network shape: civitai-web → <forgejo-service>.<namespace>.svc.cluster.local:3000
  * inside the cluster, or → https://forgejo.civitai.com from a PR-preview
@@ -21,9 +24,44 @@ import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
+import {
+  decideVersionTag,
+  versionTagName,
+  type ExistingTag,
+} from '~/server/services/blocks/approve-provenance';
+import {
+  FORGEJO_ORG,
+  FORGEJO_ORGS,
+  FORGEJO_REVIEW_ORG,
+  FORGEJO_SOURCE_ORG,
+} from '~/server/services/blocks/forgejo-orgs';
 
-export const FORGEJO_ORG = 'civitai-apps';
-const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
+/**
+ * The org names come from `forgejo-orgs.ts` (production's unless the environment names its own).
+ * FORGEJO_ORG holds the canonical per-app repos; the developer-facing SOURCE repos
+ * (FORGEJO_SOURCE_ORG) are the git history of forks and of App Assistant apps, which the developer
+ * can pull and push. Nothing there ever builds or files a publish request: no push webhook is
+ * attached to those repos, and the push webhook's org gate (`parseExpectedRepo` in `git-push.ts`)
+ * answers 403 for any org but {@link FORGEJO_ORG}.
+ */
+export { FORGEJO_ORG, FORGEJO_REVIEW_ORG, FORGEJO_SOURCE_ORG };
+
+/** The orgs whose collaborator rows the developer-access helpers may change. */
+export type CollaboratorOrg = typeof FORGEJO_ORG | typeof FORGEJO_SOURCE_ORG;
+
+/**
+ * Org names come from env, so the type cannot restrict them; this check does at run time. Never
+ * the review org: a developer with write there could rewrite the snapshot a moderator reviews.
+ */
+function collaboratorOrg(org: string | undefined): string {
+  const o = org ?? FORGEJO_ORG;
+  if (o !== FORGEJO_ORG && o !== FORGEJO_SOURCE_ORG) {
+    throw new Error(
+      `collaborator rows may change only in ${FORGEJO_ORG} or ${FORGEJO_SOURCE_ORG}, not ${o}`
+    );
+  }
+  return o;
+}
 
 /**
  * Public URL pointer for the in-review repo of a slug. Used by the
@@ -51,6 +89,9 @@ export function repoCommitUrl(slug: string, ref: string): string {
 }
 
 function getBaseUrl(): string {
+  // Every Forgejo request builds its URL here, so a refused org config stops the call before it
+  // reaches Forgejo.
+  if (FORGEJO_ORGS.error) throw new Error(FORGEJO_ORGS.error);
   const u = env.FORGEJO_BASE_URL;
   if (!u) throw new Error('FORGEJO_BASE_URL not configured');
   return u.replace(/\/$/, '');
@@ -241,12 +282,14 @@ type PermissionRead =
   | { kind: 'unknown'; raw: string }
   | { kind: 'unreadable'; reason: string };
 
-async function readCollaboratorPermission(slug: string, username: string): Promise<PermissionRead> {
+async function readCollaboratorPermission(
+  slug: string,
+  username: string,
+  org: CollaboratorOrg = FORGEJO_ORG
+): Promise<PermissionRead> {
   try {
     const res = await fjFetch(
-      `/api/v1/repos/${FORGEJO_ORG}/${slug}/collaborators/${encodeURIComponent(
-        username
-      )}/permission`
+      `/api/v1/repos/${org}/${slug}/collaborators/${encodeURIComponent(username)}/permission`
     );
     if (!res.ok) {
       // 404 here means the USER or the REPO does not exist (measured) — never
@@ -333,11 +376,14 @@ export async function addCollaborator(opts: {
   slug: string;
   username: string;
   permission?: GrantablePermission;
+  /** Defaults to the build org; the source-repo flow passes {@link FORGEJO_SOURCE_ORG}. */
+  org?: CollaboratorOrg;
 }): Promise<AddCollaboratorResult> {
   const requested = opts.permission ?? 'write';
   const requestedRank = COLLABORATOR_PERMISSION_RANK[requested];
+  const org = collaboratorOrg(opts.org);
 
-  const current = await readCollaboratorPermission(opts.slug, opts.username);
+  const current = await readCollaboratorPermission(opts.slug, opts.username, org);
 
   if (current.kind === 'known') {
     const currentRank = COLLABORATOR_PERMISSION_RANK[current.permission];
@@ -356,7 +402,7 @@ export async function addCollaborator(opts: {
             existing: current.permission,
           },
           'webhooks'
-        ).catch(() => undefined);
+        );
       }
       return { requested, existing: current.permission, outcome: 'kept' };
     }
@@ -379,11 +425,11 @@ export async function addCollaborator(opts: {
         reason: current.kind === 'unknown' ? `unrankable "${current.raw}"` : current.reason,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 
   const res = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
+    `/api/v1/repos/${org}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
     {
       method: 'PUT',
       body: JSON.stringify({ permission: requested }),
@@ -423,9 +469,15 @@ export async function addCollaborator(opts: {
  * read exists there only to implement grant-AT-LEAST (never downgrade); a revoke has
  * no level to preserve. Deliberately NOT symmetric — do not "fix" it by adding one.
  */
-export async function removeCollaborator(opts: { slug: string; username: string }): Promise<void> {
+export async function removeCollaborator(opts: {
+  slug: string;
+  username: string;
+  org?: CollaboratorOrg;
+}): Promise<void> {
   const res = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(opts.username)}`,
+    `/api/v1/repos/${collaboratorOrg(opts.org)}/${opts.slug}/collaborators/${encodeURIComponent(
+      opts.username
+    )}`,
     { method: 'DELETE' }
   );
   if (!res.ok && res.status !== 204 && res.status !== 404) {
@@ -840,6 +892,143 @@ export async function commitFiles(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Version tags on approved commits (see approve-provenance.ts for the naming rule).
+// ---------------------------------------------------------------------------
+
+/**
+ * The commit a tag points at, or null when the tag does not exist. For an annotated tag Forgejo
+ * reports the TARGET commit as `commit.sha` (the tag object's own sha is `id`), which is what an
+ * idempotency check must compare.
+ */
+export async function getTagCommitSha(slug: string, tag: string): Promise<ExistingTag> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/tags/${encodeURIComponent(tag)}`);
+  if (res.status === 404) return null;
+  const body = await unwrap<{ commit?: { sha?: string } }>(res);
+  const sha = body?.commit?.sha;
+  if (typeof sha !== 'string' || sha.length === 0) {
+    throw new Error(`Forgejo tag ${tag} on ${slug} has no target commit`);
+  }
+  return { commitSha: sha };
+}
+
+/** Create an annotated tag (a non-empty message is what makes Forgejo write a tag object). */
+async function createAnnotatedTag(opts: {
+  slug: string;
+  tag: string;
+  target: string;
+  message: string;
+}): Promise<'created' | 'conflict'> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/tags`, {
+    method: 'POST',
+    body: JSON.stringify({ tag_name: opts.tag, target: opts.target, message: opts.message }),
+  });
+  // 409: a tag with this name exists (another approve, or a re-delivery, got there first).
+  // Anything else non-2xx (422 = a protected tag name or a rejected form) throws with the
+  // server's reason, so the approve log names the refusal rather than a race.
+  if (res.status === 409) return 'conflict';
+  await unwrap<unknown>(res);
+  return 'created';
+}
+
+export type ApprovalTagResult =
+  | { status: 'created' | 'exists'; tag: string; fallbackFrom?: { tag: string; sha: string } }
+  | { status: 'skipped'; reason: string };
+
+/**
+ * Tag an approved commit: `v<version>`, or `approved-<publishRequestId>` when `v<version>`
+ * already names a different commit (`decideVersionTag`). Idempotent: a re-run for the same
+ * commit finds its tag and creates nothing. Throws only on Forgejo errors; the approve path
+ * calls it best-effort.
+ */
+export async function ensureApprovalTag(opts: {
+  slug: string;
+  version: string;
+  publishRequestId: string;
+  sha: string;
+  message: string;
+}): Promise<ApprovalTagResult> {
+  const versionTag = versionTagName(opts.version);
+  const existing = versionTag ? await getTagCommitSha(opts.slug, versionTag) : null;
+  let decision = decideVersionTag({
+    version: opts.version,
+    publishRequestId: opts.publishRequestId,
+    approvedSha: opts.sha,
+    existingVersionTag: existing,
+  });
+  if (decision.action === 'skip') return { status: 'skipped', reason: decision.reason };
+  if (decision.action === 'exists') return { status: 'exists', tag: decision.tag };
+  if (decision.action === 'create') {
+    const created = await createAnnotatedTag({
+      slug: opts.slug,
+      tag: decision.tag,
+      target: opts.sha,
+      message: opts.message,
+    });
+    if (created === 'created') return { status: 'created', tag: decision.tag };
+    // Lost a race for the version tag: decide again against what is there now.
+    decision = decideVersionTag({
+      version: opts.version,
+      publishRequestId: opts.publishRequestId,
+      approvedSha: opts.sha,
+      existingVersionTag: await getTagCommitSha(opts.slug, decision.tag),
+    });
+    if (decision.action === 'exists') return { status: 'exists', tag: decision.tag };
+    if (decision.action !== 'fallback')
+      return { status: 'skipped', reason: 'version tag conflict could not be resolved' };
+  }
+  // fallback: the per-approval tag.
+  const fallbackFrom = { tag: decision.versionTag, sha: decision.versionTagSha };
+  const existingFallback = await getTagCommitSha(opts.slug, decision.tag);
+  if (existingFallback) {
+    return existingFallback.commitSha === opts.sha
+      ? { status: 'exists', tag: decision.tag, fallbackFrom }
+      : {
+          status: 'skipped',
+          reason: `${decision.tag} already names ${existingFallback.commitSha}`,
+        };
+  }
+  const created = await createAnnotatedTag({
+    slug: opts.slug,
+    tag: decision.tag,
+    target: opts.sha,
+    message: opts.message,
+  });
+  if (created === 'conflict') {
+    const now = await getTagCommitSha(opts.slug, decision.tag);
+    return now?.commitSha === opts.sha
+      ? { status: 'exists', tag: decision.tag, fallbackFrom }
+      : { status: 'skipped', reason: `${decision.tag} was created concurrently on another commit` };
+  }
+  return { status: 'created', tag: decision.tag, fallbackFrom };
+}
+
+let platformAccountLogin: Promise<string> | null = null;
+
+/**
+ * The login of the account the admin token authenticates as: the account every platform commit
+ * (an approve's snapshot, a manifest edit) is pushed as, and so the `pusher` of their push
+ * webhooks. A developer pushes as their own `dev-<userId>` account and cannot push as this one.
+ *
+ * Read once per process. A failed read is not kept, so the next call asks again.
+ */
+export async function getPlatformAccountLogin(): Promise<string> {
+  platformAccountLogin ??= (async () => {
+    const me = await unwrap<{ login?: unknown }>(await fjFetch('/api/v1/user'));
+    const login = me?.login;
+    if (typeof login !== 'string' || login.length === 0) {
+      throw new Error('Forgejo /api/v1/user returned no login');
+    }
+    return login;
+  })();
+  try {
+    return await platformAccountLogin;
+  } catch (err) {
+    platformAccountLogin = null;
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3 (git-push self-service) — per-user Forgejo identity provisioning.
 //
 // These functions mint a SCOPED, restricted Forgejo user + token for a civitai
@@ -895,6 +1084,14 @@ export async function createForgejoUser(opts: {
       visibility: 'private',
     }),
   });
+  if (res.status === 403) {
+    // Creating a user takes a SITE-ADMIN token. A PR preview's bot token is scoped to its own
+    // orgs, so per-developer git identities cannot be provisioned there; say so instead of
+    // surfacing a bare 403.
+    throw new Error(
+      "Forgejo refused to create the developer git identity (403): this environment's Forgejo token is not a site admin"
+    );
+  }
   if (res.status === 409 || res.status === 422) {
     // Already exists — recover the row; password is unknown/unrecoverable.
     const existing = await getForgejoUser(opts.username);
@@ -964,9 +1161,32 @@ export async function mintForgejoUserToken(opts: {
 }
 
 /**
- * Ensure the `civitai-apps-review` org exists and a per-slug repo under
- * it is ready to receive a commit. Idempotent: both the org POST and the
- * repo POST treat 422 / 409 as "already exists, fine". Returns nothing —
+ * Make sure an org exists, creating it only when Forgejo says it does not (404). Looking first
+ * matters for a token that is a member of the org but may not create orgs (the PR-preview bot):
+ * Forgejo answers its org POST with 403 before it checks the name, so POST-first would fail
+ * every submit. A 422 / 409 on the POST is a concurrent create, which is fine.
+ */
+async function ensureOrg(org: { username: string; full_name: string; description: string }) {
+  const got = await fjFetch(`/api/v1/orgs/${encodeURIComponent(org.username)}`);
+  if (got.ok) return;
+  if (got.status !== 404) {
+    const body = await got.text().catch(() => '');
+    throw new Error(`Forgejo org lookup ${org.username} ${got.status}: ${body.slice(0, 240)}`);
+  }
+  const res = await fjFetch('/api/v1/orgs', {
+    method: 'POST',
+    body: JSON.stringify({ ...org, visibility: 'private' }),
+  });
+  if (!res.ok && res.status !== 422 && res.status !== 409) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo org create ${org.username} ${res.status}: ${body.slice(0, 240)}`);
+  }
+}
+
+/**
+ * Ensure the in-review org (FORGEJO_REVIEW_ORG) exists and a per-slug repo under
+ * it is ready to receive a commit. Idempotent: the org is created only when
+ * missing, and the repo POST treats 422 / 409 as "already exists, fine". Returns nothing —
  * the caller proceeds straight to `commitFiles({ org: FORGEJO_REVIEW_ORG })`.
  *
  * Used by the W1 publish-request flow to push the dev's bundle into a
@@ -974,22 +1194,12 @@ export async function mintForgejoUserToken(opts: {
  * deep-link mods into Forgejo's diff view.
  */
 export async function ensureReviewRepo(slug: string): Promise<void> {
-  // (1) Make sure the org exists. Forgejo accepts org creation via the
-  // admin API; 422 means "name taken" (i.e. org already exists).
-  const orgRes = await fjFetch('/api/v1/orgs', {
-    method: 'POST',
-    body: JSON.stringify({
-      username: FORGEJO_REVIEW_ORG,
-      full_name: 'Civitai App Blocks — in-review',
-      description:
-        'Disposable per-app repos for the W1 mod-review flow. Overwritten on each submitVersion; not used by the build pipeline.',
-      visibility: 'private',
-    }),
+  await ensureOrg({
+    username: FORGEJO_REVIEW_ORG,
+    full_name: 'Civitai App Blocks — in-review',
+    description:
+      'Disposable per-app repos for the W1 mod-review flow. Overwritten on each submitVersion; not used by the build pipeline.',
   });
-  if (!orgRes.ok && orgRes.status !== 422 && orgRes.status !== 409) {
-    const body = await orgRes.text().catch(() => '');
-    throw new Error(`Forgejo org create ${orgRes.status}: ${body.slice(0, 240)}`);
-  }
   // (2) Make sure the repo exists. auto_init=true so commitFiles can
   // immediately push to `main` (Forgejo refuses to push to a missing
   // branch). 409 / 422 = already exists.
@@ -1134,4 +1344,121 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
     throw new Error(`in-review repo ${FORGEJO_REVIEW_ORG}/${slug} has no main HEAD`);
   }
   return branch.commit.id;
+}
+
+/**
+ * Ensure the source org (FORGEJO_SOURCE_ORG) and its `<slug>` repo exist. Idempotent: the org is
+ * created only when missing, and the repo POST treats 409 / 422 as "already exists". The repo is created with `auto_init`, so
+ * `main` exists for the first contents-API commit (Forgejo refuses a commit to a missing branch).
+ *
+ * Returns whether THIS call created the repo (a 201), so the caller seeds only a repo it made.
+ *
+ * 🔴 `private: true`, as for the review repos (see `ensureReviewRepo`): the repo holds unreviewed
+ * source, keyed by a guessable slug. Access is the explicit collaborator rows only.
+ *
+ * 🔴 No webhook is attached. A push here must never file a publish request or build; the push
+ * webhook's org gate rejects this org as a second line, should a hook ever be added by hand.
+ */
+export async function ensureSourceRepo(slug: string): Promise<{ created: boolean }> {
+  await ensureOrg({
+    username: FORGEJO_SOURCE_ORG,
+    full_name: 'Civitai Apps — developer source',
+    description:
+      'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
+  });
+  const repoRes = await fjFetch(
+    `/api/v1/orgs/${FORGEJO_SOURCE_ORG}/repos`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        name: slug,
+        description: `Source of ${slug}. Pushing here never builds or submits a version.`,
+        private: true,
+        auto_init: true,
+        default_branch: 'main',
+      }),
+    },
+    commitTimeoutMs()
+  );
+  if (repoRes.status === 409 || repoRes.status === 422) return { created: false };
+  if (!repoRes.ok) {
+    const body = await repoRes.text().catch(() => '');
+    throw new Error(`Forgejo source repo create ${repoRes.status}: ${body.slice(0, 240)}`);
+  }
+  return { created: true };
+}
+
+/** The commit a branch points at, or `null` when the branch (or the repo) does not exist. */
+export async function getBranchHead(
+  org: string,
+  slug: string,
+  branch: string
+): Promise<string | null> {
+  const res = await fjFetch(`/api/v1/repos/${org}/${slug}/branches/${encodeURIComponent(branch)}`);
+  if (res.status === 404) return null;
+  const info = await unwrap<{ commit?: { id?: string } }>(res);
+  return info?.commit?.id ?? null;
+}
+
+/** One contents-API change. `sha` is the blob the caller expects to replace or delete. */
+export type FileOperation =
+  | { operation: 'create'; path: string; content: Buffer }
+  | { operation: 'update'; path: string; content: Buffer; sha: string }
+  | { operation: 'delete'; path: string; sha: string };
+
+export type CommitIdentity = { name: string; email: string };
+
+export type CommitOperationsResult =
+  | { kind: 'committed'; sha: string }
+  /**
+   * Forgejo refused the change as stale: a blob `sha` no longer matches the branch, a `create`
+   * names a path that now exists, or an `update`/`delete` names one that is gone. Nothing was
+   * written. Gitea 1.22 answers these 422 (and 404 for a missing path); a 409 is also read here.
+   */
+  | { kind: 'conflict'; status: number };
+
+/**
+ * Commit exactly `operations` onto `branch` (or onto a NEW branch `newBranch` cut from `branch`)
+ * in one commit, with the author and committer given.
+ *
+ * Unlike {@link commitFiles} this does not list the tree and does not turn every path into an
+ * update: the caller says which blob each change replaces, and Forgejo checks it. That check is
+ * the compare-and-set the source-repo writer relies on, so a change the developer pushed to a
+ * file is never overwritten by a writer that had not seen it — the commit is refused instead.
+ */
+export async function commitOperations(opts: {
+  org: string;
+  slug: string;
+  branch: string;
+  newBranch?: string;
+  operations: FileOperation[];
+  message: string;
+  author: CommitIdentity;
+}): Promise<CommitOperationsResult> {
+  const res = await fjFetch(
+    `/api/v1/repos/${opts.org}/${opts.slug}/contents`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        branch: opts.branch,
+        ...(opts.newBranch ? { new_branch: opts.newBranch } : {}),
+        message: opts.message,
+        author: opts.author,
+        committer: opts.author,
+        files: opts.operations.map((op) => ({
+          operation: op.operation,
+          path: op.path,
+          ...(op.operation === 'delete' ? {} : { content: op.content.toString('base64') }),
+          ...(op.operation === 'create' ? {} : { sha: op.sha }),
+        })),
+      }),
+    },
+    commitTimeoutMs()
+  );
+  if (res.status === 404 || res.status === 409 || res.status === 422) {
+    await res.text().catch(() => '');
+    return { kind: 'conflict', status: res.status };
+  }
+  const result = await unwrap<{ commit: { sha: string } }>(res);
+  return { kind: 'committed', sha: result.commit.sha };
 }

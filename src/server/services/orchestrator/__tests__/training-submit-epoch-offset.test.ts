@@ -88,7 +88,7 @@ const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
     modelVersionId: MODEL_VERSION_ID,
     token: 'tok',
     user: { id: USER_ID, isModerator: false } as never,
-    features: { trainingStepsPricing: true } as never,
+    features: { krea2Training: true, trainingStepsPricing: true } as never,
     domain,
   } as never);
 

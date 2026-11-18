@@ -564,6 +564,13 @@ describe('model CDC consumer', () => {
         'the connector does not stream public.ModelVersion'
       );
       expect(await modelEmbedBlock(connector('public.Model,public.ModelVersion'))).toBeNull();
+      // The prod list is a folded YAML scalar, so an entry that starts a line arrives as
+      // ' public.Model'. Debezium trims entries; the gate must too, or embedding never starts.
+      expect(
+        await modelEmbedBlock(
+          connector('public.Image,public.ModelVersion, public.Model,\npublic.Post')
+        )
+      ).toBeNull();
     } finally {
       if (saved === undefined) delete process.env.DEBEZIUM_CONNECT_URL;
       else process.env.DEBEZIUM_CONNECT_URL = saved;
@@ -663,6 +670,62 @@ describe('version-delete lookup against the real query and client', () => {
     try {
       const docs = await getModelDocs(pg as unknown as Parameters<typeof getModelDocs>[0], [1]);
       expect(docs.get(1)?.versionIds).toEqual([11, 14]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  // Defence in depth: the site's hydration hides Private models too, but the index must not hold
+  // their name and description at all. A model turning Private must lose its point, not keep it.
+  test('a Private model gets no point, and a model turning Private loses its point', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, username text);
+        CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+        CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
+        CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
+          "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text);
+        CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
+          description text, "baseModel" text, "trainedWords" text[], status text,
+          availability text, index int);
+        INSERT INTO "User" VALUES (7, 'someone');
+        INSERT INTO "Model" VALUES
+          (1, 'Public', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public'),
+          (2, 'Private', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Private'),
+          (3, 'Soon private', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public'),
+          (4, 'Private versions only', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public');
+        INSERT INTO "ModelVersion" VALUES
+          (11, 1, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (12, 1, 'secret', 'private notes', 'SDXL 1.0', '{}', 'Published', 'Private', 1),
+          (21, 2, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (31, 3, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (41, 4, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Private', 0);
+      `);
+    try {
+      const { store, embedder } = setup();
+      const deps = { pg, store, embedder } as unknown as ModelSyncDeps & { store: FakeStore };
+      await syncModelIds([1, 2, 3, 4], deps);
+      // Positive control: a Public model with a Public version still indexes.
+      expect([...store.points.keys()].sort()).toEqual([1, 3]);
+      expect(store.points.get(1)!.payload.versionIds).toEqual([11]);
+      expect(store.points.get(1)!.payload.search_text).not.toContain('private notes');
+
+      // What a CDC update to Model 3 triggers: a re-sync of its id.
+      await pg.exec(`UPDATE "Model" SET availability = 'Private' WHERE id = 3`);
+      expect(await syncModelIds([3], deps)).toMatchObject({ deleted: 1 });
+      expect([...store.points.keys()]).toEqual([1]);
+
+      // The backfill applies the same filter, and purges a Private model's point written earlier.
+      const fresh = setup().store;
+      fresh.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
+      const backfillDeps = { pg, store: fresh, embedder } as unknown as ModelSyncDeps & {
+        store: FakeStore;
+      };
+      const run = await backfillModels({ from: 0, to: 10, page: 2 }, backfillDeps);
+      expect(run.complete).toBe(true);
+      expect([...fresh.points.keys()]).toEqual([1]);
     } finally {
       await pg.close();
     }

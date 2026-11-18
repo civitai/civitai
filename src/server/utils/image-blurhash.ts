@@ -81,7 +81,7 @@ export async function tryComputeImageBlurhash(
       type: 'warning',
       source: context.source,
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return null;
   }
 }

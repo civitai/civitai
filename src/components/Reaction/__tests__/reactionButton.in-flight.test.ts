@@ -214,7 +214,7 @@ describe('ReactionButton — the event-points pop', () => {
     const { click } = mount(301);
     act(() => click());
     act(() => settle(h.calls[0], earned));
-    expect(pops()).toEqual([{ text: '+15 Yellow', color: 'rgb(250, 200, 0)' }]);
+    expect(pops()).toEqual([{ text: '+15 Yellow points', color: 'rgb(250, 200, 0)' }]);
   });
 
   it('pops nothing when the answer carries no points (none earned, another team, or too slow)', () => {

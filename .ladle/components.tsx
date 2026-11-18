@@ -3,6 +3,7 @@ import type { GlobalProvider } from '@ladle/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { StoryTRPCProvider } from './trpc';
 
 // 🔴 ORDER MATCHES `src/pages/_app.tsx` — globals FIRST, then Mantine's LAYERED stylesheet.
 // `styles.layer.css` wraps every Mantine rule in `@layer mantine`, and a layer's precedence
@@ -13,6 +14,8 @@ import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSes
 // simply stop being a picture of the app.
 import '../src/styles/globals.css';
 import '@mantine/core/styles.layer.css';
+// As `_app.tsx` does, so stories of rich-text editors get their toolbar.
+import '@mantine/tiptap/styles.layer.css';
 
 // Subset of the app theme (from src/providers/ThemeProvider.tsx)
 const theme = createTheme({
@@ -65,7 +68,7 @@ const theme = createTheme({
 });
 
 // `useCurrentUser` throws outside a session context, and the real `CivitaiSessionProvider` needs the
-// auth hub and tRPC. tRPC hooks still throw here: `createTRPCNext` only provides context via `withTRPC`.
+// auth hub and tRPC.
 export const Provider: GlobalProvider = ({ children, globalState }) => {
   const [queryClient] = useState(
     () =>
@@ -81,9 +84,11 @@ export const Provider: GlobalProvider = ({ children, globalState }) => {
           defaultColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
           forceColorScheme={globalState.theme === 'dark' ? 'dark' : 'light'}
         >
-          <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>
-            {children}
-          </div>
+          <StoryTRPCProvider>
+            <div className="ladle-story-wrapper" style={{ padding: 24, width: 'fit-content' }}>
+              {children}
+            </div>
+          </StoryTRPCProvider>
         </MantineProvider>
       </SignedOutSessionProvider>
     </QueryClientProvider>

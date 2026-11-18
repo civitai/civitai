@@ -4,6 +4,7 @@ import { countProviderDownload } from '~/server/prom/provider-download.metrics';
 import {
   checkGenerationFetch,
   type GenerationFetchRefusal,
+  type GenerationFetchResult,
   type GenerationFetchSelectors,
 } from '~/server/services/download-link/generation-fetch.service';
 import { takeProviderDownload } from '~/server/services/provider-download/provider-download.limiter';
@@ -59,6 +60,8 @@ const REFUSAL_STATUS: Record<GenerationFetchRefusal, number> = {
   'unsupported-file': 400,
 };
 
+export type ProviderServed = { ok: true; url: string } | ({ ok: false } & ProviderRefusal);
+
 /**
  * The file a provider asked for, as a short-lived URL, recorded as a `GenerationFetch` carrying
  * the provider. Never resolves a session.
@@ -77,35 +80,58 @@ export async function serveProviderDownload({
   modelVersionId: number;
   fileId?: number;
   selectors: GenerationFetchSelectors;
-}): Promise<{ ok: true; url: string } | ({ ok: false } & ProviderRefusal)> {
+}): Promise<ProviderServed> {
   const check = await checkGenerationFetch({
     modelVersionId,
     fileId,
     principal: { kind: 'provider', provider },
     selectors,
   });
+  return serveProviderFetch({ req, res, provider, check });
+}
+
+/** Answers a provider principal's `checkGenerationFetch` result, however its file was chosen. */
+export async function serveProviderFetch({
+  req,
+  res,
+  provider,
+  check,
+  expiresInSeconds,
+  record = true,
+}: {
+  req: NextApiRequest;
+  res: NextApiResponse;
+  provider: string;
+  check: GenerationFetchResult;
+  /** The signed file URL's lifetime; the delivery worker's default when omitted. */
+  expiresInSeconds?: number;
+  /** false: serve without counting a download or recording a `GenerationFetch`. */
+  record?: boolean;
+}): Promise<ProviderServed> {
   if (!check.ok) {
     countProviderDownload(provider, 'refused_gate', 'unknown');
     return { ok: false, status: REFUSAL_STATUS[check.error], body: { error: check.error } };
   }
-  countProviderDownload(provider, 'granted', check.isPublic ? 'public' : 'nonpublic');
-
-  // `null`: the request has no user, and the tracker must not go looking for one.
-  new Tracker(req, res, null)
-    .modelVersionEvent({
-      type: 'GenerationFetch',
-      modelId: check.modelId,
-      modelVersionId: check.modelVersionId,
-      fileId: check.fileId,
-      nsfw: check.nsfw,
-      earlyAccess: check.inEarlyAccess,
-      provider,
-    })
-    .catch(() => undefined);
+  if (record) {
+    countProviderDownload(provider, 'granted', check.isPublic ? 'public' : 'nonpublic');
+    // `null`: the request has no user, and the tracker must not go looking for one.
+    new Tracker(req, res, null)
+      .modelVersionEvent({
+        type: 'GenerationFetch',
+        modelId: check.modelId,
+        modelVersionId: check.modelVersionId,
+        fileId: check.fileId,
+        nsfw: check.nsfw,
+        earlyAccess: check.inEarlyAccess,
+        provider,
+      })
+      .catch(() => undefined);
+  }
 
   const { url } = await resolveDownloadUrl(check.fileId, check.fileUrl, check.fileName, {
     caller: 'download-route',
     actor: 'internal',
+    expiresInSeconds,
   });
   return { ok: true, url };
 }

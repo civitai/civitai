@@ -3,10 +3,10 @@
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
-  import { chatUrl } from '../url';
+  import { OPEN_ROW_CLASS, chatUrl } from '../url';
   import type { NewestMessage } from './chat-insights';
 
-  let { messages }: { messages: NewestMessage[] } = $props();
+  let { messages, chatId }: { messages: NewestMessage[]; chatId: number | null } = $props();
 
   const SHOWN = 15;
   let expanded = $state(false);
@@ -60,7 +60,7 @@
     {:else}
       <ul class="space-y-1.5 text-sm">
         {#each visible as m (m.id)}
-          <li class="min-w-0">
+          <li class="-mx-2 min-w-0 rounded-md px-2 py-0.5 {m.chatId === chatId ? OPEN_ROW_CLASS : ''}">
             <MessageMeta {...m} chatHref={chatUrl} />
             {#if showBodies}
               <p class="line-clamp-2 wrap-break-word text-dark-0">{m.content}</p>

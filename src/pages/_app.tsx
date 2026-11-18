@@ -66,6 +66,8 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
+import { appendSetCookie } from '~/server/utils/set-cookie';
+import { siteCookieJar } from '@civitai/auth/client';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -524,13 +526,16 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = hasSessionCookie(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const siteCookies = siteCookieJar(cookies, request.headers.host) ?? cookies;
+  let hasAuthCookie = hasSessionCookie(siteCookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = sessionCookieKind(cookies);
+  const sessionCookie = sessionCookieKind(siteCookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
-    await import('~/server/utils/server-domain');
+  const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
+    '~/server/utils/server-domain'
+  );
   const serverDomains: ServerDomains = {
     green: serverDomainMap.green,
     blue: serverDomainMap.blue,
@@ -538,7 +543,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
   // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
-  const availableOAuthProviders = await getAvailableOAuthProviders();
+  // `typeof window` block: the module reads the flag client, which must stay out of the client bundle.
+  let availableOAuthProviders: string[] = [];
+  if (typeof window === 'undefined') {
+    const { getAvailableOAuthProviders } = await import('~/server/auth/oauth-providers');
+    availableOAuthProviders = await getAvailableOAuthProviders();
+  }
 
   const region = getRegion(request);
 
@@ -794,8 +804,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
     // so only legacy holders were ever affected either way. Cost of keeping it is near
     // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
-    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
-    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // expired one is never in the jar to linger; a stale legacy cookie is not decoded
+    // outside a preview. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
   }
@@ -823,21 +833,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
+  let guardCookies: string[] = [];
   if (!guardTo && typeof window === 'undefined') {
     const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
-    guardTo =
-      sharedSlotNavigationSyncUrl({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        cookies,
-      }) ?? undefined;
+    const sync = sharedSlotNavigationSyncUrl({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      cookies,
+    });
+    if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
   // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
   // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
   // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
+    for (const cookie of guardCookies) appendSetCookie(appContext.ctx.res, cookie);
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }

@@ -24,20 +24,34 @@ import {
   networkDimSizeHint,
   newRun,
   nextImgId,
+  numberInputValue,
+  labelModeForCard,
+  sweepLabelMode,
+  labelOptions,
   optimizerLrParams,
   teLocked,
   paramDeviations,
+  paramLockReason,
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
+  kohyaSeedCard,
+  cardSupportsKohya,
   runExtraCapabilities,
+  runEngine,
+  runParamsKey,
+  runTrainingParams,
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
   autoLabelTargets,
   handLabelOnlyCount,
   labelTextAfterSwitch,
+  matchesTagFilter,
+  withFilterTags,
   withTags,
+  paramNeedsRefundAck,
+  tagEntryKey,
   withTrigger,
   versionOptions,
   CUSTOM_VERSION_KEY,
@@ -46,6 +60,8 @@ import {
   type SamplePrompt,
   blockedSelectionMessage,
   cardUnavailability,
+  repeatExt,
+  clampRepeats,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -116,8 +132,31 @@ describe('default version', () => {
 });
 
 describe('extra parameter capabilities', () => {
-  it('offers everything to an SDXL tag dataset', () => {
-    const caps = runExtraCapabilities(run('sdxl'), 'tag');
+  it('gates convolution, caption dropout and warmup by model, engine and scheduler', () => {
+    for (const type of ['sd15', 'sdxl', 'pony', 'illustrious']) {
+      const r = run(type);
+      expect(runExtraCapabilities(r, 'tag').trainConv.supported).toBe(true);
+      expect(runExtraCapabilities(r, 'tag').lrWarmupSteps.supported).toBe(false);
+    }
+    expect(runExtraCapabilities(run('minimaxh3'), 'caption').trainConv.supported).toBe(false);
+    expect(runExtraCapabilities(run('yue2'), 'caption').captionDropoutRate.supported).toBe(false);
+    const flux = run('flux2');
+    const caps = runExtraCapabilities(flux, 'caption');
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const)
+      expect(caps[field].supported).toBe(false);
+  });
+
+  it('offers all advanced controls to an SDXL tag dataset with constant learning rate', () => {
+    const r = run('sdxl');
+    const caps = runExtraCapabilities(r, 'tag', {
+      ...defaultRunParams(r),
+      lrScheduler: 'constant',
+    });
     for (const cap of Object.values(caps)) expect(cap.supported).toBe(true);
   });
 
@@ -153,6 +192,19 @@ describe('extra parameter capabilities', () => {
     });
     expect(defaultRunParams(run('sdxl'), '  ')).toMatchObject({ shuffleTokens: false });
   });
+
+  it('sizes an Anima network by LoRA type — 8 for characters, 16 otherwise, custom base too', () => {
+    const size = (r: Run, loraType: string) => {
+      const { networkDim, networkAlpha } = defaultRunParams(r, '', loraType);
+      return [networkDim, networkAlpha];
+    };
+    for (const r of [run('anima'), run('anima', CUSTOM_VERSION_KEY)]) {
+      expect(size(r, 'character')).toEqual(['8', '8']);
+      expect(size(r, 'style')).toEqual(['16', '16']);
+      expect(size(r, 'concept')).toEqual(['16', '16']);
+    }
+    expect(size(run('zimage'), 'character')).toEqual(['32', '32']);
+  });
 });
 
 describe('paramDeviations', () => {
@@ -173,6 +225,18 @@ describe('paramDeviations', () => {
     ]);
   });
 
+  it("measures network size against the LoRA type's recommendation", () => {
+    const r = run('anima');
+    expect(
+      paramDeviations(r, defaultRunParams(r, '', 'character'), 'tag', '', 'character')
+    ).toEqual([]);
+    const devs = paramDeviations(r, defaultRunParams(r, '', 'style'), 'tag', '', 'character');
+    expect(devs.map((d) => [d.field, d.recommended])).toEqual([
+      ['networkDim', '8'],
+      ['networkAlpha', '8'],
+    ]);
+  });
+
   it('names each changed field with its recommendation, in form order', () => {
     const r = run('sdxl');
     const params = { ...defaultRunParams(r), networkDim: '64', shuffleTokens: true, steps: 3000 };
@@ -182,11 +246,15 @@ describe('paramDeviations', () => {
     expect(devs[2]).toMatchObject({ label: 'Shuffle tags', value: 'On', recommended: 'Off' });
   });
 
-  it('ignores fields the run cannot use — a locked TE rate, tag fields on captions', () => {
+  it('ignores fields the run cannot use — a locked TE rate, resolution, tag fields on captions', () => {
     const krea = run('krea2');
     expect(
       paramDeviations(krea, { ...defaultRunParams(krea), textEncoderLr: '0.001' }, 'caption')
     ).toEqual([]);
+    const sdxl = run('sdxl');
+    expect(paramDeviations(sdxl, { ...defaultRunParams(sdxl), resolution: '2048' }, 'tag')).toEqual(
+      []
+    );
     const z = run('zimage');
     expect(
       paramDeviations(
@@ -211,6 +279,26 @@ describe('buildTrainingRuns extra fields', () => {
       ['blue'],
       labelMode
     )[0]!;
+
+  it('preserves backend defaults for blank new fields and sends explicit zeroes', () => {
+    const defaults = build(run('sdxl'), 'tag', { lrScheduler: 'constant' });
+    for (const field of ['lrWarmupSteps', 'captionDropoutRate', 'rankDropout'] as const)
+      expect(defaults).not.toHaveProperty(field);
+    expect(defaults.trainConv).toBe(false);
+    const edited = build(run('sdxl'), 'tag', {
+      lrScheduler: 'constant',
+      lrWarmupSteps: '0',
+      captionDropoutRate: '0',
+      rankDropout: '0',
+      trainConv: true,
+    });
+    expect(edited).toMatchObject({
+      lrWarmupSteps: 0,
+      captionDropoutRate: 0,
+      rankDropout: 0,
+      trainConv: true,
+    });
+  });
 
   it('sends the tag fields as set for a tag dataset on an SD-family model', () => {
     const out = build(run('sdxl'), 'tag', {
@@ -245,6 +333,28 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+
+  it('sends the fallback, not 0, for a cleared numeric field', () => {
+    const out = build(run('sdxl'), 'tag', { unetLr: '', networkDim: '  ' });
+    const d = defaultRunParams(run('sdxl'));
+    expect(out.unetLr).toBe(Number(d.unetLr));
+    expect(out.networkDim).toBe(Number(d.networkDim));
+    expect(out.unetLr).toBeGreaterThan(0);
+  });
+
+  it('falls back to the Prodigy rate for a cleared LR under Prodigy', () => {
+    const out = build(run('sdxl'), 'tag', { optimizer: 'Prodigy', unetLr: '' });
+    expect(out.unetLr).toBe(1);
+  });
+});
+
+describe('numberInputValue', () => {
+  // A blank field must read back as null, or Svelte clears a half-typed `1e` on the way to `1e-4`.
+  it('reads a blank field as null and passes values through', () => {
+    expect(numberInputValue('')).toBeNull();
+    expect(numberInputValue(0.0001)).toBe(0.0001);
+    expect(numberInputValue(0)).toBe(0);
   });
 });
 
@@ -574,18 +684,12 @@ describe('stampMature', () => {
     typeof stampMature
   >[0][number];
 
-  it('puts one confirm and the mature count on every run of a sweep', () => {
-    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
-    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
-      [true, 3, 'a'],
-      [true, 3, 'b'],
+  it('puts the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], 3);
+    expect(out.map((r) => [r.meta.matureCount, r.meta.name])).toEqual([
+      [3, 'a'],
+      [3, 'b'],
     ]);
-  });
-
-  it('sends no confirm when the user gave none, but still stamps the count', () => {
-    const [out] = stampMature([run], false, 2);
-    expect('matureAck' in out!).toBe(false);
-    expect(out!.meta.matureCount).toBe(2);
   });
 });
 
@@ -601,6 +705,83 @@ describe('withTags', () => {
   it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
     const tags = ['smile'];
     expect(withTags(tags, ' , smile ')).toBe(tags);
+  });
+  it('skips a tag the image already has in another casing, so typing Dress does not add a second dress', () => {
+    expect(withTags(['dress', 'Smile'], 'Dress, smile, hat')).toEqual(['dress', 'Smile', 'hat']);
+    expect(withTags([], 'Dress, dress')).toEqual(['Dress']);
+  });
+});
+
+describe('tagEntryKey', () => {
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
+    key: k,
+    shiftKey,
+    isComposing,
+    keyCode,
+  });
+  it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
+    expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
+    expect(tagEntryKey(key('Enter', true), '1girl, solo', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, true), 'あ', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, false, 229), 'かみ', 0)).toBeNull();
+  });
+  it('Backspace removes the last tag only when the box is empty', () => {
+    expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
+    expect(tagEntryKey(key('Backspace'), 'so', 2)).toBeNull();
+    expect(tagEntryKey(key('Backspace'), '', 0)).toBeNull();
+  });
+});
+
+describe('paramNeedsRefundAck', () => {
+  it('leaves the sample negative prompt and Checkpoints editable without the refund acknowledgement', () => {
+    expect(paramNeedsRefundAck('negativePrompt')).toBe(false);
+    expect(paramNeedsRefundAck('epochs')).toBe(false);
+  });
+  // The seed is sent to the trainer, not only to the preview samples: editing it is an advanced edit.
+  it('keeps the seed and the training params behind the acknowledgement', () => {
+    expect(paramNeedsRefundAck('seed')).toBe(true);
+    expect(paramNeedsRefundAck('unetLr')).toBe(true);
+  });
+});
+
+describe('matchesTagFilter', () => {
+  const tags = ['1girl', 'dress', 'smile'];
+  it('keeps an image with every included tag and none of the excluded ones', () => {
+    expect(matchesTagFilter(tags, { include: ['dress'], exclude: ['crown'] })).toBe(true);
+    expect(matchesTagFilter([...tags, 'crown'], { include: ['dress'], exclude: ['crown'] })).toBe(
+      false
+    );
+    expect(matchesTagFilter(tags, { include: ['dress', 'crown'], exclude: [] })).toBe(false);
+  });
+  it('an exclude-only filter surfaces the images missing the tag, unlabeled ones included', () => {
+    expect(matchesTagFilter(['1girl'], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter([], { include: [], exclude: ['dress'] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['dress'] })).toBe(false);
+  });
+  it("ignores case, so a typed tag finds the tagger's", () => {
+    expect(matchesTagFilter(tags, { include: ['Dress'], exclude: [] })).toBe(true);
+    expect(matchesTagFilter(tags, { include: [], exclude: ['SMILE'] })).toBe(false);
+  });
+});
+
+describe('withFilterTags', () => {
+  it('adds a comma paste to one side and moves a tag already on the other side', () => {
+    expect(
+      withFilterTags({ include: ['dress'], exclude: ['crown'] }, 'Crown, hat', 'include')
+    ).toEqual({
+      include: ['dress', 'Crown', 'hat'],
+      exclude: [],
+    });
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'dress', 'exclude')).toEqual({
+      include: [],
+      exclude: ['dress'],
+    });
+  });
+  it('does not list a tag twice on the same side', () => {
+    expect(withFilterTags({ include: ['dress'], exclude: [] }, 'DRESS', 'include')).toEqual({
+      include: ['DRESS'],
+      exclude: [],
+    });
   });
 });
 
@@ -691,6 +872,23 @@ describe('a model that is down', () => {
   });
 });
 
+describe('Flux.2, which the Studio cannot submit', () => {
+  const flux2 = cardByType('flux2')!;
+  const message = 'Flux.2 is temporarily unavailable for training. Use another base model for now.';
+
+  it('shows as unavailable and blocks a selection on it, with no moderator status at all', () => {
+    const none = new Set<string>();
+    for (const status of [null, parseServiceStatus(null)]) {
+      expect(cardUnavailability(flux2, none, status)).toEqual({
+        reason: 'Use another base model for now.',
+      });
+      expect(blockedSelectionMessage([newRun(flux2, none)], status)).toBe(message);
+    }
+    expect(cardUnavailability(cardByType('sdxl')!, none, null)).toBeNull();
+    expect(blockedSelectionMessage([newRun(cardByType('sdxl')!, none)], null)).toBeNull();
+  });
+});
+
 describe('a model that is down, in a shared ecosystem or a multi-version card', () => {
   const illustrious = cardByType('illustrious')!;
   const klein = cardByType('flux2klein')!;
@@ -709,10 +907,294 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     ).toBe('This custom model is blocked from training. Pick another.');
   });
 
+  it('blocks a code-blocked custom base even when the ops list is empty or unread', () => {
+    const anima = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
+    const run = { ...anima, customAir: 'urn:air:anima:checkpoint:civitai:2855007@3224434' };
+    const message = 'This custom model is blocked from training. Pick another.';
+    expect(blockedSelectionMessage([run], parseServiceStatus(null))).toBe(message);
+    expect(blockedSelectionMessage([run], null)).toBe(message);
+  });
+
   it('starts a partly-down card on a version that is up', () => {
     const status = parseServiceStatus({ blockedModels: ['flux2klein_9b'] });
     expect(cardUnavailability(klein, on, status)).toBeNull();
     expect(newRun(klein, on, status).versionKey).toBe('flux2klein_4b');
     expect(newRun(klein, on).versionKey).toBe('flux2klein_9b');
+  });
+});
+
+describe('Kohya engine selection and options', () => {
+  it('starts a Kohya run on the first available Kohya model, and none on media Kohya lacks', () => {
+    const none = new Set<string>();
+    const first = kohyaSeedCard('character', 'image', none)!;
+    expect(cardSupportsKohya(first)).toBe(true);
+    const blocked = parseServiceStatus({
+      blockedModels: first.versions.map((v) => v.key),
+      blockedModelReasons: {},
+    });
+    const next = kohyaSeedCard('character', 'image', none, blocked)!;
+    expect(next.type).not.toBe(first.type);
+    expect(cardSupportsKohya(next)).toBe(true);
+    expect(kohyaSeedCard('character', 'video', none)).toBeUndefined();
+  });
+
+  it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(runEngine(original)).toBe('ai-toolkit');
+    expect(runParamsKey(original)).not.toBe(runParamsKey(kohya));
+    expect(defaultRunParams(kohya)).toMatchObject({
+      optimizer: 'Adafactor',
+      lrScheduler: 'cosine_with_restarts',
+      batchSize: '4',
+      numRepeats: '1',
+      enableBucket: true,
+      lrSchedulerNumCycles: '3',
+      vParameterization: 'auto',
+      zeroTerminalSnr: 'auto',
+    });
+  });
+
+  it.each(['flux', 'chroma'])('offers custom %s checkpoints only for Kohya', (cardType) => {
+    const card = cardByType(cardType)!;
+    expect(versionOptions(card).some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(false);
+    expect(versionOptions(card, undefined, 'kohya').some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(
+      true
+    );
+  });
+
+  it('keeps Kohya resolution editable while AI Toolkit resolution is locked', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(paramLockReason(original, 'resolution')).toBeDefined();
+    expect(paramLockReason(kohya, 'resolution')).toBeUndefined();
+    const params = { ...defaultRunParams(kohya), resolution: '768' };
+    expect(paramDeviations(kohya, params, 'tag')).toContainEqual(
+      expect.objectContaining({ field: 'resolution', value: '768' })
+    );
+    expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(kohya, 'ohwx'),
+      unetLr: '',
+      batchSize: '',
+      clipSkip: '',
+      keepTokens: '',
+    };
+    const quoted = runTrainingParams(kohya, params, 'tag', 'ohwx', 'character');
+    const [submitted] = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [kohya] },
+      [],
+      'ohwx',
+      'Example',
+      [{ run: kohya, params }],
+      [],
+      [],
+      'tag'
+    );
+    expect(quoted).toMatchObject({
+      engine: 'kohya',
+      unetLr: 0.0005,
+      batchSize: 6,
+      keepTokens: 1,
+      kohya: { clipSkip: 2 },
+    });
+    expect(submitted).toMatchObject(quoted);
+  });
+
+  it('restores safe learning rates when leaving the Pony Prodigy preset', () => {
+    const kohya = { ...run('pony'), engine: 'kohya' };
+    const p = defaultRunParams(kohya);
+    expect(p).toMatchObject({ optimizer: 'Prodigy', unetLr: '1', textEncoderLr: '1' });
+    expect(optimizerLrParams(kohya, { ...p, optimizer: 'AdamW8bit' })).toEqual({
+      unetLr: '0.0005',
+      textEncoderLr: '0.00005',
+    });
+  });
+
+  it('sends caption controls only for tag datasets while retaining Kohya options', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const p = defaultRunParams(kohya, 'ohwx');
+    expect(p.networkAlpha).toBe('8');
+    expect(runTrainingParams(kohya, p, 'tag')).toMatchObject({
+      engine: 'kohya',
+      shuffleTokens: true,
+      keepTokens: 1,
+      kohya: { clipSkip: 2, enableBucket: true },
+    });
+    expect(runTrainingParams(kohya, p, 'caption')).toMatchObject({
+      shuffleTokens: false,
+      keepTokens: 0,
+    });
+  });
+
+  it('offers and sends the AI Toolkit-only settings on AI Toolkit runs alone', () => {
+    const aiToolkit = run('sdxl');
+    const kohya = { ...aiToolkit, engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(aiToolkit),
+      lrScheduler: 'constant',
+      lrWarmupSteps: '100',
+      captionDropoutRate: '0.1',
+      rankDropout: '0.2',
+      trainConv: true,
+    };
+    expect(runTrainingParams(aiToolkit, params, 'tag')).toMatchObject({
+      lrWarmupSteps: 100,
+      captionDropoutRate: 0.1,
+      rankDropout: 0.2,
+      trainConv: true,
+    });
+    const caps = runExtraCapabilities(kohya, 'tag', params);
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const) {
+      expect(caps[field].supported).toBe(false);
+      expect(runTrainingParams(kohya, params, 'tag')).not.toHaveProperty(field);
+    }
+  });
+});
+
+describe('per-image repeats on the submit', () => {
+  const build = (r: Run, images: Img[]) =>
+    buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [r] },
+      images,
+      'ohwx',
+      'test',
+      [{ run: r, params: defaultRunParams(r) }],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    )[0]!;
+
+  it('sends the repeat count and extension only for an image that repeats', () => {
+    const out = build(run('sdxl'), [
+      { ...image(1, ['ohwx']), name: 'a.JPG', repeats: 3 },
+      image(2, ['ohwx']),
+    ]);
+    expect(out.items).toEqual([
+      { air: 'blob-1', caption: 'ohwx', repeats: 3, ext: 'jpg' },
+      { air: 'blob-2', caption: 'ohwx' },
+    ]);
+    expect(out.meta.imageCount).toBe(4);
+  });
+
+  it('drops repeats for Flux.2, whose trainer is not known to honour staged paths', () => {
+    const out = build(run('flux2'), [{ ...image(1, ['ohwx']), repeats: 3 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+    expect(out.meta.imageCount).toBe(1);
+  });
+
+  it('sends no repeats in a sweep where any run cannot take them', () => {
+    const sdxl = run('sdxl');
+    const flux2 = run('flux2');
+    const out = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [sdxl, flux2] },
+      [{ ...image(1, ['ohwx']), repeats: 3 }],
+      'ohwx',
+      'test',
+      [
+        { run: sdxl, params: defaultRunParams(sdxl) },
+        { run: flux2, params: defaultRunParams(flux2) },
+      ],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    );
+    for (const payload of out) expect(payload.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('sends an image set back to 1 repeat as a plain item', () => {
+    const out = build(run('sdxl'), [{ ...image(1, ['ohwx']), repeats: 1 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('clamps a typed repeat count to a whole number from 1 to 20', () => {
+    expect(clampRepeats(2.4)).toBe(2);
+    expect(clampRepeats(2.6)).toBe(3);
+    expect(clampRepeats(Number.NaN)).toBe(1);
+    expect(clampRepeats(0)).toBe(1);
+    expect(clampRepeats(-5)).toBe(1);
+    expect(clampRepeats(21)).toBe(20);
+    expect(clampRepeats(Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it("stages a copy under the file's own media extension, else its blob's, else the media default", () => {
+    expect(repeatExt({ name: 'clip.MP4', blobId: 'x', mediaType: 'video' })).toBe('mp4');
+    expect(
+      repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
+    ).toBe('webp');
+    expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
+  });
+});
+
+describe('Krea 2 label modes', () => {
+  it('offers captions and tags, with captions as the default', () => {
+    const krea = cardByType('krea2')!;
+    expect(labelOptions(krea)).toEqual(['caption', 'tag']);
+    expect(krea.label).toBe('caption');
+  });
+
+  it('opens a model on its own default label, but keeps a pick made on the same model', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    // the flow's labelMode starts as 'tag'
+    expect(labelModeForCard(null, krea, 'tag', false)).toBe('caption');
+    expect(labelModeForCard(krea, krea, 'tag', false)).toBe('tag');
+    expect(labelModeForCard(krea, anima, 'caption', false)).toBe('tag');
+  });
+
+  it('keeps the mode when a labeled dataset moves to another model that offers it', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    expect(labelModeForCard(krea, anima, 'caption', true)).toBe('caption');
+    expect(labelModeForCard(anima, cardByType('sdxl')!, 'caption', true)).toBe('tag');
+  });
+
+  it("refuses a caption-only model in a sweep once the lead is on Krea 2's tag mode", () => {
+    const krea = cardByType('krea2')!;
+    const flux = cardByType('flux')!;
+    const sdxl = cardByType('sdxl')!;
+    // Krea 2 on tags (kept: same model), then the caption-only Flux
+    expect(sweepLabelMode([krea, flux], krea, 'tag', false)).toBeNull();
+    expect(sweepLabelMode([krea, sdxl], krea, 'tag', false)).toBe('tag');
+    // fresh on captions
+    expect(sweepLabelMode([krea, flux], null, 'tag', false)).toBe('caption');
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('refuses to mix pairs and single-image models', () => {
+    const krea = cardByType('krea2')!;
+    const pairsCard = MODEL_CARDS.find((c) => c.pairs)!;
+    expect(sweepLabelMode([krea, pairsCard], null, 'caption', false)).toBeNull();
+    expect(sweepLabelMode([pairsCard, krea], null, 'caption', false)).toBeNull();
+  });
+
+  it("refuses the selection left by removing run 1 when the next lead would re-pick a mode a later run can't take", () => {
+    const anima = cardByType('anima')!;
+    const krea = cardByType('krea2')!;
+    const sdxl = cardByType('sdxl')!;
+    expect(sweepLabelMode([anima, krea, sdxl], null, 'tag', false)).toBe('tag');
+    // Krea 2 leading a fresh dataset opens on captions, which SDXL can't take
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('checks every run against the mode a new first run would set', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    const flux = cardByType('flux')!;
+    // swapping run 1 from Krea 2 to Anima would flip a fresh dataset to tags, which Flux can't take
+    expect(sweepLabelMode([anima, flux], null, 'tag', false)).toBeNull();
+    // a swap that stays valid is allowed: Krea 2 on tags -> Flux leads, mode follows to captions
+    expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
+    // a labeled dataset keeps its format across the swap
+    expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
   });
 });

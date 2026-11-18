@@ -14,6 +14,11 @@ export const FEEDBACK_CAPTURE_OWNER_USERNAME = 'civitai-feedback-captures';
 export const FEEDBACK_CAPTURE_OWNER_REFUSAL =
   'This is the system account that holds feedback page captures; it cannot be the subject of this action. A capture shows content from another account: act on the image, or name that account.';
 
+/** Shown wherever the capture account appears as if it were a user. */
+export const FEEDBACK_CAPTURE_ACCOUNT_NOTE =
+  "System account for feedback page captures. Each image it owns is a screenshot a reporter attached to a feedback report, and can show any account's content: act on the image, or on the account whose content it shows.";
+
+/** A capture's owner stands for no one: never notified, and its reporter is not told either. */
 export function isFeedbackCaptureOwner(userId: unknown): boolean {
   return Number(userId) === FEEDBACK_CAPTURE_OWNER_ID;
 }
@@ -27,6 +32,22 @@ export const FEEDBACK_CAPTURE_RETENTION_DAYS = 30;
  */
 export const FEEDBACK_CAPTURE_METADATA_KEY = 'feedbackCapture';
 export type FeedbackCaptureMetadata = { feedbackId: number; reporterId: number };
+
+const positiveId = (value: unknown) => {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+};
+
+/** The report and reporter a capture's `Image.metadata` stamp names; null for any it lacks. */
+export function readFeedbackCaptureStamp(metadata: unknown): {
+  feedbackId: number | null;
+  reporterId: number | null;
+} {
+  const stamp = (metadata as Record<string, unknown> | null | undefined)?.[
+    FEEDBACK_CAPTURE_METADATA_KEY
+  ] as Partial<FeedbackCaptureMetadata> | null | undefined;
+  return { feedbackId: positiveId(stamp?.feedbackId), reporterId: positiveId(stamp?.reporterId) };
+}
 
 /**
  * Why a report's `screenshotId` has no capture row: the upload was not issued to the reporter, or

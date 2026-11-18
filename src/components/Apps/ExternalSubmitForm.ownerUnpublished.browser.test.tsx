@@ -196,7 +196,7 @@ function noticeText(testId: string): string {
 const ALERT_TITLE = 'This app is unpublished';
 const DRIFTED_NOTICE_TEXT =
   ALERT_TITLE +
-  `This app is unpublished, so its name, App URL, source repository and content rating ` +
+  `This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ` +
   `are locked — and your OAuth app's permissions have changed since this listing was last ` +
   `reviewed. That changed permission set rides along on every save, so while the app stays ` +
   `unpublished NOTHING on this screen can be saved — not the tagline, description or ` +
@@ -302,7 +302,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing: material fields are shown, and lock
       ).toHaveLength(0);
       await page.getByRole('button', { name: 'Next' }).click();
       await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
-      for (const field of ['name', 'contentRating', 'sourceRepoUrl'] as const) {
+      for (const field of ['name', 'contentRating', 'sourceRepoUrl', 'issueTrackerUrl'] as const) {
         expect(materialControl(field)?.disabled, `${status}/${field}`).toBe(false);
       }
     }

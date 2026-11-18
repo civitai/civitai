@@ -5,8 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
 
-// The scam cleanup's `commentsV2` kind against real Postgres with the production mirror: which
-// comments a mute hides across CommentV2 and CommentV3, and which the overturn brings back.
+// The scam cleanup's `comments` kind against real Postgres: which CommentV3 comments a mute hides,
+// and which the overturn brings back.
 
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
@@ -20,6 +20,8 @@ beforeAll(async () => {
   await pg.exec(migration('20261110120000_comment_v3_schema'));
   await pg.exec(migration('20261120120000_comment_v3_mirror'));
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
+  await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
+  await pg.exec(migration('20270102120000_comment_v3_teardown'));
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)
@@ -27,15 +29,11 @@ beforeAll(async () => {
       : (first as Prisma.Sql);
   dbMock.dbWrite.$queryRaw.mockImplementation((async (first: never, ...values: unknown[]) => {
     const sql = toSql(first, values);
-    const { rows } = await pg.query(sql.text, sql.values as unknown[]);
-    v2Writes.push({ sql: sql.text, rows: (rows as { id: number }[]).map((r) => r.id) });
-    return rows;
+    return (await pg.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (first: never, ...values: unknown[]) => {
     const sql = toSql(first, values);
-    const affected = (await pg.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
-    v2Writes.push({ sql: sql.text, rows: affected });
-    return affected;
+    return (await pg.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
   }) as never);
   dbMock.dbWrite.$queryRawUnsafe.mockImplementation(
     (async (sql: string, ...params: unknown[]) => (await pg.query(sql, params)).rows) as never
@@ -45,59 +43,41 @@ afterAll(async () => {
   await pg.close();
 });
 
-// What each tagged statement touched, to tell which one wrote a row.
-let v2Writes: { sql: string; rows: number[] | number }[] = [];
-const oldTableWrite = () => v2Writes.find((w) => w.sql.includes('UPDATE "CommentV2"'))?.rows;
-
 const SCAMMER = 5;
 const OTHER = 6;
 
-// Article 1. 41-44 are the scammer's: 41 written to CommentV3 only, 42 written to CommentV2 before
-// the flip (mirrored), 43 already hidden, 44 deleted. 45 is someone else's. 50 is the scammer's
-// 3D model review comment, on CommentV2 (mirrored; 3D model reviews are not written to CommentV3);
-// 51 one with no CommentV2 row, which only the CommentV2 arm could reach, so it stays.
+// 41, 42 and 46 are the scammer's live comments, on an article and a model; 43 is already hidden,
+// 44 deleted. 45 is someone else's.
 beforeEach(async () => {
   await pg.exec(`
-    DELETE FROM "CommentV2"; DELETE FROM "CommentV3"; DELETE FROM "Thread"; DELETE FROM "CommentTopic";
-    INSERT INTO "Model3DReview" VALUES (1) ON CONFLICT DO NOTHING;
-    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('model3dReview', 1);
+    DELETE FROM "CommentV3"; DELETE FROM "CommentTopic";
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('model', 1);
     INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "deletedAt") VALUES
-      (41, 'article', 1, ${SCAMMER}, 'v3 only', false, NULL),
+      (41, 'article', 1, ${SCAMMER}, 'one', false, NULL),
+      (42, 'article', 1, ${SCAMMER}, 'two', false, NULL),
       (43, 'article', 1, ${SCAMMER}, 'hidden already', true, NULL),
       (44, 'article', 1, ${SCAMMER}, '', false, now()),
       (45, 'article', 1, ${OTHER}, 'someone else', false, NULL),
-      (51, 'model3dReview', 1, ${SCAMMER}, 'not a CommentV3-write surface', false, NULL);
-    INSERT INTO "Thread"(id, "articleId") VALUES (900, 1);
-    INSERT INTO "Thread"(id, "model3dReviewId") VALUES (901, 1);
-    INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES
-      (42, 'from v2', ${SCAMMER}, 900), (50, '3D model review', ${SCAMMER}, 901);
+      (46, 'model', 1, ${SCAMMER}, 'on a model', false, NULL);
   `);
 });
 
-const hidden = async (table: 'CommentV2' | 'CommentV3') =>
-  (await pg.query<{ id: number }>(`SELECT id FROM "${table}" WHERE hidden ORDER BY id`)).rows.map(
+const hidden = async () =>
+  (await pg.query<{ id: number }>(`SELECT id FROM "CommentV3" WHERE hidden ORDER BY id`)).rows.map(
     (r) => r.id
   );
 
 describe('scam cleanup of comments', () => {
-  beforeEach(() => {
-    v2Writes = [];
-  });
-
-  it('hides the scammer’s live comments in both tables, each id once, and nobody else’s', async () => {
-    const record = await runScamCleanup('commentsV2', SCAMMER);
-    expect(record).toMatchObject({ kind: 'commentsV2', count: 3, truncated: false });
-    expect([...(record?.ids ?? [])].sort()).toEqual([41, 42, 50]);
-    expect(await hidden('CommentV2')).toEqual([42, 50]);
-    // 42 through the mirror and the CommentV3 arm alike; the deleted 44 and the other user's 45 stay.
-    expect(await hidden('CommentV3')).toEqual([41, 42, 43, 50]);
-    // 42 is written CommentV3 first, as every write on its surface is; the CommentV2 statement
-    // takes only the model comment.
-    expect(oldTableWrite()).toEqual([50]);
+  it('hides the scammer’s live comments on every surface, and nobody else’s', async () => {
+    const record = await runScamCleanup('comments', SCAMMER);
+    expect(record).toMatchObject({ kind: 'comments', count: 3, truncated: false });
+    expect([...(record?.ids ?? [])].sort()).toEqual([41, 42, 46]);
+    // The deleted 44 and the other user's 45 stay as they were.
+    expect(await hidden()).toEqual([41, 42, 43, 46]);
   });
 
   it('brings back exactly what it hid when the mute is overturned', async () => {
-    const record = await runScamCleanup('commentsV2', SCAMMER);
+    const record = await runScamCleanup('comments', SCAMMER);
     // A comment of someone else's under a recorded id is never touched.
     await pg.exec(`UPDATE "CommentV3" SET hidden = true WHERE id = 45`);
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
@@ -106,19 +86,15 @@ describe('scam cleanup of comments', () => {
       triggers: [{ cleanup: { ...record, ids: [...(record?.ids ?? []), 45] } }],
     } as never);
 
-    v2Writes = [];
     expect(await restoreScamCase(1)).toEqual({ restored: 3 });
-    expect(oldTableWrite()).toBe(1);
-    expect(await hidden('CommentV2')).toEqual([]);
     // 43 was hidden before the cleanup and is not in the record.
-    expect(await hidden('CommentV3')).toEqual([43, 45]);
+    expect(await hidden()).toEqual([43, 45]);
   });
 
-  it('restores a record from before the model flip, which lists old `Comment` ids', async () => {
-    // 60 is the scammer's model comment whose v1 row was 31, hidden by that cleanup; 61 is someone
-    // else's, whose old id 32 is in the record too.
+  it('restores a `commentsV2` record, written before Phase 5, by its CommentV3 ids', async () => {
+    // 60 is the scammer's comment that cleanup hid; 61 is someone else's. A `Comment` trigger wrote
+    // `commentsV2` records too, and those ids are CommentV3 ids all the same.
     await pg.exec(`
-      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('model', 1) ON CONFLICT DO NOTHING;
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id") VALUES
         (60, 'model', 1, ${SCAMMER}, 'pre-flip', true, 31),
         (61, 'model', 1, ${OTHER}, 'someone else', true, 32);
@@ -128,18 +104,58 @@ describe('scam cleanup of comments', () => {
       type: 'scam',
       triggers: [
         {
+          entityType: 'Comment',
           cleanup: {
-            kind: 'comments',
+            kind: 'commentsV2',
             at: new Date().toISOString(),
             count: 2,
-            ids: [31, 32],
+            ids: [60, 61],
             truncated: false,
           },
         },
       ],
     } as never);
 
+    // 61 is someone else's comment under a recorded id: never touched.
     expect(await restoreScamCase(1)).toEqual({ restored: 1 });
-    expect(await hidden('CommentV3')).toEqual([43, 61]);
+    expect(await hidden()).not.toContain(60);
+    expect(await hidden()).toContain(61);
+  });
+
+  it('restores a v1-era `comments` record on a `Comment` trigger through legacyV1Id', async () => {
+    // 62 is the scammer's comment with v1 id 31; 31 is theirs too, a CommentV3 id of that number.
+    await pg.exec(`
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id") VALUES
+        (62, 'model', 1, ${SCAMMER}, 'v1', true, 31),
+        (31, 'model', 1, ${SCAMMER}, 'same number', true, NULL);
+    `);
+    const record = {
+      kind: 'comments',
+      at: new Date().toISOString(),
+      count: 1,
+      ids: [31],
+      truncated: false,
+    };
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: SCAMMER,
+      type: 'scam',
+      triggers: [{ entityType: 'Comment', entityId: 31, cleanup: record }],
+    } as never);
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await hidden()).toContain(31);
+    expect(await hidden()).not.toContain(62);
+
+    // Once the stored-records SQL has mapped it (`migrated`), its ids are CommentV3 ids.
+    await pg.exec(`UPDATE "CommentV3" SET hidden = true WHERE id = 62`);
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: SCAMMER,
+      type: 'scam',
+      triggers: [
+        { entityType: 'Comment', entityId: 31, cleanup: { ...record, ids: [62], migrated: true } },
+      ],
+    } as never);
+    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await hidden()).not.toContain(62);
   });
 });

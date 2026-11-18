@@ -39,16 +39,19 @@ import { logToAxiom, safeError } from './axiom'; // the app's Axiom logger
 import { getSysRedis } from './redis';
 
 // A sign-out, ban or force-logout written anywhere ends the session here. When the store can't be reached the
-// check allows the request, so log each time it does.
+// check answers from the revocation markers this process has already read: one seen here still denies
+// (`deny_cached`), and a session with none known is allowed (`allow_unknown`). Log each one.
+// SESSION_REVOCATION_CACHE=off (or 0/false) turns that record off: every failed read then allows.
 export const isRevoked = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
-  onError: (err) => {
+  onError: (err, _reason, _claims, verdict) => {
     logToAxiom({
       ...safeError(err),
       name: 'sysredis-fail-open',
       type: 'warning',
       subtype: 'read-degraded',
       fn: 'spoke isRevoked',
+      verdict,
     }).catch(() => undefined);
   },
 });

@@ -9,6 +9,7 @@ import {
   isModelComment,
   modelPageId,
   notOnHiddenModel,
+  notOnHiddenPostText,
   notOnUnpublishedArticle,
   threadTypeLabel,
   threadUrlMap,
@@ -169,6 +170,7 @@ export const mentionNotifications = createNotificationProcessor({
           AND ${v3AppListingResolved('c')}
           AND ${notOnUnpublishedArticle('c')}
           AND ${notOnHiddenModel('c')}
+          AND ${notOnHiddenPostText('c')}
 
         UNION
 

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { notHeldForReviewSql, servableLevelSql } from '~/server/common/image-visibility';
 import sanitize from 'sanitize-html';
 import {
   addMinutes,
@@ -98,12 +99,15 @@ type ScheduledPostRow = {
 
 export async function getScheduledPosts({
   user,
+  servableLevels,
   from,
   to,
   modelVersionId,
   tag,
 }: {
   user: SessionUser;
+  /** `requestServableLevels(ctx)`: the cover and count hold to it, as the editor does. */
+  servableLevels: number;
   from: Date;
   to: Date;
   modelVersionId?: number;
@@ -129,7 +133,7 @@ export async function getScheduledPosts({
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     LEFT JOIN LATERAL (
       SELECT i.url, i.type, COUNT(*) OVER () AS count FROM "Image" i
-      WHERE i."postId" = p.id
+      WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)} AND ${notHeldForReviewSql()}
       ORDER BY i.index ASC NULLS LAST, i.id ASC
       LIMIT 1
     ) cover ON TRUE
@@ -174,17 +178,19 @@ export async function getScheduledPosts({
 export async function getPlannerPostDetail({
   id,
   user,
+  servableLevels,
 }: {
   id: number;
   user: SessionUser;
+  servableLevels: number;
 }): Promise<PlannerPostDetail> {
-  const post = await getPostEditDetail({ id, user });
+  const post = await getPostEditDetail({ id, user, servableLevels });
   // The planner is the owner's own calendar; `getPostEditDetail` also admits moderators.
   if (post.user.id !== user.id) throw throwAuthorizationError();
 
   const live = !!post.publishedAt && post.publishedAt <= new Date();
   const [resources, version, stats] = await Promise.all([
-    getPostResources({ id }),
+    getPostResources({ id, userId: user.id, isModerator: user.isModerator }),
     post.modelVersionId
       ? dbRead.modelVersion.findUnique({
           where: { id: post.modelVersionId },

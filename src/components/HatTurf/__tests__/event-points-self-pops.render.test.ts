@@ -78,7 +78,7 @@ describe('EventPointsSelfPops', () => {
     act(() => h.onWatched?.({ marked: 1, self: { points: 40, team: 'Yellow' } }));
     push(45);
     push(45);
-    expect(pops()).toEqual(['+5 Yellow']);
+    expect(pops()).toEqual(['+5 Yellow points']);
   });
 
   it('pops nothing before the watch has answered with a base', () => {

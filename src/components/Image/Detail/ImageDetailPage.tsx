@@ -17,17 +17,27 @@ import { StorylineModeProvider } from '~/components/Storyline/StorylineModeProvi
  * tree's own `Meta` sets the title once the image has loaded. A signed-in viewer of a deleted or
  * hidden image gets the client-side NotFound with a 200 (a full render answers 404 to everyone
  * else: bots and signed-out viewers never get the shell).
+ *
+ * `deferredSsr` (the `ssrSignedInSkipPrefetchImages` trial) is a full render, not the static shell:
+ * the provider's loading, NotFound and blocked decisions are made as always, and `ImageDetail2`
+ * then renders its gate and `<head>` around a loader until the client has mounted.
  */
-export function ImageDetailPage() {
+export function ImageDetailPage({ deferredSsr }: { deferredSsr?: boolean } = {}) {
   const router = useBrowserRouter();
   const shellPending = useShellPagePending();
   if (shellPending) return <ImageDetailShellSkeleton />;
 
-  return <ImageDetailRoute query={router.query} />;
+  return <ImageDetailRoute query={router.query} deferredSsr={deferredSsr} />;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the browser router's own query type
-function ImageDetailRoute({ query }: { query: Record<string, any> }) {
+function ImageDetailRoute({
+  query,
+  deferredSsr,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the browser router's own query type
+  query: Record<string, any>;
+  deferredSsr?: boolean;
+}) {
   const imageId = query.imageId;
   // Not `imagesQueryParamSchema.parse` — a throw here is a 500, and this page is the
   // destination of notification links carrying `?postId=null`. See parseImageQueryParams.
@@ -37,14 +47,16 @@ function ImageDetailRoute({ query }: { query: Record<string, any> }) {
 
   return (
     <StorylineModeProvider>
-      {(storylineImages, modeKey) => (
+      {(storylineImages, modeKey, storylineTexts) => (
         <ImageDetailProvider
           key={`${imageId}-${modeKey}`}
           imageId={imageId}
           filters={filters}
+          texts={storylineTexts?.texts}
+          postOrder={storylineTexts?.postOrder}
           images={storylineImages}
         >
-          <ImageDetail2 />
+          <ImageDetail2 deferredSsr={deferredSsr} />
         </ImageDetailProvider>
       )}
     </StorylineModeProvider>

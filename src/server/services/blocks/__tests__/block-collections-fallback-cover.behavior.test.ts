@@ -13,6 +13,17 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
+// The cached gallery level of a held post's model; by default no post is held.
+const coverLevels = vi.hoisted(() => ({ held: new Map<number, number>() }));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => coverLevels.held.has(id))
+        .map((id) => [id, { level: coverLevels.held.get(id)! }])
+    ),
+}));
 
 import {
   getFallbackCoverImages,
@@ -70,10 +81,10 @@ async function insertImage(id: number, row: Row) {
   };
   const r = { ...CLEAN, ...image } as Record<string, unknown>;
   if (post !== null) {
-    const p = { publishedAt: '2026-01-01', availability: 'Public', ...post };
+    const p = { publishedAt: '2026-01-01', availability: 'Public', modelVersionId: null, ...post };
     await holder.db.exec(`
-      INSERT INTO "Post" (id, "publishedAt", availability)
-      VALUES (${id}, ${lit(p.publishedAt)}, ${lit(p.availability)});
+      INSERT INTO "Post" (id, "publishedAt", availability, "modelVersionId")
+      VALUES (${id}, ${lit(p.publishedAt)}, ${lit(p.availability)}, ${lit(p.modelVersionId)});
     `);
   }
   await holder.db.exec(`
@@ -111,8 +122,18 @@ beforeAll(async () => {
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "publishedAt" timestamp(3),
-      availability "Availability" NOT NULL DEFAULT 'Public'
+      availability "Availability" NOT NULL DEFAULT 'Public',
+      "modelVersionId" int
     );
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, minor boolean NOT NULL, "sfwOnly" boolean NOT NULL, "gallerySettings" jsonb
+    );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    -- Model 4 is SFW-only with PG stored.
+    INSERT INTO "Model" VALUES
+      (1, false, false, NULL), (2, false, true, NULL), (3, true, false, NULL),
+      (4, false, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" VALUES (11, 1), (12, 2), (13, 3), (14, 4);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL,
@@ -147,6 +168,7 @@ beforeEach(async () => {
     return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
   await holder.db.exec(`TRUNCATE "Image", "CollectionItem", "Post";`);
+  coverLevels.held.clear();
 });
 
 describe('getFallbackCoverImages against Postgres', () => {
@@ -226,6 +248,49 @@ describe('getFallbackCoverImages against Postgres', () => {
       await insertItem(10, 2, '2026-01-02');
       expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
     });
+  });
+});
+
+describe("getFallbackCoverImages on a minor or SFW-only model's post", () => {
+  const onVersion = (modelVersionId: number, nsfwLevel: number) => ({
+    nsfwLevel,
+    post: { modelVersionId },
+  });
+
+  it.each([
+    ['SFW-only', 12],
+    ['minor', 13],
+  ])('skips a newest mature item on a %s model at a mature ceiling', async (_kind, versionId) => {
+    await insertImage(1, onVersion(versionId, 1));
+    await insertImage(2, onVersion(versionId, 4));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+  });
+
+  it('keeps a newest mature item on an unflagged model', async () => {
+    await insertImage(1, onVersion(11, 1));
+    await insertImage(2, onVersion(11, 4));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
+  });
+
+  it("takes the next item when the newest is above its model's stored gallery level", async () => {
+    await insertImage(1, onVersion(14, 1));
+    await insertImage(2, onVersion(14, 2));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+  });
+
+  it('serves no cover when the cached gallery level is stricter than the stored one', async () => {
+    await insertImage(1, onVersion(12, 1));
+    await insertImage(2, onVersion(12, 2));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    coverLevels.held.set(2, 1);
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).has(10)).toBe(false);
   });
 });
 

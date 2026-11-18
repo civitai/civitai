@@ -6,6 +6,7 @@ import { updateWorkflowsStatus } from '~/components/ImageGeneration/utils/useGen
 import { queryClient, trpc } from '~/utils/trpc';
 import { isNeverRatedVideoStep, isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import type { NormalizedWorkflowStepOutput } from '~/server/services/orchestrator/orchestration-new.service';
+import { backoffDelay } from '~/utils/backoff';
 
 // A blob HEAD waits for the scan verdict, and a failed scan is only resubmitted by a read, so an
 // unrated output keeps one HEAD open until it is rated. The blob verdict can lag the workflow's
@@ -19,7 +20,7 @@ export const UNRATED_GIVE_UP_COOLDOWN_MS = 10 * 60_000;
 const UNRATED_MAX_GIVE_UPS = 2;
 
 export function unratedRetryDelay(attempt: number) {
-  return Math.min(UNRATED_RETRY_MIN_MS * 2 ** attempt, UNRATED_RETRY_MAX_MS);
+  return backoffDelay(attempt, { baseMs: UNRATED_RETRY_MIN_MS, maxMs: UNRATED_RETRY_MAX_MS });
 }
 
 type CachedWorkflow = {

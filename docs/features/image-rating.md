@@ -8,17 +8,17 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
 
 ## The fields
 
-| Field                      | Meaning                                                                                                                                                                                                                      | Written by                                                     |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `ingestion`                | Where the image is in the scan lifecycle. `Pending` → `Scanned` / `Blocked` / `Error`; `Rescan` re-enters the scan. `NotFound` means no media behind the row. `PendingManualAssignment` skips the scan (judged collections). | Upload, scan verdict, retry cron, moderators                   |
-| `nsfwLevel`                | The rating. `0` = unrated. Derived from tags unless locked.                                                                                                                                                                  | Scan, tag changes, moderators, Knights                         |
-| `nsfwLevelLocked`          | A human decided the rating. Tag changes and rescans no longer move it.                                                                                                                                                       | Moderators, Knights consensus                                  |
-| `metadata.nsfwLevelReason` | Why the lock was set. `KNIGHTS_VOTE_NSFW_LEVEL_REASON` marks a Knights consensus lock; anything else is a moderator.                                                                                                         | Same writers as the lock                                       |
-| `needsReview`              | Which moderator queue holds the image (`poi`, `minor`, `tag`, `newUser`, `modRule`, `appeal`, …). Non-null hides it from the public.                                                                                         | Scan, tag changes, reports, moderators                         |
-| `blockedFor`               | Why the image is blocked. Set together with `ingestion = Blocked`.                                                                                                                                                           | Scan, moderation rules, moderators                             |
-| `scannedAt`                | When the scan completed. Feeds `sortAt`.                                                                                                                                                                                     | Scan verdict, moderator accept, ingestion-error resolve        |
-| `scanJobs`                 | Scan bookkeeping: `workflowId`, `retryCount`, `error.failureClass`.                                                                                                                                                          | Scan request, scan failure                                     |
-| `minor` / `poi`            | Content flags from the scan; optional feed exclusions.                                                                                                                                                                       | Scan, moderators                                               |
+| Field                      | Meaning                                                                                                                                                                                                                      | Written by                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `ingestion`                | Where the image is in the scan lifecycle. `Pending` → `Scanned` / `Blocked` / `Error`; `Rescan` re-enters the scan. `NotFound` means no media behind the row. `PendingManualAssignment` is legacy; uploads no longer set it. | Upload, scan verdict, retry cron, moderators            |
+| `nsfwLevel`                | The rating. `0` = unrated. Derived from tags unless locked.                                                                                                                                                                  | Scan, tag changes, moderators, Knights                  |
+| `nsfwLevelLocked`          | A human decided the rating. Tag changes and rescans no longer move it.                                                                                                                                                       | Moderators, Knights consensus                           |
+| `metadata.nsfwLevelReason` | Why the lock was set. `KNIGHTS_VOTE_NSFW_LEVEL_REASON` marks a Knights consensus lock; anything else is a moderator.                                                                                                         | Same writers as the lock                                |
+| `needsReview`              | Which moderator queue holds the image (`poi`, `minor`, `tag`, `newUser`, `modRule`, `appeal`, …). Non-null hides it from the public.                                                                                         | Scan, tag changes, reports, moderators                  |
+| `blockedFor`               | Why the image is blocked. Set together with `ingestion = Blocked`.                                                                                                                                                           | Scan, moderation rules, moderators                      |
+| `scannedAt`                | When the scan completed. Feeds `sortAt`.                                                                                                                                                                                     | Scan verdict, moderator accept, ingestion-error resolve |
+| `scanJobs`                 | Scan bookkeeping: `workflowId`, `retryCount`, `error.failureClass`.                                                                                                                                                          | Scan request, scan failure                              |
+| `minor` / `poi`            | Content flags from the scan; optional feed exclusions.                                                                                                                                                                       | Scan, moderators                                        |
 
 `nsfwLevel` is derived from tags until `nsfwLevelLocked` is set; `sortAt` is derived from these (step 8).
 
@@ -27,7 +27,20 @@ For the `nsfwLevel` bitflag itself and browsing-level filtering, see [nsfw-filte
 ### 1. Upload
 
 1. `createImage` inserts the row with `ingestion = Pending`, `nsfwLevel = 0`
-   (`PendingManualAssignment` instead for collections whose judges apply the rating).
+   Uploads to collections whose judges apply the rating are scanned like any other. Once the scan
+   is done (`Scanned`, no block), a judge's rating (`setCollectionItemNsfwLevel`) may raise the
+   level, never lower it. It does not lock the level: it is recorded in the server-owned
+   `metadata.judgeRating` (`userId`, `nsfwLevel`, `collectionId`, `ratedAt`), and neither a later
+   scan nor a tag recompute (`update_nsfw_levels_new`) writes an unlocked, unblocked level below it,
+   and the scan's checks run at no less than it. A raise into an NSFW level sends the image back
+   through the scan (`Rescan`). Approval in such a collection requires that collection's rating,
+   not a `legacy` one, on a scanned (`scanJobs` has a `workflowId`), unblocked image that is not
+   held for moderator review (`needsReview`); the AI review skips a held item too. An older
+   upload that was never scanned (`PendingManualAssignment`, or `Scanned` with no `workflowId`) is
+   sent to the scan (`Rescan`) the first time a judge rates or approves it, with its current level
+   seeded as a `legacy` rating (`legacyJudgeRatingSeedSql`) so the rescan can't drop below it, and
+   refused until the verdict lands. A held image is refused as waiting for moderator review first,
+   and one whose scan failed (`Error`, `NotFound`, or out of rescan retries) as failed.
 2. It calls `ingestImage`, which submits the scan and stamps `scanRequestedAt` and `scanJobs.workflowId`.
 3. A database trigger also queues the image in `JobQueue(ImageScan)` whenever `ingestion` becomes `Pending`,
    `Rescan` or `Error`, so a lost submit is retried by the cron (step 3).
@@ -49,7 +62,7 @@ The webhook `/api/webhooks/image-scan-result` runs the shared stages in `image-s
    `needsReview = 'modRule'`, _Approve_ changes nothing.
 6. **`scannedAt`** is stamped on the first scan. Later scans re-stamp it only for images under a week old,
    not on `Rescan`.
-7. A scanned image with no review key is offered to the Knights rating game.
+7. A scanned image with no review key is offered to the Knights rating game, and to the Knights of New Order v2 queue when its sources switch is on (see [`knights-sources.md`](knights-sources.md)).
 
 ### 3. Scan failure and retry
 
@@ -85,7 +98,7 @@ All go through `updateImageNsfwLevel` (main app) or its moderator-app twin.
 | Who                | Effect                                                                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | Moderator          | Sets `nsfwLevel`, **locks it**, records the reason and ModActivity. Does not change `ingestion` or `needsReview`.               |
-| Knights consensus  | Same as a moderator, with `nsfwLevelReason = KNIGHTS_VOTE_NSFW_LEVEL_REASON`. A large down-rating escalates instead of locking. |
+| Knights consensus  | Written by the Knights app through `POST /api/mod/image/kono-set-nsfw-level` (activity `setNsfwLevelKono`, reason `KNIGHTS_VOTE_NSFW_LEVEL_REASON`). Same effect as a moderator, but only onto an image that exists, has no block marker, and is unlocked or Knights-locked; never sets Blocked. A large down-rating or a Blocked consensus goes to moderators instead of writing. See `apps/knights/CLAUDE.md`. |
 | Owner / other user | Only on unlocked images: records an `ImageRatingRequest` vote (owner votes weigh more). Does not change the level directly.     |
 
 ### 6. Leaving a review queue
@@ -115,23 +128,33 @@ checks; a moderator looking at it stands in for those, Knights consensus does no
 
 Every public read path below requires **reviewed** and `needsReview IS NULL`, then adds its own filters:
 
-| Path                                  | Also requires                                                                                                   |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `getAllImages`                        | `acceptableMinor = false` outside collections; `nsfwLevel` non-zero and matching the browsing level             |
-| `getImagesForModelVersion`            | `acceptableMinor = false`; `nsfwLevel` matching the browsing level, or `!= 0` without one                       |
-| `getImage`                            | `nsfwLevel != Blocked`; post published and not private. Owners and collection managers bypass                   |
-| Remix gallery host (`hostIsShowable`) | `tosViolation = false`, `nsfwLevel != Blocked`                                                                  |
-| `images` search index                 | `tosViolation = false`, `minor = false`, `poi = false`, post published and neither private nor unsearchable    |
-| `getHiddenImagesForUser`              | `nsfwLevel != Blocked`, `tosViolation = false`, post published and not private (or the profile cover)          |
+| Path                                  | Also requires                                                                                               |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `getAllImages`                        | `acceptableMinor = false` outside collections; `nsfwLevel` non-zero and matching the browsing level         |
+| `getImagesForModelVersion`            | `acceptableMinor = false`; `nsfwLevel` matching the browsing level, or `!= 0` without one                   |
+| `getImage`                            | `nsfwLevel != Blocked`; post published and not private. Owners and collection managers bypass               |
+| Remix gallery host (`hostIsShowable`) | `tosViolation = false`, `nsfwLevel != Blocked`                                                              |
+| `images` search index                 | `tosViolation = false`, `minor = false`, `poi = false`, post published and neither private nor unsearchable |
+| `getHiddenImagesForUser`              | `nsfwLevel != Blocked`, `tosViolation = false`, post published and not private (or the profile cover)       |
 
 The `metrics-images` Meilisearch feed (the main image feed) applies its own query-time filters on the fields
 it indexes rather than calling `imageReviewedSql`; a change to the rule above has to be made there separately.
 
-Owners always see their own images, including unrated and in-review ones. Moderators see everything in the
-pending views.
+Reads also require **not restricted**: `imageNotRestrictedSql` / `imageNotRestrictedWhere` in the same file
+hide a mature image made with a base model that restricts mature images (see
+`docs/nsfw-license-restrictions.md`). Its exceptions are listed there under "Hiding images is one-way": chiefly
+the uploader's own image where the read is per viewer, a moderator opening the image by id (`getImage`,
+`assertImageVisibleToViewer`: `imageVisibilityConditions` applies no conditions for moderators), and an
+article's owner and moderators on that article's images.
 
-When adding a new image read path, use `imageReviewedSql()`, or `isImageReviewed` for rows already fetched —
-do not re-derive visibility from `nsfwLevel` alone.
+Owners always see their own images, including unrated and in-review ones, and their restricted ones on per-viewer
+reads. Moderators see everything in the main site's pending views except restricted images, which they reach
+by the image's id, on an article's or crucible's page and edit form, and in the labelled moderator tools;
+the moderator app's queues still list them.
+
+When adding a new image read path, use `imageReviewedSql()` and `imageNotRestrictedSql({ viewerId })` (or
+`isImageReviewed` / `isImageNotRestricted` for rows already fetched) — do not re-derive visibility from
+`nsfwLevel` alone.
 
 ### 8. Sort order
 
@@ -141,15 +164,15 @@ it to the top of Newest.
 
 ## Key files
 
-| Concern                            | File                                                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Visibility rule                    | `src/server/common/image-visibility.ts`                                                                                           |
-| Scan request, human ratings, feeds | `src/server/services/image.service.ts`                                                                                            |
-| Scan verdict                       | `src/server/services/image-scan-pipeline.ts`, `image-scan-result.service.ts`, `image-scanning-result.service.ts`                  |
-| Failure classes                    | `src/server/services/image-scan-failure.ts`                                                                                       |
-| Retry cron                         | `src/server/jobs/image-ingestion.ts`                                                                                              |
+| Concern                            | File                                                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Visibility rule                    | `src/server/common/image-visibility.ts`                                                                                                          |
+| Scan request, human ratings, feeds | `src/server/services/image.service.ts`                                                                                                           |
+| Scan verdict                       | `src/server/services/image-scan-pipeline.ts`, `image-scan-result.service.ts`, `image-scanning-result.service.ts`                                 |
+| Failure classes                    | `src/server/services/image-scan-failure.ts`                                                                                                      |
+| Retry cron                         | `src/server/jobs/image-ingestion.ts`                                                                                                             |
 | Tag writes after the scan          | `src/server/services/tagsOnImageNew.service.ts`, `apps/moderator/src/lib/server/tags-on-image.service.ts`, `src/server/jobs/apply-voted-tags.ts` |
-| Rating recompute                   | `packages/civitai-db-schema/prisma/programmability/update_nsfw_level.sql`                                                         |
-| Knights                            | `src/server/services/games/new-order.service.ts`                                                                                  |
-| Moderator actions                  | `apps/moderator/src/lib/server/image-moderation.service.ts`, `image-nsfw-level.ts`, `ingestion.service.ts`                        |
-| `sortAt` trigger                   | `packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql`                                                       |
+| Rating recompute                   | `packages/civitai-db-schema/prisma/programmability/update_nsfw_level.sql`                                                                        |
+| Knights                            | `src/server/services/games/new-order.service.ts`                                                                                                 |
+| Moderator actions                  | `apps/moderator/src/lib/server/image-moderation.service.ts`, `image-nsfw-level.ts`, `ingestion.service.ts`                                       |
+| `sortAt` trigger                   | `packages/civitai-db-schema/prisma/programmability/image_post_triggers.sql`                                                                      |

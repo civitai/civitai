@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -9,10 +10,8 @@ import {
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getResourceData } from '~/server/services/generation/generation.service';
-import {
-  resolveCatalogBrowsingLevel,
-  resourceExceedsCatalogCeiling,
-} from '~/server/utils/block-catalog-maturity';
+import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -83,13 +82,22 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // block catalog endpoints — bounds a block hammering this private,no-store route.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'generation_resources',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   try {
     // Anon read (like models.ts, the viewer is NOT threaded — the clamp is the

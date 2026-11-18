@@ -81,6 +81,13 @@ const getPlacementFlows = vi.fn(async () => ({
   truncated: false,
 }));
 vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
+vi.mock('$lib/server/training-lookup.service', () => ({
+  lookupTrainings: vi.fn(),
+  getAccountTrainings: vi.fn(),
+  MAX_TRAINING_IDS: 25,
+  MAX_TRAINING_ACCOUNTS: 25,
+  MAX_TRAINING_DAYS: 90,
+}));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
 const getRegistrationEmails = vi.fn(
@@ -189,6 +196,8 @@ describe('toolsFor', () => {
       'search_accounts',
       'buzz_flows',
       'placement_flows',
+      'training_lookup',
+      'account_trainings',
       'crucible_judging',
       'abuse_findings',
     ])

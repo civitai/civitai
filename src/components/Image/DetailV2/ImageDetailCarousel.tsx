@@ -2,6 +2,9 @@ import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
@@ -28,6 +31,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { TextSlide } from '~/components/Image/DetailV2/TextSlide';
 import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
@@ -44,7 +49,11 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  ingestion?: string | null;
 };
+type CarouselItem =
+  | { type: 'image'; key: string; image: ImageProps }
+  | { type: 'text'; key: string; text: DetailText };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
 type State = ReturnType<typeof useCarouselNavigation<ImageProps>>;
@@ -94,7 +103,9 @@ export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLEleme
 export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
-  images,
+  images: imageSlides,
+  items,
+  textUserId,
   videoRef,
   connect,
   index,
@@ -106,6 +117,10 @@ export function ImageDetailCarousel({
   loop = true,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
+  /** Slides with text items among the images; `index` points into these when given. */
+  items?: CarouselItem[];
+  /** The text items' author, so their own unrated text is not blurred for them. */
+  textUserId?: number;
   index: number;
   navigate?: (index: number) => void;
   next: () => void;
@@ -116,6 +131,7 @@ export function ImageDetailCarousel({
   loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  const slideCount = (items ?? imageSlides).length;
   const emblaRef = useRef<EmblaCarouselType | null>(null);
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
@@ -149,16 +165,22 @@ export function ImageDetailCarousel({
   // `scrollTo` emits 'select' synchronously, which would echo straight back into
   // `navigate` and run the whole onChange side-effect chain a second time.
   const syncingRef = useRef(false);
+  // Embla announces its slide on every reInit too (a slide added or removed, a resize), and a
+  // reInit keeps the slide it had. Writing that back is not a move: it lands after any index the
+  // parent has set but not yet rendered (a cold `?text=` load names the text from an effect, in
+  // the commit after the slide arrived) and undoes it. Only a slide that changed is passed on.
+  const announcedRef = useRef(index);
   const handleSlideChange = (slideIndex: number) => {
-    if (!syncingRef.current) navigate?.(slideIndex);
+    const moved = slideIndex !== announcedRef.current;
+    announcedRef.current = slideIndex;
+    if (moved && !syncingRef.current) navigate?.(slideIndex);
   };
 
   const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    // A slide added in the same commit as the index that names it is not embla's yet, and its
-    // own reinit would announce the old slide and write it back through `navigate`.
-    if (index >= api.slideNodes().length && index < images.length)
-      api.reInit({ startIndex: index });
+    // A slide added in the same commit as the index that names it is not embla's yet: scrolling
+    // there would miss it, so reInit embla onto it instead.
+    if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
     else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
   };
@@ -174,7 +196,7 @@ export function ImageDetailCarousel({
   useEffect(() => {
     if (embla) followIndex(embla);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- not on every render
-  }, [embla, index, images.length]);
+  }, [embla, index, slideCount]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
@@ -185,6 +207,8 @@ export function ImageDetailCarousel({
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
+  // The slide the last commit settled on, seeded like `settledIndex`.
+  const committedRef = useRef(index);
 
   useEffect(() => {
     if (!embla) return;
@@ -196,8 +220,16 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
+      committedRef.current = current;
       setSettledIndex(current);
       onSettleRef.current?.(current);
+    };
+
+    // A reInit keeps embla's slide, so one that left it where the last commit did owes no settle.
+    // Committing it anyway would announce the slide being left as the one landed on: the URL
+    // would move back to it while the carousel goes on to the index the parent just set.
+    const commitIfMoved = () => {
+      if (embla.selectedScrollSnap() !== committedRef.current) commit();
     };
 
     // 'settle' only fires from the animation loop, so anything that destroys the
@@ -209,10 +241,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
+    embla.on('settle', commit).on('reInit', commitIfMoved).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
+      embla.off('settle', commit).off('reInit', commitIfMoved).off('select', armFallback);
     };
   }, [embla]);
 
@@ -220,7 +252,7 @@ export function ImageDetailCarousel({
     embla?.reInit();
   });
 
-  if (!images.length) return null;
+  if (!slideCount) return null;
 
   return (
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
@@ -237,8 +269,12 @@ export function ImageDetailCarousel({
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
-            {images.map((image, i) => (
-              <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
+            {(items ?? imageSlides.map(asImageItem)).map((item, i) => (
+              <Embla.Slide
+                key={item.type === 'image' ? item.image.id : item.key}
+                index={i}
+                className="flex-[0_0_100%]"
+              >
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
                     Neighbors key off the settled index so a new full-size decode never
@@ -246,16 +282,19 @@ export function ImageDetailCarousel({
                     isn't mounted yet, so a drag started in that window reveals it late;
                     the fallback timer above bounds how long that can last. */}
                 {() =>
-                  (i === index || isAdjacent(i, settledIndex, images.length, loop)) && (
+                  (i === index || isAdjacent(i, settledIndex, slideCount, loop)) &&
+                  (item.type === 'text' ? (
+                    <TextSlide text={item.text} userId={textUserId} {...connect} />
+                  ) : (
                     <ImageContent
-                      image={image}
+                      image={item.image}
                       active={index === i}
                       hatLayer={hatLayer}
                       embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
-                  )
+                  ))
                 }
               </Embla.Slide>
             ))}
@@ -266,6 +305,10 @@ export function ImageDetailCarousel({
       <div ref={setHatLayer} className="pointer-events-none absolute inset-0 isolate" />
     </div>
   );
+}
+
+function asImageItem(image: ImageProps): CarouselItem {
+  return { type: 'image', key: `img:${image.id}`, image };
 }
 
 function ImageContent({
@@ -289,6 +332,12 @@ function ImageContent({
     defaultValue: true,
   });
   const features = useFeatureFlags();
+  // Optional: the carousel also renders without a session provider.
+  const session = useOptionalCivitaiSessionContext();
+  const retractedSrc =
+    features.modRetractedMedia && session?.type === 'authed'
+      ? retractedMediaUrl(image, session)
+      : null;
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -339,6 +388,14 @@ function ImageContent({
             >
               <MediaHash {...image} />
             </div>
+          ) : retractedSrc ? (
+            <RetractedMedia
+              src={retractedSrc}
+              type={image.type}
+              alt={image.name ?? undefined}
+              className="max-h-full w-auto max-w-full"
+              controls={active}
+            />
           ) : (
             <EdgeMedia
               // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,

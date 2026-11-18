@@ -75,7 +75,7 @@ const logCacheFailure = (error: unknown) => {
     type: 'warning',
     message: 'Access log cache unavailable',
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
   return null;
 };
 
@@ -93,7 +93,7 @@ export async function readServiceDealFileAccess(dealIds: number[]) {
       type: 'error',
       message: 'Could not read deal file accesses',
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
     return null;
   }
 }

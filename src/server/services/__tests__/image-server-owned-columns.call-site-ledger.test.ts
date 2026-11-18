@@ -80,15 +80,16 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
+  'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see
   // CONNECT_EXISTING_LEDGER) and collection.addSimpleImagePost (no id).
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
-  // Bounty images: an `id` keeps or links an existing image; updateEntityImages checks links.
-  'src/server/schema/bounty.schema.ts': { imageReferenceInputSchema: 2 },
-  'src/server/schema/bounty-entry.schema.ts': { imageReferenceInputSchema: 2 },
+  // Bounty and entry images (bounty-entry.schema reuses `bountyImagesSchema`): an `id` keeps or
+  // links an existing image; updateEntityImages checks links.
+  'src/server/schema/bounty.schema.ts': { comfylessImageSchema: 2 },
   // Moderator-only routes.
   'src/server/schema/cosmetic-shop.schema.ts': { comfylessImageSchema: 2 },
   'src/server/schema/purchasable-reward.schema.ts': { comfylessImageSchema: 2 },
@@ -196,15 +197,20 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
  * Every function calling `createImage`, with what it spreads in and which server-owned
  * columns it passes. Only addPostImage passes a `postId`/`index`, and only after checking
  * the post belongs to the caller.
+ *
+ * `clientUrl`: each call's `clientUrl` value, in source order, `null` where it passes none.
+ * Omitted: no call passes one. A call whose `url` came from the client must pass it, or
+ * `createImage` never checks the url's upload keys were issued to the caller.
  */
 const CREATE_IMAGE_CALLER_LEDGER: Record<
   string,
-  { calls: number; spreads: string[]; serverColumns: string[] }
+  { calls: number; spreads: string[]; serverColumns: string[]; clientUrl?: (string | null)[] }
 > = {
   'src/server/services/post.service.ts#addPostImage': {
     calls: 1,
     spreads: ['imageProps'],
     serverColumns: [],
+    clientUrl: ['serverMintedUrl ? undefined : true'],
   },
   // `productionCoverImageDeps.createImage`, a pass-through counted under the function above it.
   'src/server/services/cover-image.service.ts#logExistenceUnknown': {
@@ -222,14 +228,22 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 1,
     spreads: ['pickClientImageColumns(customThumbnail)'],
     serverColumns: [],
+    clientUrl: ['{ alsoIssuedTo: userId }'],
   },
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
     spreads: ['storedObjectEtagMetadata(measured.etag)', 'blurhashMetadata(blur)'],
     serverColumns: [],
+    clientUrl: ['true'],
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
+  // `metadata` is built before the call from the staged bytes' own metadata and the source ref.
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage': {
     calls: 1,
     spreads: [],
     serverColumns: [],
@@ -258,6 +272,7 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 1,
     spreads: ['storedObjectEtagMetadata(measured.etag)'],
     serverColumns: [],
+    clientUrl: ['true'],
   },
   'src/server/services/orchestrator/handlers/polyGen.handler.ts#ingestThumbnailImage': {
     calls: 1,
@@ -279,6 +294,9 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 11,
     spreads: [],
     serverColumns: [],
+    // pollPanelStatus, unlockPanelGeneration and selectPanelImage store generation output the
+    // server downloaded itself; every other url here came from the client.
+    clientUrl: ['true', 'true', 'true', 'true', 'true', 'true', null, null, null, 'true', 'true'],
   },
 };
 
@@ -313,6 +331,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   'src/server/services/challenge.service.ts#upsertChallengeEvent': {
     calls: 1,
     decision: 'moderator-route',
+  },
+  // A service cover the seller supplies by id must be their own image, or the offering's current cover.
+  'src/server/services/creator-service.service.ts#resolveServiceCoverImageId': {
+    calls: 1,
+    decision: 'assertOwnership',
   },
   // The crucible inputs' cover and hero schemas have no `id`.
   'src/server/services/crucible.service.ts#createCrucible': {
@@ -469,7 +492,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     },
   },
   'src/server/routers/comics.router.ts#createProject': {
-    writes: ['coverImageId: image.id', 'heroImageId: image.id'],
+    writes: ['coverImageId: cover?.id ?? null', 'heroImageId: hero?.id ?? null'],
     decision: 'server-derived',
   },
   'src/server/routers/comics.router.ts#duplicateChapter': {
@@ -606,6 +629,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     ],
     decision: 'moderator-route',
   },
+  'src/server/services/creator-service.service.ts#upsertServiceOffering': {
+    writes: ['coverImageId', 'coverImageId'],
+    decision: 'resolver',
+  },
   'src/server/services/crucible.service.ts#createCrucible': {
     writes: ['imageId', 'heroImageId'],
     decision: 'resolver',
@@ -643,7 +670,9 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['thumbnailImageId', 'sourceImageId'],
     decision: 'server-derived',
   },
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  // Reached from addResourceToPostImage behind the route guard, and from scheduleBatch with the
+  // images it just created.
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     writes: ['imageId'],
     decision: 'route-guard',
   },
@@ -666,7 +695,8 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
     writes: ['imageId'],
     decision: 'owner-checked',
-    guards: { imageId: 'if (image.post.userId !== userId)' },
+    // The author check is assertChapterPostAuthor's first line.
+    guards: { imageId: 'await assertChapterPostAuthor({' },
   },
   // The spark: someone else's image by design, refused unless it may be shown, is outside a block
   // with the starter and its creator's remix gallery is open. Written once, here.
@@ -687,10 +717,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
   },
-  'src/server/services/text-scan/actions/image-caption.ts#applyImageCaptionTextScan': {
-    writes: ['imageId: entityId'],
-    decision: 'server-derived',
-  },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
     decision: 'subject',
@@ -704,7 +730,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */
 const ROUTE_GUARDS: Record<string, { router: string; procedure: string }> = {
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     router: 'src/server/routers/post.router.ts',
     procedure:
       'addResourceToImage: verifiedProcedure .meta({ requiredScope: TokenScope.MediaWrite }) .input(addResourceToPostImageInput) .use(isImageOwnerOrModerator) .mutation(addResourceToPostImageHandler)',
@@ -841,6 +867,15 @@ function spreadsOf(region: string): string[] {
 
 const SERVER_COLUMN = /(?<![\w.])(['"]?)(id|postId|index)\1\s*:\s*([^,\n}]+)/g;
 const SERVER_COLUMN_SHORTHAND = /[{,]\s*(id|postId|index)\s*(?=[,}\n])/g;
+/** The call's `clientUrl` value, whitespace-collapsed, or null. */
+function clientUrlOf(region: string): string | null {
+  const text = withoutSelects(region);
+  const m = /(?<![\w.])clientUrl\s*(?::\s*(\{|[^,\n}]+)|(?=[,}\s]))/.exec(text);
+  if (!m) return null;
+  if (m[1] === '{') return collapse(balanced(text, m.index + m[0].length - 1, '{', '}'));
+  return collapse(m[1] ?? 'clientUrl');
+}
+
 function serverColumnsOf(region: string): string[] {
   const text = withoutSelects(region);
   return [
@@ -1013,6 +1048,12 @@ describe('createImage callers', () => {
       calls: countsOf(calls),
       spreads: merged(calls, spreadsOf),
       serverColumns: merged(calls, serverColumnsOf),
+      clientUrl: Object.fromEntries(
+        keysOf(calls).map((k) => [
+          k,
+          calls.filter((s) => s.key === k).map((s) => clientUrlOf(s.region)),
+        ])
+      ),
     }).toEqual({
       calls: Object.fromEntries(
         Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [k, v.calls])
@@ -1022,6 +1063,12 @@ describe('createImage callers', () => {
       ),
       serverColumns: Object.fromEntries(
         Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [k, v.serverColumns])
+      ),
+      clientUrl: Object.fromEntries(
+        Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [
+          k,
+          v.clientUrl ?? Array<null>(v.calls).fill(null),
+        ])
       ),
     });
   });

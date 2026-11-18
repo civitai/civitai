@@ -20,7 +20,6 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionClient>()),
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
 }));
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
@@ -44,7 +43,7 @@ const routes: { name: string; method: string; path: string; handler: Handler }[]
 const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null };
 const MEMBER = { ...MODERATOR, isModerator: false };
 
-const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = MODERATOR) => ({
+const nonOauthKey = (apiKeyType: string | undefined, tokenScope: bigint, user = MODERATOR) => ({
   user,
   apiKeyId: 11,
   ...(apiKeyType ? { apiKeyType } : {}),
@@ -52,7 +51,7 @@ const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = 
   tokenScope,
   buzzLimit: null,
 });
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 12,
   apiKeyType: 'Access',

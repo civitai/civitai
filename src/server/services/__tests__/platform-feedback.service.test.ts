@@ -484,12 +484,20 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
     expect(await countRows(pg, 'Feedback')).toBe(1);
   });
 
-  it('clips an over-long public note to 300 characters, on both procedures', async () => {
+  it('returns a 1000-character public note whole, on both procedures', async () => {
     const { ref } = await send(alice);
     await setStatus(1, 'dismissed');
-    await setResolution(1, { publicNote: `${'N'.repeat(300)}OVER` });
-    expect((await send(bob)).note).toBe('N'.repeat(300));
-    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(300) });
+    await setResolution(1, { publicNote: 'N'.repeat(1000) });
+    expect((await send(bob)).note).toBe('N'.repeat(1000));
+    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(1000) });
+  });
+
+  it('clips an over-long public note to 1000 characters, on both procedures', async () => {
+    const { ref } = await send(alice);
+    await setStatus(1, 'dismissed');
+    await setResolution(1, { publicNote: `${'N'.repeat(1000)}OVER` });
+    expect((await send(bob)).note).toBe('N'.repeat(1000));
+    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(1000) });
   });
 
   it('reads an empty public note as no note', async () => {

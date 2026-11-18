@@ -12,6 +12,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { ResourceReviewProgressCard } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewProgressCard';
 import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
 import { PostEditModelLink } from '~/components/Post/EditV2/PostEditModelLink';
 import { postEditEventCard } from '~/components/Post/EditV2/post-edit-event-card.utils';
@@ -510,6 +511,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           {storylinePublish.caption}
         </Text>
       )}
+
+      <ResourceReviewProgressCard postId={post.id} ownerId={post.user.id} />
 
       {eventCard && <PostEditEventCard {...eventCard} />}
 

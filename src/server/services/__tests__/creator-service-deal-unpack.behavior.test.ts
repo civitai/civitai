@@ -174,6 +174,7 @@ const MIGRATIONS = [
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
+  '20270106120000_service_offering_content_scan',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -305,7 +306,8 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
+      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
@@ -350,8 +352,8 @@ beforeEach(async () => {
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
-    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
-      VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'None', 'Active', now());
+    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
+      VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'None', 'Active', 'Scanned', now());
   `);
 });
 
@@ -1497,7 +1499,7 @@ describe('the finals malware scan', () => {
         ]),
         'Retry',
       ],
-      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Retry'],
+      ['pickle parse error', workflow('succeeded', [CLEAN, pickle('parseError')]), 'Failed'],
       ['pickle step missing', workflow('succeeded', [CLEAN]), 'Retry'],
       [
         'clean, counted in the step output',
@@ -1534,6 +1536,37 @@ describe('the finals malware scan', () => {
       ['clean but the workflow failed', workflow('failed', [CLEAN, NOT_PICKLE]), 'Retry'],
       ['expired', workflow('expired', []), 'Retry'],
       ['canceled', workflow('canceled', []), 'Retry'],
+      [
+        'encrypted content the virus scan could not read',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'a virus scan stopped at a limit',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'limitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'a virus scan stopped at a limit, in another case',
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'LimitsExceeded', scannedFileCount: 1 } },
+          NOT_PICKLE,
+        ]),
+        'Failed',
+      ],
+      [
+        'encrypted content while the workflow still runs',
+        workflow('processing', [
+          { $type: 'modelClamScan', output: { status: 'encrypted', scannedFileCount: 1 } },
+        ]),
+        'Failed',
+      ],
       [
         'an unknown virus status',
         workflow('succeeded', [{ $type: 'modelClamScan', output: { status: 'new' } }, NOT_PICKLE]),

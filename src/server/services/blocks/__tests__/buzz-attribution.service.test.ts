@@ -32,6 +32,7 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
     oauthClient: { findUnique: vi.fn() },
     blockBuzzAttribution: { findUnique: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn() },
     blockGoodPurchase: { groupBy: vi.fn() },
+    blockAuthorFeeAccrual: { groupBy: vi.fn(), findMany: vi.fn() },
   },
   mockDbWrite: {
     blockBuzzAttribution: {
@@ -59,13 +60,14 @@ import {
   emptyGoodsSales,
   emptyRevenue,
   getGoodsSalesForOwner,
-  getRevenueForOwner,
   isMissingGoodsTableError,
   unreadableGoodsSales,
+  unreadableIfGoodsTableMissing,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
   voidAttributionsForPayment,
 } from '../buzz-attribution.service';
+import { getAuthorFeeEarningsForOwner } from '../author-fee-earnings.service';
 import type { BlockAttribution } from '~/server/schema/blocks/attribution.schema';
 import { ACTIVE_RATE_CARD } from '../rate-card';
 
@@ -471,7 +473,7 @@ describe('REFUND_WINDOWS_DAYS', () => {
 
 /**
  * The fabricated-zero discriminator. `emptyRevenue()` is the dark-flag
- * placeholder; `getRevenueForOwner` is the real measurement. Both can return
+ * placeholder; `getAuthorFeeEarningsForOwner` is the real measurement. Both can return
  * every bucket at 0, so the ONLY thing a client can branch on is `unavailable`.
  * This describe is the authority for the real function's behaviour — the router
  * test mocks `emptyRevenue` at the module boundary and therefore cannot prove it.
@@ -483,12 +485,15 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
 
   it('still zeroes every bucket (the placeholder shape is unchanged otherwise)', () => {
     const empty = emptyRevenue();
-    expect(empty.summary.pending).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
-    expect(empty.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
-    expect(empty.summary.paidOut).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
-    expect(empty.summary.voided).toEqual({ count: 0, grossCents: 0 });
-    expect(empty.topApps).toEqual([]);
-    expect(empty.recentAttributions).toEqual([]);
+    expect(empty.authorFees).toStrictEqual({
+      accrued: { count: 0, feeBuzz: 0, byBuzzType: {} },
+      settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
+      byApp: [],
+      recent: [],
+      paidWindowDays: null,
+    });
+    // The card-purchase share is not part of the payload at all.
+    expect(Object.keys(empty).sort()).toEqual(['authorFees', 'goods', 'unavailable']);
     // The goods rail is a bucket too, and this test's name claims EVERY bucket.
     // Without this line the dark-flag payload could grow a non-zero sales figure
     // and the assertion that is supposed to notice would still pass.
@@ -509,22 +514,22 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
     // Every aggregate legitimately returns nothing — a real measurement of "this
     // publisher has earned nothing yet". It must stay unflagged, or the fix hides
     // a dashboard the publisher is entitled to see.
-    mockDbRead.blockBuzzAttribution.aggregate.mockReset();
-    mockDbRead.blockBuzzAttribution.aggregate.mockResolvedValue({
-      _count: 0,
-      _sum: { usdAmountCents: null, appOwnerShareCents: null },
-    });
-    mockDbRead.blockBuzzAttribution.groupBy.mockReset();
-    mockDbRead.blockBuzzAttribution.groupBy.mockResolvedValue([]);
+    mockDbRead.blockAuthorFeeAccrual.groupBy.mockReset();
+    mockDbRead.blockAuthorFeeAccrual.groupBy.mockResolvedValue([]);
+    mockDbRead.blockAuthorFeeAccrual.findMany.mockReset();
+    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([]);
 
-    const measured = await getRevenueForOwner({ ownerUserId: APP_OWNER_USER_ID });
+    const measured = await getAuthorFeeEarningsForOwner({ ownerUserId: APP_OWNER_USER_ID });
     const placeholder = emptyRevenue();
 
     // Precondition: the buckets really are identical, so nothing else could tell
     // these two apart. If this assertion ever fails the discriminator has stopped
-    // being the only signal and this test is no longer proving what it claims.
-    expect(measured.summary).toEqual(placeholder.summary);
-    expect(measured.topApps).toEqual(placeholder.topApps);
+    // being the only signal and this test is no longer proving what it claims. (The window
+    // marker differs by design — a measurement says which window it covers — and is not a
+    // bucket.)
+    const { paidWindowDays: _measuredWindow, ...measuredBuckets } = measured;
+    const { paidWindowDays: _placeholderWindow, ...placeholderBuckets } = placeholder.authorFees;
+    expect(measuredBuckets).toEqual(placeholderBuckets);
 
     // The measured payload carries no discriminator at all; the placeholder does.
     expect('unavailable' in measured).toBe(false);
@@ -545,6 +550,33 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
  * name, so an aggregate that read the wrong `_sum` field, the wrong status bucket
  * or the wrong row count cannot land on a right-looking number by coincidence.
  */
+describe('unreadableIfGoodsTableMissing — the one degradation the goods rail allows', () => {
+  it('a missing table gives the UNREADABLE summary and logs with the caller’s context', async () => {
+    mockLog.mockClear();
+    const missing = Object.assign(new Error('The table `block_good_purchase` does not exist'), {
+      code: 'P2021',
+    });
+    const result = await unreadableIfGoodsTableMissing(Promise.reject(missing), {
+      appBlockId: 'apb_ctx',
+    });
+    expect(result).toStrictEqual(unreadableGoodsSales());
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-goods-earnings', appBlockId: 'apb_ctx' }),
+      'civitai-prod'
+    );
+  });
+
+  it('any other error RETHROWS, unchanged', async () => {
+    const other = Object.assign(new Error('Unknown argument `bluePaidBuzz`'), { code: 'P2009' });
+    await expect(unreadableIfGoodsTableMissing(Promise.reject(other), {})).rejects.toBe(other);
+  });
+
+  it('a successful read passes through untouched (control)', async () => {
+    const sales = emptyGoodsSales();
+    await expect(unreadableIfGoodsTableMissing(Promise.resolve(sales), {})).resolves.toBe(sales);
+  });
+});
+
 describe('getGoodsSalesForOwner — the goods → earnings bridge', () => {
   const GOODS_OWNER = 4242;
 

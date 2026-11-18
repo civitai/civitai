@@ -11,6 +11,7 @@
  */
 
 import { ModelType, type MediaType } from '@civitai/db-schema/enums';
+import { NsfwLevel } from './browsing-levels';
 import { lazy } from './lazy';
 import { isDefined } from './type-guards';
 
@@ -117,7 +118,6 @@ export type LicenseRecord = {
   // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
-  disableMature?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
   // License requires derivatives to carry the same license.
@@ -140,7 +140,17 @@ export type BaseModelRecord = {
   disabled?: boolean; // Disables ALL support types (generation, training, auction, etc.)
   licenseId?: number;
   experimental?: boolean; // If true, show experimental warning in generation UI
+  // Where mature content is restricted, as the terms governing our use of this base model
+  // require. The only definition; see isMatureRestricted.
+  matureRestricted?: readonly MatureRestrictedSurface[];
 };
+
+/**
+ * - `generation`: our generator caps output below the mature levels.
+ * - `models`: models that carry mature content can't be published on the base model.
+ * - `images`: posted images at a mature level that use it are flagged and hidden.
+ */
+export type MatureRestrictedSurface = 'generation' | 'models' | 'images';
 
 // =============================================================================
 // Ecosystem Constants
@@ -216,6 +226,7 @@ export const ECO = {
   LTXV25: 81,
   Sora2: 43,
   Veo3: 44,
+  GeminiOmni: 98,
   SVD: 45,
   Vidu: 47,
   MiniMaxH3: 48,
@@ -236,6 +247,10 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
+  // MiniMax's image model. Its own ecosystem, not a MiniMaxH3 version: separate weights, and
+  // H3 video LoRAs do not apply to it.
+  MiniMaxH3Image: 97,
+  Fibo2: 99,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -622,6 +637,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 7,
     sortOrder: 72,
   },
+  {
+    id: ECO.GeminiOmni,
+    key: 'GeminiOmni',
+    displayName: 'Gemini Omni',
+    familyId: 7,
+    sortOrder: 73,
+  },
 
   // OpenAI Family (familyId: 8)
   {
@@ -872,6 +894,13 @@ export const ecosystems: EcosystemRecord[] = [
     // txt2vid + img2vid (no vid2vid support currently)
   },
   {
+    id: ECO.MiniMaxH3Image,
+    key: 'MiniMaxH3Image',
+    displayName: 'MiniMax H3 Image',
+    familyId: 26,
+    sortOrder: 165,
+  },
+  {
     id: ECO.Kling,
     key: 'Kling',
     displayName: 'Kling',
@@ -946,6 +975,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MOSS Image',
     familyId: 29,
     sortOrder: 272,
+  },
+
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
   },
 
   // Audio ecosystems
@@ -1070,6 +1108,10 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux3Klein_base',
   // ComfyMossImage{Sft,Base}CreateImageInput
   'MossImage',
+  // ComfyMiniMaxH3{Create,Edit}ImageInput
+  'MiniMaxH3Image',
+  // ComfyFibo2DevCreateImageInput, ComfyFibo2EditTurboEditImageInput
+  'Fibo2',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1244,6 +1286,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // GeminiOmni - checkpoint only
+  { ecosystemId: ECO.GeminiOmni, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Grok - checkpoint only
   { ecosystemId: ECO.Grok, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1289,6 +1334,10 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
+  // MiniMax H3 Image - no training row: training is not wired yet.
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointAndLora },
+  // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
+  { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1728,6 +1777,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.GeminiOmni,
+    defaults: {
+      model: { id: 3465115 },
+      modelLocked: true,
+      engine: 'gemini-omni',
+    },
+  },
+  {
     ecosystemId: ECO.NanoBanana,
     defaults: {
       model: { id: 2154472 },
@@ -1787,6 +1844,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
       // The comfy variant, not the hosted API one: it is the version the model
       // page publishes, and the only one that takes LoRAs.
       model: { id: 3216500 },
+    },
+  },
+  {
+    ecosystemId: ECO.MiniMaxH3Image,
+    defaults: {
+      model: { id: 3463368 },
+    },
+  },
+  {
+    ecosystemId: ECO.Fibo2,
+    defaults: {
+      model: { id: 3469179 },
+      // No published settings for Fibo's turbo LoRA; borrows the MOSS few-step, CFG-free band.
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -2441,6 +2512,10 @@ export const BM = {
   Flux3Klein: 115,
   Flux3Klein_base: 116,
   MossImage: 117,
+  MiniMaxH3Image: 118,
+  GeminiOmni: 119,
+  Fibo2: 120,
+  Fibo2Turbo: 121,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2499,7 +2574,6 @@ export const licenses: LicenseRecord[] = [
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 5,
@@ -2509,7 +2583,6 @@ export const licenses: LicenseRecord[] = [
     notice:
       'Stable Video Diffusion is licensed under the Stable Video Diffusion Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 6,
@@ -2528,7 +2601,6 @@ export const licenses: LicenseRecord[] = [
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    disableMature: true,
     nonCommercial: true,
   },
   {
@@ -2538,7 +2610,6 @@ export const licenses: LicenseRecord[] = [
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 10,
@@ -2717,7 +2788,6 @@ export const licenses: LicenseRecord[] = [
     // Section 3(iii) wording, URL included: the licence’s own link drops /blob/main/ and 404s.
     notice:
       'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://github.com/ideogram-oss/ideogram4/blob/main/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL. All rights reserved. Copyright © Ideogram, Inc.',
-    disableMature: true,
     nonCommercial: true,
     // Redistribution must be on terms no less restrictive.
     requiresSameLicense: true,
@@ -2798,7 +2868,6 @@ export const licenses: LicenseRecord[] = [
     id: 47,
     name: 'Ideogram Developer API Agreement and Policy',
     url: 'https://ideogram.ai/legal/api-tos',
-    disableMature: true,
   },
   {
     id: 48,
@@ -2860,6 +2929,27 @@ export const licenses: LicenseRecord[] = [
     url: 'https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE',
     notice:
       'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
+  },
+  {
+    id: 55,
+    name: 'MiniMax-H3-Image Community License Agreement',
+    // Permalinked to the 10 Nov 2026 revision, as for id 41.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    // Section IV.2 wants exactly "MiniMax-H3-Image" on the UI, which the "MiniMax H3 Image"
+    // label does not match, so it is shown under the generate button.
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
+  {
+    id: 56,
+    // Civitai's own terms for Fibo on the platform, not the CC BY-NC licence of Bria's public weights.
+    name: 'FIBO 2.0 Platform License',
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    poweredBy: 'Powered by Bria AI',
+    requiresSameLicense: true,
   },
 ];
 
@@ -3014,6 +3104,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 29,
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
+  },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
   },
 ];
 
@@ -3182,6 +3277,28 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
   {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
+  {
+    id: BM.Fibo2Turbo,
+    name: 'Fibo 2.0 Turbo',
+    description: "Bria AI's Fibo 2.0 with Turbo distillation for few-step image editing",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
+  {
     id: BM.Flux3Video,
     name: 'Flux 3 Video',
     description: "Black Forest Labs' FLUX 3 video generation model with native audio",
@@ -3255,6 +3372,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.Ideogram45,
@@ -3264,6 +3382,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Ideogram,
     hidden: true,
     licenseId: 47,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // Boogu
@@ -3295,6 +3414,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Imagen4,
     hidden: true,
     licenseId: 21,
+    matureRestricted: ['generation'],
   },
 
   // Kolors
@@ -3332,6 +3452,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Krea3,
     hidden: true,
     licenseId: 28,
+    matureRestricted: ['generation'],
   },
 
   // LTXV
@@ -3366,6 +3487,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.LTXV25,
     licenseId: 40,
+    matureRestricted: ['generation'],
   },
 
   // Lens
@@ -3427,6 +3549,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.NanoBanana,
     hidden: true,
     licenseId: 21,
+    matureRestricted: ['generation'],
   },
 
   // NoobAI
@@ -3570,6 +3693,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SCascade,
     hidden: true,
     licenseId: 8,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // SD 1.x
@@ -3662,6 +3786,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35,
@@ -3673,6 +3798,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35Large,
@@ -3684,6 +3810,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35LargeTurbo,
@@ -3695,6 +3822,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35Medium,
@@ -3706,6 +3834,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // SDXL
@@ -3760,6 +3889,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     hidden: true,
     disabled: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SDXLDistilled,
@@ -3812,6 +3942,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     hidden: true,
     disabled: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SVDXT,
@@ -3822,6 +3953,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     hidden: true,
     disabled: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // Sora 2
@@ -3844,6 +3976,19 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Veo3,
     hidden: true,
     licenseId: 22,
+    matureRestricted: ['generation'],
+  },
+
+  // Gemini Omni
+  {
+    id: BM.GeminiOmni,
+    name: 'Gemini Omni',
+    description: "Google's Gemini Omni Flash video generation model",
+    type: 'video',
+    ecosystemId: ECO.GeminiOmni,
+    hidden: true,
+    licenseId: 22,
+    matureRestricted: ['generation'],
   },
 
   // Wan Video
@@ -4000,6 +4145,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Vidu,
     hidden: true,
     licenseId: 32,
+    matureRestricted: ['generation'],
   },
 
   // MiniMax H3
@@ -4012,6 +4158,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 41,
   },
 
+  // MiniMax H3 Image
+  {
+    id: BM.MiniMaxH3Image,
+    name: 'MiniMax H3 Image',
+    description: "MiniMax's image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MiniMaxH3Image,
+    licenseId: 55,
+  },
+
   // Kling
   {
     id: BM.Kling,
@@ -4021,6 +4177,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Kling,
     hidden: true,
     licenseId: 34,
+    matureRestricted: ['generation'],
   },
 
   // Seedance
@@ -4071,6 +4228,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.Sonilo,
     licenseId: 46,
+    matureRestricted: ['generation'],
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
@@ -4085,6 +4243,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.PolyGen,
     licenseId: 52,
     hidden: true,
+    matureRestricted: ['generation'],
   },
   // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
   // resource-less, hidden-from-picker convention as PolyGen above.
@@ -4096,6 +4255,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Tripo,
     licenseId: 53,
     hidden: true,
+    matureRestricted: ['generation'],
   },
   {
     id: BM.Hunyuan3D,
@@ -4619,6 +4779,35 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'generation');
   });
+}
+
+/** Only moderators may put a version on a hidden base model; see `getActiveBaseModels`. */
+export function isHiddenBaseModel(baseModel: string): boolean {
+  return !!baseModelByName.get(baseModel)?.hidden;
+}
+
+/** The levels a mature restriction covers. */
+export const MATURE_RESTRICTED_LEVELS: readonly number[] = [
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+];
+
+// Lowercased: a stored base-model string differing only in case must still be restricted.
+const baseModelByLowerName = new Map(baseModelRecords.map((m) => [m.name.toLowerCase(), m]));
+
+export function isMatureRestricted(
+  baseModel: string | null | undefined,
+  surface: MatureRestrictedSurface
+): boolean {
+  return (
+    !!baseModel &&
+    !!baseModelByLowerName.get(baseModel.toLowerCase())?.matureRestricted?.includes(surface)
+  );
+}
+
+export function matureRestrictedBaseModels(surface: MatureRestrictedSurface): string[] {
+  return baseModelRecords.filter((m) => m.matureRestricted?.includes(surface)).map((m) => m.name);
 }
 
 let modelLockedBaseModelSet: Set<string> | undefined;

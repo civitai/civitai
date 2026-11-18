@@ -154,7 +154,7 @@ export const removeReplacedImages = createJob(
       deleted: deleted.length,
       readopted: readopted.size,
       heldAtDelete: held.size,
-    }).catch(() => undefined);
+    });
 
     return { deleted: deleted.length, readopted: readopted.size, heldAtDelete: held.size };
   },

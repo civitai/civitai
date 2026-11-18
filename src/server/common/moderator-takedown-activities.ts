@@ -23,7 +23,8 @@
  * DELIBERATELY EXCLUDED — the rest of that enumeration, every one of them moderator-written and
  * none of them a decision to destroy the bytes: 'bulkRestore', 'resolveAppeal', 'setNsfwLevel',
  * 'setNsfwLevelKono' and 'moderateTag', plus the flag activities the moderator app spells
- * dynamically as `poi:<bool>` / `minor:<bool>`.
+ * dynamically as `poi:<bool>` / `minor:<bool>`, and the moderator app's `clearMinor` /
+ * `minorQueueAccept`, which its `acceptImage` writes beside a `review` row.
  *
  * Adding a value here widens who can trigger a retraction. Say why, in the same commit.
  */

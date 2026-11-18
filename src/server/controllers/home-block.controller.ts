@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
@@ -12,6 +13,7 @@ import {
   deleteHomeBlockById,
   getFeaturedCollectionsPool,
   getHomeBlockById,
+  resolveHomeBlockSource,
   getHomeBlockData,
   getHomeBlocks,
   getSystemHomeBlocks,
@@ -20,9 +22,12 @@ import {
   upsertHomeBlock,
 } from '~/server/services/home-block.service';
 import { filterViewableHomeBlocks, isHomeBlockGated } from '~/server/services/home-block-access';
+import { eventViewerOf } from '~/server/events/event-viewer';
+import { getCollectionBlockAudience } from '~/server/services/home-block-collection-access';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -39,7 +44,6 @@ import type {
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
-import { isDefined } from '~/utils/type-guards';
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -55,7 +59,7 @@ export const getHomeBlocksHandler = async ({
       userId: ctx.user?.id,
       ownedOnly,
       includeSource: true,
-      viewer: ctx.user,
+      viewer: eventViewerOf(ctx),
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -80,7 +84,7 @@ export const getHomeBlocksHandler = async ({
       homeBlocks = await getHomeBlocks({
         ids: systemHomeBlockIds,
         includeSource: true,
-        viewer: ctx.user,
+        viewer: eventViewerOf(ctx),
       });
     }
 
@@ -88,12 +92,43 @@ export const getHomeBlocksHandler = async ({
       const coverage = await coverageAudience(ctx.user ?? undefined);
       // Get the core data for each home block:
       const homeBlocksWithData = await Promise.all(
-        homeBlocks.map((homeBlock) => {
-          return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
+        homeBlocks.map(async (homeBlock) => {
+          // Saving the editor removes any of the viewer's blocks it did not list, so a block that
+          // cannot be shown (not readable, nothing to render, or failing to render) is listed
+          // without its data.
+          const unlisted = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
+          if (homeBlock.type === HomeBlockType.Collection) {
+            const { fromSystem } = await resolveHomeBlockSource(homeBlock);
+            const audience = await getCollectionBlockAudience({
+              blockUserId: fromSystem ? -1 : homeBlock.userId,
+              collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
+              viewer: eventViewerOf(ctx),
+            });
+            if (audience === 'none') return unlisted;
+          }
+          const data = await getHomeBlockData({
+            homeBlock,
+            user: ctx.user,
+            ...credentialViews(ctx),
+            input,
+            coverage,
+          }).catch((error) => {
+            if (!(error instanceof TRPCError && error.code === 'NOT_FOUND'))
+              logToAxiom({
+                name: 'home-block-editor-list',
+                type: 'error',
+                message: 'a block failed to render; listed without its data',
+                homeBlockId: homeBlock.id,
+                homeBlockType: homeBlock.type,
+                error: (error as Error)?.message,
+              });
+            return null;
+          });
+          return data ?? unlisted;
         })
       );
 
-      return homeBlocksWithData.filter(isDefined);
+      return homeBlocksWithData;
     }
 
     return homeBlocks.map((homeBlock) => ({
@@ -116,7 +151,7 @@ export const getSystemHomeBlocksHandler = async ({
     const { excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
     const _homeBlocks = await filterViewableHomeBlocks(
       await getSystemHomeBlocks({ input }),
-      ctx.user
+      eventViewerOf(ctx)
     );
 
     const homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -148,9 +183,13 @@ export const getHomeBlocksByIdHandler = async ({
   input: GetHomeBlockByIdInputSchema & UserPreferencesInput;
 }): Promise<HomeBlockWithData> => {
   try {
+    let viewerOnly = false;
     const homeBlock = await getHomeBlockById({
       ...input,
-      viewer: ctx.user,
+      viewer: eventViewerOf(ctx),
+      onViewerOnly: () => {
+        viewerOnly = true;
+      },
     });
 
     // `&& ctx.cache` because `ctx.cache` really is null on the SSG prefetch path —
@@ -167,10 +206,19 @@ export const getHomeBlocksByIdHandler = async ({
     // `model.controller.getModelsInfiniteHandler` does not.
     if (
       homeBlock &&
-      (homeBlock.type === HomeBlockType.Announcement || isHomeBlockGated(homeBlock)) &&
+      (homeBlock.type === HomeBlockType.Announcement ||
+        isHomeBlockGated(homeBlock) ||
+        viewerOnly) &&
       ctx.cache
-    )
+    ) {
       ctx.cache.skip = true;
+      // Shown to this viewer only: no shared cache may keep it, the browser's included.
+      if (viewerOnly) {
+        ctx.cache.canCache = false;
+        ctx.cache.edgeTTL = 0;
+        ctx.cache.browserTTL = 0;
+      }
+    }
 
     if (!homeBlock) {
       throw throwNotFoundError('Home block not found');
@@ -234,14 +282,12 @@ export const deleteUserHomeBlockHandler = async ({
   const { id: userId, isModerator } = ctx.user;
 
   try {
-    const homeBlock = await getHomeBlockById({ ...input, viewer: ctx.user });
-    if (!homeBlock) throw throwNotFoundError(`No home block with id ${input.id}`);
-
-    if (!isModerator && homeBlock.userId !== userId) throw throwAuthorizationError();
-
+    // Only the owner (or a moderator) may delete, which `deleteHomeBlockById` checks against the
+    // row itself, so a block is deletable whatever it would render for its owner.
     const deleted = await deleteHomeBlockById({
-      input: { ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator },
+      input: { ...input, userId, isModerator },
     });
+    if (!deleted) throw throwNotFoundError(`No home block with id ${input.id}`);
 
     return deleted;
   } catch (error) {
@@ -258,7 +304,10 @@ export const setHomeBlocksOrderHandler = async ({
   input: SetHomeBlocksOrderInputSchema;
 }) => {
   try {
-    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id }, viewer: ctx.user });
+    await setHomeBlocksOrder({
+      input: { ...input, userId: ctx.user.id },
+      viewer: eventViewerOf(ctx),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -86,21 +86,21 @@ describe('needsAttention', () => {
   it('ranks by threshold first, then by how long since anyone worked it', () => {
     const rows = needsAttention(
       [
-        // `comments` scale: 2 is the worst step.
-        item('comment-fresh', 'report:comment', 2),
-        item('comment-stale', 'report:commentV2', 2),
+        // `comments` and `collections` scales: 2 is the worst step.
+        item('comment-fresh', 'report:commentV3', 2),
+        item('collection-stale', 'report:collection', 2),
         // `reportedImages` scale: 60 is the second-best step.
         item('image', 'report:image', 60),
       ],
       {
-        'report:comment': { at: ago(1) },
-        'report:commentV2': { at: ago(30) },
+        'report:commentV3': { at: ago(1) },
+        'report:collection': { at: ago(30) },
         'report:image': { at: ago(200) },
       }
     );
-    expect(labels(rows)).toEqual(['comment-stale', 'comment-fresh', 'image']);
+    expect(labels(rows)).toEqual(['collection-stale', 'comment-fresh', 'image']);
     // Over threshold is the worst three steps; the image queue is two steps below that.
-    expect(rows.over.map((r) => r.label)).toEqual(['comment-stale', 'comment-fresh']);
+    expect(rows.over.map((r) => r.label)).toEqual(['collection-stale', 'comment-fresh']);
   });
 
   it('a tracked queue nobody touched outranks one worked recently; an untracked one does not', () => {
@@ -138,7 +138,7 @@ describe('needsAttention', () => {
         // Nothing it sums answered, and a tabs group at 0 with one tab unreadable.
         item('unread', 'report:image', null, { partial: true }),
         item('floor', 'modelFlagsNeedsReview', 0, { partial: true }),
-        item('empty', 'report:comment', 0),
+        item('empty', 'report:commentV3', 0),
       ],
       null
     );
@@ -147,7 +147,11 @@ describe('needsAttention', () => {
 });
 
 describe('navWorstRank', () => {
-  const counts: Record<string, number> = { 'report:comment': 2, 'report:image': 60, articles: 40 };
+  const counts: Record<string, number> = {
+    'report:commentV3': 2,
+    'report:image': 60,
+    articles: 40,
+  };
   const countFor = (key: string | undefined) => (key ? counts[key] ?? null : null);
 
   it("gives a group its worst queue's step, ignoring informational children", () => {
@@ -155,7 +159,7 @@ describe('navWorstRank', () => {
       label: 'Reports',
       children: [
         { label: 'Image', countKey: 'report:image' },
-        { label: 'Comment', countKey: 'report:comment' },
+        { label: 'Comment', countKey: 'report:commentV3' },
       ],
     };
     expect(navWorstRank(group, countFor)).toBe(0);

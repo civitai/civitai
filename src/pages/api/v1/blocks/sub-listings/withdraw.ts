@@ -44,6 +44,8 @@ export const baseHandler = withAxiom(async function handler(
   try {
     const result = await withdrawSubListing({
       appBlockId: claims.appBlockId,
+      // Dev tokens are counted as `dev` on the refusal counter, like every other surface.
+      dev: claims.dev === true,
       userId,
       body: req.body,
     });

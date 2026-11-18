@@ -275,18 +275,33 @@ export async function listStickerPlacementRows(
     .execute();
 }
 
-/** Tracks of the approved placements on one image. Never joined to the listing: a track dwarfs its row. */
+/**
+ * Tracks of the placements on one image that `listStickerPlacementRows` lists for this viewer:
+ * approved ones, plus pending ones the viewer placed or owns. Never joined to the listing: a
+ * track dwarfs its row.
+ */
 export async function listPlacementTrackRows(
   db: Kysely<DB>,
-  input: { surface: string; targetType: string; targetId: number }
+  input: { surface: string; targetType: string; targetId: number; viewerId?: number }
 ) {
+  const { viewerId } = input;
   return db
     .selectFrom('Placement')
     .select(['id', 'targetId', 'data', 'track'])
     .where('surface', '=', input.surface)
     .where('targetType', '=', input.targetType)
     .where('targetId', '=', input.targetId)
-    .where('status', '=', 'approved')
+    .where((eb) =>
+      eb.or([
+        eb('status', '=', 'approved'),
+        ...(viewerId
+          ? [
+              eb.and([eb('status', '=', 'pending'), eb('placerId', '=', viewerId)]),
+              eb.and([eb('status', '=', 'pending'), eb('ownerId', '=', viewerId)]),
+            ]
+          : []),
+      ])
+    )
     .where('track', 'is not', null)
     .execute();
 }

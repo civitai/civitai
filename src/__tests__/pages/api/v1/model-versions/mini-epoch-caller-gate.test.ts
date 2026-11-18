@@ -6,8 +6,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/v1/model-versions/mini/[id]`, the epoch arm of a Private version, behind the
- * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also withholds the
- * epoch url from callers who are not the owner, a moderator, a grantee or the orchestrator.
+ * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also answers callers
+ * who are not the owner, a moderator, a grantee or the orchestrator as an unknown id.
  */
 
 const h = vi.hoisted(() => ({
@@ -15,6 +15,14 @@ const h = vi.hoisted(() => ({
   variant: { value: null as string | null },
   hasEntityAccess: vi.fn(),
   getFliptVariant: vi.fn(),
+  refreshBlobs: vi.fn(),
+}));
+
+vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
+  refreshBlobsService: h.refreshBlobs,
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: async () => 'owner-token',
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
@@ -62,12 +70,14 @@ type Caller = {
 async function request(
   caller: Caller = {},
   row: Partial<typeof versionRow> = {},
-  file: object = TRAINING_FILE
+  file: object = TRAINING_FILE,
+  versionRows: object[] = [{ ...versionRow, ...row }],
+  query: Record<string, string> = {}
 ) {
   h.user.value = caller.user;
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
-    .mockResolvedValueOnce([{ ...versionRow, ...row }])
+    .mockResolvedValueOnce(versionRows)
     .mockResolvedValueOnce([structuredClone(file)]);
 
   const json = vi.fn().mockReturnThis();
@@ -79,7 +89,7 @@ async function request(
   await handler(
     {
       method: 'GET',
-      query: { id: String(VERSION_ID) },
+      query: { id: String(VERSION_ID), ...query },
       headers: {
         host: 'civitai.com',
         ...(caller.authorization ? { authorization: caller.authorization } : {}),
@@ -94,6 +104,15 @@ async function request(
     .filter(([name]) => name === 'Cache-Control')
     .at(-1)?.[1];
   return { status, body, cacheControl };
+}
+
+/** The unknown-id 404, carrying nothing that names the epoch, its file or its hash. */
+function expectRefused({ status, body }: { status: unknown; body: unknown }) {
+  expect(status).toBe(404);
+  expect(body).toEqual({ error: 'Model not found' });
+  const text = JSON.stringify(body);
+  for (const leak of [TRAINING_FILE.hashes.SHA256, TRAINING_FILE.name, 'job-abc-123', EPOCH_URL])
+    expect(text).not.toContain(leak);
 }
 
 function callerLogs() {
@@ -162,12 +181,8 @@ describe('mini/[id] epoch arm, enforce', () => {
       { authorization: `Bearer ${SERVICE_TOKEN} x` },
       'anonymous',
     ],
-  ])('withholds the epoch url from %s, the rest of the response kept', async (_l, caller, cls) => {
-    const { status, body } = await request(caller);
-    expect(status).toBe(200);
-    expect(body.downloadUrls).toEqual([]);
-    expect(body.fileName).toBe(TRAINING_FILE.name);
-    expect(body.hashes).toEqual(TRAINING_FILE.hashes);
+  ])('answers %s as an unknown id', async (_l, caller, cls) => {
+    expectRefused(await request(caller));
     expect(callerLogs()).toEqual([
       expect.objectContaining({ callerClass: cls, wouldRefuse: true, enforced: true }),
     ]);
@@ -180,21 +195,18 @@ describe('mini/[id] epoch arm, enforce', () => {
 
   it('does not accept the service token when none is configured', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: undefined });
-    const { body } = await request(service);
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request(service));
     expect(callerLogs()[0]).toMatchObject({ callerClass: 'anonymous', resolvedAs: 'unrecognized' });
   });
 
   it('does not accept a blank configured token', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '\t' });
-    const { body } = await request({ authorization: 'Bearer \t' });
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request({ authorization: 'Bearer \t' }));
   });
 
   it('does not accept an empty configured token against an empty bearer', async () => {
     setEnv({ ORCHESTRATOR_SERVICE_TOKEN: '' });
-    const { body } = await request({ authorization: 'Bearer ' });
-    expect(body.downloadUrls).toEqual([]);
+    expectRefused(await request({ authorization: 'Bearer ' }));
   });
 
   it('checks a grant for the one version alone', async () => {
@@ -207,16 +219,85 @@ describe('mini/[id] epoch arm, enforce', () => {
     });
   });
 
-  it('withholds from a signed-in caller when the grant lookup fails', async () => {
+  it('refuses a signed-in caller when the grant lookup fails', async () => {
     h.hasEntityAccess.mockRejectedValueOnce(new Error('db down'));
-    const { status, body } = await request(grantee);
+    expectRefused(await request(grantee));
+  });
+
+  it('still withholds a taken-down model from the service token', async () => {
+    const { status, body } = await request(service, { modelMode: 'TakenDown' });
     expect(status).toBe(200);
     expect(body.downloadUrls).toEqual([]);
   });
 
-  it('still withholds a taken-down model from the service token', async () => {
-    const { body } = await request(service, { modelMode: 'TakenDown' });
-    expect(body.downloadUrls).toEqual([]);
+  it('answers a refused caller with the same status and body as an unknown id', async () => {
+    const refused = await request(anonymous);
+    const unknown = await request(anonymous, {}, TRAINING_FILE, []);
+    expect(refused.status).toBe(404);
+    expect({ status: refused.status, body: refused.body }).toEqual({
+      status: unknown.status,
+      body: unknown.body,
+    });
+  });
+
+  it('keeps the refused 404 out of shared caches', async () => {
+    const { cacheControl } = await request(anonymous);
+    expect(cacheControl).toBe('private, no-store');
+  });
+
+  it.each([
+    ['the owner', owner],
+    ['the service token', service],
+  ])('still gives %s the epoch air and hashes', async (_label, caller) => {
+    const { status, body } = await request(caller);
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(body.hashes).toEqual(TRAINING_FILE.hashes);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body).toHaveProperty('air');
+  });
+
+  it('refuses before the epoch is read: a version with no epochs answers as an unknown id', async () => {
+    const noEpochs = {
+      ...TRAINING_FILE,
+      metadata: { ...TRAINING_FILE.metadata, trainingResults: { epochs: [] } },
+    };
+    expectRefused(await request(anonymous, {}, noEpochs));
+    // control: the owner reaches the epoch read and gets its own error
+    const forOwner = await request(owner, {}, noEpochs);
+    expect(forOwner).toMatchObject({ status: 404, body: { error: 'Missing epoch' } });
+  });
+});
+
+describe('mini/[id] epoch arm, enforce-anon', () => {
+  beforeEach(() => {
+    h.variant.value = 'enforce-anon';
+  });
+
+  it('answers a request with no credential as an unknown id, kept out of shared caches', async () => {
+    const refused = await request(anonymous);
+    expectRefused(refused);
+    expect(refused.cacheControl).toBe('private, no-store');
+    expect(callerLogs()).toEqual([
+      expect.objectContaining({ resolvedAs: 'none', callerClass: 'anonymous', enforced: true }),
+    ]);
+  });
+
+  it.each([
+    ['a bearer that does not resolve', { authorization: 'Bearer not-a-key' }, 'unrecognized'],
+    [
+      'the owner by API key',
+      { user: { id: OWNER_ID }, authorization: 'Bearer k', subject: 'apiKey' as const },
+      'api-key',
+    ],
+    ['a signed-in caller with no grant', stranger, 'oauth'],
+    ['a signed-in session with no grant', { user: { id: STRANGER_ID } }, 'session'],
+    ['the orchestrator service token', service, 'orchestrator'],
+  ])('serves the epoch url to %s', async (_label, caller, resolvedAs) => {
+    const { status, body } = await request(caller);
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(callerLogs()).toEqual([expect.objectContaining({ resolvedAs, enforced: false })]);
   });
 });
 
@@ -255,17 +336,21 @@ describe('mini/[id] epoch arm, log', () => {
     await request({ authorization: 'Bearer some-user-key-value' });
     const logged = JSON.stringify(callerLogs());
     expect(callerLogs()).toHaveLength(2);
-    for (const entry of callerLogs())
+    for (const entry of callerLogs()) {
       expect(Object.keys(entry).sort()).toEqual([
         'authHeader',
         'callerClass',
         'enforced',
+        'mode',
         'modelVersionId',
         'name',
+        'payload',
         'resolvedAs',
         'type',
         'wouldRefuse',
       ]);
+      expect(Object.keys(entry.payload as object)).toEqual(['pick']);
+    }
     expect(logged).not.toContain(SERVICE_TOKEN.slice(0, 6));
     expect(logged).not.toContain('some-user');
     expect(logged).not.toMatch(/bearer/i);
@@ -273,13 +358,17 @@ describe('mini/[id] epoch arm, log', () => {
 });
 
 describe('mini/[id] epoch arm, cache', () => {
-  it.each(['log', 'enforce'])('%s: no shared cache may store the response', async (variant) => {
-    h.variant.value = variant;
-    for (const caller of [anonymous, owner, service]) {
-      const { cacheControl } = await request(caller);
-      expect(cacheControl).toBe('private, no-store');
+  it.each(['log', 'enforce', 'enforce-anon'])(
+    '%s: no shared cache may store the response',
+    async (variant) => {
+      h.variant.value = variant;
+      for (const caller of [anonymous, stranger, grantee, owner, moderator, service])
+        for (const query of [{}, { epoch: '5' }] as Record<string, string>[]) {
+          const { cacheControl } = await request(caller, {}, undefined, undefined, query);
+          expect(cacheControl, JSON.stringify({ caller, query })).toBe('private, no-store');
+        }
     }
-  });
+  );
 
   it('off: the cache header is left as it was', async () => {
     const { cacheControl } = await request(anonymous);
@@ -291,6 +380,7 @@ describe('mini/[id] epoch arm, off', () => {
   it.each([
     ['flag unset', null],
     ['an unknown variant', 'on'],
+    ['a near miss of enforce-anon', 'Enforce-Anon'],
   ])('%s: serves everyone and logs nothing', async (_label, variant) => {
     h.variant.value = variant;
     for (const caller of [anonymous, stranger, service]) {
@@ -316,4 +406,175 @@ describe('the service token outside the epoch arm', () => {
       'mini-epoch-caller-gate'
     );
   });
+});
+
+describe('mini/[id] epoch arm, a stored blob url', () => {
+  const BLOB_ID = 'BLOBID0000000000000000000.safetensors';
+  const STORED = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=s&exp=2026-11-04T00:00:00Z`;
+  const FRESH = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=f&exp=2099-01-01T00:00:00Z`;
+  const BLOB_FILE = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: { epochs: [{ epoch_number: 10, model_url: STORED }] },
+    },
+  };
+
+  beforeEach(() => {
+    h.variant.value = 'enforce';
+    h.refreshBlobs.mockReset();
+    h.refreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+  });
+
+  it('is signed again once for a caller the gate serves', async () => {
+    const { body } = await request(service, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the stored url for a caller log mode serves but would refuse', async () => {
+    h.variant.value = 'log';
+
+    const { body } = await request(anonymous, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([STORED]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('is not signed for a caller the gate refuses', async () => {
+    const { status } = await request(anonymous, {}, BLOB_FILE);
+
+    expect(status).toBe(404);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a bearer that does not resolve', { authorization: 'Bearer not-a-key' }],
+    ['a signed-in caller with no grant', stranger],
+  ])('enforce-anon serves %s the stored url, not signed again', async (_label, caller) => {
+    h.variant.value = 'enforce-anon';
+
+    const { status, body } = await request(caller, {}, BLOB_FILE);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([STORED]);
+    expect(h.refreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('enforce-anon signs it again for the service token', async () => {
+    h.variant.value = 'enforce-anon';
+
+    const { body } = await request(service, {}, BLOB_FILE);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('mini/[id] ?epoch= from the query string', () => {
+  const EARLY =
+    'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000005.safetensors';
+  const twoEpochs = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: {
+        epochs: [
+          { epoch_number: 5, model_url: EARLY },
+          { epoch_number: 10, model_url: EPOCH_URL },
+        ],
+      },
+    },
+  };
+  const ask = (query: Record<string, string>) => request(owner, {}, twoEpochs, undefined, query);
+
+  beforeEach(() => {
+    h.variant.value = 'enforce';
+  });
+
+  it('serves the named epoch from epochs written as epochNumber', async () => {
+    const v2 = {
+      ...twoEpochs,
+      metadata: {
+        ...twoEpochs.metadata,
+        trainingResults: {
+          epochs: [
+            { epochNumber: 5, modelUrl: EARLY },
+            { epochNumber: 10, modelUrl: EPOCH_URL },
+          ],
+        },
+      },
+    };
+    const { status, body } = await request(owner, {}, v2, undefined, { epoch: '5' });
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EARLY]);
+  });
+
+  it('400s a repeated epoch', async () => {
+    const { status } = await request(owner, {}, twoEpochs, undefined, {
+      epoch: ['5', '10'] as unknown as string,
+    });
+    expect(status).toBe(400);
+  });
+
+  it('serves the latest epoch when none is named', async () => {
+    const { status, body } = await ask({});
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  it.each([
+    ['a word', 'latest'],
+    ['a fraction', '5.5'],
+  ])('400s an epoch that is %s', async (_, epoch) => {
+    expect((await ask({ epoch })).status).toBe(400);
+  });
+
+  describe.each(['log', 'enforce', 'enforce-anon', 'off'])(
+    '%s: only the owner, a moderator or the service token picks the epoch',
+    (variant) => {
+      beforeEach(() => {
+        h.variant.value = variant === 'off' ? null : variant;
+      });
+
+      // Only the callers the mode serves; a refused one is covered by the gate tests above.
+      const held = (
+        [
+          ['a signed-out caller', anonymous],
+          ['a signed-in caller with no grant', stranger],
+          ['a grantee', grantee],
+        ] as const
+      ).filter(
+        ([, caller]) =>
+          (variant !== 'enforce' || caller === grantee) &&
+          (variant !== 'enforce-anon' || caller !== anonymous)
+      );
+
+      it.each(held)('%s gets the no-param response whatever ?epoch= holds', async (_, caller) => {
+        const unnamed = await request(caller, {}, twoEpochs);
+        expect(unnamed.status).toBe(200);
+        expect(unnamed.body.downloadUrls).toEqual([EPOCH_URL]);
+        for (const epoch of ['5', '10', '99', '', 'latest', '5.5', ['5', '10']])
+          expect(
+            await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string }),
+            `?epoch=${JSON.stringify(epoch)}`
+          ).toEqual(unnamed);
+      });
+
+      it.each([
+        ['the owner', owner],
+        ['a moderator', moderator],
+        ['the service token', service],
+      ])('%s still gets the epoch it names', async (_, caller) => {
+        const { status, body, cacheControl } = await request(caller, {}, twoEpochs, undefined, {
+          epoch: '5',
+        });
+        expect(status).toBe(200);
+        expect(body.downloadUrls).toEqual([EARLY]);
+        // The other modes already set it for every caller on this arm.
+        if (variant === 'off') expect(cacheControl).toBe('private, no-store');
+      });
+    }
+  );
 });

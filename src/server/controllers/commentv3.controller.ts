@@ -22,7 +22,6 @@ import {
 } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import { getCommentExcludedUserIds } from '~/server/services/comment-exclusions.service';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import {
   afterCommentsV3Deleted,
   bulkSetCommentV3TosViolation,
@@ -31,7 +30,6 @@ import {
 import {
   getStoredComment,
   getV3WriteComment,
-  isV3WriteSurface,
   prismaRunner,
   setCommentFlags,
   toggleCommentLock,
@@ -44,10 +42,10 @@ import {
 } from '~/server/services/commentv3/comment-write.service';
 import {
   getSectionMuted,
-  getThreadMuted,
+  getCommentMuted,
   toggleSectionLock,
   toggleSectionMute,
-  toggleThreadMute,
+  toggleCommentMute,
 } from '~/server/services/commentv3/section.service';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import {
@@ -268,13 +266,7 @@ async function assertSectionOwnerOrModerator(ctx: ProtectedContext, comment: Sto
 export async function assertCommentActionable(commentId: number, ctx: ProtectedContext) {
   const comment = await getV3WriteComment(prismaRunner(dbWrite), commentId);
   if (ctx.user.isModerator) return comment;
-  if (!comment) {
-    // A comment on a surface that does not write CommentV3 has no section gate.
-    if (await isCommentGoneForMembers(commentId))
-      throw throwNotFoundError(`No comment with id ${commentId}`);
-    return undefined;
-  }
-  if (comment.tosViolation) throw throwNotFoundError(`No comment with id ${commentId}`);
+  if (!comment || comment.tosViolation) throw throwNotFoundError(`No comment with id ${commentId}`);
   await assertSectionVisible(comment, ctx);
   if (comment.entityType === 'storyline')
     await commentSurface('storyline').assertWritable?.(comment.entityId, ctx);
@@ -288,8 +280,6 @@ async function assertCanWrite(
   answered: (StoredCommentV3 | undefined)[]
 ) {
   const { id: userId, isModerator } = ctx.user;
-  if (!isV3WriteSurface(section.entityType))
-    throw throwBadRequestError(`Comments on ${section.entityType} are not written here yet.`);
   const surface = commentSurface(section.entityType);
   await surface.assertWritable?.(section.entityId, ctx);
   await surface.assertOpen?.(section.entityId, ctx);
@@ -487,7 +477,7 @@ export async function toggleSectionMuteHandler({
   return toggleSectionMute({ ...input, userId: ctx.user.id });
 }
 
-export async function getThreadMutedHandler({
+export async function getCommentMutedHandler({
   ctx,
   input,
 }: {
@@ -495,10 +485,10 @@ export async function getThreadMutedHandler({
   input: CommentMuteInput;
 }) {
   const comment = await assertCommentActionable(input.commentId, ctx);
-  return getThreadMuted({ ...input, userId: ctx.user.id }, { comment });
+  return getCommentMuted({ ...input, userId: ctx.user.id }, { comment });
 }
 
-export async function toggleThreadMuteHandler({
+export async function toggleCommentMuteHandler({
   ctx,
   input,
 }: {
@@ -506,5 +496,5 @@ export async function toggleThreadMuteHandler({
   input: CommentMuteInput;
 }) {
   const comment = await assertCommentActionable(input.commentId, ctx);
-  return toggleThreadMute({ ...input, userId: ctx.user.id }, { comment });
+  return toggleCommentMute({ ...input, userId: ctx.user.id }, { comment });
 }

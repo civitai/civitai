@@ -21,7 +21,6 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
-  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
@@ -151,6 +150,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -163,11 +163,11 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { resolveSsrPrefetchCohort } from '~/server/utils/ssr-skip-prefetch';
 import { isMobileUserAgent } from '~/shared/utils/mobile-user-agent';
 import {
+  forcedMinorModelBrowsingLevel,
   getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import {
@@ -195,7 +195,7 @@ import {
   splitUppercase,
 } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { isNumber } from '~/utils/type-guards';
+import { isNotFoundError, isPageId, nullIfNotFound } from '~/server/utils/ssr-not-found';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -212,12 +212,8 @@ import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenu
 const RAIL_ACTIVATE_WIDTH = 1440;
 
 const NOT_FOUND = Symbol('model-not-found');
-
-const isNotFoundError = (error: unknown) => {
-  // `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`.
-  const err = error as { code?: string; data?: { code?: string } } | null | undefined;
-  return err?.code === 'NOT_FOUND' || err?.data?.code === 'NOT_FOUND';
-};
+/** This page's pattern (`ctx.pathname` in `_document`), the route label of its SSR metrics. */
+const MODEL_PAGE_ROUTE = '/models/[id]/[[...slug]]';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -232,13 +228,15 @@ export const getServerSideProps = createServerSideProps({
     };
     const id = Number(params.id);
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-    if (!isNumber(id)) return { notFound: true };
+    if (!isPageId(id)) return { notFound: true };
+    if (modelVersionId !== undefined && !isPageId(modelVersionId)) return { notFound: true };
     const version = await getDefaultModelVersion({
       modelId: id,
       modelVersionId,
       userId: session?.user?.id,
       isModerator: session?.user?.isModerator,
-    }).catch(() => null);
+      // Only a missing model reads as "no version": a failed lookup must not become a 404.
+    }).catch(nullIfNotFound(ctx.res));
     const modelVersionIdParsed = modelVersionId ?? version?.id;
 
     if (!modelVersionIdParsed && !session?.user?.isModerator) {
@@ -307,6 +305,13 @@ export const getServerSideProps = createServerSideProps({
 
     let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
     let suppressAds = false;
+    // `deferredSsr` (the `ssrSignedInSkipPrefetch` trial): the content renders as a loading shell
+    // on the server and on the hydrating render, and fills in once the client has mounted.
+    const pageResult = (deferredSsr: boolean) => ({
+      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']), deferredSsr },
+      gating,
+      suppressAds,
+    });
 
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
@@ -348,6 +353,20 @@ export const getServerSideProps = createServerSideProps({
             },
           };
         }
+      }
+
+      // Every 404, access and redirect decision above is made in both arms of the trial. `skip`
+      // keeps `model.getById` — those decisions, the ad gating and the page's `<head>` read it,
+      // and its dehydrated copy saves the client a refetch — and `hiddenPreferences.getHidden`,
+      // whose blocked-users list the page reads to render NotFound for a creator the viewer
+      // blocked, so that page is decided on the server in both arms rather than flashing the
+      // blocked creator's model after mount. Everything else renders as a loading shell that the
+      // client fills with its own queries after hydration.
+      if (
+        resolveSsrPrefetchCohort({ ctx, session, features, route: MODEL_PAGE_ROUTE }) === 'skip'
+      ) {
+        await ssg.hiddenPreferences.getHidden.prefetch();
+        return pageResult(true);
       }
 
       // No redirect — fire the remaining prefetches in parallel. They have no
@@ -413,9 +432,7 @@ export const getServerSideProps = createServerSideProps({
                 // exactly the models this matters for.
                 const forceMinorLevel = !!model.minor && !session?.user?.isModerator;
                 const browsingLevel = forceMinorLevel
-                  ? session?.user
-                    ? sfwBrowsingLevelsFlag
-                    : publicBrowsingLevelsFlag
+                  ? forcedMinorModelBrowsingLevel(!!session?.user)
                   : getServerBrowsingLevel({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
@@ -443,17 +460,14 @@ export const getServerSideProps = createServerSideProps({
       );
     }
 
-    return {
-      props: { id, initialMobile: isMobileUserAgent(ctx.req.headers['user-agent']) },
-      gating,
-      suppressAds,
-    };
+    return pageResult(false);
   },
 });
 
 export default function ModelDetailsV2({
   id,
   initialMobile,
+  deferredSsr,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
 
@@ -461,6 +475,7 @@ export default function ModelDetailsV2({
   const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
+  const deferredShell = useSsrDeferredShell(deferredSsr);
   const features = useFeatureFlags();
   const ds = !!features.modelPageDesignSystemMarkup;
   const { activeTour, running, runTour } = useTourContext();
@@ -942,42 +957,57 @@ export default function ModelDetailsV2({
   const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
   const showRail = !model.poi && !adsDisabledByUser;
 
+  // One `<Gated>` (ad gating, rating gate and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: model.nsfwLevel,
+    nsfw: model.nsfw && !model.hasSfwFace,
+    bypassRating: isOwner,
+    suppressAds: !published,
+    meta: {
+      title: `${model.name}${
+        selectedVersion ? ' - ' + selectedVersion.name : ''
+      } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
+      description: buildModelMetaDescription({
+        name: model.name,
+        ecosystemName: selectedEcosystemName,
+        typeName: getDisplayName(model.type),
+        creator: !model.user.deletedAt ? model.user.username : undefined,
+        downloads: model.rank?.downloadCountAllTime,
+        likes: model.rank?.thumbsUpCountAllTime,
+        description: plainDescription,
+      }),
+      images: withheld ? undefined : versionImages,
+      ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
+      canonical: `/models/${model.id}/${slugit(model.name)}`,
+      alternate: `/models/${model.id}`,
+      schema: metaSchema,
+      breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+        { name: 'Models', path: '/models' },
+        ...(category
+          ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+          : []),
+        { name: model.name },
+      ]),
+      deIndex:
+        model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetch`: getServerSideProps prefetched only `model.getById` and the hidden
+  // preferences (so a blocked creator's page is already NotFound above), so the server renders the
+  // gate and `<head>` with a loader in place of the content. The hydrating render must
+  // match it, so it waits for the client mount too; the content then renders as it does after a
+  // client-side navigation, with the queries the server skipped loading in place.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
+
   return (
-    <Gated
-      contentNsfwLevel={model.nsfwLevel}
-      nsfw={model.nsfw && !model.hasSfwFace}
-      bypassRating={isOwner}
-      suppressAds={!published}
-      meta={{
-        title: `${model.name}${
-          selectedVersion ? ' - ' + selectedVersion.name : ''
-        } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`,
-        description: buildModelMetaDescription({
-          name: model.name,
-          ecosystemName: selectedEcosystemName,
-          typeName: getDisplayName(model.type),
-          creator: !model.user.deletedAt ? model.user.username : undefined,
-          downloads: model.rank?.downloadCountAllTime,
-          likes: model.rank?.thumbsUpCountAllTime,
-          description: plainDescription,
-        }),
-        images: withheld ? undefined : versionImages,
-        ogEndpoint: withheld ? undefined : modelOgEndpoint(model),
-        canonical: `/models/${model.id}/${slugit(model.name)}`,
-        alternate: `/models/${model.id}`,
-        schema: metaSchema,
-        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
-          { name: 'Models', path: '/models' },
-          ...(category
-            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
-            : []),
-          { name: model.name },
-        ]),
-        deIndex:
-          model.status !== ModelStatus.Published ||
-          model.availability === Availability.Unsearchable,
-      }}
-    >
+    <Gated {...gatedProps}>
       <ComCardPreviewScope previewing={previewingComCard}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <RenderAdUnitOutstream minContainerWidth={2800} />
@@ -1429,20 +1459,12 @@ export default function ModelDetailsV2({
                                     key="toggle-searchable-menu-item"
                                   />
                                   {!model.mode ? (
-                                    <>
-                                      <Menu.Item
-                                        leftSection={<IconArchive size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                      >
-                                        Archive
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        leftSection={<IconCircleMinus size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                      >
-                                        Take Down
-                                      </Menu.Item>
-                                    </>
+                                    <Menu.Item
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
                                   ) : (
                                     <Menu.Item
                                       leftSection={<IconReload size={14} stroke={1.5} />}
@@ -1692,7 +1714,12 @@ export default function ModelDetailsV2({
               </>
             )}
             {selectedVersion && (
-              <ModelVersionWrittenReviews modelId={model.id} modelVersionId={selectedVersion.id} />
+              <ModelVersionWrittenReviews
+                modelId={model.id}
+                modelVersionId={selectedVersion.id}
+                thumbsUpCount={thumbsUpCount}
+                thumbsDownCount={thumbsDownCount}
+              />
             )}
             <AdUnitTopSection />
             <Container size="xl" my="xl">

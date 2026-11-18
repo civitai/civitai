@@ -44,7 +44,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 
 import { getTransactionsReport } from '~/server/services/buzz.service';
 
-const USER = 1557068;
+const USER = 990100030;
 
 // Fixed so the bucket sequence is a known length rather than whatever day the suite runs on.
 const NOW = new Date('2026-08-31T18:00:00.000Z');

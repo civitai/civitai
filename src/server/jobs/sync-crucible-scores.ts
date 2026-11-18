@@ -16,7 +16,7 @@ const BATCH_SIZE = 50;
 const log = createLogger('sync-crucible-scores', 'blue');
 
 const logJob = (data: MixedObject) => {
-  logToAxiom({ name: 'sync-crucible-scores', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: 'sync-crucible-scores', type: 'error', ...data }, 'webhooks');
 };
 
 /**

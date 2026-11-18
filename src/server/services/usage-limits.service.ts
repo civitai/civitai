@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/comment.schema';
+import { COMMENT_V3_RATE_LIMIT_KEY } from '~/server/schema/commentv3.schema';
 import { POST_CREATE_RATE_LIMIT_KEY } from '~/server/schema/post.schema';
 import { calendarWindow, usageLimitCounters } from '~/server/services/usage-limit-counters';
 import {
@@ -14,8 +14,7 @@ import {
   usageLimitDefs,
   type UsageLimitDef,
 } from '~/shared/constants/usage-limits';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 /** A scoped token reads its limits with either: an app that posts needs them without profile access. */
@@ -41,7 +40,8 @@ const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedK
 
 const labelOf = (id: string) => getUsageLimitDef(id).label;
 
-export type UsageLimitWindow = UsageLimitDef['window']['type'];
+/** A row's window. A `standing` allowance (app storage) is never listed through here. */
+export type UsageLimitWindow = Exclude<UsageLimitDef['window']['type'], 'standing'>;
 
 export type UsageLimit = {
   id: string;
@@ -60,6 +60,9 @@ export type UsageLimit = {
   resetAt: string | null;
 };
 
+const rowWindow = (type: UsageLimitDef['window']['type']): UsageLimitWindow | null =>
+  type === 'standing' ? null : type;
+
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
 /**
@@ -76,14 +79,14 @@ export async function getUsageLimits({
   user: SessionUser;
   req: NextApiRequest;
   /** The caller's credential scope; `TokenScope.Full` for a cookie session. */
-  tokenScope: number;
+  tokenScope: bigint;
   ids?: readonly string[];
 }): Promise<{ limits: UsageLimit[] }> {
   // Null rows would tell a token that its user is a moderator, which `/api/v1/me` releases only
   // to a session or a UserRead token. Anyone else sees a moderator's rows as a regular user's.
   const showExemption =
     user.isModerator &&
-    (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
+    (tokenScope === TokenScope.Full || hasScope(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
   const byArea = await Promise.all(
     USAGE_LIMIT_AREAS.map(async ({ area, sharedKey, ids: areaIds }): Promise<UsageLimit[]> => {
@@ -106,7 +109,7 @@ export async function getUsageLimits({
           used,
           remaining,
           windowSeconds: rule.period,
-          window: getUsageLimitDef(id).window.type,
+          window: rowWindow(getUsageLimitDef(id).window.type),
           nextAt: remaining > 0 ? null : iso(nextAt),
           resetAt: iso(resetAt),
         };
@@ -133,7 +136,8 @@ async function countedLimits(
     usageLimitDefs.map(async (def): Promise<UsageLimit | null> => {
       const counter = usageLimitCounters[def.id];
       const window = def.window;
-      if (!counter || def.kind !== 'product' || window.type === 'rolling') return null;
+      if (!counter || def.kind !== 'product') return null;
+      if (window.type === 'rolling' || window.type === 'standing') return null;
       if (wanted && !wanted.has(def.id)) return null;
       const { limit, applies } = await resolveUsageLimit(def.id, user);
       if (!applies) return null;

@@ -1909,6 +1909,7 @@ const authHub = new AuthHub(skillConfig.authHubPath, skillConfig.authHubPort);
 const APP_REGISTRY = {
   moderator: { path: 'apps/moderator', preferredPort: 5174 },
   'creator-studio': { path: 'apps/creator-studio', preferredPort: 5175 },
+  'training-studio': { path: 'apps/training-studio', preferredPort: 5176 },
 };
 
 // An app runs from the worktree it was started in. The previous class resolved its path against

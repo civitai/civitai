@@ -89,12 +89,11 @@
     key === 'Approved' && flagged
       ? 'Flagged as a real person or a minor since the request; its locks stay.'
       : null;
-  const reasonsFor = (key: Verdict) => resolutionReasonsFor('lockReview', key);
+  const reasonsFor = (key: Verdict) => resolutionReasonsFor('lockReview', key, asked);
 
   const reasonOptions = $derived(
     decisionReasonOptions(RULINGS.map((r) => ({ label: r.label, reasons: reasonsFor(r.verdict) })))
   );
-  // Rejecting takes one key: it has a single specific reason.
   const reason = $derived(draft.reason || suggestedReason(reasonsFor('Rejected')));
   $effect(() => () => resetReasonPicker());
   $effect(() => closeReasonPickerBeyond(RULINGS.length));
@@ -109,7 +108,7 @@
     const refusal = !ruling
       ? 'Pick a decision.'
       : (unavailable ??
-        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, reason, draft.note));
+        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, reason, draft.note, asked));
     if (!ruling || refusal) {
       input.cancel();
       problem = refusal;
@@ -207,6 +206,33 @@
       nthThisYear={row.appealNthThisYear}
     />
     <ComFaceCard face={row.comFace} />
+    {#if row.comFaceLaterVerdict && row.comFaceDispute !== 'later-verdict'}
+      <section class="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <p class="m-0">
+          A system rating verdict ({row.comFaceLaterVerdict}) landed while the listing check's lock
+          was on. Approving lifts the lock and that verdict with it.
+        </p>
+      </section>
+    {/if}
+    {#if row.comFaceDispute}
+      <section class="rounded-md border border-dark-4 p-3 text-xs leading-[1.45] text-dark-1">
+        <p class="m-0">
+          The owner disputes the civitai.com listing check, which read the model's listing as made
+          for sexual content and locked its rating.
+          {#if row.comFaceDispute === 'upheld'}
+            An automatic second check read it the same way.
+          {:else if row.comFaceDispute === 'later-verdict'}
+            The second check allowed it, but a system rating verdict landed while the lock was on;
+            approving lifts the lock and that verdict with it.
+          {:else if row.comFaceDispute === 'pending'}
+            An automatic second check runs first; this may close on its own.
+          {:else}
+            The automatic second check could not settle it.
+          {/if}
+          Approving lifts the lock and lets the owner add a civitai.com version.
+        </p>
+      </section>
+    {/if}
     <section class="rounded-md border border-dark-4 p-3 text-sm">
       <h3 class="m-0 mb-2 text-xs font-semibold uppercase text-dark-2">Settings asked about</h3>
       <ul class="m-0 flex list-none flex-col gap-1 p-0">

@@ -10,12 +10,15 @@ import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { downloadCredentialGate } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
   supportsTensorVramEstimate,
 } from '~/utils/model-tensor-metadata';
 import { FAILED_SCAN_DOWNLOAD_MESSAGE } from '~/server/utils/failed-scan';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 /**
  * 🔴 `id` is bounded to a Postgres int4, and the bound is load-bearing — this is
@@ -45,12 +48,23 @@ const schema = z.object({
 const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const NO_STORE_CACHE_CONTROL = 'private, no-store';
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: MODEL_VIEW_SCOPE });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
   res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
+  // Moderator rights through a bearer credential follow the download routes' rule, and need the
+  // route's scope whatever the rollout flag says.
+  const credential = downloadCredentialGate(req, sessionUser, {
+    requiredScope: TokenScope.ModelsRead,
+  });
+  const user =
+    credential.effectiveUser?.isModerator && credential.outcome === 'refused'
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
 
   const result = schema.safeParse(req.query);
   if (!result.success)
@@ -178,7 +192,7 @@ export default MixedAuthEndpoint(async function handler(
       fileId: id,
       modelVersionId: file.modelVersionId,
       format,
-    }).catch(() => undefined);
+    });
 
     // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
     // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got
@@ -199,7 +213,7 @@ export default MixedAuthEndpoint(async function handler(
     // `logToAxiom` call directly above — nothing is destroyed, only moved.
     return res.status(422).json({ error: 'Unable to read tensor metadata for this file' });
   }
-});
+}
 
 function getStatusCode(
   status: Exclude<Awaited<ReturnType<typeof getFileForModelVersion>>['status'], 'success'>

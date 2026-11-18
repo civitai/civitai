@@ -13,6 +13,7 @@ where it loads on demand:
 
 ## How to work with us
 - Plans are markdown documents in `docs/`. Our inline comments are marked `@dev:`; leave yours as `@ai:`.
+  A plan or proposal without a current `**Status:**` line is historical; guides (`docs/dev/`, `docs/packages/`) are not plans.
 - **Never open an issue or ticket without a closing condition** — what ends it and who or what checks it.
   Read `docs/dev/filing-follow-ups.md` before filing anything.
 - Read a file before editing it; plan the change, then make one complete edit. Act after reading 3–5
@@ -23,15 +24,14 @@ where it loads on demand:
 ## The repo
 - pnpm workspace. `src/` is the civitai.com Next.js 16 app (TypeScript, Mantine v7, Tailwind + SCSS
   modules, tRPC, Prisma/PostgreSQL, Zustand, React Query, Meilisearch).
-- `apps/` — sibling apps (`auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`,
-  `orchestrator-gateway`, `storage`, `training-studio`), each with its own `CLAUDE.md` and
-  `pnpm dev:<name>` / `pnpm release:<name>`. New app: the `scaffold-civitai-app` skill and
-  `docs/packages/new-app-integration.md`. `apps/moderator`, `apps/auth` and
-  `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte: none of the main-app conventions apply;
-  see `docs/svelte-app-standard.md`.
+- `apps/*` — sibling apps: read the app's own `CLAUDE.md` or `README.md` first. Apps with a `svelte.config.js` are SvelteKit
+  (main-app conventions don't apply; `docs/svelte-app-standard.md`); apps with a `go.mod` are Go. New app: the
+  `scaffold-civitai-app` skill and `docs/packages/new-app-integration.md`.
 - `packages/civitai-*` — shared workspace packages. `event-engine-common/` is a git submodule.
-- Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed —
-  `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
+- **Use X for Y** (`.claude/rules/server.md`) names the one helper per need (HTTP, rate limit, lock, cache, DB client, new query, feature flag, …); follow it over nearby code.
+  Store choice: cache and rate-limit data go on `redis` with a TTL; `sysRedis` is durable state, not a cache, and takes no new key without sign-off; new durable data goes in Postgres.
+- Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed — `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
+- **Node→Go ports** (`ports/manifest.json`): before changing Node code run `node scripts/ports/touched.mjs <files>`; if the change alters what a touched endpoint returns, change its Go handler in the same PR (`AGENTS.md` → Endpoints ported to Go).
 
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
@@ -46,7 +46,7 @@ where it loads on demand:
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
 
 ## Commands
-- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio`
+- **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio|training-studio`
   runs those from the current worktree with the auth hub; other `apps/*` use their own `pnpm dev:<name>`.
 - **Local env misbehaving** (override ignored, sign-in fails, onboarding wizard everywhere)? Read
   `docs/dev/local-setup.md` first.
@@ -122,13 +122,13 @@ anything committed counts as disclosed and must be fixed and rotated.
 2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
    and `pnpm run lint` locally — PR CI runs both on every PR to `main` (on a draft, ESLint only). (Typecheck can't be scoped to files.)
 3. The unit suite (`pnpm run test:unit:run`; PR CI does not run it unless the PR has the `full-ci` label: adding it starts the full
-   suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Want it on every PR? Always add it: `gh pr create ... --label full-ci` or
-   `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
+   suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Add it only when needed (the change touches code the unit/component suites cover and the PR is near
+   merge-ready), never on every PR: `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
 5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
    required checks, so a red run doesn't block.
-6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes with no
-   automated gate. Required when you moved a file, renamed a script or command, retired an env var,
+6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, lanes that no build or test covers (`comment-review`
+   is also the hosted review's `comments` lane, and `civitai-review` runs it locally when recording). Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.
 
 **Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the

@@ -17,7 +17,6 @@ const { createSearchIndexUpdateProcessor } = await import(
   '~/server/search-index/base.search-index'
 );
 
-// Prod before the hand migration: no Comic.
 const SCHEMA = `
   CREATE TYPE "OutboxEntity" AS ENUM ('Article', 'Image', 'Model', 'Post', 'ModelVersion');
   CREATE TABLE "Outbox" (
@@ -89,6 +88,12 @@ describe('the search Outbox forward', () => {
     expect(h.queued).toHaveLength(1);
   });
 
+  it('never forwards a refresh pass, but still queues it for Meilisearch', async () => {
+    await processor('Comic').queueUpdate([{ id: 1 }], { reason: 'refresh' });
+    expect(await outbox()).toEqual([]);
+    expect(h.queued).toHaveLength(1);
+  });
+
   it('forwards nothing for an entity the flag leaves out', async () => {
     setEnv({ SEARCH_OUTBOX_FORWARD: [] });
     await processor('Article').queueUpdate([{ id: 1 }], { reason: 'edit' });
@@ -96,21 +101,18 @@ describe('the search Outbox forward', () => {
     expect(h.queued).toHaveLength(1);
   });
 
-  // Comic switched on before its enum value is applied: the insert fails in Postgres.
+  // A stubbed rejection, not a real database error: the socket harness can report a SQL error as a
+  // dropped connection instead, which made the message nondeterministic.
   it('swallows a failed insert, and still queues the update for Meilisearch', async () => {
     loggingMock.logToAxiom.mockClear();
+    dbMock.dbWrite.outbox.createMany.mockRejectedValueOnce(new Error('insert failed'));
     await expect(
       processor('Comic').queueUpdate([{ id: 1 }], { reason: 'edit' })
     ).resolves.toBeUndefined();
-    await harness.recover();
 
-    expect(await outbox()).toEqual([]);
     expect(h.queued).toHaveLength(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'search-outbox-forward',
-        message: expect.stringMatching(/invalid input value for enum/),
-      })
+      expect.objectContaining({ name: 'search-outbox-forward', message: 'insert failed' })
     );
   });
 });

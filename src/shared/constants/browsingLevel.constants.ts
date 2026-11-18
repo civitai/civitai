@@ -1,3 +1,4 @@
+import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -242,9 +243,36 @@ export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 /** R, X and XXX; unlike nsfwBrowsingLevelsFlag, without Blocked. */
 export const matureBrowsingLevelsFlag = allBrowsingLevelsFlag & ~sfwBrowsingLevelsFlag;
 
-/** A model flagged unsuitable for mature content is held to PG/PG-13 wherever it is shown or used. */
+/**
+ * The levels a model is held to wherever it is shown or used: a model flagged as depicting a minor
+ * by the minor content rule, an SFW-only model to PG/PG-13. The two are kept apart because only the
+ * first is a minor rule.
+ */
 export const modelBrowsingLevelLimit = (model: { minor: boolean; sfwOnly: boolean }) =>
-  model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  model.minor
+    ? minorContentBrowsingLevelsFlag
+    : model.sfwOnly
+    ? sfwBrowsingLevelsFlag
+    : allBrowsingLevelsFlag;
+
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
+ * gallery reads 0 as no cap.
+ */
+export function heldGalleryLevel(
+  stored: number | undefined,
+  model: { minor: boolean; sfwOnly: boolean }
+) {
+  const limit = modelBrowsingLevelLimit(model);
+  return Flags.intersection(stored ?? 0, limit) || limit;
+}
+
+/** The level a minor model's gallery and carousel are forced to for a viewer who is not a moderator. */
+export const forcedMinorModelBrowsingLevel = (signedIn: boolean) =>
+  signedIn
+    ? minorContentBrowsingLevelsFlag
+    : Flags.intersection(minorContentBrowsingLevelsFlag, publicBrowsingLevelsFlag);
 
 export const exceedsModelBrowsingLevelLimit = (
   nsfwLevel: number,

@@ -205,9 +205,16 @@ describe('requestTurfSync', () => {
 
 const visibleOf = (sql: string) =>
   sql.slice(sql.indexOf(' p."publishedAt"'), sql.indexOf('"blockedFor" IS NULL'));
+// The whole contestEntry fragment: the contest check and the running flag Crucible check.
 const contestOf = (sql: string) => {
-  const at = sql.indexOf('EXISTS ( SELECT 1 FROM "CollectionItem"');
-  return at < 0 ? '' : sql.slice(at, sql.indexOf(')', sql.indexOf("'Contest'", at)) + 1);
+  const at = sql.indexOf('(EXISTS ( SELECT 1 FROM "CollectionItem"');
+  if (at < 0) return '';
+  let depth = 0;
+  for (let i = at; i < sql.length; i++) {
+    if (sql[i] === '(') depth++;
+    else if (sql[i] === ')' && --depth === 0) return sql.slice(at, i + 1);
+  }
+  return '';
 };
 const OWNER_ALLOWS_TURF =
   'EXISTS (SELECT 1 FROM "User" ow WHERE ow.id = i."userId" AND ow."bannedAt" IS NULL AND ow."deletedAt" IS NULL AND (ow.settings -> ? ->> ?) IS DISTINCT FROM \'true\')';
@@ -244,8 +251,8 @@ describe('the stickers a turf push carries', () => {
   it('picks each team’s newest first, then the next newest, drawable only, five at most', () => {
     // teamRank 1: Blue 6 (newest, id beats 3 at the same time), Pink 4; then Blue 3, 2, 1; Blue 7 is
     // sixth. Pink 5 is newest of all but not drawable.
-    expect(pickFeedStickers(rows).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
-    expect(pickFeedStickers(rows)[0]).toEqual({
+    expect(pickFeedStickers(rows, 5).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    expect(pickFeedStickers(rows, 5)[0]).toEqual({
       id: '6',
       userId: 106,
       team: 'Blue',
@@ -307,7 +314,8 @@ describe('the stickers a turf push carries', () => {
       string,
       { imageId: number; stickers: { id: string }[] }[]
     ];
-    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    // The default cap is TURF_FEED_STICKERS (10): the sixth Blue hat rides along too.
+    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1', '7']);
   });
 });
 

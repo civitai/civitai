@@ -1,19 +1,11 @@
-import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { commentV3IdsByOldId } from '~/server/services/commentv3/moderation.service';
-import {
-  hasV3SurfaceTwinSql,
-  prismaRunner,
-  setCommentFlags,
-  v3SurfaceCommentIds,
-} from '~/server/services/commentv3/write.service';
+import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
 
-export type ScamCleanup = 'chatMessages' | 'commentsV2' | 'none';
+export type ScamCleanup = 'chatMessages' | 'comments' | 'none';
 export const SCAM_CLEANUP_MAX_RECORDED_IDS = 5000;
 
 export type ScamCleanupRecord = {
-  /** `comments`: a record from before the model flip, of old `Comment` ids. */
-  kind: Exclude<ScamCleanup, 'none'> | 'comments';
+  kind: Exclude<ScamCleanup, 'none'>;
   /** ISO. For chat it is the exact `deletedAt` written, which is what the restore matches on. */
   at: string;
   count: number;
@@ -23,18 +15,15 @@ export type ScamCleanupRecord = {
 
 type IdRow = { id: number };
 
-// The `commentsV2` kind also covers CommentV3-write surfaces. The tables share one id sequence, so
-// one id list restores both. A comment there is set through `setCommentFlags`, CommentV3 first with
-// its CommentV2 row kept in step, the lock order of every write on those surfaces; the CommentV2
-// update leaves it out.
-async function setV3SurfaceHidden(userId: number, hidden: boolean, among?: number[]) {
-  const ids = await v3SurfaceCommentIds(
-    prismaRunner(dbWrite),
-    userId,
-    hidden ? 'NOT hidden' : 'hidden',
-    among
-  );
-  if (!ids.length) return [];
+/** Hides, or shows again, the user's live comments, optionally only those of `among`. */
+async function setCommentsHidden(userId: number, hidden: boolean, among?: number[]) {
+  const ids = (
+    await dbWrite.$queryRaw<IdRow[]>`
+      SELECT id FROM "CommentV3"
+      WHERE "userId" = ${userId} AND "deletedAt" IS NULL AND hidden = ${!hidden}
+        AND (${!among}::boolean OR id = ANY(${among ?? []}::int[]))`
+  ).map((r) => r.id);
+  // One transaction: a partial hide would leave comments hidden with no record to restore them by.
   return dbWrite.$transaction((tx) => setCommentFlags(prismaRunner(tx), ids, { hidden }));
 }
 
@@ -48,18 +37,10 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
           AND "userId" = ${userId} AND "deletedAt" IS NULL
         RETURNING id
       `;
-    case 'commentsV2':
+    case 'comments':
       // `hidden`, not the ToS removal: that is the ban path, which notifies and settles rewards per
       // comment. This one has to be undone by id when a moderator overturns the mute.
-      return (async () => [
-        ...(await dbWrite.$queryRaw<IdRow[]>`
-          UPDATE "CommentV2" c2 SET hidden = true, "updatedAt" = ${at}
-          WHERE c2."userId" = ${userId} AND c2.hidden IS NOT TRUE
-            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}
-          RETURNING id
-        `),
-        ...(await setV3SurfaceHidden(userId, true)).map(({ id }) => ({ id })),
-      ])();
+      return setCommentsHidden(userId, true);
   }
 }
 
@@ -79,7 +60,20 @@ export async function runScamCleanup(
   };
 }
 
-function restore(userId: number, record: ScamCleanupRecord) {
+type StoredCleanup = ScamCleanupRecord & { migrated?: boolean };
+
+/**
+ * A `comments` record on a `Comment` trigger predates the model flip and holds v1 ids, until the Phase 5
+ * stored-records SQL maps them (`migrated`). The new code writes `CommentV3` triggers only.
+ */
+async function storedCommentIds(record: StoredCleanup, triggerType: unknown) {
+  if (triggerType !== 'Comment' || record.migrated) return record.ids;
+  const rows = await dbWrite.$queryRaw<IdRow[]>`
+    SELECT id FROM "CommentV3" WHERE "legacyV1Id" = ANY(${record.ids}::int[])`;
+  return rows.map((r) => r.id);
+}
+
+async function restore(userId: number, record: StoredCleanup, triggerType: unknown) {
   switch (record.kind) {
     case 'chatMessages':
       // By the exact timestamp written, so messages the user deleted themselves stay deleted.
@@ -89,17 +83,13 @@ function restore(userId: number, record: ScamCleanupRecord) {
           AND "userId" = ${userId} AND "deletedAt" = ${new Date(record.at)}
       `;
     case 'comments':
-      return (async () =>
-        (await setV3SurfaceHidden(userId, false, await commentV3IdsByOldId(record.ids))).length)();
-    case 'commentsV2':
-      return (async () => {
-        const v2 = await dbWrite.$executeRaw`
-          UPDATE "CommentV2" c2 SET hidden = false
-          WHERE c2.id = ANY(${record.ids}::int[]) AND c2."userId" = ${userId} AND c2.hidden
-            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}
-        `;
-        return v2 + (await setV3SurfaceHidden(userId, false, record.ids)).length;
-      })();
+      return (await setCommentsHidden(userId, false, await storedCommentIds(record, triggerType)))
+        .length;
+    default:
+      // `commentsV2`, no longer written, also holds CommentV3 ids.
+      if ((record.kind as string) === 'commentsV2')
+        return (await setCommentsHidden(userId, false, record.ids)).length;
+      return 0;
   }
 }
 
@@ -111,10 +101,10 @@ export async function restoreScamCase(userRestrictionId: number) {
   if (!row || row.type !== 'scam' || !Array.isArray(row.triggers)) return { restored: 0 };
 
   let restored = 0;
-  for (const trigger of row.triggers as { cleanup?: ScamCleanupRecord | null }[]) {
+  for (const trigger of row.triggers as { entityType?: string; cleanup?: StoredCleanup | null }[]) {
     const record = trigger?.cleanup;
     if (!record?.count) continue;
-    restored += await restore(row.userId, record);
+    restored += await restore(row.userId, record, trigger.entityType);
   }
   return { restored };
 }

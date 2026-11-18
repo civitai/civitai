@@ -47,6 +47,11 @@ export function isSkipConsentRedirectUri(uri: string): boolean {
   }
 }
 
+/** The first of these redirect URIs an app that skips consent may not have, if any. */
+export function firstNonSkipConsentRedirectUri(uris: string[]): string | undefined {
+  return uris.find((uri) => !isSkipConsentRedirectUri(uri));
+}
+
 /**
  * The error response URL for a client whose `redirectUri` has already been checked with
  * redirectUriMatches (RFC 6749 §4.1.2.1): `?error=…&error_description=…&state=…`.

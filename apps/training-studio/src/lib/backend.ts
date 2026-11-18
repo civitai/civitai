@@ -1,3 +1,4 @@
+import type { TrainingQuote } from './orchestrator-core';
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
 // web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
@@ -30,6 +31,8 @@ export type {
 export type { SubmittedBatch, TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
+import type { DatasetRatingCount } from '$lib/dataset-rating';
+import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 
 /** One run's fully-resolved training config, as `submitTraining` sends it (the wire contract of the
  *  shell's POST /api/train): the core's `TrainingRunInput` minus the continue-only field, with the
@@ -63,6 +66,14 @@ export interface StudioBackend {
     signal: AbortSignal
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
+  /** The server's mature count for these dataset blobs under the v2 rating, which also starts rating
+   *  the rest. Absent, or `enabled: false`, means Review counts from the upload rating. */
+  datasetRating?(blobIds: string[]): Promise<DatasetRatingCount>;
+  /** Where each of these dataset files stands for training. Absent, or `enabled: false`, means Review
+   *  doesn't wait and the submit's own refusal decides. */
+  datasetReadiness?(blobIds: string[]): Promise<ReadinessProbe>;
+  /** Whether the orchestrator would take this run's dataset now (a whatif; never charges). */
+  datasetReadyToTrain?(run: TrainingRunPayload): Promise<ReadinessCheck>;
   /** The caller's recent single-image edits, one per result — the edit Data step's "From my edit
    *  generations". */
   listEditGenerations(): Promise<EditGenerationItem[]>;
@@ -92,20 +103,21 @@ export interface StudioBackend {
     addEpochs: number,
     currencies: string[]
   ): Promise<{ cost: number | null; steps?: number; matureCount: number }>;
-  /** Refused, charging nothing, when the source dataset is mature and `matureAck` is false. */
+  /** `matureCount` is the count the quote showed; refused with `MatureRepriceError`, charging nothing,
+   *  when the server rates the source mature after a quote that was not, on a charge that would spend Green. */
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
     currencies: string[],
-    matureAck: boolean
+    matureCount: number
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
   /** Real whatif for ONE run's exact config (steps/epochs/base) — what the Review step's Final
    *  price shows. Orchestrator pricing has a base fee and per-epoch terms, so scaling the "from"
    *  quote misprices; only this number matches what Start will charge. Null = unpriced. */
-  quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
+  quoteRun(input: TrainingWhatIfInput): Promise<TrainingQuote | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The training service status moderators set on the main app; null when the host can't read it. */

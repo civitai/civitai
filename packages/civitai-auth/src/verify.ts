@@ -1,9 +1,8 @@
 // SPOKE verify side (Path C). Verifies a session token LOCALLY — no per-request hop:
 //  1. ES256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
 //                  unknown `kid`, i.e. key rotation). This is the steady state.
-//  2. legacy JWE → decoded with NEXTAUTH_SECRET via a jose reimplementation (legacy-cookie.ts) — NO next-auth
-//                  dependency — ONLY to READ old `civitai-token` cookies until they age out post-cutover.
-//  3. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
+//     Nothing else is a session: any other token is rejected.
+//  2. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
@@ -16,7 +15,6 @@ import {
   type JWTPayload,
 } from 'jose';
 import { sessionCookieName } from './cookies';
-import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
 import { SESSION_LINEAGE_MAX_AGE_MS } from './family';
@@ -40,17 +38,6 @@ export interface AuthVerifierConfig {
    * Single-key only — for key ROTATION across multiple kids, use JWKS (spokes) instead.
    */
   publicKeyPem?: string;
-  /** Migration-window only: secret to decode legacy next-auth JWE cookies. */
-  legacySecret?: string;
-  /**
-   * Explicit kill-switch for the legacy next-auth JWE fallback. The legacy decode is a SECOND trust
-   * root (symmetric, no iss/aud — the old cookies never carried them), so it must be gated by an
-   * explicit decision, not merely inferred from `legacySecret` presence. Defaults to "on when a
-   * legacy secret is configured" to preserve migration-window behavior; set `false` at cutover to
-   * hard-disable legacy acceptance even while NEXTAUTH_SECRET is still in the env, then remove this
-   * whole branch once all legacy cookies have aged out.
-   */
-  legacyEnabled?: boolean;
   /** Reject tokens without `iat0`. Defaults to env.AUTH_REQUIRE_IAT0 (false). */
   requireIat0?: boolean;
   /** Clock injection (tests), epoch ms. */
@@ -104,10 +91,6 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // that base URL (http://localhost → unprefixed, https://auth.civitai.com → __Secure-).
     cookieName: config.cookieName ?? sessionCookieName(issuer?.startsWith('https://') ?? false),
     publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
-    legacySecret: config.legacySecret ?? env.NEXTAUTH_SECRET,
-    // Explicit gate for the legacy JWE trust root. Default: enabled iff a legacy secret is present
-    // (preserves migration-window behavior); pass `legacyEnabled: false` to force it off at cutover.
-    legacyEnabled: config.legacyEnabled ?? true,
     requireIat0: config.requireIat0 ?? env.AUTH_REQUIRE_IAT0,
     clock: config.clock ?? (() => Date.now()),
     isRevoked: config.isRevoked,
@@ -170,7 +153,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
 
     let alg: string | undefined;
     try {
-      alg = decodeProtectedHeader(token).alg;
+      const header = decodeProtectedHeader(token);
+      // A session is a plain JWT; an access token (`at+jwt`) or any other typed token is not one.
+      if (header.typ !== undefined && header.typ !== 'JWT') return null;
+      alg = header.alg;
     } catch {
       alg = undefined;
     }
@@ -188,17 +174,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       } catch {
         return null; // bad signature / expired / wrong issuer
       }
-    } else if (cfg.legacyEnabled && cfg.legacySecret) {
-      // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
-      // (legacy-cookie.ts). Gated behind the explicit `legacyEnabled` switch (a second, symmetric trust
-      // root with no iss/aud), not just secret presence. Returns null on a corrupt/foreign/expired
-      // cookie. Drop this branch post-cutover.
-      claims = await decodeLegacySessionCookie(token, cfg.legacySecret);
     }
 
     if (!claims) return null;
-    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token. The swap bridge
-    // is removed, but this guard cheaply rejects any stray legacy swap-shaped token.
+    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token.
     if ((claims as { purpose?: unknown }).purpose === 'swap') return null;
     if (!withinLineageLimits(claims)) return null;
     if (cfg.isRevoked && (await cfg.isRevoked(claims))) return null;
@@ -284,4 +263,100 @@ function readCookie(
     if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
   }
   return undefined;
+}
+
+/** How far in the future an access token's `iat` may be, for clock skew between hub pods. */
+const ACCESS_TOKEN_IAT_LEEWAY_S = 30;
+
+export interface AccessTokenJwtVerifierConfig {
+  /** The hub's SPKI public key (PEM). Defaults to AUTH_JWT_PUBLIC_KEY. Unused when `jwksUri` is set. */
+  publicKeyPem?: string;
+  /**
+   * Verify against the hub's JWKS at this URL instead of a local key: a resource server, which holds
+   * no hub key. Keys are cached and refetched on an unknown `kid` (jose's remote JWKS set, with the
+   * same bounded fetch as the session verifier).
+   */
+  jwksUri?: string;
+  /**
+   * Require `aud` to name this resource, by exact string (one of its entries when it is an array).
+   * Unset: `aud` must be present but any value passes (the hub's own introspection, which serves
+   * every resource).
+   */
+  audience?: string;
+  clock?: () => number;
+}
+
+/**
+ * Whether a bearer is a compact JWS whose protected header says `typ: at+jwt` (RFC 9068 2.1; the
+ * `application/` prefix is optional, and media types compare case-insensitively). Decides which
+ * path a token takes only: it verifies nothing.
+ */
+export function isAccessTokenJwt(token: string): boolean {
+  if (token.split('.').length !== 3) return false;
+  try {
+    const typ = decodeProtectedHeader(token).typ;
+    return typeof typ === 'string' && /^(application\/)?at\+jwt$/i.test(typ);
+  } catch {
+    return false;
+  }
+}
+
+/** jose error codes that are about the key fetch, not the token: a failed or slow JWKS read. */
+const KEY_FETCH_ERROR_CODES = new Set(['ERR_JOSE_GENERIC', 'ERR_JWKS_TIMEOUT', 'ERR_JWKS_INVALID']);
+const isKeyFetchError = (err: unknown) => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code !== 'string' || !code.startsWith('ERR_J') || KEY_FETCH_ERROR_CODES.has(code);
+};
+
+/**
+ * Verifies the hub's own RFC 9068 access tokens (`typ: at+jwt`): ES256 only, the given issuer exactly,
+ * the configured audience exactly, `exp` with no leeway, and `iat` at most 30 s ahead. Returns the
+ * payload, or null for a token that fails any check.
+ * Throws, on every call, when `issuer` is empty or (without `jwksUri`) when no public key is
+ * configured or it cannot be imported. With `jwksUri`, a failure to read the JWKS (unreachable,
+ * non-200, timeout, unparseable) also throws rather than returning null, so a caller can tell "the
+ * hub's keys are unavailable" from "this token is not valid".
+ */
+export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfig = {}) {
+  const jwks = config.jwksUri
+    ? createRemoteJWKSet(new URL(config.jwksUri), { timeoutDuration: JWKS_TIMEOUT_MS })
+    : undefined;
+  const publicKeyPem = jwks ? undefined : config.publicKeyPem ?? loadAuthEnv().AUTH_JWT_PUBLIC_KEY;
+  const clock = config.clock ?? (() => Date.now());
+  let _key: ReturnType<typeof importSPKI> | undefined;
+  const key = () => {
+    if (!publicKeyPem) throw new Error('[@civitai/auth] no AUTH_JWT_PUBLIC_KEY configured');
+    return (_key ??= importSPKI(normalizePem(publicKeyPem), ALG));
+  };
+
+  return async function verifyAccessTokenJwt(
+    token: string,
+    issuer: string
+  ): Promise<JWTPayload | null> {
+    if (!issuer) throw new Error('[@civitai/auth] an access token is verified against an issuer');
+    // Outside the try: a missing or unimportable public key is a misconfiguration and throws; it
+    // is never read as "this token is not valid".
+    const pemKey = jwks ? undefined : await key();
+    const nowMs = clock();
+    const opts = {
+      algorithms: [ALG],
+      issuer,
+      ...(config.audience !== undefined ? { audience: config.audience } : {}),
+      typ: 'at+jwt',
+      clockTolerance: 0,
+      currentDate: new Date(nowMs),
+      requiredClaims: ['exp', 'iat', 'jti', 'sub', 'aud', 'client_id'],
+    };
+    try {
+      const { payload } = pemKey
+        ? await jwtVerify(token, pemKey, opts)
+        : await jwtVerify(token, jwks as NonNullable<typeof jwks>, opts);
+      if (typeof payload.iat !== 'number') return null;
+      if (payload.iat > Math.floor(nowMs / 1000) + ACCESS_TOKEN_IAT_LEEWAY_S) return null;
+      return payload;
+    } catch (err) {
+      if (jwks && isKeyFetchError(err)) throw err;
+      return null;
+    }
+  };
 }

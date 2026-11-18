@@ -1,3 +1,4 @@
+import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
 
 /**
@@ -63,4 +64,21 @@ export function isTrustedOrchestratorUrl(url: string | undefined | null): boolea
   const configured = hostOf(env.ORCHESTRATOR_ENDPOINT);
   const trusted = configured ? [configured, ...KNOWN_ORCHESTRATOR_HOSTS] : KNOWN_ORCHESTRATOR_HOSTS;
   return trusted.includes(parsed.host.toLowerCase());
+}
+
+/**
+ * Whether a caller-supplied media url may be handed to a step run on the system orchestrator
+ * token: only media on Civitai's orchestrator, where uploads land. The raw string is forwarded,
+ * so it must already be canonical (which also refuses the backslash and control bytes WHATWG
+ * rewrites); the host judged here is then the host any parser sees. `@` is refused anywhere: a
+ * parser splitting the authority on the last `@` would read the host from the query. Both host
+ * comparisons include the port.
+ */
+export function isCivitaiMediaUrl(raw: string): boolean {
+  const parsed = URL.canParse(raw) ? new URL(raw) : null;
+  if (!parsed || parsed.href !== raw || parsed.hash || raw.includes('@')) return false;
+  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  return (
+    isTrustedOrchestratorUrl(raw) || (parsed.protocol === 'https:' && parsed.host === publicHost)
+  );
 }

@@ -89,8 +89,8 @@ it('the controls use a procedure in none of the routing sets', () => {
 });
 
 describe('block-token queries leave the browser as POST', () => {
-  it('covers all eight procedures (the set is not silently empty)', () => {
-    expect(ALL).toHaveLength(8);
+  it('covers all nine procedures (the set is not silently empty)', () => {
+    expect(ALL).toHaveLength(9);
   });
 
   it.each(ALL)('%s goes out as POST with the token in the body, not the URL', async (path) => {

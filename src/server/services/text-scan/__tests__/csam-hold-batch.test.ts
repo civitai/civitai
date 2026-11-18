@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({ decide: vi.fn() }));
 // Hand-listed: the loop under test never reaches a removal, only the module's imports do.
 vi.mock('~/server/services/article.service', () => ({ unpublishArticleById: vi.fn() }));
 vi.mock('~/server/services/chat.service', () => ({ deleteChatMessage: vi.fn() }));
-vi.mock('~/server/services/commentsv2.service', () => ({ bulkSetCommentV2TosViolation: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
   toggleBan: vi.fn(),
   clearUserProfileFields: vi.fn(),
@@ -18,6 +17,9 @@ vi.mock('~/server/services/model.service', () => ({ unpublishModelById: vi.fn() 
 vi.mock('~/server/services/post.service', () => ({ unpublishPostAsModerator: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 vi.mock('~/server/services/text-scan/actions/csam-hold', () => ({ lockCsamHold: vi.fn() }));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  requeueBlockedServiceOffering: vi.fn(),
+}));
 
 const {
   CSAM_HOLD_BATCH_MAX,

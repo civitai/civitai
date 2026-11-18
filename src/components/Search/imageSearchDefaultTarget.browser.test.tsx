@@ -35,11 +35,13 @@ vi.mock('react-instantsearch', async (importOriginal) => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  // Every flag on except `imageSearch`, which tests set.
+  // Every flag on except image search, which tests set. `feedSearch` offers images on its own, so
+  // "image search off" is both flags off.
+  const imageSearchFlags = new Set<string | symbol>(['imageSearch', 'feedSearch']);
   return {
     ...actual,
     useFeatureFlags: () =>
-      new Proxy({}, { get: (_, key) => (key === 'imageSearch' ? state.imageSearch : true) }),
+      new Proxy({}, { get: (_, key) => (imageSearchFlags.has(key) ? state.imageSearch : true) }),
   };
 });
 // The harness has no tRPC client or session, and the search scope reads both.

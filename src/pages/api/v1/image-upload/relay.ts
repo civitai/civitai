@@ -11,12 +11,16 @@ import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
-import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  recordUploadKeyOwner,
+  withholdUnrecordedUploadKey,
+} from '~/server/services/image-url-ownership';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   sanitizeImageUploadRelayProducer,
   type ImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // FALLBACK upload path, for clients that cannot reach the storage host directly.
 //
@@ -311,7 +315,10 @@ export async function authorizeRelayRequest(
     return { outcome: 'forbidden_origin' };
   }
 
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+  );
   if (session === false) return { outcome: 'unauthorized' };
   const userId = session?.user?.id;
   if (!userId) {
@@ -371,8 +378,11 @@ async function runRelay(
       // `uploadImageBufferToStore` returns { key, backend }; the direct presign route
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
-      trackImageUpload(req, res, key);
-      await recordUploadKeyOwner(key, userId);
+      // After the store write: the store mints the key. A refusal (when on) wastes at most one
+      // relay body, which is capped small.
+      if (withholdUnrecordedUploadKey(res, await recordUploadKeyOwner(key, userId)))
+        return 'owner_unrecorded';
+      trackImageUpload(req, res, key, userId);
       res.status(200).json({ id: key });
       // One event per relayed upload. The usage counter (below) says THAT relays
       // happen; this says WHO — the only signal that can size the population of
@@ -383,7 +393,7 @@ async function runRelay(
       // individual rescues behind a number that moved. Contained: the
       // bytes are already stored, so a telemetry failure must not fail the route.
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 'image-upload-relayed',
           userId,
           bytes: body.length,

@@ -20,9 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the bundler creates between two emitted copies.
  *
  * 🔴 What this CANNOT prove is how many copies the bundler actually emits — a test loads a
- * module as many times as it is told to. That half is gated at build time by
- * `scripts/check-server-graph-singletons.mjs`, which reads the real emitted source maps.
- * Neither check subsumes the other: this one pins the invariant, that one pins the fact.
+ * module as many times as it is told to; nothing checks that half.
  *
  * No `vi.mock` of the logger or the OTel packages anywhere below — a wholesale mock would
  * make the assertions statements about the mock, and the module under test has no runtime

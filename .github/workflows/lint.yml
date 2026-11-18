@@ -93,6 +93,16 @@ name: Lint
 # commits — every open PR going red at once, which reads as a CI outage rather
 # than as one bad commit.
 #
+# 🔴 THE UNIT SUITE IS THE EXCEPTION: it is verified in BATCHES, not per push. A push
+# to `main` runs typecheck, typecheck-tests, packages and component; `unit` is skipped there.
+# unit-batched.yml dispatches this workflow (`only: unit`) on `main` on a schedule (the cron in
+# unit-batched.yml is the one place that sets the cadence) when `main`'s head has moved
+# since the last batch run, and on red the `unit-verify` job re-runs the failed
+# files, bisects to the first bad merge commit and posts a failing `Unit tests (main batch)` commit
+# status ON THAT COMMIT. So a unit regression still renders red on the commit that caused it,
+# within about one cadence interval plus the run, instead of within minutes; that is the trade.
+# scripts/__tests__/main-branch-ci-coverage.test.ts pins this path instead of a push-reachable one.
+#
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
 # base by construction and is skipped; so are the sibling workflows schema-drift
 # and submodule-pin-guard, which are base-relative gates with nothing to compare
@@ -116,11 +126,8 @@ name: Lint
 # a negative one includes that path again. A change touching ANY file outside
 # the excluded trees still runs everything.
 #
-# Kept (re-included) because a unit test reads it, so editing it alone can turn
-# the suite red: docs/dev/convention-guards.md (no-lint-rules-script-drift
-# checks its "Convention guards run as tests" section against package.json).
-# Found by grepping every test file for paths under docs/ that it opens; that
-# was the only one. Markdown OUTSIDE these trees is deliberately not excluded:
+# No unit test opens a file under docs/ or claudedocs/ today, so nothing is
+# re-included. Markdown OUTSIDE these trees is deliberately not excluded:
 # tests read CLAUDE.md files, .claude/rules/*.md, app READMEs and the ToS
 # markdown under src/. If you add a test that reads a file under docs/ or
 # claudedocs/, add that path below the negations.
@@ -154,18 +161,24 @@ name: Lint
 #
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
 #
-# With the `full-ci` label on a PR (draft or not), every PR run here includes the
-# four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
-# `github.event.pull_request.labels`, the PR's CURRENT label set, on every
-# opened/synchronize/reopened/ready_for_review run until the label is removed.
-# apps.yml honours the same label, behind its own `paths:` filter. To get it on
-# every PR:
-#   gh pr create ... --label full-ci     or     gh pr edit <n> --add-label full-ci
+# With the `full-ci` label on a PR (draft or not), a PR run here includes the
+# six `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
+# `github.event.pull_request.labels`, the label set in that run's event payload.
+# apps.yml honours the same label, behind its own `paths:` filter. The label stays
+# on until the full unit suite has passed once on the PR (on some commit, not
+# necessarily the head): the `full-ci-done` job removes it after a run whose six
+# shards all passed, so later pushes run without the shards; a cancelled or red unit run leaves it on. Re-add it to ask again. Add it
+# only when the change touches code the unit or component suites cover and the PR is
+# near merge-ready.
+#   gh pr edit <n> --add-label full-ci
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
 # `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
-# and apps.yml on the PR branch, so the full suite starts at once; read its header
-# for why (a run started by any other label overlays the PR's real check results).
+# and apps.yml on the PR branch, so the full suite starts at once (not when the PR's own run on
+# that commit already started the shards, e.g. a PR opened with the label); read its header
+# for why (a run started by any other label overlays the PR's real check results). That
+# dispatch sets `skip_passed`, so it skips the suites the PR run on the same commit passed (the
+# `passed` job).
 # scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:
   pull_request:
@@ -175,21 +188,18 @@ on:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   push:
     branches: [main]
     paths:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
-  # does every suite step in a job that hosts several (`component` hosts geometry
-  # and the quarantine run). On pull_request and push `inputs.only` is empty, so
+  # does every suite step in a job that hosts several (`component` hosts geometry). On pull_request and push `inputs.only` is empty, so
   # it narrows nothing: what runs there is decided by each job's or step's own
-  # event gate (`unit` skips pull requests without the `full-ci` label and the
-  # quarantine step skips all of them; ESLint is PR-only; typecheck runs where
+  # event gate (`unit` skips pull requests without the `full-ci` label;
+  # ESLint is PR-only; typecheck runs where
   # Tekton does not; drafts run ESLint only unless
   # labeled `full-ci`).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
@@ -199,8 +209,8 @@ on:
       only:
         description: >-
           Run only this suite. all = every suite (default). typecheck,
-          typecheck-tests (test files only), unit (all 4 shards), unit-1 .. unit-4
-          (one shard), packages, geometry, component (includes the quarantine run).
+          typecheck-tests (test files only), unit (all 6 shards), unit-1 .. unit-6
+          (one shard), packages, geometry, component.
           App suites: dispatch apps.yml.
         type: choice
         default: all
@@ -213,26 +223,47 @@ on:
           - unit-2
           - unit-3
           - unit-4
+          - unit-5
+          - unit-6
           - packages
           - geometry
           - component
+      # Set by full-ci.yml. See the `passed` job.
+      skip_passed:
+        description: >-
+          Skip the suites the pull_request Lint run on this commit already passed.
+          Geometry still runs.
+        type: boolean
+        default: false
+      # Set by full-ci.yml. See the `full-ci-done` job. Not part of the concurrency group.
+      pr:
+        description: >-
+          PR number whose full-ci label to remove once every unit shard passes. Leave empty.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 # One group per ref, for pull requests AND pushes. On a PR `github.ref` is
 # `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
-# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
-# cancels the run for the older one that is still going.
+# On a push to `main` it is `refs/heads/main`, and there the group QUEUES rather
+# than cancels: the running `main` run finishes, at most one newer push waits
+# behind it, and a still-newer push replaces the waiting one (GitHub's rule for a
+# pending run in a group).
 #
-# That last part is a deliberate trade, not an oversight. Until 2026-10 a push
-# grouped by `github.sha`, so every commit on `main` kept its own full run (10+
-# jobs) alive. On a busy day that queued dozens of `main` runs behind the PR
-# runs on a plan with a fixed concurrent-job limit. The newest commit's run
-# checks a tree that contains every older commit, so `main` still gets a
-# verdict; what is given up is a per-commit verdict for intermediate commits,
-# which show as `cancelled`. To pin a break to one of them, push a branch at
-# that commit and dispatch this workflow on it (`only` narrows it to one suite).
+# Why queue, not cancel, on `main`. Until 2026-10 a push grouped by `github.sha`,
+# so every commit on `main` kept its own full run (10+ jobs) alive and dozens of
+# `main` runs queued behind PRs on a plan with a fixed concurrent-job limit. That
+# was fixed by cancelling instead, but `main` takes pushes faster than a run
+# takes, so cancel-in-progress left most push runs `cancelled` with no verdict.
+# Queueing costs about the same runner time and finishes far more of them (the
+# replay behind this: docs/testing/reading-ci-results.md, "CI cost
+# measurements"). The newest finished run checks a tree that contains every older
+# commit; a commit whose run was replaced while waiting shows as `cancelled`. To pin a
+# break to one of them, push a branch at that commit and dispatch this workflow
+# on it (`only` narrows it to one suite).
 #
 # A `ready_for_review` run shares the PR's `refs/pull/N/merge` group, so it
 # cancels a still-running draft ESLint run. That is fine: the ready run runs
@@ -242,11 +273,65 @@ permissions:
 # dispatch of the same suite on the same branch cancels the stale one, while
 # dispatches of DIFFERENT suites on one branch still run side by side. The
 # `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
+#
+# The batch unit dispatch (unit-batched.yml, dispatched as github-actions[bot] with `only: unit`)
+# has its own group, so a person's `only: unit` dispatch on the same ref neither cancels it nor is
+# cancelled by it.
 concurrency:
-  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
-  cancel-in-progress: true
+  group: lint-${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && format('unit-batch-{0}', github.ref) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
+  # ── A full-ci DISPATCH SKIPS WHAT THE PR RUN ON THE SAME COMMIT ALREADY PASSED ──────────────
+  #
+  # full-ci.yml dispatches this workflow (`only: all`, `skip_passed: true`) when the label is
+  # added to a PR whose own Lint run did not start the unit shards. That PR run usually runs
+  # `Typecheck test files`, `Package unit tests` and the three component shards on the same head
+  # commit. This job reads that run's jobs
+  # (scripts/ci/lint-dispatch-passed.mjs) and sets an output per suite that PASSED there; those
+  # jobs skip here. It waits up to 10 minutes for PR jobs still running, since the label is
+  # usually added while they are. A failed, cancelled or unfinished PR job, a lookup error, or
+  # this job failing all mean the suite runs here.
+  #
+  # Same SHA, not the same tree: a PR run tests the PR's merge commit (head plus base), while
+  # this dispatch tests the branch head alone. So a skipped suite's verdict is the one on the
+  # merge commit; to see the head alone, dispatch without `skip_passed`.
+  #
+  # Geometry still runs when the component suite is skipped: on a PR it is report-only, so a
+  # green shard 1 there says nothing about it, and here it is a real verdict. The unit shards
+  # and `typecheck` never wait on this job.
+  #
+  # A hand dispatch may set `skip_passed` too, with any `only`; it narrows the same way.
+  #
+  # Every job that `needs` this one has `!cancelled()` in its `if`: on a PR or a push this job
+  # is skipped, and without a status function a job whose need was skipped is skipped too.
+  passed:
+    name: Suites the PR run passed (full-ci dispatch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_passed }}
+    permissions:
+      actions: read
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      typecheck_tests: ${{ steps.find.outputs.typecheck_tests }}
+      packages: ${{ steps.find.outputs.packages }}
+      component: ${{ steps.find.outputs.component }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/lint-dispatch-passed.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # `github.sha` is the commit this dispatch checks out, so it is the one to match.
+      - name: Read the pull_request Lint run on this commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: node scripts/ci/lint-dispatch-passed.mjs
+
   eslint:
     name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
@@ -323,6 +408,33 @@ jobs:
       # main-app side is not path-filtered into apps.yml.
       - name: Moderator hold SQL matches the main app
         run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
+
+      # BLOCKING, on every PR including drafts. The `*.schema-drift.test.ts` files pin the published
+      # manifest schema (public/schemas/app-block/v1.json) against the code that enforces it (the
+      # manifest validator, the scope and category constants), and the files the Go feed service
+      # embeds against the Node modules they are generated from. They live in the unit suite, which
+      # runs on a PR only with the `full-ci` label, so a schema or validator edit could otherwise
+      # merge without them. Unfiltered on purpose: they read the schema with readFileSync, so no
+      # import graph sees it, and a hand-kept list of the files they pin would go stale silently.
+      #
+      # The file list is a glob, so a new drift test joins by its name. The JSON report is counted
+      # because vitest given files it does not match runs the rest and still exits 0.
+      - name: Manifest schema drift tests
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.schema-drift.test.ts')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No *.schema-drift.test.ts files found; this step would have checked nothing."
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}"
+          pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
+            --outputFile=schema-drift-report.json "${files[@]}"
+          ran=$(node -e 'console.log(require("./schema-drift-report.json").testResults.length)')
+          if [ "$ran" -ne "${#files[@]}" ]; then
+            echo "::error::vitest ran $ran of ${#files[@]} schema drift test files; each one must run."
+            exit 1
+          fi
 
       - name: Register ESLint problem matcher
         run: echo "::add-matcher::.github/problem-matchers/eslint-unix.json"
@@ -533,9 +645,10 @@ jobs:
     # not skip push: drafts skip this job and `main` has no required checks, so
     # test-file type errors from draft or red-merged PRs otherwise reach `main`
     # unmeasured and every later PR inherits the red. On `main` it renders red and
-    # blocks nothing. A newer push cancels the run in flight, so in a burst the error
-    # shows on the last commit of the burst; check the cancelled runs before it.
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
+    # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
+    # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
+    needs: passed
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') && needs.passed.outputs.typecheck_tests != 'true' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -575,13 +688,14 @@ jobs:
     # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
     # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
-    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED; REAL VERDICT ON `main` AND ON DISPATCH ──
+    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
     #
     # The `if` below skips this job on `pull_request` unless the PR carries the
-    # `full-ci` label (draft or not; every push while the label is on runs it — see
-    # the header). It runs on every push to `main` (blocking in the sense every other
-    # job is: it renders red; `main` has no required checks) and on
-    # `workflow_dispatch`, where `only` still selects it.
+    # `full-ci` label (draft or not; the label comes off once all six shards have
+    # passed for the PR — `full-ci-done`, see the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
+    # where `only` still selects it — including the batch dispatch on `main` from
+    # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
+    # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
     #
     # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
     # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
@@ -590,16 +704,15 @@ jobs:
     # (`continue-on-error` on `pull_request`) from its first day, so it never blocked
     # anything, and it passed 760 of 793 shard runs (96%).
     #
-    # THE TRADE, stated plainly: a unit regression is now found on `main` after
-    # merge instead of on the PR. The push run still renders red on the commit that
-    # caused it within minutes (`concurrency` above may fold a burst of commits into
-    # the newest one's run). The `test:lint-rules` convention guards
-    # (`src/server/services/__tests__/no-*.test.ts`) run inside this suite, so they
-    # move to `main` with it.
+    # THE TRADE, stated plainly: a unit regression is found on `main` after merge,
+    # by the next batch run, instead of on the PR. It renders red on the commit that
+    # caused it (the bisect), up to one cadence interval plus the run and the bisect later. The
+    # `test:lint-rules` convention guards (`src/server/services/__tests__/no-*.test.ts`)
+    # run inside this suite, so they move with it.
     #
     # WANT A VERDICT BEFORE MERGING? Add the `full-ci` label to the PR
     # (`gh pr edit <n> --add-label full-ci`), or dispatch this workflow on your
-    # branch with `only: unit` (all four shards) or `only: unit-<n>` (one):
+    # branch with `only: unit` (all six shards) or `only: unit-<n>` (one):
     #   gh workflow run lint.yml --ref <branch> -f only=unit
     # Or run `pnpm run test:unit:run` locally, which the root CLAUDE.md already asks for.
     #
@@ -626,52 +739,42 @@ jobs:
     # `Unit tests` step underneath was `failure`, so for those old runs read
     # `steps[].conclusion` from the jobs endpoint, not the run.
     #
-    # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
+    # `only: unit` runs all six shards; `only: unit-<n>` runs that shard alone
     # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
     # draft too).
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
-    # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
+    if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    # ── SHARDED ACROSS 6 RUNNERS ────────────────────────────────────────────
     #
-    # Measured before the change, n=12 runs of this job, from the Actions API:
+    # Vitest's `--shard` cuts a path-hash-ordered list into equal file COUNTS. Fixed
+    # cost per shard (setup, checkout, install) is ~100-120s and does not shard.
     #
-    #   Unit tests step   555.5s   <- variable, scales with 1/shards
-    #   Install            30.0s   |
-    #   checkout           21.0s   |  fixed overhead, paid by EVERY shard
-    #   setup-node         13.0s   |
-    #   set up job + pnpm   2.5s   |  = 66.5s
-    #   -------------------------
-    #   total             622.0s   = the 10.4m job median
+    # WHY 6, measured 2026-11-17 (only=unit dispatches, two runs per config; the
+    # job-minutes column is the sum of all shard jobs):
     #
-    # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
-    # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
+    #   config               max shard job   job-minutes
+    #   N=4                  1005-1076s      64-65
+    #   N=6                  816-964s        69-70
+    #   N=8 (cost split)     648-883s        69-79
     #
-    # 🔴 WHY 4 AND NOT MORE. The curve is already flat at 4: the fifth shard saves
-    # ~0.5m of wall clock (3.4m -> 3.0m) and the sixth ~0.3m, while EVERY shard adds
-    # the 66.5s fixed overhead to runner-minutes (13.7m at N=4, 14.8m at N=5) and
-    # takes one more slot of the plan's org-wide concurrent-job limit, which this
-    # workflow already saturates — so each extra shard queues someone else's job
-    # for longer than it saves this one. Shrink the fixed overhead or the suite
-    # before raising this number.
+    # 4 -> 6 takes ~15% off the slowest shard (mean 1040s -> 890s over these runs) for a
+    # few more job-minutes. N=8 cuts the
+    # wall further but adds the fixed cost per extra shard (and one more slot of the
+    # plan's org-wide concurrent-job limit, which this workflow already saturates —
+    # each extra shard queues someone else's job), and exposes more runners to a slow
+    # install (one N=8 shard spent 342s in setup-node + Install against a typical
+    # ~65s). Shrink the fixed overhead or the suite before raising this number.
     #
-    # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
-    # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
-    # claudedocs/test-perf-measurement-envelope-2026-08-15.md and
-    # scripts/test-perf/README.md), so uneven shards were the live risk. Measured
-    # on the first green sharded run, 2026-08-25:
-    #
-    #   shard   1        2        3        4
-    #   files   355      354      354      354     <- vitest splits by FILE COUNT
-    #   tests   5794     5142     5774     5447
-    #   wall    3.3m     3.6m     3.8m     3.4m    <- 1.14x spread
-    #
-    # The file split is near-exact; the 14% spread is the cost distribution
-    # showing through it. Adequate at N=4 — but the margin narrows as N rises and
-    # per-shard file counts fall, so READ THE FOUR DURATIONS after any change to
-    # this matrix. If one dominates, assign files by measured per-file cost
-    # (scripts/test-perf/reporter.mjs emits it) rather than raising N.
+    # A COST-BASED SPLIT WAS MEASURED AND DROPPED. Assigning files greedy longest-first
+    # by recorded per-file time (N=4/6/8, two runs each) could not be told apart from
+    # the count split at two runs per config: runner speed varies ~1.65x within one
+    # run (the same files ran 0.77x on one shard's runner and 1.27x on another's), so
+    # the slowest shard is mostly the slowest RUNNER. Modelled, it would take a few
+    # percent off the slowest shard (~4% at N=6). Don't rebuild it without several
+    # runs per config. Note for anyone measuring: the JSON reporter's per-file
+    # startTime/endTime cover only the test bodies, not import, which dominates here.
     #
     # ⚠️ Suite size moves fast: 1,065 files / 16,784 tests on 2026-08-15 became
     # 1,417 files / 22,157 executed ten days later, +33%. Any figure here is a
@@ -683,21 +786,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [1, 2, 3, 4] unless a dispatch named one shard (`only: unit-<n>`). The
-        # `--shard=<n>/4` denominator below stays 4 either way, so a single
+        # [1, 2, 3, 4, 5, 6] unless a dispatch named one shard (`only: unit-<n>`). The
+        # `--shard=<n>/6` denominator below stays 6 either way, so a single
         # shard runs exactly the files it would in a full run.
-        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4]') }}
-    # Per-shard, not the whole suite. The ~3.4m estimate above is from the
-    # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
-    # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
-    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m and shard 3
-    # (the heaviest, since `--shard` splits by file count, not cost) hit 20m on
-    # slow runners. It is NOT 30/4: the fixed overhead does not shard.
+        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4],"unit-5":[5],"unit-6":[6]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4, 5, 6]') }}
+    # Per-shard, not the whole suite. On 2026-10-23, under heavy runner load, shards
+    # took 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
+    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m at N=4 and the
+    # heaviest hash shard hit 20m on slow runners. Left at 25m when N went to 6 (shards
+    # 8-15m at N=6 on 2026-11-17): the headroom is for slow runners, which do not shard.
     timeout-minutes: 25
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
     # itself without its URL, so a shard that does not hold it pays only the container start.
-    services:
+    # Anchored: `unit-verify` re-runs failed files and bisects with the same services and env.
+    services: &unit-services
       redis:
         image: redis:7
         ports:
@@ -716,7 +819,7 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-    env:
+    env: &unit-env
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3, hot-reads-5 and
@@ -736,6 +839,10 @@ jobs:
       KYSELY_HOT_READS_9_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-10 suite (its own `hot_reads_10_parity` schema).
       KYSELY_HOT_READS_10_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-11 suite (its own `hot_reads_11_parity` schema).
+      KYSELY_HOT_READS_11_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-12 suite (its own `hot_reads_12_parity` schema).
+      KYSELY_HOT_READS_12_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The image_delivery_lookup(url) parity suite: creates and drops its own database and roles
       # on this server, so it needs the superuser URL.
       IMAGE_DELIVERY_LOOKUP_FN_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
@@ -775,34 +882,47 @@ jobs:
       # optimize pass happens within a run; it does not carry anything between
       # runs.)
       #
-      # 🔴 RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main`. This job runs on a pull
-      # request only when it carries the `full-ci` label (see the job comment), so
-      # the readers are the next push to `main`, a `workflow_dispatch` on any
-      # branch (full-ci.yml dispatches one) and a labeled PR, all of which can read
-      # the default branch's scope.
-      # A dispatch or a PR must not save: an entry saved on a
+      # 🔴 RESTORE ALWAYS, SAVE ONLY ON `main`. This job runs on a pull request only
+      # when it carries the `full-ci` label and no longer runs on push, so on `main` it
+      # runs as the batch dispatch (unit-batched.yml), which is what saves; the readers
+      # are the next batch run, a `workflow_dispatch` on any branch (full-ci.yml
+      # dispatches one) and a labeled PR, all of which can read the default branch's scope.
+      # A dispatch on another branch or a PR must not save: an entry saved on a
       # feature branch is scoped to that ref, readable by nothing else, and counts
       # against the same 10 GB repo budget as everything useful — the leak a
       # sibling change once cleaned up (20 orphans, 9.65 GB, 95.3% of the budget).
-      # Saving only on `main` keeps this at FOUR entries total.
+      # Saving only on `main` keeps this at SIX entries total (one per shard).
       #
-      # Budget: 4 x 302 MB = 1.21 GB worst case, and that is an over-estimate
+      # Budget: 6 x 302 MB = 1.81 GB worst case, and that is an over-estimate
       # twice over — the 302 MB is the full local project set (this job runs
       # `--project unit*`, a subset) and Actions compresses on upload.
       #
       # A run whose `pnpm-lock.yaml` differs from `main`'s last saved one misses the
       # exact key and falls back to the prefix, restoring the previous lockfile's
       # bundles; Vite validates its own optimizer metadata and re-optimizes what
-      # actually moved. A dispatch then saves nothing and pays cold-ish cost; the
-      # first push to `main` with that lockfile saves the new key.
+      # actually moved. A branch dispatch then saves nothing and pays cold-ish cost; the
+      # first run on `main` with that lockfile saves the new key.
       - name: Restore Vite pre-bundle cache
         id: vite-cache
         uses: actions/cache/restore@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # The last line falls back to ANY shard's entry: the content does not depend on which
+          # files a shard runs (see above), so a shard with no entry of its own — a new shard
+          # number after the matrix grows — starts from a sibling's bundles instead of cold.
           restore-keys: |
             vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+            vite-unit-${{ runner.os }}-${{ runner.arch }}-
+
+      # MEMORY SAMPLER, diagnostic. Shard 4 was killed mid-run by the runner ("The runner has
+      # received a shutdown signal") several times on 2026-11-18, in the first minutes, when its
+      # heaviest PGlite files ran at once. Writes `free -m` every 5 s for the whole job, uploaded
+      # below as `unit-memory-<shard>-a<attempt>` even when the runner is starved, so the next
+      # kill shows its peak instead of a guess. Remove once the cap below is proven or replaced.
+      - name: Start memory sampler
+        run: |
+          nohup bash -c 'while true; do echo "=== $(date -u +%H:%M:%S)"; free -m; sleep 5; done' > "$RUNNER_TEMP/unit-memory.log" 2>&1 &
 
       # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
       # `vitest run --project unit* ...args`, and its queueDecision() returns
@@ -832,8 +952,30 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      #
+      # VITEST_MAX_WORKERS=2 (read by vitest.config.mts): uncapped, Vitest runs one fork per
+      # core and shard 4's PGlite-heavy files exhausted the hosted runner's 16 GB. At 3 workers
+      # (2026-11-18, four runs) memory still reached 15.4 GB used with 3 GB swap full inside
+      # 2 minutes, and one of the four runs was killed.
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+        env:
+          VITEST_MAX_WORKERS: 2
+        # The [mem] line also goes into this step's log, which streams live: a runner killed for
+        # memory never reaches the upload step below (observed 2026-11-18), but its log keeps
+        # every line up to the kill.
+        run: |
+          nohup bash -c 'while true; do echo "[mem] $(date -u +%H:%M:%S) $(free -m | awk '"'"'/^Mem:/{print "used=" $3 " avail=" $7} /^Swap:/{print "swap=" $3}'"'"' | tr "\n" " ")"; sleep 5; done' &
+          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      - name: Upload memory samples
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-memory-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unit-memory.log
+          if-no-files-found: ignore
+          retention-days: 8
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -848,9 +990,46 @@ jobs:
         # confusing red assert step on top of the cancellation. Observed on shard 3
         # of the run that shipped the `--` bug.
         if: ${{ !cancelled() }}
-        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 6
 
-      # See the restore step for why this is push-only. Three further details:
+      # For `unit-verify`, which reads which files failed. Kept briefly.
+      - name: Upload unit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-report-${{ matrix.shard }}
+          path: unit-report.json
+          if-no-files-found: warn
+          retention-days: 3
+          # A re-run of a failed shard uploads again under the same name.
+          overwrite: true
+
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
+      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
+      # missing report is already failed, by name, by this suite's own ledger step.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        # Telemetry only: a failed upload must never turn a green suite red.
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-unit-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: unit-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
+
+      # The registry adapter's bundle, and its check that every external it loads loads under
+      # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
+      # seconds, so one shard pays it.
+      - name: Registry adapter bundle loads its externals
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: pnpm run build:registry-adapter
+
+      # See the restore step for why this is `main`-only. Three further details:
       #
       #   `!cancelled()` rather than the default — a RED suite still produced a
       #     valid set of pre-bundles, and refusing to save them would mean a
@@ -864,7 +1043,7 @@ jobs:
       #     be creating this cache". That must not red a commit on `main`, where
       #     a red on this job has to mean the code.
       - name: Save Vite pre-bundle cache
-        if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -876,7 +1055,8 @@ jobs:
     runs-on: ubuntu-latest
     # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    needs: passed
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.packages != 'true' }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -892,7 +1072,7 @@ jobs:
     # repo-settings change, not a workflow one.
     #
     # Why this one runs on PRs when `unit` does not: `unit` is ~12,000+ tests whose cost is a
-    # ~33s import/transform phase per file, four shards and most of this workflow's
+    # ~33s import/transform phase per file, six shards and most of this workflow's
     # job-minutes (see its comment). This is 616 tests with no browser, no database and no
     # Next module graph — ~15s locally.
     #
@@ -997,19 +1177,38 @@ jobs:
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-packages-a${{ github.run_attempt }}
+          path: packages-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
+
   component:
     name: Component + geometry tests (${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    # Pinned: Playwright 1.57 cannot install chromium deps on ubuntu-latest (26.04) yet.
+    runs-on: ubuntu-24.04
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
-    # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1, QUARANTINE ON SHARD 2 ──
+    # On a full-ci dispatch whose PR run passed the component suite (`passed`), only shard 1
+    # runs, with geometry alone, exactly as `only: geometry` does. On `only: component` that
+    # leaves nothing to run, so the job skips.
+    needs: passed
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (inputs.only != 'component' || needs.passed.outputs.component != 'true') }}
+    # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1 ──
     #
     # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
     # EVERY shard, and geometry rides on shard 1. 3, not 4: a fourth shard saves under a minute
     # of wall clock while adding another setup and one more slot of the plan's org-wide
-    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). Geometry
-    # and the quarantine run are put on DIFFERENT shards so neither stacks on the other; shard 3
-    # carries `component` only.
+    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). Shards 2
+    # and 3 carry `component` only.
     #
     # `--shard` is not cost-aware: it splits by FILE COUNT, so READ THE THREE DURATIONS after
     # any change to this matrix or to the suite's heaviest files.
@@ -1024,15 +1223,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `only: geometry` runs geometry alone, which lives on shard 1, so it needs only that.
+        # `only: geometry` runs geometry alone, which lives on shard 1, so it needs only that;
+        # so does a dispatch whose PR run passed the component suite (`passed`).
         # The `--shard=<n>/3` denominator stays 3 whatever the matrix holds.
-        shard: ${{ inputs.only == 'geometry' && fromJSON('[1]') || fromJSON('[1, 2, 3]') }}
-    # The three browser-mode suites, in one job so ONE checkout, install and Chromium install
-    # serves all of them: `component` (blocking), `geometry` (report-only on PRs) and the
-    # `component-quarantine` run (push to `main` and dispatch only). Each was its own job until
+        shard: ${{ (inputs.only == 'geometry' || needs.passed.outputs.component == 'true') && fromJSON('[1]') || fromJSON('[1, 2, 3]') }}
+    # The two browser-mode suites, in one job so ONE checkout, install and Chromium install
+    # serves both: `component` (blocking) and `geometry` (report-only on PRs). Each was its own job until
     # the plan's org-wide concurrent-job limit became the bottleneck: this workflow saturates
     # it, and every job a run starts queues someone else's. Every suite step carries its own
-    # selector (`only: component` runs component + quarantine, `only: geometry` runs geometry),
+    # selector (`only: component` runs component, `only: geometry` runs geometry),
     # and every suite after the first is `!cancelled()`, so one red suite never hides the others.
     #
     # 🔴 THE ONLY JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND THAT IS ALIGNED WITH THE
@@ -1058,7 +1257,7 @@ jobs:
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
     env:
-      SUITE_COMPONENT: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
+      SUITE_COMPONENT: ${{ needs.passed.outputs.component != 'true' && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') }}
       SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     steps:
       - uses: actions/checkout@v7
@@ -1135,12 +1334,55 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
+      # ── SYSTEM-PACKAGE CACHE: THE .debs `install-deps` DOWNLOADS ─────────
+      #
+      # The browser cache above leaves the system libraries to apt, and apt is
+      # the slow part when the runner's Ubuntu mirror is: from 2026-11-18 ~00:00Z
+      # this step went from 10-35 s per shard to 140-630 s on most runs
+      # (`Fetched 32.1 MB in 7min 53s (67.8 kB/s)`, mostly fonts and mesa), and
+      # with three shards one of them nearly always drew a slow download, so it
+      # sat on the Lint critical path. So the .deb files are cached too, and
+      # copied into apt's own archive dir before the install: apt reuses a .deb
+      # it finds there with the file name and size the index lists (it does not
+      # re-hash it), and downloads only what is missing or newer. The package
+      # set and versions stay exactly what `install-deps` asks apt for; only
+      # where the bytes come from changes. Trust boundary: the same as the
+      # browser cache above, a `main`-scoped Actions cache entry.
+      #
+      # Keyed by ISO week (with a prefix restore-key) so the entry is
+      # re-saved once a week as Ubuntu's -updates move on, instead of freezing
+      # on the first save and downloading every newer package forever. Saved
+      # on a push to `main` only, like the browser cache, for the same reason.
+      # `ImageOS` is the runner's machine env (ubuntu24), which the `env` expression context
+      # does not see, so it is read here.
+      - name: Resolve system-package cache key
+        id: apt-key
+        run: echo "prefix=playwright-apt-${ImageOS:?}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-" >> "$GITHUB_OUTPUT" && echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
+          restore-keys: |
+            ${{ steps.apt-key.outputs.prefix }}
+
       - name: Install Chromium for Playwright
         id: chromium
         env:
           CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
           set -euo pipefail
+          # Keep what apt downloads, so the step below can collect it for the cache.
+          echo 'Binary::apt-get::APT::Keep-Downloaded-Packages "true"; APT::Keep-Downloaded-Packages "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99-keep-playwright-debs >/dev/null
+          cached=0
+          if compgen -G "$HOME/playwright-apt-debs/*.deb" >/dev/null; then
+            sudo cp "$HOME"/playwright-apt-debs/*.deb /var/cache/apt/archives/
+            cached=$(find "$HOME/playwright-apt-debs" -name '*.deb' | wc -l)
+          fi
+          echo "system-package cache: $cached .deb file(s) restored"
           if [ "$CACHE_HIT" = true ]; then
             echo "browser cache hit: installing system dependencies only"
             pnpm exec playwright install-deps chromium
@@ -1148,6 +1390,30 @@ jobs:
           else
             pnpm exec playwright install --with-deps chromium
           fi
+          # Every .deb apt now holds: the restored ones plus whatever it fetched. The cache
+          # save below stores this directory; the count is the positive control that apt
+          # kept its downloads (0 here would mean the cache can never fill).
+          # `autoclean` first drops .debs the index no longer lists (versions -updates has
+          # superseded), so the weekly re-save does not carry every old version forward.
+          # Best-effort: Chromium is installed by now, and a failure collecting the cache
+          # must not fail this step (`steps.chromium.outcome` gates the suites).
+          if ! {
+            sudo apt-get autoclean -qq &&
+              mkdir -p "$HOME/playwright-apt-debs" &&
+              find "$HOME/playwright-apt-debs" -name '*.deb' -delete &&
+              find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$HOME/playwright-apt-debs" {} +
+          }; then
+            echo "::warning title=Playwright system-package cache::collecting the .debs failed; the next run downloads them again"
+          fi
+          echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
+
+      - name: Save Playwright system packages
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
 
       # Right after the install, so a red suite later still leaves the entry saved.
       # `continue-on-error`: best-effort infrastructure, like the Vite cache save.
@@ -1192,6 +1458,21 @@ jobs:
           path: ${{ runner.temp }}/component-report.json
           if-no-files-found: warn
           retention-days: 3
+
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-component-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/component-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
       # ── GEOMETRY: REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ──────────────────
       #
@@ -1329,33 +1610,20 @@ jobs:
           }
           JS
 
-      # ── QUARANTINE: PUSH TO `main` AND DISPATCH ONLY ─────────────────────────────────────
-      #
-      # Why: AppAssistantWorkspace.browser.test.tsx stalls on Playwright clicks at random on CI
-      # runners, and red-ed PRs that do not touch it (civitai/civitai#7101). It is held out of the
-      # blocking `Component tests` step and runs here instead, with the groups skipped there
-      # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
-      #
-      # Push to `main` and dispatch only; exit criteria in scripts/ci/component-quarantine.mjs,
-      # read from runs on `main`. Count the green
-      # streak from this STEP's conclusion in push runs on `main` (jobs endpoint): here it is a
-      # real verdict, so a red quarantine run turns the `main` run red, attributed by step name.
-      # No `continue-on-error`: it was `${{ github.event_name == 'pull_request' }}`, which is
-      # always false on a step that never runs on a PR. If PR runs come back, decide then
-      # whether they block (a literal `true` is rejected by main-branch-ci-coverage.test.ts,
-      # since it would also apply on push).
-      #
-      # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
-      # same gate as the blocking suite (`--narrowed`: a floor and file ledger make no sense for
-      # one file). The gate only ever adds a failure; it never turns vitest's red into green.
-      - name: Quarantined component tests
-        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' && matrix.shard == 2 }}
-        run: |
-          rc=0
-          pnpm exec vitest run --project component-quarantine \
-            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/quarantine-report.json" || rc=$?
-          node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/quarantine-report.json" --narrowed || exit 1
-          exit $rc
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-geometry-a${{ github.run_attempt }}
+          path: geometry-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
       # The only place a report-only red stays visible on a PR: see the geometry paragraph above.
       # Reads each report-only step's `outcome` (what it did) rather than its `conclusion` (what
@@ -1381,12 +1649,13 @@ jobs:
   # that check by name keeps working. Red when any shard job did not succeed (geometry stays
   # report-only on PRs via its own `continue-on-error`) or when the merged reports fail the
   # full ledger. On an `only: geometry` dispatch this job is skipped — there are no component
-  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job.
+  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job. The same holds on
+  # a full-ci dispatch whose PR run passed the component suite (`passed`).
   component-ledger:
     name: Component + geometry tests
-    needs: component
+    needs: [passed, component]
     runs-on: ubuntu-latest
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.component != 'true' }}
     timeout-minutes: 10
     steps:
       # The ledger walks `src/` for `*.browser.test.tsx` and imports scripts/ci only, so no
@@ -1421,3 +1690,152 @@ jobs:
             echo "::error title=Component shard did not succeed::the component shard jobs concluded '$SHARDS'. Open the red 'Component + geometry tests (n/3)' job for the cause."
             exit 1
           fi
+
+  # ── THE BATCHED UNIT VERDICT, AS A COMMIT STATUS ─────────────────────────────────────────────
+  #
+  # Only on the batch dispatch (unit-batched.yml dispatches this workflow as github-actions[bot]
+  # with `only: unit`); a person's `only: unit` dispatch and full-ci.yml's `only: all` dispatch
+  # never reach it. Green: a success `Unit tests (main batch)` status on HEAD. Red: re-runs the
+  # failed files at HEAD (a pass there = flaky: a success on HEAD whose description names the
+  # flaky files, never a bare one, plus a warning annotation), then `git bisect run
+  # --first-parent` from the last green batch-verified commit, and posts a FAILING status on the
+  # first bad commit naming the failed files, or on HEAD when the bisect cannot isolate one
+  # (scripts/ci/unit-batched.mjs). That keeps a unit red rendering on the commit that caused it.
+  # The gate's record is the commit status itself: it skips a run only when HEAD already carries
+  # a POSTED `success` or `failure` in this context. A bisected red therefore also posts on HEAD.
+  # If any step here fails, the last step posts `error` on HEAD naming it, so a crashed
+  # verification is visible and the next batch run re-verifies.
+  unit-verify:
+    name: Unit verified (main batch)
+    needs: unit
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    services: *unit-services
+    env: *unit-env
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          # Strings, not numbers: `cond && 0 || 1` is always 1, because 0 is falsy.
+          fetch-depth: ${{ needs.unit.result == 'failure' && '0' || '1' }}
+          submodules: ${{ needs.unit.result == 'failure' }}
+
+      - id: pnpm
+        uses: pnpm/action-setup@v6
+        if: needs.unit.result == 'failure'
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install
+        id: install
+        if: needs.unit.result == 'failure'
+        run: pnpm install --frozen-lockfile
+
+      - name: Download unit reports
+        id: download
+        if: needs.unit.result == 'failure'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: unit-report-*
+          path: ${{ runner.temp }}/reports
+
+      - name: Post the verdict (bisect on red)
+        id: verdict
+        # Under the job's 45: a step timeout FAILS the step, so the crash step below still runs.
+        timeout-minutes: 38
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+        # 6: the `unit` matrix on an `only: unit` dispatch. Fewer reports than this means a shard
+        # never finished, so the red is not treated as a flake or bisected.
+        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports" 6
+
+      # A crashed verification must not look like no news: `error` on HEAD, naming the step, so
+      # the gate (which counts only a posted success or failure) re-verifies HEAD next time.
+      - name: Post error on HEAD if this job crashed
+        # cancelled() too: a job-level timeout cancels the job, and failure() is then false.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-pnpm=${{ steps.pnpm.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            install=${{ steps.install.outcome }}
+            download-reports=${{ steps.download.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Unit tests (main batch)" \
+            -f "description=Batch verification crashed at step: $step. The next batch run re-verifies." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Unit batch verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"
+
+  # ── THE `full-ci` LABEL COMES OFF ONCE THE FULL UNIT SUITE HAS PASSED ───────────────────────
+  #
+  # The label stays on a PR until one Lint run has passed all six unit shards for it (on some
+  # commit of the PR, not necessarily its head); this job then removes it, so later pushes run
+  # without the shards (re-add it to ask again). Which runs:
+  #   - a pull_request run whose payload carries the label, from a branch in this repo (a fork's
+  #     token cannot edit labels);
+  #   - a dispatch with the `pr` input, which only full-ci.yml passes. The batch verification
+  #     on `main` (`only: unit`, no `pr`) and a hand dispatch without `pr` remove nothing.
+  # And only after a FULL unit run: every shard (no `only: unit-<n>`) and `success` (a matrix
+  # job is `success` only when every shard is). A cancelled, failed or skipped unit run keeps
+  # the label, so the next push runs the shards again: PR runs share a cancel-in-progress
+  # group, and removing the label before the shards finished could leave no full run at all.
+  # A failed removal warns and never fails the job; a 404 means the label is already gone.
+  full-ci-done:
+    name: Remove the full-ci label (unit suite passed)
+    needs: unit
+    runs-on: ubuntu-latest
+    if: ${{ needs.unit.result == 'success' && (github.event_name == 'pull_request' || inputs.only == 'all' || inputs.only == 'unit') && ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) }}
+    permissions:
+      pull-requests: write
+    timeout-minutes: 5
+    steps:
+      # Values reach the shell through env, never pasted into the script. On a dispatch `pr` is
+      # free text, so it must be a number and name an open PR whose head is this branch in this
+      # repo, or nothing is removed.
+      - name: Remove the full-ci label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          REPO: ${{ github.repository }}
+        run: |
+          say() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+              echo "::warning title=full-ci label not removed::the pr input is not a PR number (see the job summary)"
+              say "**full-ci label not removed**: the \`pr\` input (\`${PR//[$'\r\n']/ }\`) is not a PR number."
+              exit 0
+            fi
+            head=$(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.repo.full_name, .head.ref] | join(" ")' || true)
+            if [ "$head" != "open $REPO $GITHUB_REF_NAME" ]; then
+              echo "::warning title=full-ci label not removed::the pr input does not name an open PR from this branch (see the job summary)"
+              say "**full-ci label not removed**: PR #$PR is not an open PR whose head is \`$GITHUB_REF_NAME\` (got: ${head//[$'\r\n']/ })."
+              exit 0
+            fi
+          fi
+          if out=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" 2>&1); then
+            say "The full unit suite passed: removed the \`full-ci\` label from #$PR. Later pushes run the normal PR suites."
+          elif grep -q 'HTTP 404' <<< "$out"; then
+            say "The full unit suite passed; the \`full-ci\` label was already off #$PR."
+          else
+            echo "::warning title=full-ci label not removed::removing the label failed (see the job summary)"
+            say "**Could not remove the \`full-ci\` label** from #$PR (${out//[$'\r\n']/ }); remove it by hand, or later pushes keep running the unit shards."
+          fi
+          say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"

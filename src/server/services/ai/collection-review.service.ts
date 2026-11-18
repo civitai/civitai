@@ -53,15 +53,32 @@ export const aiReviewObservationsSchema = z.object({
   hasBuzzReference: z.boolean(),
 });
 
+const OBSERVATION_COLUMNS = [
+  'minorUncertain',
+  'depictsMinor',
+  'isPhotorealistic',
+  'suggestiveStyling',
+  'sexualContent',
+] as const;
+export type AiReviewObservationColumns = Record<(typeof OBSERVATION_COLUMNS)[number], -1 | 0 | 1>;
+
+/** For the audit row: 1 or 0 as the model answered, -1 where there is no readable answer. */
+export function toObservationColumns(raw: unknown): AiReviewObservationColumns {
+  const parsed = aiReviewObservationsSchema.safeParse(raw);
+  const o = parsed.success ? parsed.data : undefined;
+  const columns = {} as AiReviewObservationColumns;
+  for (const key of OBSERVATION_COLUMNS) {
+    const value = o?.[key];
+    columns[key] = value === undefined ? -1 : value ? 1 : 0;
+  }
+  return columns;
+}
+
 export type AiReviewDecision = {
   decision: 'approve' | 'reject' | 'escalate';
   violations: AiReviewViolation[];
   escalations: string[];
-  /**
-   * The escalation is our uncertainty, not a finding against the submission — an unreadable
-   * response, or a subject whose age the model could not determine. Callers must never turn this
-   * into a rejection; nobody should be told they broke a rule because we could not tell.
-   */
+  /** Callers must leave this escalation for a human and never turn it into a rejection. */
   neverReject?: boolean;
 };
 
@@ -72,8 +89,7 @@ const MINOR_ESCALATIONS = {
 } as const;
 const MINOR_ESCALATION_VALUES: string[] = Object.values(MINOR_ESCALATIONS);
 
-// Holds whatever the collection decides: a rejected item is deleted from some boards within the
-// hour, and the image's own review queue is the only place this signal survives that.
+// Escalates to the minor queue whatever the collection decides.
 export const needsMinorReview = ({ escalations }: Pick<AiReviewDecision, 'escalations'>) =>
   escalations.some((e) => MINOR_ESCALATION_VALUES.includes(e));
 
@@ -96,9 +112,6 @@ export function decideFromObservations(
   const violations: AiReviewViolation[] = [];
   const escalations: string[] = [];
 
-  // Also honoured when the model only suspects a minor: these are seven independent booleans with
-  // no cross-validation, and a hedged depictsMinor alongside a positive finding is exactly the
-  // inconsistency the rules layer exists to absorb.
   const anyMinorSignal = o.depictsMinor || !!o.minorUncertain;
   if (anyMinorSignal && o.minorIsPhotorealistic) escalations.push(MINOR_ESCALATIONS.photorealistic);
   if (anyMinorSignal && o.minorInappropriate) escalations.push(MINOR_ESCALATIONS.inappropriate);
@@ -114,10 +127,6 @@ export function decideFromObservations(
     : undefined;
   if (ratingEscalation) escalations.push(ratingEscalation);
 
-  // Escalating on this hedge alone would sweep up much of the stylized art these collections are
-  // made of, which is exactly what the prompt invites the model to be unsure about. It matters
-  // where the presentation is sexualized, and — per rules/minors.md, where photorealism is the
-  // bright line for minors in ANY context — where the image could pass for a photograph.
   const uncertainAge =
     !!o.minorUncertain && (!!o.suggestiveStyling || o.sexualContent || !!o.isPhotorealistic);
   if (uncertainAge) escalations.push(MINOR_ESCALATIONS.possible);
@@ -169,8 +178,7 @@ export function resolveRejectionMessage(
 
 export const isAiReviewAvailable = () => !!openrouter;
 
-// The codebase treats both 0 and -1 as "not yet rated" (see updateCollectionItemsStatus's
-// judgesApplyBrowsingLevel guard), so neither is a level and neither is allowed here.
+// 0 (not yet scanned or rated) and -1 are not levels, so neither is allowed here.
 export const isUnratedNsfwLevel = (nsfwLevel: number) => nsfwLevel <= 0;
 
 export function isNsfwLevelAllowed(nsfwLevel: number, allowedNsfwLevels: number) {

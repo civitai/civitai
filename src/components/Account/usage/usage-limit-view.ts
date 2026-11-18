@@ -48,6 +48,7 @@ const AREA_NAMES: Record<string, string> = {
   generation: 'Generation',
   training: 'Training',
   gifts: 'Gifts',
+  apps: 'Apps',
 };
 
 export function usageAreaName(area: string) {

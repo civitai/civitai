@@ -2,6 +2,7 @@ import { getClickhouse } from './clickhouse';
 import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { usersByIds } from './users.service';
 import { INTERNAL_IP_RANGE } from './clickhouse-filters';
+import { capped } from './section';
 
 // Everything behind `/api/image-signals` — the ClickHouse half of Image Lookup. One file per endpoint,
 // same rule as the User Lookup services.
@@ -112,6 +113,38 @@ export async function hasImageEvents(imageId: number): Promise<boolean> {
     SELECT count() AS n FROM default.images WHERE imageId = ${imageId}
   `);
   return Number(rows[0]?.n ?? 0) > 0;
+}
+
+export type FlaggedRemix = {
+  key: string;
+  time: string;
+  userId: number;
+  username: string | null;
+  source: string;
+};
+
+// A remix cannot predate its source, so createdAt is a safe lower bound on the time-sorted table.
+export async function getFlaggedRemixes(
+  imageId: number,
+  createdAt: string,
+  limit = 20
+): Promise<{ rows: FlaggedRemix[]; truncated: boolean }> {
+  const rows = await getClickhouse().$query<{ time: string; userId: string; source: string }>(`
+    SELECT time, userId, source
+    FROM default.prohibitedRequests
+    WHERE remixOfId = ${imageId} ${bounded(createdAt, 'time')}
+    ORDER BY time DESC
+    LIMIT ${limit + 1}
+  `);
+
+  const byId = await usersByIds(rows.slice(0, limit).map((r) => Number(r.userId)));
+  return capped(rows, limit, (r, i) => ({
+    key: `${i}:${r.time}`,
+    time: clickhouseDate(r.time),
+    userId: Number(r.userId),
+    username: byId.get(Number(r.userId))?.username ?? null,
+    source: r.source,
+  }));
 }
 
 export type ReactionCluster = {

@@ -29,7 +29,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
       hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
       refreshStandings: vi.fn(),
     },
-    mockReferee: { runEventPointsReferee: vi.fn() },
+    mockReferee: { runEventPointsReferee: vi.fn(), REFEREE_CLICKHOUSE_BUDGET_S: 2100 },
     mockSync: { syncEventHats: vi.fn() },
   })
 );
@@ -420,6 +420,23 @@ describe('end-of-event cleanup', () => {
     await eventEngine.updateLeaderboard(new Date(close + HOUR));
     expect(winnerUpdates().map(([, id]) => id)).toEqual([22]);
     expect(sysStore[winnerMarker]).toBe('Blue');
+  });
+
+  // Fixed when the job starts, so the hat sync and every event's settle spend one budget under the
+  // job's lock rather than a fresh one each.
+  it('gives the settle a deadline taken at the start of the run', async () => {
+    vi.useFakeTimers({ now: new Date(close + HOUR) });
+    try {
+      const start = Date.now();
+      mockSync.syncEventHats.mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + 100_000);
+        return [];
+      });
+      await eventEngine.updateLeaderboard(new Date(close + HOUR));
+      expect(mockReferee.runEventPointsReferee.mock.calls[0]?.[3]).toBe(start + 2_100_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps settling past the window until a run is final, then stops', async () => {

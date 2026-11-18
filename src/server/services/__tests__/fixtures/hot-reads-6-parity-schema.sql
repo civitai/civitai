@@ -49,7 +49,9 @@ CREATE TABLE "hot_reads_6_parity"."Image" (
   "type"      "hot_reads_6_parity"."MediaType"                NOT NULL DEFAULT 'image',
   "width"     INTEGER,
   "height"    INTEGER,
-  "metadata"  JSONB                                           NOT NULL DEFAULT '{}'
+  "metadata"  JSONB                                           NOT NULL DEFAULT '{}',
+  "needsReview" TEXT,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE "hot_reads_6_parity"."Cosmetic" (

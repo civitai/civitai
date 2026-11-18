@@ -9,6 +9,7 @@ import {
 } from '~/components/Search/semanticImageSearchClient';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { routeToSemanticSearch } from '~/components/Search/semanticSearchRouting';
 import { trpcVanilla } from '~/utils/trpc';
 import { isSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
 
@@ -20,7 +21,6 @@ import { isSemanticArticleSearchEnabled } from '~/components/Search/semanticArti
  */
 
 type SearchClient = NonNullable<InstantSearchProps['searchClient']>;
-type SearchRequests = Parameters<SearchClient['search']>[0];
 type SearchInput = Parameters<typeof trpcVanilla.semanticArticleSearch.search.query>[0];
 type SearchOutput = Awaited<ReturnType<typeof trpcVanilla.semanticArticleSearch.search.query>>;
 
@@ -82,29 +82,9 @@ export function withSemanticArticleSearch(
   searchArticles = createSemanticArticleSearch(),
   isEnabled = isSemanticArticleSearchEnabled
 ): SearchClient {
-  return {
-    ...client,
-    async search(requests: SearchRequests) {
-      const routed = requests.map((r) => isEnabled() && isSemanticArticleIndex(r.indexName));
-      if (!routed.some(Boolean)) return client.search(requests);
-
-      const others = requests.filter((_, i) => !routed[i]);
-      const [otherResponse, articleResults] = await Promise.all([
-        others.length ? client.search(others) : Promise.resolve({ results: [] }),
-        Promise.all(
-          requests.map((request, i) =>
-            routed[i]
-              ? searchArticles(request.indexName, (request.params ?? {}) as RequestParams)
-              : undefined
-          )
-        ),
-      ]);
-      let next = 0;
-      return {
-        results: requests.map((_, i) =>
-          routed[i] ? articleResults[i] : (otherResponse.results as unknown[])[next++]
-        ),
-      };
-    },
-  } as unknown as SearchClient;
+  return routeToSemanticSearch(
+    client,
+    (indexName) => isEnabled() && isSemanticArticleIndex(indexName),
+    searchArticles
+  );
 }

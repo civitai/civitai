@@ -5,6 +5,7 @@
   import {
     FARO_LOKI_RETENTION_HOURS,
     faroSessionLink,
+    feedbackPathLinksToCivitai,
     reconstructFeedbackUrl,
     type FeedbackContext,
   } from '$lib/feedback';
@@ -69,7 +70,9 @@
     <span class="ml-2 font-normal normal-case">{dateTime(createdAt)}</span>
   </h3>
 
-  {#if reconstructed}
+  {#if reconstructed && !feedbackPathLinksToCivitai(area)}
+    <span class="font-mono text-sm wrap-anywhere">{reconstructed}</span>
+  {:else if reconstructed}
     <a
       href={`${civitaiUrl}${reconstructed}`}
       target="_blank"

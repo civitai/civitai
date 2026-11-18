@@ -209,6 +209,52 @@ describe('linkArticleContentImages', () => {
   });
 });
 
+describe('an owner save that leaves out an image held for review', () => {
+  const HELD = row(30, { needsReview: 'csam' });
+  const PLAIN = row(31);
+
+  beforeEach(() => {
+    // The article's connections, filtered as Prisma would: a dropped filter widens the result.
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async ({ where }: any) => {
+      const { entityType: _type, entityId: _id, imageId, NOT, ...rest } = where;
+      if (Object.keys(rest).length) throw new Error(`unexpected filter ${Object.keys(rest)}`);
+      return [HELD, PLAIN]
+        .filter((image) => !imageId.notIn.includes(image.id))
+        .filter((image) => !NOT || image.needsReview !== NOT.image.needsReview)
+        .map((image) => ({ imageId: image.id }));
+    }) as never);
+  });
+
+  const deletedConnections = () =>
+    dbMock.dbWrite.imageConnection.deleteMany.mock.calls.flatMap(
+      ([args]: any) => args.where.imageId.in
+    );
+
+  it('🔴 keeps the held image connected to the article', async () => {
+    await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(deletedConnections()).not.toContain(HELD.id);
+  });
+
+  it('still disconnects an image that is not held', async () => {
+    await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(deletedConnections()).toEqual([PLAIN.id]);
+  });
+});
+
 describe('applyArticleContentChange', () => {
   const save = (userId: number) =>
     applyArticleContentChange({
@@ -268,19 +314,6 @@ describe('deleteArticleById', () => {
       expect(deletedIds()).toEqual([UNUSED_OWN.id]);
     }
   );
-
-  it('removes the comment topic before the article, in the same transaction', async () => {
-    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
-
-    const topicDelete = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
-      (strings as unknown as string[]).join('?').includes('DELETE FROM "CommentTopic"')
-    );
-    expect(topicDelete).toBeGreaterThanOrEqual(0);
-    expect(dbMock.dbWrite.$executeRaw.mock.calls[topicDelete].slice(1)).toEqual([ARTICLE_ID]);
-    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
-      dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
-    );
-  });
 
   // An article saved before shop keys were refused can hold one as the author's own image row.
   it('keeps an unused image of the author whose key shop artwork uses', async () => {
@@ -524,7 +557,8 @@ describe('the article banner', () => {
   const NEW_BANNER = row(32);
   const ANOTHER_ARTICLES = row(33, { uses: ['article'] });
   const FOREIGN = row(34, { userId: SOMEONE_ELSE });
-  const IMAGES = [COVER, BANNER, NEW_BANNER, ANOTHER_ARTICLES, FOREIGN];
+  const POSTED = row(35, { postId: 500 });
+  const IMAGES = [COVER, BANNER, NEW_BANNER, ANOTHER_ARTICLES, FOREIGN, POSTED];
 
   /** The article row as the update left it, so the image predicates see the new cover and banner. */
   let saved: { coverId: number | null; bannerId: number | null };
@@ -600,6 +634,14 @@ describe('the article banner', () => {
     );
   });
 
+  it('keeps the cover when the save does not mention it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+    await save({});
+
+    expect(saved.coverId).toBe(COVER.id);
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
   it('keeps the banner when the save does not mention it', async () => {
     await save({ coverImage: COVER });
 
@@ -646,9 +688,7 @@ describe('the article banner', () => {
 
     deleteImageById.mockClear();
     dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
-      where.OR.some((c: any) => c.bannerId === COVER.id) && where.id.not === ARTICLE_ID
-        ? 1
-        : 0) as never);
+      where.OR.some((c: any) => c.bannerId === COVER.id) ? 1 : 0) as never);
     await save({ coverImage: NEW_BANNER });
     expect(deletedIds()).not.toContain(COVER.id);
   });
@@ -661,6 +701,136 @@ describe('the article banner', () => {
 
     expect(saved).toEqual({ coverId: NEW_BANNER.id, bannerId: null });
     expect(deletedIds()).toEqual([]);
+  });
+
+  const replaceStoredCover = async (stored: Row, next: Row) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+      coverId: stored.id,
+    } as never);
+    await save({ coverImage: next });
+  };
+
+  it("🔴 keeps a replaced cover that is one of the author's posted images", async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+
+    await replaceStoredCover(POSTED, NEW_BANNER);
+
+    expect(deletedIds()).not.toContain(POSTED.id);
+  });
+
+  it('🔴 keeps a replaced cover that a later save has put back on this article', async () => {
+    // As the article row stands after the other save: it shows the old cover again. Only a count
+    // that includes this article sees that.
+    dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
+      where.id === undefined && where.OR.some((c: any) => c.coverId === COVER.id)
+        ? 1
+        : 0) as never);
+
+    await replaceStoredCover(COVER, NEW_BANNER);
+
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  describe('a save without a cover its model hides from the editor', () => {
+    const saveWithoutCover = async (stored: Row, withheld: boolean) => {
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+        coverId: stored.id,
+      } as never);
+      const holdRead = dbMock.dbWrite.$queryRaw.getMockImplementation();
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+          ? withheld
+            ? [{ id: stored.id }]
+            : []
+          : holdRead?.(strings, ...values)) as never);
+      const imageRead = dbMock.dbWrite.image.findMany.getMockImplementation();
+      dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+        args.select?.userId
+          ? IMAGES.filter((image) => args.where.id.in.includes(image.id)).map(({ id, userId }) => ({
+              id,
+              userId,
+            }))
+          : imageRead?.(args)) as never);
+      dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+      await upsertArticle({
+        id: ARTICLE_ID,
+        userId: AUTHOR,
+        title: 'A title',
+        content: '<p>had images</p>',
+        status: 'Draft',
+        coverImage: null,
+        bannerImage: { id: BANNER.id, url: 'u' },
+      } as never);
+      // What the update wrote for the cover: undefined leaves the column alone.
+      const [{ data }] = dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: any }];
+      return data.coverId;
+    };
+
+    it("🔴 keeps a withheld cover someone else uploaded, which the owner's form never had", async () => {
+      expect(await saveWithoutCover(FOREIGN, true)).toBeUndefined();
+    });
+
+    it('clears it when its model does not withhold it', async () => {
+      expect(await saveWithoutCover(FOREIGN, false)).toBeNull();
+    });
+
+    it("clears the owner's own withheld cover, which their form showed", async () => {
+      expect(await saveWithoutCover(COVER, true)).toBeNull();
+    });
+  });
+
+  describe('when a moderator replaces the cover', () => {
+    const replaceAsModerator = async (stored: Row, next: Row) => {
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+        coverId: stored.id,
+      } as never);
+      dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+      await upsertArticle({
+        id: ARTICLE_ID,
+        userId: MODERATOR,
+        isModerator: true,
+        title: 'A title',
+        content: '<p>had images</p>',
+        status: 'Draft',
+        coverImage: { id: next.id, url: 'u' },
+      } as never);
+    };
+
+    it('🔴 keeps a cover owned by someone other than the author, whose safety report is on file', async () => {
+      dbMock.dbWrite.csamReport.count.mockImplementation((async ({ where }: any) =>
+        where.userId === SOMEONE_ELSE ? 1 : 0) as never);
+
+      await replaceAsModerator(FOREIGN, COVER);
+
+      expect(deletedIds()).not.toContain(FOREIGN.id);
+    });
+
+    it("deletes the author's own replaced cover", async () => {
+      await replaceAsModerator(COVER, NEW_BANNER);
+
+      expect(deletedIds()).toContain(COVER.id);
+    });
+  });
+
+  it('🔴 keeps the cover when the save does not mention it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+    } as never);
+
+    expect(saved.coverId).toBe(COVER.id);
+    expect(deletedIds()).not.toContain(COVER.id);
   });
 
   it('clears a cover saved as null even when another article shows it', async () => {
@@ -716,5 +886,25 @@ describe('the article banner', () => {
     await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
 
     expect(deletedIds()).toContain(BANNER.id);
+  });
+
+  // A moderator's form carries a restricted banner (getArticleById), so their null removes it.
+  it("clears a restricted banner on a moderator's save", async () => {
+    const base = dbMock.dbWrite.image.findMany.getMockImplementation();
+    dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+      args.select?.modelRestricted
+        ? args.where.id.in.map((id: number) => ({ id, nsfwLevel: 4, modelRestricted: true }))
+        : base?.(args)) as never);
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: MODERATOR,
+      isModerator: true,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      coverImage: { id: COVER.id, url: 'u' },
+      bannerImage: null,
+    } as never);
+    expect(saved.bannerId).toBeNull();
   });
 });

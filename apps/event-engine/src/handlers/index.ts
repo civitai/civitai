@@ -9,7 +9,6 @@ import { bountyEntryReactionHandler } from './bounty-entry-reactions';
 import { resourceReviewHandler } from './reviews';
 import { collectionItemHandler } from './collection-items';
 import { collectionContributorHandler } from './collection-contributors';
-import { commentV2Handler } from './comment-v2';
 import { commentV3Handler } from './comment-v3';
 import { imageResourceHandler } from './image-resources';
 import { buzzTipHandler } from './buzz-tips';
@@ -19,7 +18,6 @@ import { comicEngagementHandler } from './comic-engagements';
 import { bountyEntryHandler } from './bounty-entries';
 import { bountyBenefactorHandler } from './bounty-benefactors';
 import { bountyHandler } from './bounty';
-import { tagsHandler } from './tags';
 import { modelVersionEventsHandler } from './model-version-events';
 import { jobsHandler } from './jobs';
 import { manualHandler } from './manual';
@@ -49,7 +47,6 @@ export const eventHandlers: Record<string, EventHandler> = {
   collectionContributorHandler,
 
   // Comments
-  commentV2Handler,
   commentV3Handler,
 
   // Images
@@ -60,7 +57,6 @@ export const eventHandlers: Record<string, EventHandler> = {
 
   // Tags
   tagEngagementHandler,
-  tagsHandler,
 
   // Engagements
   bountyEngagementHandler,

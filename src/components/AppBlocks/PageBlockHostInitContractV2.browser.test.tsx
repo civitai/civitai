@@ -37,6 +37,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   // the module wholesale, so the factory must re-declare it or the ESM link
   // fails.
   setTrpcBatchingEnabled: vi.fn(),
+  // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- the inert proxy fails every test here (PageBlockHost reads hook shapes at render); converting is its own change
   trpc: {
     // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
     // hosts register the handler, so every host-rendering suite needs these
@@ -69,6 +70,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {
@@ -216,6 +218,16 @@ async function mountAndCaptureInit(overrides: Partial<typeof baseProps> = {}) {
   const init = posts.last('BLOCK_INIT')!.payload as BlockInitPayload;
   return { posts, init };
 }
+
+describe('PageBlockHost BLOCK_INIT — capabilities', () => {
+  test('🔴 advertises workflowMedia:v1, so the SDK may send GET_WORKFLOW_MEDIA to this host', async () => {
+    // The SDK sends GET_WORKFLOW_MEDIA only to a host that advertises it; any other host
+    // would leave the request unanswered.
+    const { posts, init } = await mountAndCaptureInit();
+    expect(init.capabilities).toContain('workflowMedia:v1');
+    posts.stop();
+  });
+});
 
 describe('PageBlockHost BLOCK_INIT — viewer.signedIn (v2)', () => {
   test('🔴 signedIn: true reaches the block through the PROP path, not the projection', async () => {

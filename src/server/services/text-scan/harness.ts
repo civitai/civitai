@@ -89,6 +89,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'sampleShadow',
   'quoteEntities',
   'composeEntities',
+  'composeComFaceIntent',
   'scanTexts',
   'quoteTexts',
   'literalModelRules',
@@ -325,6 +326,10 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     action: z.literal('composeEntities'),
     entityType,
     entityIds: z.array(z.number().int().positive()).min(1).max(50),
+  }),
+  z.object({
+    action: z.literal('composeComFaceIntent'),
+    modelIds: z.array(z.number().int().positive()).min(1).max(50),
   }),
   z
     .object({
@@ -821,6 +826,39 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
   return { entityType, results };
 }
 
+async function composeComFaceIntent(modelIds: number[]) {
+  const { comFaceIntentFields, getOwnTriggerWords } = await import(
+    '~/server/services/model-com-face-intent.service'
+  );
+  const models = await dbRead.model.findMany({
+    where: { id: { in: modelIds }, deletedAt: null },
+    select: { id: true, name: true, description: true, userId: true },
+  });
+  const byId = new Map(models.map((model) => [model.id, model]));
+  const results = await Promise.all(
+    modelIds.map(async (entityId) => {
+      const model = byId.get(entityId);
+      if (!model) return { entityId, ok: false as const, error: 'entity not found' };
+      const triggerWords = await getOwnTriggerWords({
+        modelId: model.id,
+        userId: model.userId,
+        db: dbRead,
+      });
+      return {
+        entityId,
+        ok: true as const,
+        fields: comFaceIntentFields({
+          name: model.name,
+          description: model.description,
+          triggerWords,
+        }),
+        userId: model.userId,
+      };
+    })
+  );
+  return { results };
+}
+
 type ShadowSampleInput = Omit<Extract<TextScanHarnessInput, { action: 'sampleShadow' }>, 'action'>;
 
 type ShadowRow = {
@@ -965,7 +1003,7 @@ function requireModeratorId(id: number | undefined) {
   return id;
 }
 
-/** `actor.moderatorId` (an authenticated session) wins over any id asserted in the body; `putLabelModes` accepts only the session id. */
+/** Writes are attributed to `actor.moderatorId` (an authenticated session) only; an id in the body is ignored. */
 export async function runTextScanHarnessAction(
   input: TextScanHarnessInput,
   actor: { moderatorId?: number }
@@ -1005,7 +1043,7 @@ export async function runTextScanHarnessAction(
 
     case 'putPrompt': {
       const { key, content, note, baseId } = input;
-      const createdById = requireModeratorId(actor.moderatorId ?? input.createdById);
+      const createdById = requireModeratorId(actor.moderatorId);
       return {
         kind: 'json',
         body: await insertTextScanPrompt({ key, content, note, createdById, baseId }),
@@ -1013,12 +1051,12 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putConfig': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       return { kind: 'json', body: await setTextScanConfig(input.config, { moderatorId: id }) };
     }
 
     case 'putModes': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       const modes = await setTextScanRollout(input.entityType, input.rollout, {
         moderatorId: id,
         allowActive: input.allowActive,
@@ -1027,7 +1065,7 @@ export async function runTextScanHarnessAction(
     }
 
     case 'putWebSearchModes': {
-      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const id = requireModeratorId(actor.moderatorId);
       const webSearchModes = await setTextScanWebSearchRollout(input.entityType, input.rollout, {
         moderatorId: id,
         allowActive: input.allowActive,
@@ -1104,6 +1142,9 @@ export async function runTextScanHarnessAction(
 
     case 'composeEntities':
       return { kind: 'json', body: await composeEntities(input.entityType, input.entityIds) };
+
+    case 'composeComFaceIntent':
+      return { kind: 'json', body: await composeComFaceIntent(input.modelIds) };
 
     case 'scanTexts': {
       const profile = requireProfile(input.entityType);

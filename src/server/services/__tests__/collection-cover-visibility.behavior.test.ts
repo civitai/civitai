@@ -109,11 +109,23 @@ const OWNER_REMOVED = 215; // the collection owner's own removed upload
 const REMOVED_LEVEL = 213; // stranger's image, Scanned with no reason but rated at the removed level
 const TAKEN_DOWN_MODEL = 216; // stranger's image on a published post on a taken-down model
 const LIVE_MODEL = 217; // stranger's image on a published post on a model that is not taken down
+const RESTRICTED_R = 218; // stranger's R image on a restricted base model
+const RESTRICTED_PG = 219; // stranger's PG image on a restricted base model
+const UNRESTRICTED_R = 220; // stranger's R image on an unrestricted base model
+const VIEWER_RESTRICTED_R = 221; // the viewer's own R image on a restricted base model
+const RESTRICTED_X = 222; // stranger's X image on a restricted base model
+const RESTRICTED_XXX = 223; // stranger's XXX image on a restricted base model
+const UNRATED = 224; // stranger's scanned image on a published post that has no rating
+const VIEWER_UNRATED = 225; // the viewer's own scanned image that has no rating
+const MINOR_R = 226; // the viewer's minor-flagged image rated R, on a published public post
+const MINOR_PG13 = 227; // the viewer's minor-flagged image rated PG-13, on the same post
+const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (NULL)
 
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
+      minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
       "userId"          integer NOT NULL,
       "postId"          integer,
@@ -123,6 +135,7 @@ beforeAll(async () => {
       "ingestion"       "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor"      text,
       "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
       "needsReview"     text,
       "metadata"        jsonb,
       "scanJobs"        jsonb
@@ -133,7 +146,7 @@ beforeAll(async () => {
       "modelVersionId" integer
     );
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
-    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "mode" "ModelModifier");
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "userId" integer, "mode" "ModelModifier", minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb);
     CREATE TABLE "ModelVersion" ("id" integer PRIMARY KEY, "modelId" integer NOT NULL);
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "CollectionContributor" (
@@ -142,7 +155,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
-      "bannerId" integer
+      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
@@ -183,7 +196,19 @@ beforeAll(async () => {
       (${OTHER_MANAGER_UPLOAD}, ${OTHER_MANAGER}, NULL, 'Scanned', NULL, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${UNRATED}, ${STRANGER}, 1, 0), (${VIEWER_UNRATED}, ${VIEWER}, 5, 0);
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "minor") VALUES
+      (${MINOR_R}, ${VIEWER}, 5, 4, true),
+      (${MINOR_PG13}, ${VIEWER}, 5, 2, true),
+      (${UNFLAGGED_R}, ${VIEWER}, 5, 4, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor") VALUES (${OWNER_REMOVED}, ${OWNER}, NULL, 'Blocked', 'Moderated');
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
+      (${RESTRICTED_R},        ${STRANGER}, 1, 4, true),
+      (${RESTRICTED_PG},       ${STRANGER}, 1, 1, true),
+      (${UNRESTRICTED_R},      ${STRANGER}, 1, 4, false),
+      (${VIEWER_RESTRICTED_R}, ${VIEWER},   5, 4, true),
+      (${RESTRICTED_X},        ${STRANGER}, 1, 8, true),
+      (${RESTRICTED_XXX},      ${STRANGER}, 1, 16, true);
     INSERT INTO "CollectionContributor" ("collectionId", "userId", "permissions") VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['VIEW', 'MANAGE']::"CollectionContributorPermission"[]),
       (${COLLECTION}, ${VIEW_ONLY}, ARRAY['VIEW', 'ADD']::"CollectionContributorPermission"[]),
@@ -209,6 +234,8 @@ describe('which covers a stranger is shown', () => {
     ["the collection owner's own upload", OWNER_UPLOAD],
     ["a collection manager's upload", MANAGER_UPLOAD],
     ['an image on a model that is not taken down', LIVE_MODEL],
+    ['a PG image on a restricted base model', RESTRICTED_PG],
+    ['an R image on an unrestricted base model', UNRESTRICTED_R],
   ])('shows %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(true);
   });
@@ -225,7 +252,11 @@ describe('which covers a stranger is shown', () => {
     ["the upload of another collection's manager", OTHER_MANAGER_UPLOAD],
     ['an image rated at the removed level', REMOVED_LEVEL],
     ['an image still being scanned', PENDING_SCAN],
+    ['an image with no rating', UNRATED],
     ['an image on a taken-down model', TAKEN_DOWN_MODEL],
+    ['an R image on a restricted base model', RESTRICTED_R],
+    ['an X image on a restricted base model', RESTRICTED_X],
+    ['an XXX image on a restricted base model', RESTRICTED_XXX],
   ])('hides %s', async (_, imageId) => {
     expect(await servable(imageId)).toBe(false);
   });
@@ -235,8 +266,37 @@ describe('which covers a stranger is shown', () => {
     expect(await servable(VIEWER_REMOVED, { id: STRANGER })).toBe(false);
   });
 
+  it("shows the image's owner their own unrated image, and nobody else", async () => {
+    expect(await servable(VIEWER_UNRATED, { id: VIEWER })).toBe(true);
+    expect(await servable(VIEWER_UNRATED, { id: STRANGER })).toBe(false);
+  });
+
   it('shows staff any cover', async () => {
     expect(await servable(REMOVED, { id: 99, isModerator: true })).toBe(true);
+  });
+
+  it('shows a restricted base model R image to its uploader only, not to staff', async () => {
+    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(true);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: STRANGER })).toBe(false);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(false);
+  });
+});
+
+describe('a minor-flagged cover', () => {
+  it('is shown at R only to its owner and staff', async () => {
+    expect(await servable(MINOR_R)).toBe(false);
+    expect(await servable(MINOR_R, { id: STRANGER })).toBe(false);
+    expect(await servable(MINOR_R, { id: VIEWER })).toBe(true);
+    expect(await servable(MINOR_R, { id: 99, isModerator: true })).toBe(true);
+  });
+
+  it('is shown to anyone at PG-13', async () => {
+    expect(await servable(MINOR_PG13)).toBe(true);
+    expect(await servable(MINOR_PG13, { id: STRANGER })).toBe(true);
+  });
+
+  it('is shown to anyone at R when the flag is unset', async () => {
+    expect(await servable(UNFLAGGED_R, { id: STRANGER })).toBe(true);
   });
 });
 
@@ -247,12 +307,16 @@ describe('withServableCovers', () => {
       { id: 2, userId: OWNER, name: 'b', image: { id: REMOVED } },
       { id: 3, userId: OWNER, name: 'c', image: null },
       { id: 4, userId: OWNER, name: 'd', image: { id: PRIVATE_POST } },
+      { id: 5, userId: OWNER, name: 'e', image: { id: RESTRICTED_R } },
+      { id: 6, userId: OWNER, name: 'f', image: { id: RESTRICTED_PG } },
     ];
     expect(await withServableCovers(rows)).toEqual([
       rows[0],
       { ...rows[1], image: null },
       rows[2],
       { ...rows[3], image: null },
+      { ...rows[4], image: null },
+      rows[5],
     ]);
   });
 });
@@ -296,12 +360,22 @@ describe('getCollectionById', () => {
     ['a removed image', REMOVED],
     ['an image on a Private post', PRIVATE_POST],
     ['an image on a draft post', UNPUBLISHED_POST],
+    ['an R image on a restricted base model', RESTRICTED_R],
   ])('returns no cover when the stored cover is %s', async (_, imageId) => {
     expect(await coverOf(imageId)).toBeNull();
   });
 
   it("returns the viewer's own image to them", async () => {
     expect(await coverOf(VIEWER_REMOVED, { id: VIEWER })).toBe(VIEWER_REMOVED);
+  });
+
+  it('returns a PG cover on a restricted base model (control)', async () => {
+    expect(await coverOf(RESTRICTED_PG)).toBe(RESTRICTED_PG);
+  });
+
+  it("returns the owner's own R cover on a restricted base model, and withholds it from staff", async () => {
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(VIEWER_RESTRICTED_R);
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBeNull();
   });
 });
 

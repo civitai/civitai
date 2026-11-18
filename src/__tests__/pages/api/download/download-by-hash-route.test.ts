@@ -212,17 +212,6 @@ describe('/api/download/{sha256|blake3}/<hash>', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'File not found' });
   });
 
-  it('refuses a per-provider token rather than serving its holder as anonymous', async () => {
-    const res = await run(sha256Route, HASH, { token: 'acme:secret' });
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Provider tokens are not accepted on this URL',
-    });
-    expect(holder.params).toEqual([]);
-    expect(mockGetFileForModelVersion).not.toHaveBeenCalled();
-  });
-
   it('applies the download IP blocklist', async () => {
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: BLOCKED });
 

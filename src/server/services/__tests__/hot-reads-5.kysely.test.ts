@@ -227,24 +227,24 @@ describe('getHomeBlockById', () => {
     await read();
     expect(q.getHomeBlockRow.mock.calls).toEqual([[kyselyRead, ID]]);
     expect(q.getHomeBlockRow.mock.calls[0][0]).toBe(kyselyRead);
-    expect(dbMock.dbRead.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.homeBlock.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.homeBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('a row missing on the replica falls back to the primary through Prisma', async () => {
     q.getHomeBlockRow.mockResolvedValue(undefined as never);
     await read();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow.mock.calls[0][0]).toEqual({
+    expect(dbMock.dbWrite.homeBlock.findUnique.mock.calls[0][0]).toEqual({
       select: { id: true, metadata: true, type: true, userId: true, sourceId: true },
       where: { id: ID },
     });
-    expect(dbMock.dbRead.homeBlock.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.homeBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('a replica error falls back to the primary through Prisma', async () => {
     q.getHomeBlockRow.mockRejectedValue(new Error('replica down') as never);
     await read();
-    expect(dbMock.dbWrite.homeBlock.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.homeBlock.findUnique).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -319,7 +319,7 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
   it('the Kysely read on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getModelMeta.mockResolvedValue({ id: ID, meta: {} } as never);
-    await expect((await load())({ input: { id: ID } })).resolves.toBeNull();
+    await expect((await load())({ input: { id: ID }, ctx: {} as never })).resolves.toBeNull();
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', ID);
     expect(q.getModelMeta.mock.calls).toEqual([[kyselyWrite, ID]]);
     expect(q.getModelMeta.mock.calls[0][0]).toBe(kyselyWrite);
@@ -329,7 +329,9 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
 
   it('a missing model is still a not-found error', async () => {
     q.getModelMeta.mockResolvedValue(undefined as never);
-    await expect((await load())({ input: { id: ID } })).rejects.toThrow(`No model with id ${ID}`);
+    await expect((await load())({ input: { id: ID }, ctx: {} as never })).rejects.toThrow(
+      `No model with id ${ID}`
+    );
   });
 });
 

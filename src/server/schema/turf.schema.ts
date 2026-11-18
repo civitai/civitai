@@ -30,7 +30,18 @@ export const placeTurfStickerSchema = z.object({
   source: z.enum(['feed', 'image-detail']).optional(),
 });
 
+/** The most hats one add puts on a flag. The picker offers 1, 5 and this, each capped at what the player has. */
+export const FLAG_HAT_MAX = 10;
+
+export const placeFlagHatsSchema = z.object({
+  event: eventName,
+  imageId: z.number().int().positive(),
+  cosmeticId: z.number().int().positive(),
+  count: z.number().int().min(1).max(FLAG_HAT_MAX),
+});
+
 export const turfEventSchema = z.object({ event: eventName });
+export const flagRaceCollectionSchema = z.object({ collectionId: z.number().int().positive() });
 
 export const turfReactionEarnsSchema = z.object({
   event: eventName,
@@ -61,7 +72,7 @@ export const setTurfOwnerOffSchema = z.object({ event: eventName, off: z.boolean
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
 
 /** Hats a feed card draws per image: what the feed reads, and what a turf push carries. */
-export const TURF_FEED_STICKERS = 5;
+export const TURF_FEED_STICKERS = 10;
 
 export const turfStickersForImagesSchema = z.object({
   event: eventName,
@@ -69,9 +80,15 @@ export const turfStickersForImagesSchema = z.object({
   perImage: z.number().int().min(1).max(TURF_FEED_STICKERS).default(TURF_FEED_STICKERS),
 });
 
+/**
+ * Images per `hatTurf.watch` call; clients chunk by it, so it must not exceed what the schema
+ * accepts.
+ */
+export const MAX_TURF_IMAGES_PER_MARK = 50;
+
 export const watchTurfImagesSchema = z.object({
   event: eventName,
-  imageIds: z.array(z.number().int().positive()).max(50),
+  imageIds: z.array(z.number().int().positive()).max(MAX_TURF_IMAGES_PER_MARK),
 });
 
 /** A sticker's hat art: the cosmetic's image, and where its visible pixels sit (fit canvas, bounds). */

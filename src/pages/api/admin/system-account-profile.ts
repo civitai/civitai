@@ -159,7 +159,7 @@ export default HeaderTokenSecuredEndpoint(
       type: failed || !auditRecorded ? 'error' : 'info',
       name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
       details: { userId, changed, failed, asserted_actor: actorUserId, auditRecorded },
-    }).catch(() => null);
+    });
 
     if (failed)
       return res.status(500).json({ userId, changed, failed: failed.fields, auditRecorded });

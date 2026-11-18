@@ -8,6 +8,10 @@
  */
 
 import { ECOSYSTEM_UNAVAILABLE } from '~/shared/generation/gates';
+import {
+  PROMPT_CHECK_UNAVAILABLE_ERROR_CODE,
+  PROMPT_POLICY_REFUSED_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 
 /**
  * The stable text the generation graph's ecosystem field refuses with when the chosen ecosystem is
@@ -19,6 +23,7 @@ export const ECOSYSTEM_UNAVAILABLE_MESSAGE = ECOSYSTEM_UNAVAILABLE;
 
 export const APP_SUBMIT_FAILURE_REASONS = [
   'validation',
+  'prompt_refused',
   'ecosystem_unavailable',
   'insufficient_buzz',
   'rate_limited',
@@ -105,8 +110,14 @@ export function appSubmitFailureFromResult(result: unknown): AppSubmitFailureRea
   if (result === null || typeof result !== 'object') return null;
   const snapshot = (result as { snapshot?: unknown }).snapshot;
   if (snapshot === null || typeof snapshot !== 'object') return null;
-  const { status, error } = snapshot as { status?: unknown; error?: unknown };
+  const { status, error, errorCode } = snapshot as {
+    status?: unknown;
+    error?: unknown;
+    errorCode?: unknown;
+  };
   if (status !== 'failed') return null;
+  if (errorCode === PROMPT_POLICY_REFUSED_ERROR_CODE) return 'prompt_refused';
+  if (errorCode === PROMPT_CHECK_UNAVAILABLE_ERROR_CODE) return 'server_error';
   return classifyAppSubmitFailure({ message: error });
 }
 

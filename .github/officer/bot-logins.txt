@@ -1,0 +1,15 @@
+# bot-logins.txt: GitHub logins of the officer GitHub Apps that may open PRs here.
+#
+# A PR whose AUTHOR is listed here is checked by .github/workflows/officer-pr-check.yml
+# whatever its head branch is named. A head branch starting with `officer/` is checked too,
+# whoever opened it. The branch name alone is not an identity (the prefix is configurable on
+# the agent side), so both select.
+#
+# Read from the BASE commit only, so a PR cannot add or remove a login to decide whether it
+# is checked. The file is also forbidden to officer PRs (.github, forbidden-paths.txt).
+#
+# Format: one login per line, `<app-slug>[bot]`, compared case-insensitively. `#` starts a
+# comment; blank lines are ignored.
+#
+civitai-officer-release-followup[bot]
+civitai-officer-ci-watch[bot]

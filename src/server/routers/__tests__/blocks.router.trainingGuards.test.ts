@@ -4,13 +4,15 @@ import type * as TokenAccessModule from '~/server/services/blocks/block-token-ac
 import type * as FlagModule from '~/server/services/app-blocks-flag';
 import type * as FeatureFlagsModule from '~/server/services/feature-flags.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
+import type * as TrainingServiceModule from '~/server/services/training.service';
 
 /**
  * ONE trigger-word rule for every App Blocks carrier of a training run, through
  * `blocksRouter`: a pass-through `kind:'step'` training `$type` and every training step
  * of a `kind:'workflow'` (a `repeat` template included) gets the trigger-word check every
  * training path uses, at the estimate and the submit, before any quote or reservation;
- * a trigger word that is not a literal string is refused.
+ * a trigger word that is not a literal string is refused. The same carriers get the
+ * training service's status and its blocked and disabled base models.
  */
 
 const h = vi.hoisted(() => ({
@@ -24,6 +26,7 @@ const h = vi.hoisted(() => ({
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
   buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
+  trainingStatus: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -60,6 +63,10 @@ vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', (
     triggerWord: string;
     log: Record<string, unknown>;
   }) => h.check(input),
+}));
+vi.mock('~/server/services/training.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingServiceModule>()),
+  getTrainingServiceStatus: () => h.trainingStatus(),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -188,6 +195,10 @@ const repeatOverImages = (template: Record<string, unknown>) => ({
 });
 
 beforeEach(() => {
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
@@ -211,6 +222,11 @@ beforeEach(() => {
     throw new Error('no real submit expected in this file');
   });
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
+  h.trainingStatus.mockImplementation(async () => ({
+    available: true,
+    blockedModels: [],
+    blockedModelReasons: {},
+  }));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,61 +297,31 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
   });
 });
 
-describe('the trigger word of a training step inside a `kind:workflow`', () => {
-  it('is checked at the estimate and the submit, before the orchestrator is asked', async () => {
-    const body = workflowBody([
-      { name: 'tag', $type: 'wdTagging', input: {} },
-      { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
-    ]);
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.check).toHaveBeenCalledTimes(2);
-    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('checks every training step’s word, skipping blank ones and non-training steps', async () => {
-    const body = workflowBody([
-      { name: 'tag', $type: 'wdTagging', input: { triggerWord: 'nottraining' } },
-      { name: 'a', $type: 'training', input: { triggerWord: 'cleanword' } },
-      { name: 'b', $type: 'training', input: { triggerWord: '   ' } },
-      { name: 'c', $type: 'imageResourceTraining', input: irtInput('badword') },
-    ]);
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    expect(h.check.mock.calls.map(([input]) => input.triggerWord)).toEqual([
-      'cleanword',
-      'badword',
-    ]);
-  });
-
-  it('checks an `imageResourceTraining` step’s `loraName`, inside a `repeat` too', async () => {
-    const direct = workflowBody([{ $type: 'imageResourceTraining', input: irtInput('badword') }]);
-    const repeated = workflowBody(
-      [repeatOverImages({ $type: 'imageResourceTraining', input: irtInput('badword') })],
-      { images: [{ url: 'a' }] }
-    );
-    for (const body of [direct, repeated]) {
-      await expect(estimate(body)).rejects.toThrow(REFUSED);
-      await expect(submit(body)).rejects.toThrow(REFUSED);
+describe('a training step inside a `kind:workflow`', () => {
+  it('is refused before any training check, at the estimate and the submit, inside a `repeat` too', async () => {
+    const bodies = [
+      workflowBody([
+        { name: 'tag', $type: 'wdTagging', input: {} },
+        { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
+      ]),
+      workflowBody([{ $type: 'imageResourceTraining', input: irtInput('badword') }]),
+      workflowBody([repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })], {
+        images: [{ url: 'a' }],
+      }),
+      workflowBody(
+        [{ $type: 'training', input: { triggerWord: { $ref: '$arguments', path: 'tw' } } }],
+        { tw: 'badword' }
+      ),
+    ];
+    for (const body of bodies) {
+      for (const call of [estimate, submit]) {
+        await expect(call(body)).resolves.toMatchObject({
+          snapshot: { status: 'failed', errorCode: 'workflow_step_denied' },
+        });
+      }
     }
-    expect(h.check).toHaveBeenCalledTimes(4);
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('refuses a `$ref` `loraName` in a workflow, before any check or orchestrator call', async () => {
-    const body = workflowBody(
-      [{ $type: 'imageResourceTraining', input: irtInput({ $ref: '$arguments', path: 'n' }) }],
-      { n: 'badword' }
-    );
-    await expect(estimate(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING_LORA,
-    });
-    await expect(submit(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING_LORA,
-    });
     expect(h.check).not.toHaveBeenCalled();
+    expect(h.trainingStatus).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -348,53 +334,140 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
     expect(h.check).not.toHaveBeenCalled();
   });
 
-  it('is checked inside a `repeat` template', async () => {
-    const body = workflowBody(
-      [repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })],
-      { images: [{ url: 'a' }] }
-    );
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
+  it('refuses a training input that is itself a reference, before any check or orchestrator call', async () => {
+    const body = workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
+      cfg: { triggerWord: 'badword' },
+    });
+    const refused = expect.stringContaining('a step input must be an object, not a reference');
+    for (const call of [estimate, submit]) {
+      await expect(call(body)).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'workflow_ref_invalid', error: refused },
+      });
+    }
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('the base model of a training step an app names itself', () => {
+  const fluxDev = {
+    engine: 'ai-toolkit',
+    ecosystem: 'flux1',
+    modelVariant: 'dev',
+    triggerWord: 'tw',
+  };
+  const blockStatus = (blockedModels: string[], blockedModelReasons = {}) =>
+    h.trainingStatus.mockImplementation(async () => ({
+      available: true,
+      blockedModels,
+      blockedModelReasons,
+    }));
+
+  it('refuses a base model blocked in the training status, at the estimate and the submit', async () => {
+    blockStatus(['flux_dev'], { flux_dev: 'Back soon.' });
+    const body = stepBody(fluxDev);
+    const refusal = {
+      code: 'BAD_REQUEST',
+      message: 'Flux is temporarily unavailable for training. Back soon.',
+    };
+    await expect(estimate(body)).rejects.toMatchObject(refusal);
+    await expect(submit(body)).rejects.toMatchObject(refusal);
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      'a `$ref` trigger word',
-      workflowBody(
-        [{ $type: 'training', input: { triggerWord: { $ref: '$arguments', path: 'tw' } } }],
-        { tw: 'badword' }
-      ),
-    ],
-    [
-      'a `$ref` trigger word inside a `repeat` template',
-      workflowBody(
-        [
-          repeatOverImages({
-            $type: 'training',
-            input: { triggerWord: { $ref: 'item', path: 'url' } },
-          }),
-        ],
-        { images: [{ url: 'a' }] }
-      ),
-    ],
-    [
-      'a training input that is itself a reference',
-      workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
-        cfg: { triggerWord: 'badword' },
-      }),
-    ],
-  ])('refuses %s, before any check or orchestrator call', async (_label, body) => {
+  it('matches the ecosystem and variant however they are cased', async () => {
+    blockStatus(['flux_dev']);
+    await expect(
+      estimate(stepBody({ Engine: 'AI-Toolkit', Ecosystem: 'Flux1', ModelVariant: 'DEV' }))
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blocked base model whose ecosystem ignores the `model` AIR it was sent', async () => {
+    blockStatus(['flux_dev']);
+    await expect(
+      estimate(stepBody({ ...fluxDev, model: 'urn:air:flux1:checkpoint:civitai:1@1' }))
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('control: a custom SDXL checkpoint is not refused for the blocked SDXL base', async () => {
+    blockStatus(['sdxl']);
+    const custom = {
+      engine: 'ai-toolkit',
+      ecosystem: 'sdxl',
+      model: 'urn:air:sdxl:checkpoint:civitai:9@9',
+    };
+    await estimate(stepBody({ ...custom, triggerWord: 'tw' })).catch(() => undefined);
+    expect(h.submitWorkflow).toHaveBeenCalled();
+  });
+
+  it('refuses a blocked custom model, whichever AIR form names it', async () => {
+    blockStatus(['civitai:53761@285757']);
+    const body = stepBody(
+      { ...irtInput('tw'), model: 'urn:air:sd1:checkpoint:civitai:53761@285757' },
+      'imageResourceTraining'
+    );
     await expect(estimate(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: NOT_A_STRING,
+      message: 'This model has been blocked from training - please try another one.',
     });
-    await expect(submit(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING,
-    });
-    expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a base model the catalog disables', async () => {
+    await expect(
+      estimate(
+        stepBody({
+          engine: 'ai-toolkit',
+          ecosystem: 'mossImage',
+          modelVariant: 'base',
+          triggerWord: 'tw',
+        })
+      )
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'MOSS Image Base is not available for training.',
+    });
+  });
+
+  it('refuses a variant the catalog does not list, for an entry that names none', async () => {
+    blockStatus(['qwen_image']);
+    await expect(
+      estimate(
+        stepBody({ engine: 'ai-toolkit', ecosystem: 'qwen', modelVariant: 'x', triggerWord: 'tw' })
+      )
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('control: a non-ai-toolkit engine is not mapped to a base by its ecosystem', async () => {
+    blockStatus(['flux_dev']);
+    await estimate(stepBody({ ...fluxDev, engine: 'kohya' })).catch(() => undefined);
+    expect(h.submitWorkflow).toHaveBeenCalled();
+  });
+
+  it('refuses every training step while the training service is unavailable', async () => {
+    h.trainingStatus.mockImplementation(async () => ({
+      available: false,
+      message: 'Training is paused',
+      blockedModels: [],
+    }));
+    await expect(submit(stepBody(fluxDev))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Training is paused',
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('control: a model that is not blocked reaches the orchestrator', async () => {
+    blockStatus(['sdxl']);
+    await estimate(stepBody(fluxDev)).catch(() => undefined);
+    expect(h.submitWorkflow).toHaveBeenCalled();
+  });
+
+  it('control: a step with no training `$type` never reads the training status', async () => {
+    await estimate(stepBody(fluxDev, 'wdTagging')).catch(() => undefined);
+    expect(h.trainingStatus).not.toHaveBeenCalled();
   });
 });

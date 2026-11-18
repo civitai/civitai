@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MatureAckRequiredError } from './mature-charge';
+import { MatureRepriceError } from './mature-charge';
 import { shellBackend } from './shell-backend';
 import { AutoLabelRefusedError } from './autolabel-errors';
+import {
+  FILES_PROCESSING_CODE,
+  FILES_PROCESSING_MESSAGE,
+  FilesProcessingError,
+} from './files-processing';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -18,14 +23,10 @@ describe('keep-training requests carry the picked currencies', () => {
 
   it('submit sends them in the body', async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ workflowId: 'wf-2' }));
-    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green'], true);
+    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green'], 2);
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(JSON.parse(init.body as string).currencies).toEqual(['blue', 'green']);
-    expect(JSON.parse(init.body as string).matureAck).toBe(true);
-    fetchMock.mockResolvedValueOnce(Response.json({ workflowId: 'wf-3' }));
-    await shellBackend.continueRun('wf-1', 10, 5, ['blue'], false);
-    const unacked = fetchMock.mock.calls[1]![1] as RequestInit;
-    expect(JSON.parse(unacked.body as string).matureAck).toBe(false);
+    expect(JSON.parse(init.body as string).matureCount).toBe(2);
   });
 });
 
@@ -38,24 +39,20 @@ describe('keep-training errors', () => {
   });
 });
 
-describe('a submit refused for a missing mature confirm', () => {
-  const refusal = () =>
-    Response.json({ message: 'Confirm the charge', matureCount: 3 }, { status: 409 });
-
-  it.each([
-    ['train', () => shellBackend.submitTraining([])],
-    ['train further', () => shellBackend.continueRun('wf-1', 10, 5, ['blue'], false)],
-  ])('%s hands back the mature count so the confirm can show', async (_, run) => {
-    fetchMock.mockResolvedValueOnce(refusal());
-    const err = await run().catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(MatureAckRequiredError);
-    expect((err as MatureAckRequiredError).matureCount).toBe(3);
+describe('a submit refused because the server rated the dataset mature', () => {
+  it('hands back the mature count so Review can reprice', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ message: 'Reprice', matureCount: 3 }, { status: 409 })
+    );
+    const err = await shellBackend.submitTraining([]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MatureRepriceError);
+    expect((err as MatureRepriceError).matureCount).toBe(3);
   });
 
   it('keeps any other failure a plain error with the server message', async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ message: 'busy' }, { status: 502 }));
-    const err = await shellBackend.continueRun('wf-1', 10, 5, ['blue'], false).catch((e) => e);
-    expect(err).not.toBeInstanceOf(MatureAckRequiredError);
+    const err = await shellBackend.continueRun('wf-1', 10, 5, ['blue'], 0).catch((e) => e);
+    expect(err).not.toBeInstanceOf(MatureRepriceError);
     expect((err as Error).message).toBe('busy');
   });
 });
@@ -92,5 +89,27 @@ describe('auto-label submit failures decide whether the image keeps its cap slot
   it('a network failure after send may have been charged', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     expect(await submit().catch((e) => e)).not.toBeInstanceOf(AutoLabelRefusedError);
+  });
+});
+
+describe('a training submit refused while files are still processing', () => {
+  it('comes back as FilesProcessingError so the retry can show', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        { message: FILES_PROCESSING_MESSAGE, code: FILES_PROCESSING_CODE },
+        { status: 400 }
+      )
+    );
+    const err = await shellBackend.submitTraining([]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FilesProcessingError);
+  });
+
+  it('keeps any other 400 a plain error with the server message', async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ message: 'Training could not start: bad steps' }, { status: 400 })
+    );
+    const err = await shellBackend.submitTraining([]).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(FilesProcessingError);
+    expect((err as Error).message).toBe('Training could not start: bad steps');
   });
 });

@@ -1,3 +1,4 @@
+import { aiToolkitOptionSupport, type AiToolkitOptions } from '@civitai/shared/training-options';
 import type {
   MingAiToolkitTrainingInput,
   MossImageBaseAiToolkitTrainingInput,
@@ -117,6 +118,12 @@ export interface ModelCard {
   pairs?: true;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
+}
+
+/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
+ *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
+export function isFlux2(engine?: string): boolean {
+  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
 }
 
 export const MODEL_CARDS: ModelCard[] = [
@@ -433,6 +440,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'K2',
     media: 'image',
     label: 'caption',
+    bothLabels: true,
     description: 'The realism pick — skin, hair and light from real photos.',
     released: '2026-06-22',
     flag: 'latest',
@@ -919,6 +927,21 @@ export const catalogFlagKeys = (): string[] => [
   ),
 ];
 
+/** The Kohya engine's gate. Same fail-closed semantics as a catalog gate: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const KOHYA_FLAG_KEY = 'training-studio-kohya';
+
+/** Gates the Manage tags find-and-replace row. Same fail-closed semantics: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const TAG_FIND_REPLACE_FLAG_KEY = 'training-studio-tag-find-replace';
+
+/** Every gate a host evaluates for the flow. */
+export const hostFlagKeys = (): string[] => [
+  ...catalogFlagKeys(),
+  KOHYA_FLAG_KEY,
+  TAG_FIND_REPLACE_FLAG_KEY,
+];
+
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
  *  one. Null when a pair card is ungated, so nothing gates them. */
 export const pairCardFlagKeys = (): string[] | null => {
@@ -1319,12 +1342,14 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  // Not the main app's 32/32, which Anima LoRA creators report as too large: 16/16 here, 8/8 for
+  // characters (`NETWORK_SIZE_BY_LORA_TYPE`).
   anima: {
     epochs: 5,
     unetLr: 1e-4,
     textEncoderLr: 0,
-    networkDim: 32,
-    networkAlpha: 32,
+    networkDim: 16,
+    networkAlpha: 16,
     resolution: 1024,
     batchSize: 1,
     noiseOffset: 0,
@@ -1576,10 +1601,25 @@ function batchMaxForCard(cardType: string): number {
   return 1;
 }
 
+/** Network dim/alpha per LoRA type, by version key, over that version's `PARAM_DEFAULTS`. */
+const NETWORK_SIZE_BY_LORA_TYPE: Record<
+  string,
+  Partial<Record<string, Pick<RunParamDefaults, 'networkDim' | 'networkAlpha'>>>
+> = {
+  anima: { character: { networkDim: 8, networkAlpha: 8 } },
+};
+
 /** The advanced-param defaults for a chosen version (falls back to the card's primary version, then the
- *  modern-caption base — so a "Custom…" pick still gets sensible per-family values). */
-export function paramsForVersion(card: ModelCard, versionKey: string): RunParamDefaults {
-  return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
+ *  modern-caption base — so a "Custom…" pick still gets sensible per-family values), sized for the
+ *  LoRA type where that version's network size depends on it. */
+export function paramsForVersion(
+  card: ModelCard,
+  versionKey: string,
+  loraType = ''
+): RunParamDefaults {
+  const key = PARAM_DEFAULTS[versionKey] ? versionKey : card.versions[0]!.key;
+  const defaults = PARAM_DEFAULTS[key] ?? PARAM_FALLBACK;
+  return { ...defaults, ...NETWORK_SIZE_BY_LORA_TYPE[key]?.[loraType] };
 }
 
 /**
@@ -1675,8 +1715,8 @@ export const teTrainingUnsupportedReason = (
     : `Text encoder training isn't supported for ${modelName}.`;
 };
 
-/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
- *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
+/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets;
+ *  batch is capped per family; epochs are 1–20; LR is 0–1. Resolution mirrors the in-app trainer only. */
 export function paramBounds(card: ModelCard): Record<string, ParamBound> {
   const sdxl = SDXL_FAMILY.has(card.type);
   const video = card.media === 'video';
@@ -1688,7 +1728,8 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
     textEncoderLr: { min: 0, max: 1, step: 1e-5 },
     networkDim: { min: 1, max: netMax, step: 1 },
     networkAlpha: { min: 1, max: netMax, step: 1 },
-    // Video/audio resolution is fixed upstream; images range per family.
+    // The orchestrator's AI-Toolkit input declares no `resolution` and drops what we send, so no value
+    // here (SDXL's 2048 included) reaches the trainer. Widening these bounds would add nothing.
     resolution: video
       ? { min: 960, max: 960, step: 1 }
       : audio
@@ -1715,6 +1756,7 @@ export const versionPriceKey = (cardType: string, versionKey: string): string =>
  *  dataset) is hidden with its reason, and `minSnrGamma` is declared only on the SD-family inputs.
  *  Mirrors the per-model `overrides` in `src/components/Training/Form/TrainingParams.tsx`. */
 export type ExtraParamField =
+  | keyof AiToolkitOptions
   | 'shuffleTokens'
   | 'keepTokens'
   | 'minSnrGamma'
@@ -1722,6 +1764,10 @@ export type ExtraParamField =
   | 'flipAugmentation';
 
 export const EXTRA_PARAM_FIELDS: ExtraParamField[] = [
+  'lrWarmupSteps',
+  'captionDropoutRate',
+  'rankDropout',
+  'trainConv',
   'shuffleTokens',
   'keepTokens',
   'minSnrGamma',
@@ -1769,8 +1815,19 @@ export function extraParamDefaults(
 export function extraParamCapabilities(
   card: ModelCard,
   version: ModelVersionInfo,
-  labelMode: LabelType
+  labelMode: LabelType,
+  {
+    engine = version.engine ?? 'ai-toolkit',
+    lrScheduler = '',
+    steps = 0,
+  }: { engine?: string; lrScheduler?: string; steps?: number } = {}
 ): Record<ExtraParamField, ExtraParamCapability> {
+  const support = aiToolkitOptionSupport({
+    engine,
+    ecosystem: version.ecosystem,
+    lrScheduler,
+    steps,
+  });
   const image = card.media === 'image';
   const tagOnly = {
     supported: labelMode === 'tag',
@@ -1778,6 +1835,25 @@ export function extraParamCapabilities(
   };
   const imageOnly = { supported: image, reason: `Not used when training on ${card.media}.` };
   return {
+    lrWarmupSteps: {
+      supported: support.lrWarmupSteps,
+      reason: 'Warmup is available with constant learning rate only.',
+      bound: { min: 0, max: Math.min(10000, steps), step: 1 },
+    },
+    captionDropoutRate: {
+      supported: support.captionDropoutRate,
+      reason: 'Caption dropout is unavailable for this model.',
+      bound: { min: 0, max: 1, step: 0.01 },
+    },
+    rankDropout: {
+      supported: support.rankDropout,
+      reason: 'Requires AI Toolkit.',
+      bound: { min: 0, max: 0.99, step: 0.01 },
+    },
+    trainConv: {
+      supported: support.trainConv,
+      reason: 'Convolution training is available for SD 1.5 and SDXL-family AI Toolkit runs only.',
+    },
     shuffleTokens: tagOnly,
     keepTokens: { ...tagOnly, bound: { min: 0, max: 3, step: 1 } },
     minSnrGamma: {
@@ -1787,5 +1863,22 @@ export function extraParamCapabilities(
     },
     noiseOffset: { ...imageOnly, bound: { min: 0, max: 1, step: 0.01 } },
     flipAugmentation: imageOnly,
+  };
+}
+
+export function trainingLearningRates(
+  ecosystem: string,
+  optimizer = '',
+  lr?: number,
+  textEncoderLr?: number
+) {
+  const prodigy = isProdigy(optimizer);
+  return {
+    lr: prodigy && lr !== undefined ? 1 : lr,
+    textEncoderLr: teTrainingUnsupportedReason(ecosystem)
+      ? 0
+      : prodigy && textEncoderLr !== undefined && textEncoderLr > 0
+      ? 1
+      : textEncoderLr,
   };
 }

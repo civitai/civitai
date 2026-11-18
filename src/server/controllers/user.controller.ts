@@ -1,3 +1,4 @@
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
@@ -8,7 +9,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -58,6 +61,7 @@ import type {
   GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import type {
   BadgeCosmetic,
   CardDecorationCosmetic,
@@ -92,6 +96,7 @@ import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteBasicDataForUser,
   deleteUserProfilePictureCache,
   equipCosmetic,
   getCreators,
@@ -177,6 +182,8 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -329,7 +336,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       ? countUnclaimedPrizes(id).catch(() => 0)
       : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
-    // notifications service over HTTP (with its own retries) and the main
+    // notifications service over HTTP (1.5 s per attempt, one retry) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
@@ -484,7 +491,14 @@ export const completeOnboardingHandler = async ({
         // address, and treating it as a change would revoke a verification the user already earned.
         const emailChanged =
           !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
-        if (emailChanged) await assertEmailAllowed(input.email);
+        // This step only sets a first address. Replacing one goes through `requestEmailChange`, which
+        // proves the new address before writing it.
+        if (!input.email && !current?.email) throw throwBadRequestError('Please provide an email');
+        if (emailChanged && current?.email)
+          throw throwBadRequestError(
+            'Your account already has an email address. Use Change email in your account settings to change it.'
+          );
+        if (emailChanged && input.email) await assertEmailAllowed(input.email);
 
         // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
         // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
@@ -498,7 +512,7 @@ export const completeOnboardingHandler = async ({
         // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
         //
         // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
-        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // when it sets a first address. A bare re-submit must not stamp: `onboarding` is caller-supplied
         // input, so without that condition any account could mark itself, including one that predates
         // the rule and has been posting for years.
         if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
@@ -508,34 +522,40 @@ export const completeOnboardingHandler = async ({
           data: {
             onboarding,
             username: input.username,
-            email: input.email,
-            ...(emailChanged ? { emailVerified: null } : {}),
+            ...(emailChanged ? { email: input.email, emailVerified: null } : {}),
           },
         });
-        if (input.username && input.username !== current?.username)
+        if (input.username && input.username !== current?.username) {
           queueScamScan({ entityType: 'User', entityId: id });
+          // The user index already holds this account from signup, and its incremental sync scans
+          // on `createdAt`, so without the enqueue search keeps the pre-onboarding username.
+          // Best-effort: the row is committed, and a cache/Redis blip must not fail the step.
+          await Promise.all([
+            deleteBasicDataForUser(id).catch(handleLogError),
+            usersSearchIndex
+              .queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+              .catch(handleLogError),
+            bustUserCreator(id, { usernames: current?.username ? [current.username] : [] }),
+          ]);
+          void queueOwnedContentUpdate(id);
+        }
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
         // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
         // once per account, so this path sends at most once. A user who mistypes their address
-        // corrects it and uses the banner's resend.
-        //
-        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
-        // `User.email` to the account holder — this step rewrites it without the immutability check in
-        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
-        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
-        // rather than a bound on WHO can be mailed.
+        // corrects it through Change email, which mails the corrected address.
         //
         // The address is passed rather than re-read: a replica read right after this write can still
         // hold the OLD row, and a token minted for the old address silently reverts the change when
         // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
         // the mail reached. Best-effort: the step is committed above, and a mail failure must not
         // report a step the user then re-submits.
-        if (changed && !verified && input.email)
+        const address = input.email ?? current?.email;
+        if (changed && !verified && address)
           await issueEmailVerification(
             id,
-            input.email,
+            address,
             input.username ?? current?.username ?? null
           ).catch(handleLogError);
         break;
@@ -596,7 +616,7 @@ export const completeOnboardingHandler = async ({
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
     //
     // 🔴 Gating on `changed` ALONE is narrower than what this handler WRITES. The Profile step writes
-    // `username`/`email` unconditionally (see the switch above), and both are carried on the session shape — so a
+    // `username` unconditionally and a first `email` (see the switch above), and both are carried on the session shape — so a
     // re-submit of a step whose bit is already set advanced nothing, skipped the bust, and left the new username
     // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
     const wroteSessionIdentity =
@@ -645,6 +665,8 @@ export const updateUserHandler = async ({
   } = input;
   const currentUser = ctx.user;
   if (id !== currentUser.id) throw throwAuthorizationError();
+  // An address is only ever set from a signed-in session, as in `completeOnboardingStep`.
+  if (ctx.apiKeyId != null) delete data.email;
   if (username && !(await isUsernamePermitted(username)))
     throw throwBadRequestError('Invalid username');
 
@@ -673,15 +695,25 @@ export const updateUserHandler = async ({
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
-    // so any other picture is always created as a new row.
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload.
+    // The edit form fills a missing picture with `{ url: user.image }`; re-sent unchanged, that is
+    // no new upload. A picture withheld from its owner's read must not be replaced by it.
+    const isImageFallback =
+      !!profilePicture && !profilePicture.id && !!user.image && profilePicture.url === user.image;
     const newPicture =
-      profilePicture && profilePicture.id !== user.profilePictureId
+      profilePicture && profilePicture.id !== user.profilePictureId && !isImageFallback
         ? { ...profilePicture, id: undefined }
         : undefined;
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -948,11 +980,15 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        image: true,
+        profilePicture: { select: { url: true, nsfwLevel: true, type: true } },
       },
     });
+    const items = results.items.map((item) => ({
+      ...item,
+      profilePicture: avatarAtLevel(item.profilePicture, publicBrowsingLevelsFlag),
+    }));
 
-    return getPagingData(results, take, page);
+    return getPagingData({ ...results, items }, take, page);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1101,6 +1137,15 @@ export async function toggleFavoriteHandler({
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
 
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
     modelId,
@@ -1124,6 +1169,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {
@@ -1291,7 +1337,7 @@ export const toggleMuteHandler = async ({
       type: 'error',
       message: (error as Error).message,
       details: { userId: id },
-    }).catch(() => undefined);
+    });
   }
 
   return updatedUser;

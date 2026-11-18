@@ -12,14 +12,13 @@ import { imageFeedVerdict, type ImageFeedPage } from './preview-image-feed.verdi
  * and the page carries `source` on the wire (image.controller.ts) naming who answered:
  *
  *  - `feed` / `db` / `meili` — someone answered the query: the page must be non-empty.
- *  - `retired` — the feeds index (`metrics_images_v1`) is retired and the
- *    reader refused it. Only the retirement guard stamps this source, so this is the one
- *    case where an empty page passes, and it must be exactly the empty shape. Previews set
- *    no FEED_SERVICE_URL, so this is what a preview gets. An empty page under any other
- *    source fails: it is what a feed that broke for some other reason would return.
+ *    Previews set no FEED_SERVICE_URL, so the Postgres query answers, as `db`.
+ *  - `retired` — the empty shape a retired-index refusal answers; the only source under which
+ *    an empty page passes. An empty page under any other source fails: it is what a feed that
+ *    broke for some other reason would return.
  *
- * The verdict lives in preview-image-feed.verdict.ts, which a unit test also feeds the
- * real getAllImagesIndex output (src/server/services/__tests__/retired-feeds-index-readers).
+ * The verdict lives in preview-image-feed.verdict.ts, with its unit test in
+ * src/server/services/__tests__/preview-image-feed-verdict.test.ts.
  *
  * Runs as `tester` (free member that PASSES the preview gate). image.getInfinite is a
  * heavyProcedure, reachable for a gate-passing user. page.request carries the storageState

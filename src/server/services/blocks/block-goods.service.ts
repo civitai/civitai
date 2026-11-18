@@ -685,7 +685,7 @@ export async function purchaseBlockGood(
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       // The claim never landed, so NOTHING was charged and the key is still
       // free — an identical retry is the right thing for the caller to allow.
       return {
@@ -840,7 +840,7 @@ export async function purchaseBlockGood(
         detail: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
 
     if (knownPreMoney) {
       // The claim is DELETED rather than tombstoned, because THIS attempt put
@@ -924,7 +924,7 @@ export async function purchaseBlockGood(
         totalLegs: transaction.transactionIds.length,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return {
       ok: false,
       status: 409,
@@ -958,7 +958,7 @@ export async function purchaseBlockGood(
         legsWithoutDuplicateFlag,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     // Safe to reverse the whole prefix: this attempt is the exclusive holder of
     // the key, so no other attempt's money can be under it. A reversal whose
     // own outcome is not established leaves the row `pending` and reports
@@ -1033,7 +1033,7 @@ export async function purchaseBlockGood(
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     // The charge landed and the grant did not. Reverse the charge — unambiguous,
     // because this attempt holds the key exclusively — and RETIRE the key, so
     // the retry is keyed to a new generation instead of colliding with the
@@ -1104,7 +1104,7 @@ async function rollbackCharge(transactionId: string, title: string): Promise<boo
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return false;
   }
 }
@@ -1161,7 +1161,7 @@ async function releaseUnsettledClaim(purchaseId: string): Promise<void> {
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
 }
 
@@ -1210,42 +1210,18 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
 }
 
 /**
- * ⚠️ PARTIALLY CLOSED — read which half. This block used to say goods revenue
- * was invisible to EVERY app-earnings surface. That is no longer true of the
- * owner's own revenue pages and is still true of the collaborator ones.
+ * Goods revenue reaches the app-earnings surfaces by READ, never by back-filling attribution:
  *
- * - BRIDGED: `blocks.getMyRevenue` — both `/apps/revenue` and
- *   `/apps/[appBlockId]/revenue` — now also calls `getGoodsSalesForOwner`
- *   (`src/server/services/blocks/buzz-attribution.service.ts`), a READ-side
- *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This
- *   rail still writes NO attribution row and nothing here changed: the bridge is
- *   a second query the reporting layer runs, deliberately not a write, so it
- *   commits to nothing about whether a sale "is an attribution".
- * - STILL INVISIBLE: `getAppEarnings` and `blocks.getMyApps`, which read
- *   `app-collaborator-earnings.service.ts`. Those are the COLLABORATOR surfaces.
- *
- * ⚠️ CORRECTION, because the first version of this note gave a reason the code
- * contradicts. It said bridging them "needs an answer to how one sale divides
- * among several seats — a split nobody has specified". **There is no split to
- * specify.** `getAppEarnings` already shows the app's UNDIVIDED owner-share total
- * to every seat — its own test asserts the accepted editor reads the same
- * `shareCents` as the owner, and `AppEarningsPanel` says so on screen ("shared
- * with everyone seated on it"). The split argument is real but belongs to a
- * different axis: it is about the PAYEE on the write side, which is why
- * `app-access.call-site-ledger.test.ts` records it for `resolveBlockGoodForPurchase`
- * below. Carrying it over to a READ, where nobody receives anything, was wrong.
- *
- * The honest statement of why they are unbridged: it is UNFINISHED SCOPE, not a
- * blocked decision. Extending the collaborator panel means a second renderer, a
- * Buzz-vs-cents decision for `getMyAppsEarnings`'s `lifetimeShareCents` (which is
- * a cents field a Buzz total cannot simply be added to), and a deliberate choice
- * about whether a seated editor should see a second rail's figures. Tracked as
- * follow-on work; it is not waiting on a product answer.
+ * - `blocks.getMyRevenue` (`/apps/revenue`, `/apps/[appBlockId]/revenue`) and
+ *   `appCollaborators.getAppEarnings` (the listing editor's Earnings tab) both call
+ *   `getGoodsSalesForOwner` (`src/server/services/blocks/buzz-attribution.service.ts`), an
+ *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This rail writes NO
+ *   attribution row, so it commits to nothing about whether a sale "is an attribution".
  *
  * `recordSpendAttribution` is workflow-anchored, so it was never a drop-in and
  * still is not.
@@ -1396,7 +1372,7 @@ async function payBlockGoodOwner(args: {
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
 
     // Persist whatever DID land even though the payout as a whole failed: a
     // recorded leg is what a refund reverses, and an unrecorded one is Buzz the
@@ -1422,7 +1398,7 @@ async function payBlockGoodOwner(args: {
             error: messageOf(writeError),
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
       });
   }
 }
@@ -1544,7 +1520,7 @@ export async function refundBlockGoodPurchase(args: {
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { refunded: false, reason: 'buyer_refund_failed' };
   }
 
@@ -1594,7 +1570,7 @@ export async function refundBlockGoodPurchase(args: {
         failures,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
   }
 
   return { refunded: true, buyerRefundedBuzz, clawedBackBuzz, failures };

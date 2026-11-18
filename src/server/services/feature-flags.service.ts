@@ -9,10 +9,12 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
 import { formatDate } from '~/utils/date-helpers';
+import { createCachedFlagGate } from '~/server/utils/cached-flag-gate';
 
 export type ServerAvailability = ColorDomain;
 
@@ -98,6 +100,14 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
+  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
+  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
+  // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
+  // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
+  // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -205,6 +215,31 @@ const featureFlags = createFeatureFlags({
   modelPageDesignSystemMarkup: {
     availability: [],
     fliptKey: 'model-page-design-system-markup',
+  },
+  // SSR-CPU trial: for a signed-in viewer's full page load, a route that adopts it
+  // (`~/server/utils/ssr-skip-prefetch`) keeps only the data its 404, access and redirect decisions
+  // need, skips every other prefetch, and server-renders its content as a loading shell that the
+  // client fills after hydration. Anonymous visitors, verified bots and `/_next/data` requests are
+  // never in the trial. `[]`: dark and fails CLOSED when the key is absent or Flipt is down, so the
+  // `ssr-signed-in-skip-prefetch` rollout is the only on-switch. OFF = the full render, unchanged.
+  ssrSignedInSkipPrefetch: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch',
+  },
+  // The same trial for `/images/[imageId]`, `/posts/[postId]` and `/user/[username]`, one flag per
+  // page (`SSR_SKIP_PREFETCH_FLAGS` in `~/server/utils/ssr-skip-prefetch` maps each route to its
+  // flag), so each page is rolled out and rolled back on its own. Dark and fail CLOSED, as above.
+  ssrSignedInSkipPrefetchImages: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-images',
+  },
+  ssrSignedInSkipPrefetchPosts: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-posts',
+  },
+  ssrSignedInSkipPrefetchUser: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-user',
   },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
@@ -370,6 +405,13 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-audio-training',
   },
+  // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
+  trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -390,6 +432,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -436,14 +480,50 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
-  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // Image search on the search pages: /search/semantic, "more like this", the Images entry in the
+  // pickers and tabs, /search/images and the semanticImageSearch procedures. `feedSearch` (below)
+  // also offers the Images entry, opens the search procedure and redirects /search/images.
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
+  // Images first. It switches between the old and the new search on its own (it opens the semantic
+  // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
+  // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
+  // rollout splits signed-in users only.
+  feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
+  // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
+  imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
+  // Comic search on /search/comics, the same way.
+  semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
+  // Semantic search on the challenges feed. Dark: Flipt is its only switch.
+  semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
+  // Search v3 for models: the header bar filters the models feed (?query=) through the search
+  // service. Dark: Flipt is its only switch, and off is today's in-feed Meilisearch search.
+  modelFeedSearch: { availability: [], fliptKey: 'search-v3-models' },
+  // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
+  semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
+  // The semantic storyline search endpoint. Dark: Flipt is its only switch.
+  semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
+  // The semantic collection and bounty search endpoints. Dark: Flipt is their only switch.
+  semanticCollectionSearch: { availability: [], fliptKey: 'semantic-collection-search' },
+  semanticBountySearch: { availability: [], fliptKey: 'semantic-bounty-search' },
+  // The crucibles feed's search box, answered from the semantic search. Off, the feed has no
+  // search box. Dark: Flipt is its only switch.
+  semanticCrucibleSearch: { availability: [], fliptKey: 'semantic-crucible-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -458,6 +538,10 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -485,6 +569,11 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -561,9 +650,15 @@ const featureFlags = createFeatureFlags({
   // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
   // have them before every player does.
   hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
+  // One page-wide Hat Turf watch mark set instead of one per provider (turf-watch-hub.ts). Dark:
+  // Flipt is its only switch.
+  hatTurfBatchedCalls: { availability: [], fliptKey: 'hat-turf-batched-calls' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
+  // The Flag Race: the badge on the home flag row and adding hats to a flag. Testers get it before
+  // launch; it goes public when the first flags swap in. The row itself is gated by its block's featureFlag.
+  flagRace: { availability: ['mod'], fliptKey: 'birthday2026-flag-race' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -663,7 +758,9 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   comicSearch: ['public'],
-  generationOnlyModels: ['mod', 'granted', 'gold'],
+  // Open to every signed-in creator; kept as a flag so an env override can switch it off in the main app
+  // (Creator Studio's canSetGenerationOnly restates the default and doesn't read it).
+  generationOnlyModels: ['user'],
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
@@ -671,6 +768,9 @@ const featureFlags = createFeatureFlags({
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
+  // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
+  // admits (testers before launch, everyone after).
+  knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
@@ -712,7 +812,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['mod'] },
+  generationAirResources: { availability: ['user'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -736,6 +836,10 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
+  knightsEnqueue: ['granted'],
+  textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
@@ -852,6 +956,14 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
+  // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
+  // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
+  // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
+  appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
+  // The in-app raise of a viewer's own per-app daily Buzz limit. `[]`: dark for everyone until
+  // the Flipt flag turns it on; the server twin `isAppDailyLimitRaiseEnabled` gates the procedures.
+  appDailyLimitRaise: { availability: [], fliptKey: 'app-daily-limit-raise' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -937,6 +1049,12 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // Storylines: text items between a chapter's images (PostText), their slides and threads.
+  storylineText: {
+    availability: ['mod', 'granted'],
+    fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
@@ -1064,6 +1182,10 @@ type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
+/** Flipt has a client to answer with. Not live: it is down, or a stub module leaves the accessor out. */
+const fliptIsLive = (mod: FliptModule) =>
+  'getFliptClientSync' in mod && mod.getFliptClientSync() !== null;
+
 function loadFliptModule(): Promise<FliptModule | null> {
   if (_fliptModule) return Promise.resolve(_fliptModule);
   if (typeof window !== 'undefined') return Promise.resolve(null);
@@ -1158,6 +1280,8 @@ const hasFeature = (
       }
       return fliptResult;
     }
+    // A live client that cannot answer has no such key: a flag that requires one is off.
+    if (feature.fliptKeyRequired && fliptIsLive(_fliptModule)) return false;
     // Flipt unavailable — fall through to static evaluation below
   }
 
@@ -1226,9 +1350,12 @@ function isFeatureFlagKeyPresent(
   return true;
 }
 
-function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
-  // Build the Flipt context once and reuse for every flag (was rebuilt per flag).
-  const fliptContext = buildFliptContext(ctx.user);
+function computeFeatureFlags(
+  ctx: FeatureAccessContext,
+  // Build the Flipt context once and reuse for every flag (was rebuilt per flag). A caller that
+  // already built it (the version-keyed cache, which keys on it) passes it in.
+  fliptContext: Record<string, string> = buildFliptContext(ctx.user)
+): FeatureAccess {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
     // Delegate the per-key decision to the shared evaluator so eager output is
@@ -1262,8 +1389,43 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 const FEATURE_ACCESS_TTL_MS = 10_000;
 const FEATURE_ACCESS_MAX = 20_000;
 type FeatureAccessEntry = { value: FeatureAccess; expiresAt: number };
-let featureAccessCur = new Map<string, FeatureAccessEntry>();
-let featureAccessPrev = new Map<string, FeatureAccessEntry>();
+
+/**
+ * Two-generation map with per-entry expiry: memory is bounded to ~2x `max` without a full-clear
+ * thrash. A live hit in the older generation is promoted, so hot keys survive a rotation; an
+ * expired entry is deleted on read. Returns the stored object itself; callers hand out a copy.
+ */
+function createTwoGenerationCache(max: number) {
+  let cur = new Map<string, FeatureAccessEntry>();
+  let prev = new Map<string, FeatureAccessEntry>();
+  return {
+    get(key: string, now: number): FeatureAccess | undefined {
+      let entry = cur.get(key);
+      if (entry) {
+        if (entry.expiresAt > now) return entry.value;
+        cur.delete(key);
+      }
+      entry = prev.get(key);
+      if (entry) {
+        prev.delete(key);
+        if (entry.expiresAt > now) {
+          cur.set(key, entry); // promote so hot keys survive rotation
+          return entry.value;
+        }
+      }
+      return undefined;
+    },
+    set(key: string, value: FeatureAccess, expiresAt: number) {
+      if (cur.size >= max) {
+        prev = cur;
+        cur = new Map();
+      }
+      cur.set(key, { value, expiresAt });
+    },
+  };
+}
+
+let featureAccessCache = createTwoGenerationCache(FEATURE_ACCESS_MAX);
 
 function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccessContext): string {
   // In dev, checkRegionAccess bypasses region entirely, so it can't affect the
@@ -1279,33 +1441,143 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
 }
 
 export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
+  if (isStateVersionCacheEnabled()) {
+    const version = readFliptStateVersion();
+    if (version !== null) return getFeatureFlagsVersioned(ctx, version);
+  }
   const now = Date.now();
   const key = featureAccessKey(ctx);
 
-  let entry = featureAccessCur.get(key);
-  if (entry) {
-    if (entry.expiresAt > now) return { ...entry.value };
-    featureAccessCur.delete(key);
-  }
-  entry = featureAccessPrev.get(key);
-  if (entry) {
-    if (entry.expiresAt > now) {
-      featureAccessPrev.delete(key);
-      featureAccessCur.set(key, entry); // promote so hot keys survive rotation
-      return { ...entry.value };
-    }
-    featureAccessPrev.delete(key);
-  }
+  const cached = featureAccessCache.get(key, now);
+  if (cached) return { ...cached };
 
   const value = computeFeatureFlags(ctx);
-  // Generational rotation (bounds memory to ~2x MAX without a full-clear thrash).
-  if (featureAccessCur.size >= FEATURE_ACCESS_MAX) {
-    featureAccessPrev = featureAccessCur;
-    featureAccessCur = new Map();
-  }
-  featureAccessCur.set(key, { value, expiresAt: now + FEATURE_ACCESS_TTL_MS });
+  featureAccessCache.set(key, value, now + FEATURE_ACCESS_TTL_MS);
   return { ...value };
 };
+
+// ---------------------------------------------------------------------------------------------
+// Version-keyed whole-result cache, behind `feature-flags-state-version-cache` (default OFF).
+// Entries belong to one `getFliptStateVersion()` value and all drop when it moves, so they can live
+// `FEATURE_ACCESS_VERSIONED_TTL_MS` while a Flipt change still arrives within the 10s cache's bound
+// (poll interval + eval-cache TTL + 10s). An entry computed less than `getFliptEvalCacheTtlMs()`
+// after this cache first saw a version gets the 10s TTL: the eval cache may still answer with
+// pre-move evaluations in that window.
+// KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The key holds every input `hasFeature` and
+// `isFeatureFlagKeyPresent` read: the whole Flipt context and the entity id, the sorted
+// `permissions`, the host, the full region, and whether that region is restricted now (that
+// depends on the date too). Env overrides, `isDev` and the registry are fixed per process.
+// Values are interned per version; callers get a shallow copy, never the shared object.
+export const FEATURE_ACCESS_VERSIONED_TTL_MS = 10 * 60_000;
+const FEATURE_ACCESS_VERSIONED_MAX = 20_000;
+const FEATURE_ACCESS_VERSIONED_MAX_VALUES = 5_000;
+
+type VersionedFeatureAccessState = {
+  version: number;
+  /** When this cache first read `version` — never earlier than the move itself. */
+  seenAt: number;
+  entries: ReturnType<typeof createTwoGenerationCache>;
+  values: Map<string, FeatureAccess>;
+};
+let versionedFeatureAccess: VersionedFeatureAccessState | null = null;
+
+function readStateVersionCacheSwitch(): boolean | null {
+  const flipt = _fliptModule;
+  const key = flipt?.FLIPT_FEATURE_FLAGS?.FEATURE_FLAGS_STATE_VERSION_CACHE;
+  if (!flipt || !key) return null;
+  return flipt.isFliptSync(key);
+}
+
+// Global boolean, read at most once per 5s per process. `null` (unknown key, Flipt not loaded or
+// not initialized) and any throw read as OFF, so the 10-second cache is the default and fallback.
+let isStateVersionCacheEnabled = createCachedFlagGate(readStateVersionCacheSwitch);
+
+/** `null` when the Flipt module is not loaded, or does not expose a state version. */
+function readFliptStateVersion(): number | null {
+  const getVersion = _fliptModule?.getFliptStateVersion;
+  if (typeof getVersion !== 'function') return null;
+  try {
+    const version = getVersion();
+    return typeof version === 'number' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function readFliptEvalCacheTtlMs(): number {
+  try {
+    const ttl = _fliptModule?.getFliptEvalCacheTtlMs?.();
+    // Unknown reads as the package default, never as 0 (0 would treat every entry as settled).
+    return typeof ttl === 'number' && ttl >= 0 ? ttl : 10_000;
+  } catch {
+    return 10_000;
+  }
+}
+
+function versionedFeatureAccessKey(
+  { user, req, host = req?.headers.host }: FeatureAccessContext,
+  fliptContext: Record<string, string>
+): string {
+  // Same region rule as `featureAccessKey`: dev bypasses region checks; a nullish req has none.
+  const region = isDev || !req ? undefined : getRegion(req);
+  const restricted = region ? (isRegionRestricted(region) ? '1' : '0') : '';
+  const flipt = Object.keys(fliptContext)
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(fliptContext[k])}`)
+    .join('&');
+  const entity = user ? `u:${encodeURIComponent(String(user.id))}` : 'anon';
+  const permissions = user
+    ? (user.permissions ?? [])
+        .slice()
+        .sort()
+        .map((p) => encodeURIComponent(p))
+        .join(',')
+    : '';
+  return `${entity}|f:${flipt}|p:${permissions}|h:${encodeURIComponent(host ?? '')}|r:${
+    region ? JSON.stringify(region) : ''
+  }|rr:${restricted}`;
+}
+
+function getFeatureFlagsVersioned(ctx: FeatureAccessContext, version: number): FeatureAccess {
+  const now = Date.now();
+  let state = versionedFeatureAccess;
+  if (!state || state.version !== version) {
+    state = versionedFeatureAccess = {
+      version,
+      seenAt: now,
+      entries: createTwoGenerationCache(FEATURE_ACCESS_VERSIONED_MAX),
+      values: new Map(),
+    };
+  }
+
+  const fliptContext = buildFliptContext(ctx.user);
+  const key = versionedFeatureAccessKey(ctx, fliptContext);
+
+  const cached = state.entries.get(key, now);
+  if (cached) return { ...cached };
+
+  const computed = computeFeatureFlags(ctx, fliptContext);
+  // Intern: keys are inserted in registry order, so equal key lists mean equal results.
+  const signature = Object.keys(computed).join(',');
+  let value = state.values.get(signature);
+  if (!value) {
+    if (state.values.size >= FEATURE_ACCESS_VERSIONED_MAX_VALUES) state.values.clear();
+    state.values.set(signature, computed);
+    value = computed;
+  }
+
+  const settled = now - state.seenAt >= readFliptEvalCacheTtlMs();
+  const ttl = settled ? FEATURE_ACCESS_VERSIONED_TTL_MS : FEATURE_ACCESS_TTL_MS;
+  state.entries.set(key, value, now + ttl);
+  return { ...value };
+}
+
+/** Tests only: forget the cached switch read and every cached result (both caches). */
+export function resetFeatureFlagsStateVersionCacheForTests() {
+  isStateVersionCacheEnabled = createCachedFlagGate(readStateVersionCacheSwitch);
+  versionedFeatureAccess = null;
+  featureAccessCache = createTwoGenerationCache(FEATURE_ACCESS_MAX);
+}
 
 /**
  * PER-FLAG lazy FeatureAccess. Accessing `features.X` evaluates ONLY key `X`
@@ -1469,9 +1741,11 @@ export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser)
   if (flipt) await flipt.ensureFliptInitialized();
   const context = buildFliptContext(user);
   return keys.every((key) => {
-    const fliptKey = featureFlags[key].fliptKey;
+    const { fliptKey, fliptKeyRequired } = featureFlags[key];
     if (!fliptKey || envOverriddenFlags.has(key)) return true;
-    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+    if (!_fliptModule) return false;
+    if (_fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null) return true;
+    return !!fliptKeyRequired && fliptIsLive(_fliptModule);
   });
 }
 
@@ -1585,6 +1859,10 @@ export function computeUserFeatureFlagsOverlay(
     }
   }
 
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
+
   return result;
 }
 
@@ -1606,6 +1884,11 @@ type FeatureFlag = {
   badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
+  /**
+   * The flag is off while Flipt is up and has no `fliptKey` flag. Without it a missing key falls back
+   * to `availability`, as an outage does; an outage still does.
+   */
+  fliptKeyRequired?: boolean;
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties

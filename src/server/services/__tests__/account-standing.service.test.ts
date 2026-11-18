@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -119,6 +120,10 @@ describe('isAccountMuted', () => {
   });
 
   it('stops waiting on a stalled cache after its deadline and reads the row', async () => {
+    // The cluster-cache guard inside fetchThroughCache has its own, shorter deadline and reaches the
+    // same answer (the row) sooner; switch it off so this pins THIS service's deadline, which still
+    // bounds the read when the guard is disabled.
+    setEnv({ REDIS_CACHE_READ_DEADLINE_MS: 0 });
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     try {
       redisMock.redis.packed.get.mockReturnValue(new Promise(() => undefined) as never);

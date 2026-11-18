@@ -98,6 +98,9 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE } from '~/server/services/blocks/consent-revocation.service';
+import type { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
+import { errorFormatter } from '~/server/trpc/error-formatter';
 
 const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 const grantMock = dbMock.dbWrite.appUserScopeGrant;
@@ -132,6 +135,17 @@ function consentCtx(userId = USER) {
 
 function caller(userId = USER) {
   return blocksRouter.createCaller(consentCtx(userId) as never);
+}
+
+/** The error as the client receives it: shaped by the app's real `errorFormatter`. */
+function formatted(err: unknown) {
+  const e = err as TRPCError;
+  const shape = {
+    message: e.message,
+    code: -32603,
+    data: { code: e.code, httpStatus: getHTTPStatusCodeFromError(e) },
+  } as Parameters<typeof errorFormatter>[0]['shape'];
+  return errorFormatter({ shape, error: e }) as { data: Record<string, unknown> };
 }
 
 beforeEach(() => {
@@ -304,6 +318,61 @@ describe('blocks.revokeScopes — the happy path writes BOTH halves', () => {
         'lags" from "nothing was recorded" — which is the whole point of the wording'
     ).toBeUndefined();
   });
+
+  /**
+   * 🔴 THE CLIENT READS "Permission removed" OFF `data.consentRevokeRecorded`, NOT OFF THE 503. The
+   * `mapDbUnavailable` middleware answers an unreachable database with a 503 too, so the code alone
+   * cannot say whether the row moved. Read through the REAL `errorFormatter`, since `createCaller`
+   * returns the error before the formatter shapes it and the flag is lifted there.
+   *
+   * MUTATION THAT MUST KILL IT: drop `cause: { consentRevokeRecorded: true }` from the throw.
+   */
+  it('the publish-failure 503 carries data.consentRevokeRecorded through the formatter', async () => {
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    const err = await caller()
+      .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+      .then(
+        () => null,
+        (e) => e
+      );
+    expect(grantMock.update).toHaveBeenCalledTimes(1);
+    expect(formatted(err).data).toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      consentRevokeRecorded: true,
+    });
+  });
+
+  /**
+   * 🔴 THE OTHER 503 — nothing written, and it must NOT carry the flag. Each pre-write read rejects
+   * with a Prisma-shaped unreachable-database error; `mapDbUnavailable` turns that into a 503 the
+   * client used to report as a removal while the grant stayed live.
+   */
+  it.each([
+    ['the app lookup (replica)', () => appBlockFindUnique],
+    ['the held-scopes read (primary)', () => grantMock.findUnique],
+  ])(
+    'an unreachable database during %s is a 503 WITHOUT consentRevokeRecorded, and writes nothing',
+    async (_label, target) => {
+      target().mockRejectedValue(
+        Object.assign(new Error("Can't reach database server"), {
+          name: 'PrismaClientInitializationError',
+          errorCode: 'P1001',
+        })
+      );
+      const err = await caller()
+        .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+        .then(
+          () => null,
+          (e) => e
+        );
+      // A POSITIVE CONTROL: it really is the middleware's 503, so the arm is about that 503.
+      expect(err).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      expect(grantMock.update).not.toHaveBeenCalled();
+      expect(grantMock.create).not.toHaveBeenCalled();
+      expect(redisMock.redis.set).not.toHaveBeenCalled();
+      expect(formatted(err).data.consentRevokeRecorded).toBeUndefined();
+    }
+  );
 
   it('reports fullyRevoked + budgetCleared when the last spend scope goes', async () => {
     grantMock.findUnique.mockResolvedValue({

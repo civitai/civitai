@@ -1,14 +1,26 @@
+import { ilikeContains } from '~/server/utils/ilike';
 import { Prisma } from '@prisma/client';
+import {
+  isHeldForReview,
+  isServableLevelOrOwnUnrated,
+  notHeldForReviewWhere,
+  servableLevelOrOwnUnratedWhere,
+} from '~/server/common/image-visibility';
 import {
   onStorySparkLost,
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 } from '~/server/events/points/hooks';
-import { uniq } from 'lodash-es';
+import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NsfwLevel,
+  PostSort,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -42,7 +54,6 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -62,6 +73,9 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
@@ -80,6 +94,7 @@ import {
   createImage,
   createImageResources,
   deleteImageFromS3,
+  purgesAllVersions,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
@@ -90,8 +105,12 @@ import {
   isPlainOwnerDelete,
   imagesWithOpenReports,
 } from '~/server/services/image.service';
-import type { AssertPostOwnedBy } from '~/server/services/image.service';
+import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
+import { Flags } from '~/shared/utils/flags';
+import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
+import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
@@ -111,6 +130,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
 import {
   Availability,
   CollectionMode,
@@ -119,7 +139,7 @@ import {
   JobQueueType,
   MediaType,
   Model3DStatus,
-  ModelHashType,
+  ModelModifier,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
@@ -150,6 +170,10 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -282,15 +306,26 @@ export const getPostsInfinite = async ({
   disableMinor,
   poiOnly,
   minorOnly,
+  asModerator,
+  asOwner = false,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
+  /** Whether the request reads with a moderator's view; default false (`credentialViews`). */
+  asModerator?: boolean;
+  /** Whether the request may see the user's own drafts, Private and scheduled posts; default false. */
+  asOwner?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
-  const isModerator = user?.isModerator ?? false;
+  // One value for every moderator branch below: a narrow-scope key is not a moderator here.
+  const isModerator = asModerator === true && !!user?.isModerator;
+  // A narrow-scope key is not the owner of its posts here: the post owner branches read `ownerId`.
+  // Collection permissions (and the contributor read) still follow `user.id`: a scoped key keeps
+  // collection ownership and membership.
+  const ownerId = asOwner ? userId : undefined;
   const includeCosmetics = !!include?.includes('cosmetics');
 
   let targetUser: number | undefined;
@@ -308,7 +343,7 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-user:${targetUser}`);
   }
 
-  const isOwnerRequest = !!userId && targetUser === userId;
+  const isOwnerRequest = !!ownerId && targetUser === ownerId;
 
   if (!isOwnerRequest && !isModerator) {
     // Makes it so private posts are not shown to the public
@@ -341,7 +376,14 @@ export const getPostsInfinite = async ({
       where: { id: modelVersionId },
       select: { model: { select: { poi: true, userId: true } } },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+    if (
+      version &&
+      !canViewPoiModel(
+        version.model.poi,
+        version.model.userId,
+        user && { ...user, isModerator, id: ownerId ?? null }
+      )
+    )
       return { items: [] };
 
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
@@ -353,11 +395,11 @@ export const getPostsInfinite = async ({
   let collectionJoined = false;
   let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
-    if (scheduled && userId) {
+    if (scheduled && ownerId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
       // the image service carve-out (image.service.ts ~line 4060).
       AND.push(
-        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${ownerId} AND p."publishedAt" > NOW()))`
       );
     } else {
       AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
@@ -381,8 +423,14 @@ export const getPostsInfinite = async ({
       WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
     )`);
 
-  // Applies to owner requests too, unlike the tag filter.
-  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+  // Applies to owner requests too, unlike the tag filter. One creator's posts (a profile search)
+  // match the words anywhere in the title, cheap over that one user's rows; across everyone, a prefix.
+  if (query)
+    AND.push(
+      targetUser
+        ? Prisma.sql`p.title ILIKE ${ilikeContains(query)}`
+        : Prisma.sql`p.title ILIKE ${query + '%'}`
+    );
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();
@@ -404,13 +452,16 @@ export const getPostsInfinite = async ({
   else if (jump?.direction === 'after')
     AND.push(Prisma.sql`p."publishedAt" >= ${new Date(jump.startMs)}`);
 
+  // An empty level is no level asked for: read as public, as `getAllImages` does, so the posts, their
+  // images and the image exclusions below are all served at the same level.
+  if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   if (browsingLevel) {
-    if (pending && (isModerator || userId)) {
+    if (pending && (isModerator || ownerId)) {
       if (isModerator) {
         AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
-      } else if (userId) {
+      } else if (ownerId) {
         AND.push(
-          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${ownerId}))`
         );
       }
     } else {
@@ -435,8 +486,8 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    const displayReviewItems = user?.id
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+    const displayReviewItems = ownerId
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${ownerId})`
       : '';
 
     // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
@@ -540,8 +591,37 @@ export const getPostsInfinite = async ({
     if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
+  // Images follow the viewer's hidden tags and the browsing-settings exclusions at the request's
+  // level, whatever the request sent. Resolved onto a target of its own, which names no owner, so
+  // none of it is skipped; the image's own creator keeps every image, and moderators resolve to none.
+  const imageRules: {
+    browsingLevel?: number;
+    excludedTagIds?: number[];
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = { browsingLevel };
+  await enforceBlockedBrowsingTags(imageRules, {
+    id: user?.id,
+    username: user?.username,
+    isModerator,
+  });
+  const excludedImageTagIds = new Set([
+    ...(imageRules.excludedTagIds ?? []),
+    ...(excludedTagIds ?? []),
+  ]);
+  const showsImage = (image: {
+    userId: number;
+    poi?: boolean | null;
+    minor?: boolean | null;
+    tagIds?: number[];
+  }) =>
+    (!!ownerId && image.userId === ownerId) ||
+    (!(imageRules.disablePoi && image.poi) &&
+      !(imageRules.disableMinor && image.minor) &&
+      !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
+
   // Filter to published model versions:
-  const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
+  const filterByPermissionContent = !isOwnerRequest && !isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
   // Get user data
   const userIds = postsRaw.map((i) => i.userId);
@@ -553,7 +633,9 @@ export const getPostsInfinite = async ({
           ? getImagesForPosts({
               postIds: postsRaw.map((x) => x.id),
               // excludedIds: excludedImageIds,
-              user,
+              // Images are fetched with the request's own rights: a scoped key (no `ownerId`) as
+              // a signed-out viewer, so it gets no owner carve-out either.
+              user: ownerId !== undefined && user ? { ...user, isModerator } : undefined,
               browsingLevel,
               pending,
               disablePoi,
@@ -598,7 +680,7 @@ export const getPostsInfinite = async ({
         // remove unlisted resources the user has no access to:
         .filter((p) => {
           // Allow mods and owners to view all.
-          if (user?.isModerator || p.userId === user?.id) return true;
+          if (isModerator || (!!ownerId && p.userId === ownerId)) return true;
 
           // Hide posts from unpublished model versions:
           if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
@@ -622,7 +704,7 @@ export const getPostsInfinite = async ({
         // a per-item field — no consumer reads `item.cursorId`. Dropping it
         // removes one field (a superjson-typed Date/number node) PER POST.
         .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
-          const _images = images.filter((x) => x.postId === post.id);
+          const _images = images.filter((x) => x.postId === post.id && showsImage(x));
           const { username, image, deletedAt } = userData[creatorId] || {};
 
           return {
@@ -728,12 +810,22 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
-export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+type PostEditInput = GetByIdInput & {
+  user: SessionUser;
+  /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
+  servableLevels: number;
+};
+
+export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const editImages = await getPostEditImages({ id, user });
+  const [editImages, texts] = await Promise.all([
+    getPostEditImages({ id, user, servableLevels }),
+    getPostEditTexts(id),
+  ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
@@ -760,6 +852,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     parentModelName: model?.name ?? null,
     collectionTagId,
     images,
+    texts,
     collectionItemExists,
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
@@ -875,10 +968,29 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
-export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+/**
+ * The post's storyline text items for its editor, whatever the `storylineText` flag: the editor
+ * places new items by index among them, so it needs every row the author has.
+ */
+async function getPostEditTexts(postId: number) {
+  const db = await getDbWithoutLag('postImages', postId);
+  return db.postText.findMany({
+    where: { postId },
+    select: { id: true, index: true, content: true },
+    orderBy: [{ index: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
-    where: { postId: id },
+    where: {
+      postId: id,
+      AND: [
+        user.isModerator ? {} : notHeldForReviewWhere(),
+        servableLevelOrOwnUnratedWhere(servableLevels, user.id),
+      ],
+    },
     select: editPostImageSelect,
   });
   return combinePostEditImageData(images, user);
@@ -1023,6 +1135,7 @@ export const createPost = async ({
     collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
+    texts: [] as PostDetailEditable['texts'],
     collectionItemExists,
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
@@ -1294,7 +1407,11 @@ export const deletePost = async ({
   id,
   isModerator,
   deletedById,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  viewerIsModerator = isModerator,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+  // The delete trigger on "PostText" refuses it too; this refuses it with a message.
+  if ((await heldPostTextPostIds({ postIds: [id] })).length)
+    throw heldTextError(viewerIsModerator, 'Text in this post');
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1425,6 +1542,7 @@ export const deletePost = async ({
           deleteImageFromS3({
             id: image.id,
             url: image.url,
+            allVersions: purgesAllVersions(image, !!viewerIsModerator),
             keepShopArtwork: isPlainOwnerDelete(
               { ...image, openReport: reported.has(image.id) },
               deletedById
@@ -1517,7 +1635,7 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 };
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'post-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'post-service', type: 'error', ...data });
 };
 
 const DETAIL_LIMIT = 10;
@@ -1532,7 +1650,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
   let respJson;
   try {
-    const response = await fetch(src);
+    const response = await outboundFetch(src, { timeoutMs: 10_000 });
     respJson = await response.json();
   } catch (e) {
     return log({ user, message: 'Failure fetching JSON data from external URL.', domain: src });
@@ -1572,6 +1690,27 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 };
 
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
+
+/** Whether an upload may stay at the index its client sent (`addPostImage`). */
+export async function keepSentIndex(postId: number, index: number) {
+  if (!Number.isInteger(index) || index < 0) return false;
+  const [holder, hiddenEnd] = await Promise.all([
+    // primary: decides the index this upload is written at
+    dbWrite.image.findFirst({ where: { postId, index }, select: { id: true } }),
+    // primary: decides the index this upload is written at
+    dbWrite.image.aggregate({
+      where: {
+        postId,
+        OR: [
+          { NOT: notHeldForReviewWhere() },
+          { nsfwLevel: { notIn: [0, NsfwLevel.PG, NsfwLevel.PG13] } },
+        ],
+      },
+      _max: { index: true },
+    }),
+  ]);
+  return !holder && index > (hiddenEnd?._max.index ?? -1);
+}
 
 export const addPostImage = async ({
   modelVersionId,
@@ -1637,20 +1776,11 @@ export const addPostImage = async ({
 
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
-    select: {
-      userId: true,
-      collection: {
-        select: {
-          metadata: true,
-        },
-      },
-    },
+    select: { userId: true },
   });
 
   if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
   if (post.userId !== user.id) throw throwAuthorizationError();
-
-  const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
   // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
   // a retried mutation or a duplicated client submission — return the existing
@@ -1675,6 +1805,22 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
+  // On a post with storyline text items, a new image goes after the last item whatever index the
+  // client sent. Without text, a sent index may repeat an image's the editor is not served and so
+  // does not count: `keepSentIndex` decides, and otherwise the image goes last.
+  const lastText = await dbWrite.postText.findFirst({
+    where: { postId: props.postId },
+    orderBy: { index: 'desc' },
+    select: { index: true },
+  });
+  const sentIndex = imageProps.index;
+  if (lastText || sentIndex == null || !(await keepSentIndex(props.postId, sentIndex))) {
+    const imageEnd = await dbWrite.image.aggregate({
+      where: { postId: props.postId },
+      _max: { index: true },
+    });
+    imageProps.index = Math.max(lastText?.index ?? -1, imageEnd?._max.index ?? -1) + 1;
+  }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -1689,7 +1835,6 @@ export const addPostImage = async ({
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
-    skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
     clientUrl: serverMintedUrl ? undefined : true,
   });
 
@@ -1782,22 +1927,57 @@ export async function bustCachesForPosts(postIds: number | number[]) {
     .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
-  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
-  // .com cover, which only the level computation re-checks.
   const showcaseModelIds = [
     ...new Set(
       results.filter((x) => x.isShowcase && x.modelId != null).map((x) => x.modelId as number)
     ),
   ];
-  await refreshSfwFaceLevels(showcaseModelIds);
+  await refreshModelShowcases(showcaseVersionIds, showcaseModelIds);
+}
+
+/**
+ * After every image of an account is blocked: the showcases and search documents of the models it
+ * owns.
+ */
+export async function refreshShowcasesForUserModels(userId: number) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+    SELECT mv.id AS "modelVersionId", m.id AS "modelId"
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE m."userId" = ${userId}
+  `;
+  if (!rows.length) return;
+  await refreshModelShowcases(
+    rows.map((r) => r.modelVersionId),
+    uniq(rows.map((r) => r.modelId))
+  );
+}
+
+const SHOWCASE_CHUNK = 500;
+
+async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
+  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
+  // .com cover, which only the level computation re-checks.
+  await refreshSfwFaceLevels(modelIds);
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
   // path) routes to primary during the replication window. Then refresh
   // instead of bust — refresh actively repopulates from primary, so a
   // concurrent reader can't poison the cache with `images: []` during the
   // bust debounce window.
-  await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
-  await imagesForModelVersionsCache.refresh(showcaseVersionIds);
+  for (const batch of chunk(versionIds, SHOWCASE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', batch);
+    await imagesForModelVersionsCache.refresh(batch);
+  }
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves, so a showcase image that
+  // stops qualifying would stay in its search document. Call-site import: models.search-index
+  // imports image.service, which imports this module.
+  const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
+  for (const batch of chunk(modelIds, SHOWCASE_CHUNK))
+    await modelsSearchIndex.queueUpdate(
+      batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -1889,15 +2069,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 };
 
-export const addResourceToPostImage = async ({
-  id: imageIds,
-  modelVersionId,
-  user,
-}: AddResourceToPostImageInput & { user: SessionUser }) => {
-  if (!imageIds.length) {
-    throw throwBadRequestError('Must include at least one image.');
-  }
-
+/** Looks up a version an uploader may credit to their images, or throws not found. */
+export async function findCreditableModelVersion(modelVersionId: number, user: SessionUser) {
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
@@ -1906,69 +2079,92 @@ export const addResourceToPostImage = async ({
         select: { ...modelVersionVisibilitySelect.model.select, name: true, id: true, type: true },
       },
       name: true,
-      files: {
-        select: {
-          hashes: {
-            select: {
-              hash: true,
-            },
-            where: {
-              type: ModelHashType.AutoV2,
-            },
-          },
-        },
-      },
     },
   });
 
   if (!modelVersion || !(await canViewModelVersion(modelVersion, user)))
     throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+  return modelVersion;
+}
+
+type CreditableModelVersion = Awaited<ReturnType<typeof findCreditableModelVersion>>;
+
+/**
+ * Credits every version to every image as uploader-asserted (`detected: false`), in one locked
+ * insert with one round of cache busting. `skipOnSite` leaves on-site generations out instead of
+ * refusing the whole call.
+ */
+export async function creditResourcesToImages({
+  imageIds,
+  modelVersions,
+  user,
+  skipOnSite = false,
+}: {
+  imageIds: number[];
+  modelVersions: CreditableModelVersion[];
+  user: SessionUser;
+  skipOnSite?: boolean;
+}) {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+  if (!modelVersions.length) return [];
 
   // Read from primary — users can attach a resource within seconds of posting
   // the image, so the replica (5-10s lag) would return fewer rows and throw
   // a spurious "Image not found".
   const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, type: true },
+    select: { id: true, postId: true, meta: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
-  // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((image) => !canAddManualResources(image))) {
+  let creditableIds = imageIds;
+  if (skipOnSite) {
+    creditableIds = images.filter((image) => canAddManualResources(image)).map((x) => x.id);
+    if (!creditableIds.length) return [];
+  } else if (images.some((image) => !canAddManualResources(image))) {
+    // TODO technically this can be called with a combo of on/off site imgs
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
+  const adding = modelVersions.map((version) => ({
+    modelVersionId: version.id,
+    modelType: version.model.type,
+  }));
   const createdResources = await dbWrite.$transaction(async (tx) => {
     // Serialises concurrent adds to the same image, so two requests cannot both pass the limit check.
     await tx.$queryRaw`SELECT id FROM "Image" WHERE id IN (${Prisma.join(
-      imageIds
+      creditableIds
     )}) ORDER BY id FOR UPDATE`;
     const existing = await tx.imageResourceHelper.findMany({
-      where: { imageId: { in: imageIds } },
+      where: { imageId: { in: creditableIds } },
       select: { imageId: true, modelVersionId: true, modelType: true, detected: true },
     });
-    for (const imageId of imageIds) {
+    for (const imageId of creditableIds) {
       const error = getManualResourceLimitError(
         existing.filter((r) => r.imageId === imageId),
-        [{ modelVersionId, modelType: modelVersion.model.type }]
+        adding
       );
       if (error) throw throwBadRequestError(error);
     }
 
     return tx.imageResourceNew.createManyAndReturn({
-      data: imageIds.map((imageId) => ({
-        modelVersionId,
-        imageId,
-        detected: false,
-      })),
+      data: creditableIds.flatMap((imageId) =>
+        adding.map(({ modelVersionId }) => ({ modelVersionId, imageId, detected: false }))
+      ),
       skipDuplicates: true,
       select: { modelVersionId: true, imageId: true },
     });
   });
 
   if (createdResources.length > 0) {
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: uniq(createdResources.map((x) => x.modelVersionId)),
+      imageIds: uniq(createdResources.map((x) => x.imageId)),
+    });
     await queueImageSearchIndexUpdate({
       ids: uniq(createdResources.map((x) => x.imageId)),
       action: SearchIndexUpdateQueueAction.Update,
@@ -1980,8 +2176,10 @@ export const addResourceToPostImage = async ({
 
   await imageResourcesCache.refresh(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
-  await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-  await bustCacheTag(`images-model:${modelVersion.model.id}`);
+  for (const version of modelVersions) {
+    await bustCacheTag(`images-modelVersion:${version.id}`);
+    await bustCacheTag(`images-model:${version.model.id}`);
+  }
 
   // Once per post, not per image: every image of a post shares its caches.
   const postIds = uniq(images.map((image) => image.postId).filter(isDefined));
@@ -1996,6 +2194,18 @@ export const addResourceToPostImage = async ({
       modelVersionId: { in: createdResources.map((x) => x.modelVersionId) },
     },
   });
+}
+
+export const addResourceToPostImage = async ({
+  id: imageIds,
+  modelVersionId,
+  user,
+}: AddResourceToPostImageInput & { user: SessionUser }) => {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+  const modelVersion = await findCreditableModelVersion(modelVersionId, user);
+  return creditResourcesToImages({ imageIds, modelVersions: [modelVersion], user });
 };
 
 export const removeResourceFromPostImage = async ({
@@ -2035,9 +2245,234 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
-  const transaction = await dbWrite.$transaction(
-    imageIds.map((id, index) => dbWrite.image.update({ where: { id, postId }, data: { index } }))
+type Editor = { user: SessionUser; servableLevels: number };
+
+/**
+ * Whether an image counts, or will once scanned, toward the version level
+ * (`imageDerivedVersionLevelSql`): an unrated image counts as soon as its scan rates it.
+ */
+const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.Blocked;
+
+/**
+ * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
+ * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * index. `movable` holds the others the editor listed, with their current index and whether the
+ * version level counts them.
+ */
+async function editorHiddenImages(
+  postId: number,
+  listedIds: number[],
+  { user, servableLevels }: Editor
+) {
+  // primary: decides which indexes the reorder write that follows may take
+  const images = await dbWrite.image.findMany({
+    where: { postId },
+    select: { id: true, index: true, needsReview: true, nsfwLevel: true, userId: true },
+  });
+  const listed = new Set(listedIds);
+  const isHidden = (image: (typeof images)[number]) =>
+    !listed.has(image.id) ||
+    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
+  const hidden = images.filter(isHidden);
+  const movable = new Map(
+    images
+      .filter((image) => !isHidden(image))
+      .map((image) => [
+        image.id,
+        { index: image.index ?? 0, counted: countsTowardVersionLevel(image.nsfwLevel) },
+      ])
+  );
+  return {
+    ids: new Set(hidden.map((image) => image.id)),
+    indexes: new Set(hidden.map((image) => image.index ?? 0)),
+    movable,
+    images: images.map((image) => ({
+      id: image.id,
+      index: image.index,
+      nsfwLevel: image.nsfwLevel,
+      pinned: isHidden(image),
+    })),
+  };
+}
+
+// `index` as stored: the version level sorts a null index after every number.
+type RankedImage = { id: number; index: number | null; nsfwLevel: number; pinned: boolean };
+
+/**
+ * Whether writing `positions` would change, for any pinned image, how many images the version
+ * level counts sit ahead of it (or level with it): now, once unrated images are rated, or if any
+ * Blocked image is later cleared. The reorder refuses such a write.
+ */
+export function shiftsPinnedRank(
+  images: RankedImage[],
+  positions: Array<{ type: 'image' | 'text'; id: number; index: number }>
+) {
+  const moved = new Map(positions.filter((p) => p.type === 'image').map((p) => [p.id, p.index]));
+  const before = (image: RankedImage) => image.index ?? Infinity;
+  const after = (image: RankedImage) => moved.get(image.id) ?? image.index ?? Infinity;
+  const views = [
+    (image: RankedImage) => image.nsfwLevel !== 0 && countsTowardVersionLevel(image.nsfwLevel),
+    (image: RankedImage) => countsTowardVersionLevel(image.nsfwLevel),
+    // Every image: a Blocked verdict can be lifted on review, and the image then counts.
+    () => true,
+  ];
+  return views.some((counts) => {
+    const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {
+      const others = images.filter((image) => counts(image) && image.id !== pin.id);
+      const pinAt = at(pin);
+      return `${others.filter((image) => at(image) < pinAt).length}:${
+        others.filter((image) => at(image) === pinAt).length
+      }`;
+    };
+    return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
+  });
+}
+
+type Hidden = Awaited<ReturnType<typeof editorHiddenImages>>;
+type Placed = { type: 'image' | 'text'; id: number };
+
+const sortedIndexes = (items: Placed[], hidden: Hidden) =>
+  items.map((item) => hidden.movable.get(item.id)?.index ?? 0).sort((a, b) => a - b);
+
+/**
+ * Indexes for `order`, in order. `ownSlots`: the images trade the indexes they already hold.
+ * Otherwise items are numbered from 0 in the editor's order, skipping the pinned images' and
+ * `reserved` indexes. Either way each pinned image keeps the same images-ahead counts
+ * `shiftsPinnedRank` checks: own slots trade within the images the version level counts and
+ * within the rest; numbered, every image fills the stretches between pinned images up to the
+ * count each held before, and texts take the room left over.
+ */
+function placeAroundPinned(
+  order: Placed[],
+  hidden: Hidden,
+  { ownSlots, reserved = new Set<number>() }: { ownSlots: boolean; reserved?: Set<number> }
+) {
+  const seen = new Set<string>();
+  const items = order.filter((item) => {
+    const key = `${item.type}:${item.id}`;
+    return !seen.has(key) && !!seen.add(key);
+  });
+  const isCounted = (item: Placed) =>
+    item.type === 'image' && !!hidden.movable.get(item.id)?.counted;
+  const isImage = (item: Placed) => item.type === 'image' && hidden.movable.has(item.id);
+
+  const index = new Map<Placed, number>();
+  if (ownSlots) {
+    const groups = hidden.ids.size
+      ? [items.filter(isCounted), items.filter((item) => !isCounted(item))]
+      : [items];
+    for (const group of groups) {
+      const slots = sortedIndexes(group, hidden);
+      group.forEach((item, i) => index.set(item, slots[i]));
+    }
+    return items.map((item) => ({ ...item, index: index.get(item)! }));
+  }
+
+  // Stretch k runs up to the k-th pinned index; the last one is open.
+  const pins = [...hidden.indexes].sort((a, b) => a - b);
+  const last = pins.length;
+  const stretchOf = (at: number) => pins.filter((pin) => pin < at).length;
+  const blocked = new Set([...pins, ...reserved]);
+  const room = pins.map((pin, k) => {
+    let free = 0;
+    for (let at = k ? pins[k - 1] + 1 : 0; at < pin; at++) if (!blocked.has(at)) free++;
+    return free;
+  });
+  const quota = pins.map(() => 0);
+  for (const item of items.filter(isImage)) {
+    const k = stretchOf(hidden.movable.get(item.id)!.index);
+    if (k < last) quota[k]++;
+  }
+  const used = pins.map(() => 0);
+  const usedCounted = pins.map(() => 0);
+  const stretch = new Map<Placed, number>();
+  let k = 0;
+  for (const item of items) {
+    let at;
+    if (isImage(item)) {
+      while (k < last && usedCounted[k] >= quota[k]) k++;
+      at = k;
+      if (at < last) usedCounted[at]++;
+    } else {
+      at = k;
+      while (at < last && room[at] - used[at] <= quota[at] - usedCounted[at]) at++;
+    }
+    if (at < last) used[at]++;
+    stretch.set(item, at);
+  }
+
+  let at = 0;
+  for (let s = 0; s <= last; s++) {
+    if (s) at = Math.max(at, pins[s - 1] + 1);
+    for (const item of items.filter((item) => stretch.get(item) === s)) {
+      while (blocked.has(at)) at++;
+      index.set(item, at++);
+    }
+  }
+  return items.map((item) => ({ ...item, index: index.get(item)! }));
+}
+
+/**
+ * Without `items` (an editor from before text items, or with them off), a post that has text keeps
+ * every text row where it is: the listed images trade the indexes those images already hold.
+ * Otherwise they are numbered from 0, around the images the editor may not move.
+ */
+async function imageOnlyReorder(postId: number, imageIds: number[], editor: Editor) {
+  const hidden = await editorHiddenImages(postId, imageIds, editor);
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  const order = imageIds
+    .filter((id) => !hidden.ids.has(id) && (!hasText || hidden.movable.has(id)))
+    .map((id) => ({ type: 'image' as const, id }));
+  return { hidden, positions: placeAroundPinned(order, hidden, { ownSlots: !!hasText }) };
+}
+
+/**
+ * The editor's whole reading order, numbered from 0 around the images it may not move and any
+ * text rows it did not send.
+ */
+async function itemsReorder(
+  postId: number,
+  items: NonNullable<ReorderPostImagesInput['items']>,
+  editor: Editor
+) {
+  const ids = (type: 'image' | 'text') => items.filter((i) => i.type === type).map((i) => i.id);
+  const hidden = await editorHiddenImages(postId, ids('image'), editor);
+  const order = items.filter((item) => item.type === 'text' || !hidden.ids.has(item.id));
+  // primary: decides which indexes the reorder write that follows may take
+  const unlistedTexts = await dbWrite.postText.findMany({
+    where: { postId, id: { notIn: ids('text') } },
+    select: { index: true },
+  });
+  return {
+    hidden,
+    positions: placeAroundPinned(order, hidden, {
+      ownSlots: false,
+      reserved: new Set(unlistedTexts.map((text) => text.index)),
+    }),
+  };
+}
+
+/** Writes the editor's order and returns the index each item it may move now has. */
+export const reorderPostImages = async ({
+  id: postId,
+  imageIds,
+  items,
+  ...editor
+}: ReorderPostImagesInput & Editor) => {
+  const { hidden, positions } = items
+    ? await itemsReorder(postId, items, editor)
+    : await imageOnlyReorder(postId, imageIds, editor);
+  // Fail closed: placement is meant to keep this, and a write that breaks it is refused.
+  if (shiftsPinnedRank(hidden.images, positions))
+    throw throwBadRequestError('This order could not be saved.');
+  await dbWrite.$transaction(
+    positions.map(({ type, id, index }) =>
+      type === 'image'
+        ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+        : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+    )
   );
 
   await updatePostNsfwLevel(postId);
@@ -2047,14 +2482,169 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
     { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
   ]);
 
-  return transaction;
+  return positions;
 };
 
-export const getPostResources = async ({ id }: GetByIdInput) => {
-  return await dbRead.postResourceHelper.findMany({
-    where: { postId: id },
-    orderBy: { modelName: 'asc' },
+/**
+ * Unfiltered: includes rows from images the viewer may not open. Filter before returning to anyone
+ * but the owner or a moderator.
+ */
+const readPostResourceRows = (id: number) =>
+  dbRead.postResourceHelper.findMany({ where: { postId: id }, orderBy: { modelName: 'asc' } });
+
+/**
+ * Moderators get every row. Anyone else gets rows of models they may see
+ * (`getModelIdsVisibleToViewer`; a row with no model is dropped). The post's owner gets them from
+ * all its images; others only from images they may open, each row naming such an image.
+ */
+export const getPostResources = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & {
+  // Required, though either may be undefined: every caller says whose view it reads.
+  userId: number | undefined;
+  isModerator: boolean | undefined;
+}) => {
+  const [rows, post, images] = await Promise.all([
+    readPostResourceRows(id),
+    dbRead.post.findUnique({ where: { id }, select: { userId: true } }),
+    dbRead.image.findMany({ where: { postId: id }, select: { id: true } }),
+  ]);
+  if (isModerator || !rows.length) return rows;
+
+  if (userId !== undefined && post?.userId === userId) {
+    const visibleModelIds = await getModelIdsVisibleToViewer(
+      rows.map((row) => row.modelId).filter(isDefined),
+      { id: userId }
+    );
+    return rows.filter((row) => row.modelId != null && visibleModelIds.has(row.modelId));
+  }
+
+  const visibleIds = await getImageIdsVisibleToViewer({
+    ids: images.map((image) => image.id),
+    userId,
+    isModerator,
   });
+  if (!visibleIds.size) return [];
+
+  const used = await dbRead.imageResourceNew.findMany({
+    where: { imageId: { in: [...visibleIds] } },
+    select: { imageId: true, modelVersionId: true },
+    orderBy: { imageId: 'asc' },
+  });
+  const imageByVersion = new Map<number, number>();
+  for (const { imageId, modelVersionId } of used)
+    if (!imageByVersion.has(modelVersionId)) imageByVersion.set(modelVersionId, imageId);
+
+  const visibleModelIds = await getModelIdsVisibleToViewer(
+    rows.map((row) => row.modelId).filter(isDefined),
+    { id: userId }
+  );
+
+  return rows.flatMap((row) => {
+    const imageId = imageByVersion.get(row.modelVersionId);
+    if (imageId === undefined) return [];
+    if (row.modelId == null || !visibleModelIds.has(row.modelId)) return [];
+    return [{ ...row, imageId }];
+  });
+};
+
+type PostResourceCover = Pick<
+  ImagesForModelVersions,
+  'id' | 'userId' | 'url' | 'type' | 'nsfwLevel' | 'width' | 'height' | 'hash' | 'poi' | 'minor'
+>;
+
+/**
+ * The covers of a post's resources for its owner (or a moderator), keyed by model version. The
+ * cover is the first image of the shared version-image cache that the viewer's browsing level
+ * allows; a mature model listed on .com through its face sends only its PG/PG-13 images there.
+ * A version of a taken-down model, or of another user's private model, has none. Covers are
+ * decoration, so a cache failure yields none rather than an error.
+ */
+export const getPostResourceCovers = async ({
+  id,
+  user,
+  browsingLevel,
+}: GetByIdInput & { user: SessionUser; browsingLevel: number }) => {
+  const post = await dbRead.post.findUnique({ where: { id }, select: { userId: true } });
+  if (!post || (post.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+
+  const resources = await readPostResourceRows(id);
+  const versionIds = [
+    ...new Set(resources.filter((x) => x.name !== 'vae').map((x) => x.modelVersionId)),
+  ].filter(isDefined);
+  const covers: Record<number, PostResourceCover | null> = Object.fromEntries(
+    versionIds.map((versionId) => [versionId, null])
+  );
+  if (!versionIds.length) return covers;
+
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: {
+      id: true,
+      model: {
+        select: {
+          mode: true,
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+          availability: true,
+          userId: true,
+        },
+      },
+    },
+  });
+  const servable = versions.filter(
+    ({ model }) =>
+      model.mode !== ModelModifier.TakenDown &&
+      (model.availability !== Availability.Private || model.userId === user.id)
+  );
+  if (!servable.length) return covers;
+
+  const byVersion = await imagesForModelVersionsCache
+    .fetch(servable.map((version) => version.id))
+    .catch((error: Error) => {
+      logToAxiom({
+        name: 'post-service',
+        type: 'error',
+        message: 'post resource covers unavailable',
+        error: error.message,
+      });
+      return undefined;
+    });
+  if (!byVersion) return covers;
+
+  const showSfwFace = showsSfwFace(browsingLevel);
+  for (const { id: versionId, model } of servable) {
+    const images = imagesForFace(
+      byVersion[versionId]?.images ?? [],
+      { nsfw: model.nsfw, hasSfwFace: hasCompleteSfwFace(model) },
+      showSfwFace
+    ).filter(
+      (image) =>
+        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        // The cache keeps images from private posts; only their owner may see them.
+        (image.availability !== Availability.Private || image.userId === user.id)
+    );
+    const cover = images[0];
+    covers[versionId] = cover
+      ? {
+          id: cover.id,
+          userId: cover.userId,
+          url: cover.url,
+          type: cover.type,
+          nsfwLevel: cover.nsfwLevel,
+          width: cover.width,
+          height: cover.height,
+          hash: cover.hash,
+          poi: cover.poi,
+          minor: cover.minor,
+        }
+      : null;
+  }
+  return covers;
 };
 
 export const updatePostNsfwLevel = async (ids: number | number[]) => {
@@ -2071,7 +2661,8 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
 export const getPostContestCollectionDetails = async ({
   id,
   userId,
-}: GetByIdInput & { userId?: number }) => {
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2084,7 +2675,25 @@ export const getPostContestCollectionDetails = async ({
       items: [],
     };
 
-  const collection = await getCollectionById({ input: { id: post.collectionId } });
+  const permissions = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  // A collection whose items the viewer may not read answers as none. The post's owner submitted
+  // it, so they always see it.
+  const isPostOwner = !!userId && userId === post.userId;
+  if (!isPostOwner && !canReadCollectionItems(permissions))
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
+
+  const collection = await getCollectionById({
+    input: { id: post.collectionId },
+    viewer: userId ? { id: userId, isModerator } : undefined,
+  });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)
     return {
@@ -2098,14 +2707,24 @@ export const getPostContestCollectionDetails = async ({
   const images = isImageCollection
     ? await dbRead.image.findMany({
         where: { postId: id },
+        select: { id: true },
       })
+    : [];
+  const imageIds = isImageCollection
+    ? [
+        ...(await getImageIdsVisibleToViewer({
+          ids: images.map((i) => i.id),
+          userId,
+          isModerator,
+        })),
+      ]
     : [];
 
   const items = await dbRead.collectionItem.findMany({
     where: {
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
-      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      imageId: isImageCollection ? { in: imageIds } : undefined,
     },
     select: {
       id: true,
@@ -2116,11 +2735,6 @@ export const getPostContestCollectionDetails = async ({
       reviewedAt: true,
       tag: true,
     },
-  });
-
-  const permissions = await getUserCollectionPermissionsById({
-    id: post.collectionId,
-    userId,
   });
 
   return {
@@ -2138,7 +2752,9 @@ export const getPostContestCollectionDetails = async ({
 export const updatePostCollectionTagId = async ({
   id,
   collectionTagId,
-}: UpdatePostCollectionTagIdInput) => {
+  userId,
+  isModerator,
+}: UpdatePostCollectionTagIdInput & { userId: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2150,8 +2766,24 @@ export const updatePostCollectionTagId = async ({
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return;
 
-  if (!collection.tags.find((t) => t.id === collectionTagId))
-    throw throwBadRequestError('Invalid tag');
+  // Category tags only, and only on entries that have none or a category tag: the rest (judging
+  // state and the like) is the system's, as `setCollectionItemsTag` keeps it.
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.id);
+  if (!categoryTagIds.includes(collectionTagId)) throw throwBadRequestError('Invalid tag');
+
+  // An entrant changes their category only while submissions are open; managers and moderators
+  // can at any time.
+  const { manage } = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  if (!manage) {
+    const { submissionEndDate } = (collection.metadata ?? {}) as CollectionMetadataSchema;
+    if (submissionEndDate && new Date(submissionEndDate) < new Date())
+      throw throwBadRequestError('Submissions for this contest are closed');
+    if (await isContestBanned(userId)) throw throwBadRequestError(CONTEST_BANNED_MESSAGE);
+  }
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -2166,6 +2798,7 @@ export const updatePostCollectionTagId = async ({
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }],
     },
     data: {
       tagId: collectionTagId,

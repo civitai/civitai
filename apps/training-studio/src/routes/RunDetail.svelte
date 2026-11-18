@@ -42,6 +42,7 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
@@ -60,11 +61,11 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -320,7 +321,8 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
@@ -492,9 +494,7 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
-  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
-  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  // The submit's own rating can find mature images the quote missed; its refusal raises this.
   let refusedFurther = $state<{ run: string; count: number } | null>(null);
   const furtherMature = $derived(
     Math.max(
@@ -504,23 +504,13 @@
   );
   const furtherSpend = $derived(
     quote?.cost != null
-      ? nonBlueSpend(quote.cost, buzzMode.value, {
-          mature: furtherMature > 0,
-          member: hostConfig().isPaidMember === true,
-        })
+      ? nonBlueSpend(quote.cost, buzzMode.value, { mature: furtherMature > 0 })
       : null
   );
-  // The run id is in the key so a tick never carries over to another run with the same price.
-  const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
-    return key && `${workflowIdKey}:${key}`;
-  });
-  let furtherAckedFor = $state<string | null>(null);
-  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
+    if (!publishTarget || continuing || quote?.cost == null) return;
     continuing = true;
     continueError = '';
     try {
@@ -529,13 +519,12 @@
         publishTarget.number,
         Number(furtherEpochs) || 5,
         buzzMode.currencies,
-        furtherAckKey !== null
+        furtherMature
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      if (err instanceof MatureAckRequiredError)
-        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      if (err instanceof MatureRepriceError) refusedFurther = { run: workflowIdKey, count: err.matureCount };
       else confirming = false;
     } finally {
       continuing = false;
@@ -623,7 +612,6 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
-    furtherAckedFor = null;
     ownRights = false;
     shareDataset = false;
     shareTouched = false;
@@ -864,6 +852,12 @@
   {#if d.traces.length}
     {#key d.workflowId}
       <LossGraph traces={d.traces} training={d.state === 'training'} />
+    {/key}
+  {/if}
+
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
     {/key}
   {/if}
 
@@ -1249,7 +1243,7 @@
               {#if confirming}
                 <Button
                   onclick={doTrainFurther}
-                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                  disabled={continuing || quote?.cost == null}
                 >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
@@ -1284,34 +1278,12 @@
                 pricing…
               {/if}
             </div>
-            {#if furtherAckKey}
-              <div
-                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
-              >
-                <Checkbox
-                  id="ack-further-mature"
-                  bind:checked={
-                    () => furtherAckedFor === furtherAckKey,
-                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
-                  }
-                  class="mt-0.5 shrink-0"
-                />
-                <label for="ack-further-mature" class="cursor-pointer">
-                  {furtherMature}
-                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
-                  <strong>mature</strong>.
-                  {#if furtherSpend}
-                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
-                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
-                    > will be charged.
-                  {:else if buzzMode.blueFirst}
-                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
-                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {:else}
-                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {/if}
-                </label>
-              </div>
+            {#if furtherMature > 0 && hostConfig().isPaidMember !== true && buzzMode.blueFirst}
+              <p class="max-w-sm text-xs leading-snug text-dark-2">
+                Without a membership, mature sample images from runs paid with
+                <span class="text-blue-400">Blue</span> Buzz are blurred. Turn off Spend Blue first to
+                pay in <span class="text-yellow-400">Yellow</span> and see them.
+              </p>
             {/if}
           </div>
         </div>

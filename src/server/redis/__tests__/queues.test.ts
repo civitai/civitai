@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // queues.ts imports the real redis client module, which opens sockets at load.
 // Mock it to an in-memory sysRedis whose hGet reply type (string vs Buffer) we
@@ -526,11 +527,11 @@ describe('dropped-enqueue parking lot', () => {
       });
       expect(sAdd).toHaveBeenCalledWith(BUCKETS_CSV, ['4', '5']);
 
-      // Deleted by key AND by the length it replayed, so a drop that landed between the
+      // Deleted by key AND by the value it replayed, so a drop that landed between the
       // read and the delete is not swallowed along with it.
       const deletes = callsMatching(executeRaw, 'DELETE FROM "KeyValue"');
       expect(deletes).toHaveLength(1);
-      expect(deletes[0].slice(1)).toEqual([PARKED_KEY, 2]);
+      expect(deletes[0].slice(1)).toEqual([PARKED_KEY, JSON.stringify([4, 5])]);
     });
 
     it('leaves the row parked when the replay fails, and does not park a second copy', async () => {
@@ -546,6 +547,52 @@ describe('dropped-enqueue parking lot', () => {
       // lose the ids, and re-inserting would duplicate them.
       expect(callsMatching(executeRaw, 'DELETE FROM "KeyValue"')).toHaveLength(0);
       expect(callsMatching(queryRaw, 'INSERT INTO "KeyValue"')).toHaveLength(0);
+    });
+
+    describe('against Postgres', () => {
+      let pg: PGlite;
+      const run = (call: unknown[]) => {
+        const [strings, ...values] = call as [string[], ...unknown[]];
+        const text = strings.reduce((acc, s, i) => `${acc}$${i}${s}`);
+        return pg.query(text, values);
+      };
+      const row = async () =>
+        (await pg.query<{ value: number[] }>('SELECT "value" FROM "KeyValue"')).rows[0]?.value;
+
+      beforeEach(async () => {
+        pg = new PGlite();
+        await pg.exec('CREATE TABLE "KeyValue" ("key" TEXT PRIMARY KEY, "value" JSONB NOT NULL)');
+        await pg.query(`INSERT INTO "KeyValue" VALUES ($1, '[4,5]'::jsonb)`, [PARKED_KEY]);
+        queryRaw.mockImplementation((...call: unknown[]) =>
+          run(call).then((r) => r.rows as { key: string; value: unknown }[])
+        );
+        executeRaw.mockImplementation((...call: unknown[]) =>
+          run(call).then((r) => r.affectedRows ?? 0)
+        );
+        hGet.mockResolvedValue(BUCKETS_CSV);
+      });
+      afterEach(() => pg.close());
+
+      it('deletes the row it replayed', async () => {
+        await drainDroppedEnqueues();
+
+        expect(await row()).toBeUndefined();
+      });
+
+      it('keeps a same-length row that replaced the one it read before its delete', async () => {
+        // Between the read and the delete, an overlapping drain clears [4,5] and a writer parks
+        // [6,7]: same length, ids never replayed.
+        sAdd.mockImplementationOnce(async () => {
+          await pg.query(`UPDATE "KeyValue" SET "value" = '[6,7]'::jsonb WHERE "key" = $1`, [
+            PARKED_KEY,
+          ]);
+          return 1;
+        });
+
+        await drainDroppedEnqueues();
+
+        expect(await row()).toEqual([6, 7]);
+      });
     });
 
     it('drops a row whose value is not an array rather than retrying it forever', async () => {

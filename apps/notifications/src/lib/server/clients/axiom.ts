@@ -12,7 +12,7 @@ export function logToAxiom(data: MixedObject, datastream = 'notifications') {
 }
 
 export function logAxiomError(error: unknown) {
-  return logToAxiom({ type: 'error', ...safeError(error) }).catch(() => {});
+  return logToAxiom({ type: 'error', ...safeError(error) });
 }
 
 export { safeError };

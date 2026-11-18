@@ -1,3 +1,4 @@
+import type { ReadableStream as WebReadableStream } from 'stream/web';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
@@ -12,7 +13,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import {
   getImageUploadIpEvents,
   UPLOAD_REQUEST_IP_NOTE,
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
 } from '~/server/services/image-upload-action.service';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob } from '~/utils/file-utils';
@@ -40,7 +43,6 @@ import type { Report } from '@civitai/cybertipline-tools';
 import {
   Client,
   Environment,
-  FileDetailType,
   FileRelevance,
   IncidentType,
   IPEventName,
@@ -72,7 +74,6 @@ import { supplementalReportText } from '~/server/services/csam-supplemental-text
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
-import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
 import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 import { MAX_EVIDENCE_BYTES } from '~/server/services/generator-evidence/preserve-blob';
@@ -86,6 +87,7 @@ import {
   evidenceFilesToSend,
   evidenceReportInfo,
   evidenceSizeProblem,
+  promptFileDetails,
   readVerifiedEvidence,
   verifyStoredEvidence,
 } from '~/server/services/generator-evidence/evidence-payload';
@@ -165,7 +167,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version' | 'image-upload-request';
+    type: 'post' | 'model-version' | 'image-upload-request' | 'feedback-capture-upload';
     id: number;
   };
 };
@@ -435,6 +437,7 @@ async function getImages(imageIds?: number[]) {
     where: { id: { in: imageIds } },
     select: {
       id: true,
+      userId: true,
       url: true,
       createdAt: true,
       name: true,
@@ -452,6 +455,8 @@ async function getImages(imageIds?: number[]) {
 
 export async function getUserIpInfo(report: Partial<CsamReportProps>) {
   if (!report.userId || !report.type || !clickhouse) return [];
+  // Interpolated into ClickHouse SQL below.
+  const userId = Number(report.userId);
 
   let captureEvents: CsamReportUserActivity[] = await clickhouse.$query<{
     ip: string;
@@ -463,7 +468,8 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE userId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
+    WHERE (targetUserId = ${userId} OR (userId = ${userId} AND targetUserId != ${userId}))
+      AND (type = 'Registration' OR type = 'Login')
   `);
 
   switch (report.type) {
@@ -483,7 +489,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             postId,
             time
           FROM posts
-          WHERE userId = ${report.userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
+          WHERE userId = ${userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
         `)
         ).map(({ postId, ...data }) => ({
           ...data,
@@ -506,7 +512,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             modelVersionId,
             time
           FROM modelVersionEvents
-          WHERE userId = ${report.userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
+          WHERE userId = ${userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
         `)
         ).map(({ modelVersionId, ...data }) => ({
           ...data,
@@ -611,6 +617,10 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+/** Filed with each feedback page capture in an image report, whoever the report's subject is. */
+export const FEEDBACK_CAPTURE_FILE_NOTE =
+  'Page capture submitted by a reporter: this file is a screenshot of a Civitai page that a user attached to a feedback report sent to Civitai. It may show content posted by an account other than the one who submitted it.';
+
 export function getReportedUserAdditionalInfo(
   email: string | null,
   userActivity: CsamReportUserActivity[]
@@ -620,6 +630,9 @@ export function getReportedUserAdditionalInfo(
       email ? `Email: ${email}` : null,
       userActivity.some((a) => a.details?.type === 'image-upload-request')
         ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+      userActivity.some((a) => a.details?.type === 'feedback-capture-upload')
+        ? FEEDBACK_CAPTURE_UPLOAD_IP_NOTE
         : null,
     ]
       .filter(Boolean)
@@ -724,7 +737,7 @@ function logSendFailure(
     message: (e as Error | undefined)?.message,
     reportId: report.id,
     ncmecReportId,
-    hoursPending: hoursSinceFiled(report),
+    payload: { hoursPending: hoursSinceFiled(report) },
   });
 }
 
@@ -744,7 +757,7 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       subType: 'send-blocked',
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
-      hoursPending,
+      payload: { hoursPending },
     });
   }
 }
@@ -769,8 +782,7 @@ export async function logOverdueEvidenceApprovals() {
       subType: 'send-blocked',
       message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
       reportId: report.id,
-      hoursPending,
-      awaiting: 'evidence-approval',
+      payload: { hoursPending, awaiting: 'evidence-approval' },
     });
   }
 }
@@ -908,8 +920,7 @@ async function recordSkippedEntries(claim: SendClaim, budget: SpoolBudget) {
     'send-entries-skipped',
     {
       message: `report ${claim.report.id} skips ${skipped.count} archive entries`,
-      empty: skipped.empty,
-      unreadable: skipped.unreadable,
+      payload: { empty: skipped.empty, unreadable: skipped.unreadable },
     },
     'error'
   );
@@ -939,11 +950,13 @@ async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason:
   const unconfirmed = report.details?.unconfirmedOpens ?? [];
   const fields = {
     message: `report ${report.id} held (${holdCase}): ${reason}`,
-    case: holdCase,
-    hoursPending: hoursSinceFiled(report),
     ncmecReportId: report.reportId ?? undefined,
-    possibleDuplicateReportIds: possibleDuplicates,
-    unconfirmedOpens: unconfirmed.length,
+    payload: {
+      case: holdCase,
+      hoursPending: hoursSinceFiled(report),
+      possibleDuplicateReportIds: possibleDuplicates,
+      unconfirmedOpens: unconfirmed.length,
+    },
   };
   logSendLine(claim, 'send-held', fields, 'error');
   logSendLine(claim, 'send-decision-needed', fields, 'error');
@@ -1015,7 +1028,7 @@ async function cancelStoredCyberTip(
     logSendLine(
       claim,
       'send-possible-duplicate',
-      { ncmecReportId: stored, cancelOutcome: outcome, message },
+      { ncmecReportId: stored, message, payload: { cancelOutcome: outcome } },
       'error'
     );
   else
@@ -1036,19 +1049,17 @@ async function cancelStoredCyberTip(
 async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = {
-    case: 'no-files' satisfies SendHoldCase,
-    ncmecReportId: claim.report.reportId ?? undefined,
-  };
-  logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
+  const ncmecReportId = claim.report.reportId ?? undefined;
+  const payload = { hoursPending, case: 'no-files' satisfies SendHoldCase };
+  logSendLine(claim, 'send-no-files', { message, ncmecReportId, payload }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
       claim,
       'send-decision-needed',
       {
         message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
-        hoursPending,
-        ...stored,
+        ncmecReportId,
+        payload,
       },
       'error'
     );
@@ -1061,10 +1072,15 @@ async function logNoFiles(claim: SendClaim, message: string) {
  */
 function logXmlProblem(claim: SendClaim, problem: string) {
   const hoursPending = hoursSinceFiled(claim.report);
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const ncmecReportId = claim.report.reportId ?? undefined;
   const message = `report ${claim.report.id} would not be well-formed XML: ${problem}`;
-  logSendLine(claim, 'send-xml', { message, hoursPending, ...stored }, 'error');
-  logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
+  logSendLine(claim, 'send-xml', { message, ncmecReportId, payload: { hoursPending } }, 'error');
+  logSendLine(
+    claim,
+    'send-decision-needed',
+    { message, ncmecReportId, payload: { hoursPending } },
+    'error'
+  );
 }
 
 /**
@@ -1096,8 +1112,7 @@ function logHeldOnUnconfirmedOpen(claim: SendClaim) {
     'send-decision-needed',
     {
       message: `report ${claim.report.id} is held: ${opens.length} earlier open(s) may have left a CyberTip at NCMEC with no id here. Check with NCMEC, then clear it to send.`,
-      hoursPending: hoursSinceFiled(claim.report),
-      unconfirmedOpens: opens.length,
+      payload: { hoursPending: hoursSinceFiled(claim.report), unconfirmedOpens: opens.length },
     },
     'error'
   );
@@ -1297,9 +1312,7 @@ async function reportImages(claim: SendClaim) {
       subType: 'send-all-unreadable',
       message: `report ${report.id} has no readable file`,
       reportId: report.id,
-      hoursPending,
-      filesUnreadable: failed.length,
-      filesAbsent: absent.length,
+      payload: { hoursPending, filesUnreadable: failed.length, filesAbsent: absent.length },
     });
     if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
       logToAxiom({
@@ -1308,7 +1321,7 @@ async function reportImages(claim: SendClaim) {
         subType: 'send-decision-needed',
         message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
         reportId: report.id,
-        hoursPending,
+        payload: { hoursPending },
       });
     return logSendFailure(report, new Error('no file of the report could be read'), 'archive-data');
   }
@@ -1380,12 +1393,19 @@ async function reportImages(claim: SendClaim) {
       fileAnnotations.physicalHarm = true;
     }
     const originalFileName = image.name?.split('?')[0];
+    const prompts = promptFileDetails((image.meta ?? {}) as Record<string, unknown>, {
+      storedOnImage: true,
+    });
+    if (isFeedbackCaptureOwner(image.userId))
+      prompts.additionalInfo.unshift(xmlText(FEEDBACK_CAPTURE_FILE_NOTE));
     fileDetailsOf.set(image.id, {
       fileDetails: {
         originalFileName: originalFileName ? xmlText(originalFileName) : undefined,
         locationOfFile: xmlText(getEdgeUrl(image.url, { type: image.type })),
         fileViewedByEsp: viewed.has(image.id),
         fileAnnotations,
+        ...(prompts.details && { details: prompts.details }),
+        ...(prompts.additionalInfo.length && { additionalInfo: prompts.additionalInfo }),
       },
       fileAnnotations,
     });
@@ -1523,8 +1543,7 @@ async function reportImages(claim: SendClaim) {
       'send-short',
       {
         message: `report ${report.id} sent without ${filesMissing} file(s)`,
-        filesMissing,
-        filesAbsent: filesMissing - failed.length,
+        payload: { filesMissing, filesAbsent: filesMissing - failed.length },
       },
       'error'
     );
@@ -1652,6 +1671,14 @@ async function sendGenerationData(
       'archive-data'
     );
 
+  const detailsOf = ({ job }: (typeof fetched)[number]) => {
+    const { details, additionalInfo } = promptFileDetails(job);
+    return {
+      ...GENERATED_FILE_DETAILS,
+      ...(details && { details }),
+      ...(additionalInfo.length && { additionalInfo }),
+    } satisfies FileDetailsXml;
+  };
   let sending: ReturnType<typeof sendEach> | undefined;
   const sent = await sendCyberTip(
     claim,
@@ -1662,32 +1689,16 @@ async function sendGenerationData(
       }),
     },
     {
-      fileDetails: [GENERATED_FILE_DETAILS],
+      fileDetails: fetched.map(detailsOf),
       sendFiles: async (reportId) => {
         sending = sendEach(
           fetched,
-          async ({ job: { prompt, negativePrompt, resources }, url, file }) => {
+          async (item) => {
             const {
               data: { fileId, hash },
-            } = await uploadToCyberTip(claim, await spooledFile(file));
-
-            const valuePair: Array<{ name: string; value: string }> = [];
-            if (prompt)
-              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
-            if (negativePrompt)
-              valuePair.push({
-                name: 'negativePrompt',
-                value: trimNonAlphanumeric(negativePrompt) ?? '',
-              });
-            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
-
-            await cybertipClient.submitFileDetails({
-              fileId,
-              reportId,
-              ...GENERATED_FILE_DETAILS,
-              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-            });
-            return { url, fileId, hash } satisfies CsamReportGeneratedImageData;
+            } = await uploadToCyberTip(claim, await spooledFile(item.file));
+            await cybertipClient.submitFileDetails({ fileId, reportId, ...detailsOf(item) });
+            return { url: item.url, fileId, hash } satisfies CsamReportGeneratedImageData;
           },
           // The upload reads each file whole: one at a time.
           1
@@ -1706,8 +1717,7 @@ async function sendGenerationData(
       'send-short',
       {
         message: `report ${report.id} sent without ${failed.length} file(s)`,
-        filesMissing: failed.length,
-        filesAbsent: 0,
+        payload: { filesMissing: failed.length, filesAbsent: 0 },
       },
       'error'
     );
@@ -2177,7 +2187,7 @@ async function getTrainingDataZipStream({
   if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
   if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
   // Convert Web ReadableStream to Node.js Readable stream
-  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+  return Readable.fromWeb(response.body as WebReadableStream);
 }
 
 function uploadStream({
@@ -2347,28 +2357,9 @@ export const userContentSections: {
 
 /**
  * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
- * archives: the CommentV3 rows, then any CommentV2 row the mirror never copied. For accounts whose
- * reports were archived before `data.json` carried comments.
+ * archives. For accounts whose reports were archived before `data.json` carried comments.
  */
 export async function archiveUserComments(userId: number) {
-  const v2 = await dbRead.commentV2.findMany({ where: { userId }, orderBy: { id: 'asc' } });
-  const mirrored = v2.length
-    ? new Set(
-        (
-          await kyselyV3Read
-            .selectFrom('CommentV3')
-            .select('id')
-            .where(
-              'id',
-              'in',
-              v2.map((c) => c.id)
-            )
-            .execute()
-        ).map((c) => c.id)
-      )
-    : new Set<number>();
-  const unmirrored = v2.filter((c) => !mirrored.has(c.id));
-
   let comments = 0;
   async function* counted<T>(rows: AsyncIterable<T>) {
     for await (const row of rows) {
@@ -2386,12 +2377,11 @@ export async function archiveUserComments(userId: number) {
         ['userId', { value: userId }],
         ['archivedAt', { value: new Date().toISOString() }],
         ['comments', { items: counted(userCommentRows(userId)) }],
-        ['commentsV2NotInV3', { value: unmirrored }],
       ],
     }),
     uploadStream({ stream: sink, userId, filename: 'comments.json' }),
   ]);
-  return { userId, ...stored, comments: comments + unmirrored.length };
+  return { userId, ...stored, comments };
 }
 
 /**
@@ -3226,11 +3216,13 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
       reportId: report.id,
       expected: imageUrls.length,
-      strikeUrls: strikeUrls.size,
-      namedUrls: namedUrls.size,
-      entries,
-      unreadable,
-      strikesNotFound,
+      payload: {
+        strikeUrls: strikeUrls.size,
+        namedUrls: namedUrls.size,
+        entries,
+        unreadable,
+        strikesNotFound,
+      },
     });
 
     archived.push({

@@ -118,7 +118,7 @@ const ownerUser = { id: 7, isModerator: false, tier: 'free', username: 'owner' }
 const findUnique = dbRead.appBlock.findUnique as ReturnType<typeof vi.fn>;
 
 // A stored manifest that is FULLY VALID under the real validator (iframe block,
-// contentRating, a single OAuth-eligible scope). The app's allowedScopes cover
+// contentRating, a single OAuth-eligible scope, a `page` surface). The app's allowedScopes cover
 // that scope and allowedOrigins cover the canonical per-app subdomain the
 // stamper writes (https://my-app.civit.ai/).
 const approvedBlock = {
@@ -135,6 +135,7 @@ const approvedBlock = {
     renderMode: 'iframe',
     trustTier: 'unverified',
     scopes: ['models:read:self'],
+    page: { path: '/', title: 'My App' },
     iframe: {
       src: 'https://my-app.civit.ai/',
       minHeight: 200,
@@ -180,7 +181,9 @@ describe('blocks.updateManifest — scopeJustifications enforcement (real valida
     expect(mockCommitFiles).toHaveBeenCalledTimes(1);
     // The justification survives into the committed manifest bytes (so the mod
     // sees it).
-    const committed = JSON.parse(mockCommitFiles.mock.calls[0][0].files[0].content.toString('utf8'));
+    const committed = JSON.parse(
+      mockCommitFiles.mock.calls[0][0].files[0].content.toString('utf8')
+    );
     expect(committed.scopeJustifications).toEqual({
       'models:read:self': 'We render the page model in a widget.',
     });

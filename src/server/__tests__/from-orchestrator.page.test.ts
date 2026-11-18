@@ -90,6 +90,12 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
     await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'no-checkpoint' } });
   });
 
+  it('answers a run whose model was taken down as not found', async () => {
+    mockGetWorkflow.mockResolvedValue(run('approved'));
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ workflowId: 'wf-1' }] as never);
+    await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'not-found' } });
+  });
+
   it('explains a workflow that is not a training run', async () => {
     mockGetWorkflow.mockResolvedValue({ ...run('approved'), tags: ['generation'] });
     await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'not-found' } });

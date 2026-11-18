@@ -90,7 +90,7 @@ export async function applyBountyPoi({
     entityType: 'Bounty',
     entityId,
     workflowId,
-  }).catch(() => null);
+  });
   return { notified: notify };
 }
 

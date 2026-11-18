@@ -10,6 +10,7 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 
 const log = createLogger('challenge-prize', 'yellow');
 
@@ -52,10 +53,12 @@ export async function checkAndAwardEntryPrize({
     // Count user's accepted entries in this collection
     const [entryCount] = await dbRead.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count
-      FROM "CollectionItem"
-      WHERE "collectionId" = ${collectionId}
-      AND "addedById" = ${userId}
-      AND status IN ('ACCEPTED', 'REVIEW')
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${collectionId}
+      AND ci."addedById" = ${userId}
+      AND ci.status IN ('ACCEPTED', 'REVIEW')
+      AND ${imageNotRestrictedSql()}
     `;
 
     const userEntryCount = Number(entryCount.count);

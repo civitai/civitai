@@ -1,5 +1,6 @@
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 type S3ToVimeoUpload = {
   url: string;
@@ -17,7 +18,8 @@ export const uploadVimeoVideo = async ({
   description,
   size,
 }: S3ToVimeoUpload) => {
-  const res = await fetch(`https://api.vimeo.com/me/videos`, {
+  const res = await outboundFetch(`https://api.vimeo.com/me/videos`, {
+    timeoutMs: 30_000,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -55,9 +57,10 @@ export const checkVideoAvailable = async ({
   id: string;
   accessToken: string;
 }) => {
-  const res = await fetch(
+  const res = await outboundFetch(
     `https://api.vimeo.com/videos/${id}?fields=player_embed_url,upload.status,transcode.status`,
     {
+      timeoutMs: 30_000,
       method: 'GET',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -101,7 +104,8 @@ export const updateVimeoVideo = async ({
     return;
   }
 
-  const res = await fetch(`https://api.vimeo.com/videos/${videoId}`, {
+  const res = await outboundFetch(`https://api.vimeo.com/videos/${videoId}`, {
+    timeoutMs: 30_000,
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',

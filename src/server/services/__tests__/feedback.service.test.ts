@@ -109,6 +109,18 @@ describe('createFeedback — extended context', () => {
     expect(writtenContext()).toEqual({ images: [UUID_1] });
   });
 
+  it('stamps the support ticket a moderator filed it from beside the context', async () => {
+    await createFeedback({
+      ...args,
+      context: { reportedSource: 'moderator-ticket' },
+      freshdeskTicketId: 4321,
+    });
+    expect(writtenContext()).toEqual({
+      reportedSource: 'moderator-ticket',
+      freshdeskTicketId: 4321,
+    });
+  });
+
   it('writes an empty object when there is no context at all (invariant guard)', async () => {
     await createFeedback(args);
     expect(writtenContext()).toEqual({});

@@ -49,7 +49,10 @@ describe('scored-event route access', () => {
     await callerFor({ id: 7 }).watchPoints({ event: 'birthday2026', topics: ['teams'] });
     await callerFor(undefined).watchPoints({ event: 'birthday2026', topics: ['teams'] });
     const calls = watch.markEventPointsWatched.mock.calls as unknown as [object, unknown][];
-    expect(calls.map(([, viewer]) => viewer)).toEqual([{ id: 7 }, undefined]);
+    expect(calls.map(([, viewer]) => viewer)).toEqual([
+      { id: 7, isModerator: false },
+      { id: undefined, isModerator: false },
+    ]);
     for (const [input] of calls)
       expect(input).toMatchObject({ event: 'birthday2026', topics: ['teams'] });
   });
@@ -64,7 +67,7 @@ describe('scored-event route access', () => {
   it('serves getMyCosmeticScores for the signed-in caller only', async () => {
     await callerFor({ id: 7 }).getMyCosmeticScores({ event: 'birthday2026' });
     expect(service.getMyEventCosmeticScores).toHaveBeenCalledWith({
-      user: { id: 7 },
+      user: { id: 7, isModerator: false },
       event: 'birthday2026',
     });
   });
@@ -85,9 +88,12 @@ describe('scored-event route access', () => {
   it('reads getMyHats and getPlaceableContent as the signed-in caller', async () => {
     await callerFor({ id: 7 }).getMyHats({ event: 'birthday2026' });
     await callerFor({ id: 7 }).getPlaceableContent({ event: 'birthday2026' });
-    expect(service.getMyEventHats).toHaveBeenCalledWith({ user: { id: 7 }, event: 'birthday2026' });
+    expect(service.getMyEventHats).toHaveBeenCalledWith({
+      user: { id: 7, isModerator: false },
+      event: 'birthday2026',
+    });
     expect(service.getPlaceableEventContent).toHaveBeenCalledWith({
-      user: { id: 7 },
+      user: { id: 7, isModerator: false },
       event: 'birthday2026',
     });
   });
@@ -103,7 +109,7 @@ describe('scored-event route access', () => {
     expect(service.getPlaceableEventContentPage).not.toHaveBeenCalled();
     await callerFor({ id: 7 }).getPlaceableContentPage(input());
     expect(service.getPlaceableEventContentPage).toHaveBeenCalledWith(
-      expect.objectContaining({ user: { id: 7 }, ...input() })
+      expect.objectContaining({ user: { id: 7, isModerator: false }, ...input() })
     );
   });
 
@@ -132,7 +138,7 @@ describe('scored-event route access', () => {
     expect(service.getEventHatCatalog).toHaveBeenCalledTimes(1);
     expect(service.getEventHatCatalog).toHaveBeenCalledWith({
       event: 'birthday2026',
-      viewer: undefined,
+      viewer: { id: undefined, isModerator: false },
     });
   });
 
@@ -141,7 +147,7 @@ describe('scored-event route access', () => {
     await callerFor({ id: 7 }).getHatCatalog({ event: 'birthday2026' });
     expect(service.getEventHatCatalog).toHaveBeenCalledWith({
       event: 'birthday2026',
-      viewer: { id: 7 },
+      viewer: { id: 7, isModerator: false },
     });
   });
 

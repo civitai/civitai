@@ -9,13 +9,12 @@
 //                       session-revocation marker protocol (createSessionRegistry).
 export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
-export { createAuthVerifier } from './verify';
-export type { AuthVerifier, AuthVerifierConfig } from './verify';
-export { decodeLegacySessionCookie } from './legacy-cookie'; // read legacy next-auth civitai-token (no next-auth dep)
+export { createAuthVerifier, createAccessTokenJwtVerifier, isAccessTokenJwt } from './verify';
+export type { AuthVerifier, AuthVerifierConfig, AccessTokenJwtVerifierConfig } from './verify';
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
 export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
-export type { SessionClient, SessionClientConfig } from './session-client';
+export type { SessionClient, SessionClientConfig, SessionResolution } from './session-client';
 export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
 export type { DeviceAccountClient, DeviceAccount } from './device-client';
 export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
@@ -34,6 +33,7 @@ export type {
   SpokeGuardCheckOptions,
   SpokeGuardConfig,
   SpokeGuardResult,
+  SpokeSignInReason,
 } from './spoke-guard';
 export {
   spokeAuthorize,
@@ -50,12 +50,20 @@ export {
   clearPostLoginMarker,
   loginRetryCookie,
   clearLoginRetryCookie,
-  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
-export { createRevocationCheck } from './revocation-check';
-export type { RevocationCheckConfig } from './revocation-check';
+export {
+  createRevocationCheck,
+  DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  revocationReadTimeoutMs,
+} from './revocation-check';
+export type {
+  RevocationCheckConfig,
+  RevocationDegradedVerdict,
+  RevocationFailureReason,
+  RevocationOutcome,
+} from './revocation-check';
 export {
   buildAuthorizeRedirect,
   completeFirstPartyCallback,
@@ -67,7 +75,8 @@ export {
 } from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
 export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
-export type { SessionSigner, SessionSignerConfig } from './sign';
+export { ACCESS_TOKEN_JWT_TYP } from './sign';
+export type { SessionSigner, SessionSignerConfig, AccessTokenJwtClaims } from './sign';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {
@@ -95,7 +104,14 @@ export {
   legacySessionCookieName,
   allCookieNames,
   sessionCookieMode,
+  siteCookieMode,
   legacyCookieReadEnabled,
+  hostOnlySite,
+  otherSlotExpiries,
+  siteCookieHeader,
+  siteCookieJar,
+  cookiePairName,
+  expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,
   sessionCookieNameForSlot,

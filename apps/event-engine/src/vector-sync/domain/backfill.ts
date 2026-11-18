@@ -23,7 +23,7 @@ export type BackfillOptions = {
 
 /** Walks the domain's ids below `to` down to `from`, a page at a time. */
 export async function backfillDomain<P extends DomainPayload>(
-  domain: Pick<Domain<P>, 'name' | 'table' | 'getDocs'>,
+  domain: Pick<Domain<P>, 'name' | 'table' | 'getDocs' | 'embedInput'>,
   opts: BackfillOptions,
   deps: {
     pg: Pick<Pool, 'query'>;
@@ -44,7 +44,11 @@ export async function backfillDomain<P extends DomainPayload>(
     // A hard-deleted row has no row left; only the collection still holds its id.
     const known = new Set(ids);
     ids.push(...(await deps.store.idsInRange(lo, cursor)).filter((id) => !known.has(id)));
-    const page = await syncIds(domain.getDocs, ids, { ...deps, dryRun: opts.dryRun });
+    const page = await syncIds(domain.getDocs, ids, {
+      ...deps,
+      embedInput: domain.embedInput,
+      dryRun: opts.dryRun,
+    });
     for (const key of Object.keys(stats) as Array<keyof SyncStats>) stats[key] += page[key];
     cursor = lo;
     logger.info({ next: cursor, page, total: stats }, `${domain.name}-backfill: page done`);
@@ -129,7 +133,7 @@ export async function runBackfill<P extends DomainPayload>(
   try {
     if (!args.dryRun) await store.bootstrap({ alias: domain.alias() });
     // A dry run creates nothing, so before the first real run there is no collection to read.
-    const { exists } = await store.client.collectionExists(store.collection);
+    const exists = await store.exists();
     const empty = { payloadFields: async () => new Map(), idsInRange: async () => [] };
     const result = await backfillDomain(domain, args, {
       pg,

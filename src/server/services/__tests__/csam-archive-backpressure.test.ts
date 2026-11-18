@@ -369,7 +369,7 @@ describe('getCsamsToArchive', () => {
   it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
     const generatorEvidence = {
       id: 11,
-      userId: 707070,
+      userId: 990200007,
       reportedById: 5,
       type: 'GeneratedImage',
       reportSentAt: new Date(),
@@ -383,13 +383,19 @@ describe('getCsamsToArchive', () => {
     };
     const control = {
       id: 12,
-      userId: 717171,
+      userId: 990200008,
       reportedById: 5,
       type: 'Image',
       details: {},
       images: [],
     };
-    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    const namesNoUrl = {
+      id: 13,
+      userId: 990200009,
+      type: 'GeneratedImage',
+      details: {},
+      images: [],
+    };
     dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
       generatorEvidence,
       control,
@@ -424,7 +430,7 @@ describe('getCsamsToArchive', () => {
 describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
   const report = {
     id: 4545,
-    userId: 919191,
+    userId: 990200012,
     reportedById: 5,
     reportId: 79,
     type: 'TrainingData',
@@ -454,7 +460,7 @@ describe('archiveCsamDataForReport (TrainingData report, training data missing)'
 describe('archiveCsamDataForReport (Image report)', () => {
   const report = {
     id: 4242,
-    userId: 909090,
+    userId: 990200011,
     reportedById: 5,
     reportId: 77,
     type: 'Image',
@@ -748,7 +754,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
   // The generated-image path had the identical unbounded-append shape and must be bounded too.
   const report = {
     id: 4343,
-    userId: 808080,
+    userId: 990200010,
     reportedById: 5,
     reportId: 78,
     type: 'GeneratedImage',
@@ -873,9 +879,11 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(line).toMatchObject({
       reportId: report.id,
       expected: IMAGE_COUNT,
-      strikeUrls: IMAGE_COUNT,
-      entries: IMAGE_COUNT - 1,
-      unreadable: 1,
+      payload: expect.objectContaining({
+        strikeUrls: IMAGE_COUNT,
+        entries: IMAGE_COUNT - 1,
+        unreadable: 1,
+      }),
       type: 'error',
     });
     const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
@@ -891,7 +899,10 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
-    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ unreadable: 1 }),
+      type: 'error',
+    });
   });
 
   it('stamps a pass that read nothing once the give-up window has passed', async () => {
@@ -900,7 +911,9 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
     expect(stamped()).toBe(true);
-    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ entries: 0, unreadable: IMAGE_COUNT }),
+    });
   });
 
   it('archives the blobs the report names when the strikes list is not found', async () => {
@@ -917,9 +930,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(stamped()).toBe(true);
     expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
     expect(generatedLine()).toMatchObject({
-      strikesNotFound: true,
-      strikeUrls: 0,
-      entries: 1,
+      payload: expect.objectContaining({ strikesNotFound: true, strikeUrls: 0, entries: 1 }),
       type: 'info',
     });
   });
@@ -996,7 +1007,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 
   const report = {
     id: 4444,
-    userId: 707070,
+    userId: 990200007,
     reportedById: 5,
     reportId: 79,
     // ExternalLink archives the base bundle and nothing else, which isolates this path.
@@ -1183,25 +1194,19 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
   });
 
-  it("archives a held user's comments on their own, with the CommentV2 rows CommentV3 lacks", async () => {
+  it("archives a held user's comments on their own", async () => {
     seedDb();
     v3.comments = [
       { id: 1, userId: report.userId, content: 'c1' },
       { id: 2, userId: report.userId, content: 'c2' },
       { id: 3, userId: report.userId + 1, content: 'not theirs' },
     ];
-    dbMock.dbRead.commentV2.findMany.mockResolvedValue([
-      { id: 1, userId: report.userId },
-      { id: 99, userId: report.userId },
-    ] as never);
-
     const result = await archiveUserComments(report.userId);
 
     const archive = JSON.parse(uploads.get('comments.json')!.toString('utf8'));
     expect(archive.userId).toBe(report.userId);
     expect(archive.comments.map((c: { id: number }) => c.id)).toEqual([1, 2]);
-    expect(archive.commentsV2NotInV3.map((c: { id: number }) => c.id)).toEqual([99]);
-    expect(result.comments).toBe(3);
+    expect(result.comments).toBe(2);
   });
 
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {
@@ -1226,7 +1231,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 describe('archiveCsamDataForReport (upload failure)', () => {
   const report = {
     id: 4545,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 80,
     type: 'ExternalLink',
@@ -1264,7 +1269,7 @@ describe('archiveCsamDataForReport (upload failure)', () => {
 describe('archiveCsamDataForReport (generated-image report as sent)', () => {
   const report = {
     id: 4747,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 82,
     type: 'GeneratedImage',
@@ -1301,7 +1306,7 @@ describe('archiveCsamDataForReport (generated-image report as sent)', () => {
 describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
   const report = {
     id: 4646,
-    userId: 505050,
+    userId: 990200005,
     reportedById: 5,
     reportId: 81,
     type: 'GeneratedImage',
@@ -1351,7 +1356,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
   const MiB = 1024 * 1024;
   const report = {
     id: 4848,
-    userId: 303030,
+    userId: 990200003,
     reportedById: 5,
     reportId: 83,
     type: 'Image',
@@ -1538,7 +1543,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
       async (args: { where?: { id?: { gt?: number } } } = {}) =>
         rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
     );
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 202020 });
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 990200002 });
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     mockGetObject = async (key) => {
@@ -1551,7 +1556,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     await expect(
       archiveCsamDataForReport({
         id: 4949,
-        userId: 202020,
+        userId: 990200002,
         reportedById: 5,
         reportId: 84,
         type: 'Image',
@@ -1571,7 +1576,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
 describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   const report = {
     id: 4747,
-    userId: 404040,
+    userId: 990200004,
     reportedById: 5,
     reportId: 82,
     type: 'Image',

@@ -1,0 +1,226 @@
+package hydrate
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
+)
+
+// The model-data and model-tags misses (model.getAll's getModelsRaw): dataForModelsCache and
+// modelTagCache (src/server/redis/caches.ts), computed with their lookupFns' own queries.
+
+var (
+	// dataForModelsCache: ttl a day, staleWhileRevalidate off (EX = the ttl), cacheNotFound off: a model
+	// the lookup finds no version for is left out and nothing is written for it (fill's writeNotFound
+	// false). Looked up under a Go-first probe: a model with no data is dropped from the page.
+	modelDataSpec = lookupSpec{cache: MissModelData, reason: "model-data-miss", key: KeyDataForModel, idKey: "modelId",
+		ttl: ttlDay, notFoundTTL: ttlDay, probeLooksUp: true}
+	// modelTagCache: ttl a day, staleWhileRevalidate off, cacheNotFound (default) on, no notFoundTtl, so
+	// its markers get the day too. Looked up under a probe: the tags decide the excluded-tag drop.
+	modelTagsSpec = lookupSpec{cache: MissModelTags, reason: "model-tags-miss", key: KeyModelTags, idKey: "modelId",
+		ttl: ttlDay, notFoundTTL: ttlDay, probeLooksUp: true}
+)
+
+// sqlModelDataVersions is dataForModelsCache's lookupFn's first query, its enum columns selected as
+// text (Prisma hands the Node code the enum's name). The ids are one int[] parameter where Node binds
+// IN (…).
+const sqlModelDataVersions = `SELECT
+  mv."id",
+  mv.index,
+  mv."modelId",
+  mv."name",
+  mv."earlyAccessTimeFrame",
+  mv."baseModel",
+  mv."baseModelType",
+  mv."createdAt",
+  mv."trainingStatus"::text AS "trainingStatus",
+  mv."publishedAt",
+  mv."status"::text AS "status",
+  mv."flags",
+  mv.availability::text AS availability,
+  mv."nsfwLevel",
+  mv."description",
+  mv."trainedWords",
+  (SELECT rr."resourceId" FROM "RecommendedResource" rr
+   WHERE rr."sourceId" = mv.id
+     AND rr.settings->>'isLinkedComponent' = 'true'
+     AND rr.settings->>'componentType' = 'VAE'
+     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
+   LIMIT 1) AS "vaeId",
+  COALESCE(gc.covered, false) AS covered,
+  COALESCE(gc."coveredNext", false) AS "coveredNext"
+FROM "ModelVersion" mv
+LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+WHERE mv."modelId" = ANY($1::int[])
+ORDER BY mv."modelId", mv.index`
+
+// sqlModelDataHashes is the lookupFn's second query, on the same database as the first.
+const sqlModelDataHashes = `SELECT "modelId", hash
+FROM "ModelHash"
+WHERE
+  "modelId" = ANY($1::int[])
+  AND "hashType" = 'SHA256'
+  AND "fileType" IN ('Model', 'Pruned Model')`
+
+// sqlModelTags is modelTagCache's lookupFn: `findMany({ where: { modelId: { in: ids } }, select:
+// { modelId, tagId } })`, no order (Prisma sends none either).
+const sqlModelTags = `SELECT "modelId", "tagId" FROM "TagsOnModels" WHERE "modelId" = ANY($1::int[])`
+
+// modelDataVersionColumns are each cached version's members, in the query's column order without
+// `modelId` (the lookup destructures it out: `{ modelId, ...version }`).
+var modelDataVersionColumns = []string{"id", "index", "name", "earlyAccessTimeFrame", "baseModel", "baseModelType",
+	"createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel", "description",
+	"trainedWords", "vaeId", "covered", "coveredNext"}
+
+// fillModelData is dataForModelsCache.fetch's miss path; no marker is written (cacheNotFound is off).
+func (s *Sources) fillModelData(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
+	if s.Compute == nil {
+		return nil
+	}
+	return s.fill(ctx, modelDataSpec, models, got, writable, false, nil, s.lookupModelData)
+}
+
+// fillModelTags is modelTagCache.fetch's miss path, asked only for the models the data cache answered.
+func (s *Sources) fillModelTags(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
+	if s.Compute == nil {
+		return nil
+	}
+	return s.fill(ctx, modelTagsSpec, models, got, writable, true, nil, s.lookupModelTags)
+}
+
+// lookupModelData is dataForModelsCache's lookupFn. Keep the versions in (modelId, index) order and the
+// hashes in row order: the cache value's order is what Node serves.
+func (s *Sources) lookupModelData(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	db, err := s.lagAwareDB(ctx, "model", ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sqlModelDataVersions, ids)
+	if err != nil {
+		return nil, err
+	}
+	maps, err := rowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	order := []int{}
+	versions := map[int][]any{}
+	for _, m := range maps {
+		mid, ok := Int(m["modelId"])
+		if !ok {
+			return nil, fmt.Errorf("model data: row %v has no modelId", m["id"])
+		}
+		v := make(jspack.Obj, 0, len(modelDataVersionColumns))
+		for _, col := range modelDataVersionColumns {
+			val, err := modelDataValue(m[col])
+			if err != nil {
+				return nil, fmt.Errorf("model data: %s: %w", col, err)
+			}
+			v = append(v, jspack.KV{K: col, V: val})
+		}
+		if _, seen := versions[mid]; !seen {
+			order = append(order, mid)
+		}
+		versions[mid] = append(versions[mid], v)
+	}
+	hashRows, err := db.Query(ctx, sqlModelDataHashes, ids)
+	if err != nil {
+		return nil, err
+	}
+	hashMaps, err := rowsToMaps(hashRows)
+	if err != nil {
+		return nil, err
+	}
+	hashes := map[int][]any{}
+	for _, m := range hashMaps {
+		mid, _ := Int(m["modelId"])
+		if _, ok := versions[mid]; !ok {
+			continue // `results[modelId]?.hashes.push(hash)`: a model with no version has no record
+		}
+		h, err := modelDataValue(m["hash"])
+		if err != nil {
+			return nil, fmt.Errorf("model data: hash: %w", err)
+		}
+		hashes[mid] = append(hashes[mid], h)
+	}
+	out := make(map[int]jspack.Obj, len(order))
+	for _, mid := range order {
+		hs := hashes[mid]
+		if hs == nil {
+			hs = []any{}
+		}
+		out[mid] = jspack.O("modelId", mid, "hashes", hs, "tags", []any{}, "versions", versions[mid])
+	}
+	return out, nil
+}
+
+// lookupModelTags is modelTagCache's lookupFn on the replica (a plain fetch's dbRead): per model with
+// at least one tag, `{modelId, tagIds}` in row order; a model with none is absent (its marker is
+// written). The appendFn (the tag records) runs on every read, not here.
+func (s *Sources) lookupModelTags(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	rows, err := s.Replica.Query(ctx, sqlModelTags, ids)
+	if err != nil {
+		return nil, err
+	}
+	maps, err := rowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	order := []int{}
+	tags := map[int][]any{}
+	for _, m := range maps {
+		mid, ok := Int(m["modelId"])
+		tid, ok2 := Int(m["tagId"])
+		if !ok || !ok2 {
+			return nil, fmt.Errorf("model tags: row %v", m)
+		}
+		if _, seen := tags[mid]; !seen {
+			order = append(order, mid)
+		}
+		tags[mid] = append(tags[mid], int64(tid))
+	}
+	out := make(map[int]jspack.Obj, len(order))
+	for _, mid := range order {
+		out[mid] = jspack.O("modelId", mid, "tagIds", tags[mid])
+	}
+	return out, nil
+}
+
+// modelDataValue is one column's value as the Node row holds it: an integer as a number, a timestamp
+// as a Date, a text[] as an array of strings, text and booleans as they are, SQL NULL as null.
+func modelDataValue(v any) (any, error) {
+	switch t := v.(type) {
+	case nil, bool, string:
+		return t, nil
+	case int16:
+		return int64(t), nil
+	case int32:
+		return int64(t), nil
+	case int64:
+		return t, nil
+	case int:
+		return int64(t), nil
+	case time.Time:
+		return t, nil
+	case []string:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = x
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			switch e := x.(type) {
+			case nil, string:
+				out[i] = e
+			default:
+				return nil, fmt.Errorf("unexpected array element %T", x)
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("unexpected %T", v)
+}

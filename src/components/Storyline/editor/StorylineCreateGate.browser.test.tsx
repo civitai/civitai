@@ -13,6 +13,8 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 
 const mocks = vi.hoisted(() => ({
   storyline: { data: undefined as unknown, isLoading: false },
+  sparkImage: undefined as unknown,
+  features: {} as Record<string, boolean>,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -21,6 +23,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
       'storyline.getById': { useQuery: () => mocks.storyline },
+      'image.get': { useQuery: () => ({ data: mocks.sparkImage }) },
     }),
   };
 });
@@ -34,7 +37,7 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
 
 vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsMod>()),
-  useFeatureFlags: () => ({}),
+  useFeatureFlags: () => mocks.features,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, muted: false }) }));
 
@@ -61,6 +64,8 @@ function renderCreateFlow() {
 
 beforeEach(() => {
   mocks.storyline = { data: undefined, isLoading: false };
+  mocks.sparkImage = undefined;
+  mocks.features = {};
 });
 
 describe('the chapter 1 page of a storyline', () => {
@@ -97,5 +102,47 @@ describe('the chapter 1 page of a storyline', () => {
     renderCreateFlow();
 
     await vi.waitFor(() => expect(dropzoneInputs().length).toBeGreaterThan(0));
+  });
+});
+
+describe('the chapter 1 page of a storyline started from an image', () => {
+  const sparkImage = { id: 77, url: 'spark-url', type: 'image', nsfwLevel: 1, hasMeta: true };
+  const sparkStoryline = {
+    ...emptyStoryline,
+    spark: { image: sparkImage, user: { id: 6, username: 'painter' } },
+  };
+  const sparkPanel = () => page.getByRole('region', { name: 'Your story starts from this image' });
+
+  test('shows the image it started from, and offers a remix of it', async () => {
+    mocks.storyline = { data: sparkStoryline, isLoading: false };
+    mocks.sparkImage = sparkImage;
+    mocks.features = { imageGeneration: true };
+    renderCreateFlow();
+
+    await expect.element(sparkPanel().getByText("@painter's")).toBeVisible();
+    await expect.element(sparkPanel().getByRole('link')).toHaveAttribute('href', '/images/77');
+    await expect
+      .element(sparkPanel().getByRole('button', { name: 'Remix this image' }))
+      .toBeVisible();
+    await vi.waitFor(() => expect(dropzoneInputs().length).toBeGreaterThan(0));
+  });
+
+  test('credits an image that cannot be remixed, with no remix offer', async () => {
+    mocks.storyline = { data: sparkStoryline, isLoading: false };
+    mocks.sparkImage = { ...sparkImage, type: 'audio', hasMeta: false };
+    mocks.features = { imageGeneration: true };
+    renderCreateFlow();
+
+    await expect.element(sparkPanel().getByRole('link')).toHaveAttribute('href', '/images/77');
+    expect(page.getByRole('button', { name: 'Remix this image' }).elements()).toHaveLength(0);
+  });
+
+  test('shows no spark panel for a storyline started the usual way', async () => {
+    mocks.storyline = { data: emptyStoryline, isLoading: false };
+    mocks.features = { imageGeneration: true };
+    renderCreateFlow();
+
+    await expect.element(page.getByRole('link', { name: 'The Patch' })).toBeVisible();
+    expect(sparkPanel().elements()).toHaveLength(0);
   });
 });

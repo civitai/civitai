@@ -6,14 +6,21 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getMultipartPutUrl, getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
-import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  recordUploadKeyOwner,
+  withholdUnrecordedUploadKey,
+} from '~/server/services/image-url-ownership';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
   try {
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    const session = await getApiAuthSession(
+      { req, res },
+      { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+    );
     if (session === false) return;
     const userId = session?.user?.id;
     if (!userId || session.user?.muted) {
@@ -22,6 +29,8 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     }
 
     const imageKey = randomUUID();
+    // Recorded before the key is presigned, so a refusal (when on) hands out no usable key.
+    if (withholdUnrecordedUploadKey(res, await recordUploadKeyOwner(imageKey, userId))) return;
 
     const imageMime: string | undefined = req.body.mimeType;
     const fileExt: string | undefined = req.body.filename?.split('.').pop();
@@ -33,8 +42,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
 
     // Register in storage-resolver (fire-and-forget)
     registerMediaLocation(imageKey, backend, req.body.size ?? 0);
-    trackImageUpload(req, res, imageKey);
-    await recordUploadKeyOwner(imageKey, userId);
+    trackImageUpload(req, res, imageKey, userId);
 
     res.status(200).json({ ...result, backend });
   } catch (error) {

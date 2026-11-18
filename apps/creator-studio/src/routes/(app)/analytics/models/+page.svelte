@@ -32,11 +32,16 @@
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import Pagination from '$lib/components/Pagination.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import { CookieState } from '$lib/state/cookie-state.svelte';
+  import { MODEL_PERIOD_COOKIE, type ModelPeriod } from '$lib/model-period';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
-  const periodLabel = $derived(`for ${formatRange(data.range)}`);
+  const period = new CookieState<ModelPeriod>(MODEL_PERIOD_COOKIE, () => data.period);
+  const periodLabel = $derived(
+    data.period === 'all' ? 'across all time' : `for ${formatRange(data.range)}`
+  );
   const impressionsDeltaOk = $derived(impressionsComparable(data.compare.from));
   const perPage = $derived(analyticsPageSize.value);
 
@@ -219,7 +224,24 @@
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
 
-<AnalyticsHeader range={data.range} compare={data.compare} />
+<AnalyticsHeader
+  range={period.value === 'month' ? data.range : undefined}
+  compare={period.value === 'month' ? data.compare : undefined}
+>
+  <ToggleGroup.Root
+    type="single"
+    variant="outline"
+    size="sm"
+    spacing={1}
+    bind:value={() => period.value, (v: string) => v && period.set(v as ModelPeriod)}
+    aria-label="Show one month or all time"
+  >
+    <ToggleGroup.Item value="month" class="text-xs">Month</ToggleGroup.Item>
+    <ToggleGroup.Item value="all" class="text-xs" title="Everything since your first model version"
+      >All time</ToggleGroup.Item
+    >
+  </ToggleGroup.Root>
+</AnalyticsHeader>
 
 {#if showImpressions}
   <ImpressionsNotice />

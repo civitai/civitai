@@ -42,7 +42,7 @@ import type { AppRole } from './app-capabilities.constants';
  * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
-export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
+export type ScopeBitmaskRequirement = bigint | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
@@ -495,30 +495,12 @@ export function isPrivateRunAudience(value: unknown): value is PrivateRunAudienc
 export const PRIVATE_RUN_BUZZ_CAP = 2500;
 
 /**
- * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
- * a viewer has installed. The abuse ceiling nobody consents to — a per-call
- * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
- * the aggregate that actually binds. Enforced in `blocks.router.ts`
- * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
- * ONE ceiling rather than multiplying it).
- *
- * Lives HERE, in the client-safe shared module, because it is now read by three
- * places that must agree: the server enforcement, the `blocks.grantScopes` zod
- * bound on a user-set consent budget, and the consent dialog that shows the user
- * what the ceiling is. It is also the upper bound on
- * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
- * platform cap could never bind, so storing one would be storing a number that
- * means nothing.
- */
-export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
-
-/**
  * The most a block token's per-call `buzzBudget` claim may be, for an install token
  * and a pre-approval (dev / private-run / review) token alike. It bounds one
  * generation only. A multi-step (`kind: 'workflow'`) call is bounded in TOTAL at this
  * budget times its step count, and at `BLOCK_WORKFLOW_MAX_BUZZ_PER_CALL` whatever the
  * budget; no single step is held to the budget. Total spend is bounded by
- * `BLOCK_BUZZ_CAP_PER_DAY`, `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
+ * the per-user daily cap (`resolveUserAppCaps`), `PRIVATE_RUN_BUZZ_CAP`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP`,
  * the dev-tunnel session cap and the per-app caps.
  *
  * The two exceptions are jobs whose exact price the VIEWER confirmed in host chrome —
@@ -576,6 +558,21 @@ export function resolvePerCallBuzzBudget(declared: unknown): number {
  */
 export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as const;
 
+/**
+ * A generation input names the viewer's own upload before its scan has finished. Retry once the
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'textToImage'`,
+ * `kind:'step'` and `kind:'workflow'` bodies and inline `customComfy` graphs as a failed
+ * snapshot's `errorCode`.
+ */
+export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
+
+/**
+ * An inline `customComfy` graph uses a node the host does not run inline: one that reads or
+ * writes a file path, or a loader that takes an input from another node instead of a literal
+ * value. Returned by the estimate and the submit as a failed snapshot's `errorCode`.
+ */
+export const INLINE_NODE_REFUSED_ERROR_CODE = 'inline-node-refused' as const;
+
 /** Where a viewer sets, raises or removes their per-app daily Buzz limit. */
 export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
 
@@ -601,7 +598,15 @@ export const APP_DAILY_LIMIT_SETTINGS_PATH = '/apps/activity';
  * decides for them.
  */
 export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
-export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+/**
+ * The most a viewer may set as one app's daily consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`, the `blocks.grantScopes` zod bound and the
+ * consent dialog). A fixed 50,000 for every tier, by decision: it was the per-user daily cap
+ * before that cap became per-tier (`resolveUserAppCaps`), and it is no longer tied to it. So
+ * a paid tier's higher daily cap, and the opt-in above it, are reachable only across several
+ * apps or on grants with no budget set.
+ */
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = 50_000;
 
 /**
  * The scope the per-app daily Buzz budget governs.
@@ -678,9 +683,9 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
  * enforced exactly as given.
  *
  * The number is the LOWEST per-engine post-paid ceiling any registered recipe
- * declares today: `STARTER_BUDGET.maxBuzz` = 90 and `seamless-pano`'s cheapest engine
- * (`zimage-turbo`) = 90. A budget under it cannot fund a single customComfy
- * generation, so an app using one will appear broken. Registry steps can be far
+ * declares (`STARTER_BUDGET.maxBuzz`, `seamless-pano`'s `zimage-turbo`). A budget
+ * under it cannot fund a single customComfy generation, so an app using one will
+ * appear broken. Registry steps can be far
  * cheaper (`convert-image` = 1 Buzz), which is why this warns instead of blocking.
  * If a cheaper recipe engine is ever registered this number is free to drop — it
  * changes copy, never enforcement.
@@ -688,8 +693,8 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
 export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
 
 /**
- * The HIGHEST per-engine post-paid ceiling any registered recipe declares
- * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * The HIGHEST per-engine post-paid ceiling any registered recipe declares.
+ * Pinned to the registry alongside LOW
  * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
  * path.
  *
@@ -698,7 +703,7 @@ export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
  * figure at all. This constant exists solely so the parity test notices a
  * widening of the RECIPE range.
  */
-export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
+export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 90;
 
 /**
  * The body of the low-budget warning, shared by the consent modal and the editor
@@ -717,9 +722,9 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * asserts no figure, and no claim about which actions still run.** Every such
  * claim was falsifiable because the reservation space has no short true
  * description —
- *   · recipe ceilings are 90, 90, 150, 180 (note the TIE — it falsified
- *     "more on the other engines", and the parity test cannot see it because
- *     `LOW === min(...)` holds for any number of ties);
+ *   · recipe ceilings have tied (which falsified "more on the other engines",
+ *     and the parity test cannot see it because `LOW === min(...)` holds for any
+ *     number of ties);
  *   · the INLINE customComfy arm reserves an app-declared ceiling up to
  *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
  *   · `textToImage` reserves its live whatIf quote, which can be far LOWER;
@@ -731,7 +736,7 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * this docblock asserted: every path gates the reservation against the token's
  * per-call budget, which every mint clamps at `BUZZ_BUDGET_CAP`.
  * It is simply not renderable — it is per-app, far above what most paths reserve
- * (INLINE_MAX_BUZZ = 250; 180 for recipes; a quoted step can reach the cap itself),
+ * (INLINE_MAX_BUZZ = 250; recipes sit far below that; a quoted step can reach the cap itself),
  * and alarming rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:
@@ -792,7 +797,7 @@ export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-bloc
  */
 export function validateBlockScopesAgainstOauthClient(
   blockScopes: string[],
-  oauthClientAllowedScopes: number
+  oauthClientAllowedScopes: bigint
 ): { valid: boolean; rejectedScopes: string[] } {
   const rejected: string[] = [];
   for (const scope of blockScopes) {
@@ -844,8 +849,8 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * the OAuth-eligible scope set, exactly what the validator / token-mint path
  * expects as the per-client ceiling.
  */
-export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
-  let bitmask = 0;
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint {
+  let bitmask = 0n;
   for (const scope of blockScopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
@@ -992,3 +997,16 @@ export function isConsentExemptScope(scope: string): boolean {
 
 /** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
 export const REVOKE_SCOPES_MAX_PER_CALL = 32;
+
+/**
+ * The site's prompt check refused the prompt. A failed snapshot's `errorCode` on every App Block
+ * generation submit, with `error` the refusal reasons only. Nothing is charged; resubmitting the
+ * same prompt is refused again.
+ */
+export const PROMPT_POLICY_REFUSED_ERROR_CODE = 'prompt-policy-refused' as const;
+
+/**
+ * The prompt check could not run, so nothing was submitted or charged. Retry no sooner than
+ * 30 seconds later, at most 3 times.
+ */
+export const PROMPT_CHECK_UNAVAILABLE_ERROR_CODE = 'prompt-check-unavailable' as const;

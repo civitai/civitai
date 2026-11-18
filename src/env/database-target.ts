@@ -46,8 +46,9 @@
 //
 // 🔴 SCOPE: this describes the DATABASE, and nothing else. It is not a general "is this
 // production" flag and must not become one. `IS_PREVIEW` remains correct for what it actually
-// means — environment identity — and still gates auth (src/server/auth/get-server-auth-session.ts)
-// and page access (src/server/auth/route-guard.ts). Do not repoint those at this variable.
+// means — environment identity — and still gates page access (src/server/auth/route-guard.ts). Do not
+// repoint that at this variable. The preview sign-in cookie (src/server/auth/preview-session-cookie.ts)
+// requires both: IS_PREVIEW and an explicit non-production database.
 
 /** The three states of `DATABASE_ENVIRONMENT`. `unknown` means "not configured", not "neither". */
 export type DatabaseEnvironment = 'production' | 'non-production' | 'unknown';

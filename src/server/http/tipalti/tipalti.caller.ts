@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
@@ -38,12 +39,15 @@ export class TipaltiCaller extends HttpCaller {
 
     if (
       TipaltiCaller.acessToken &&
-      Date.now() - TipaltiCaller.acessToken.createdAt < TipaltiCaller.acessToken.expiresIn
+      // expires_in is seconds; renew a minute early so a call never carries a just-expired token.
+      Date.now() - TipaltiCaller.acessToken.createdAt <
+        (TipaltiCaller.acessToken.expiresIn - 60) * 1000
     ) {
       return TipaltiCaller.acessToken;
     }
 
-    const response = await fetch(env.TIPALTI_API_TOKEN_URL, {
+    const response = await outboundFetch(env.TIPALTI_API_TOKEN_URL, {
+      timeoutMs: 30_000,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
@@ -172,7 +176,8 @@ export class TipaltiCaller extends HttpCaller {
     return url;
   }
 
-  validateWebhookEvent(signature: string, payload: string | Buffer) {
+  // Static: checking a signature needs only the webhook secret, never an API token.
+  static validateWebhookEvent(signature: string, payload: string | Buffer) {
     if (!env.TIPALTI_WEBTOKEN_SECRET) throw new Error('Missing TIPALTI_WEBTOKEN_SECRET env');
 
     const [t, v] = signature.split(',');

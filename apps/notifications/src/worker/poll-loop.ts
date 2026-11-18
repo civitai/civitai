@@ -11,7 +11,7 @@ import format from 'pg-format';
 import { newNotificationSignal, type NotificationCategory } from '@civitai/notifications';
 import { notifDbWrite } from '../lib/server/clients/db';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
-import { notificationCache } from '../lib/server/cache';
+import { notificationCache, redisWithin } from '../lib/server/cache';
 import { health } from '../lib/server/health';
 import { dispatchEmail } from './email';
 import { dispatchPush } from './push';
@@ -64,22 +64,12 @@ function sleep(ms: number) {
 
 /** Bump one recipient's unread counter within `counterBumpTimeoutMs`. Resolves whether it succeeded. */
 async function bumpCounter(userId: number, category: NotificationCategory): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<false>((resolve) => {
-    timer = setTimeout(() => {
-      health.recordRedisFailure();
-      resolve(false);
-    }, counterBumpTimeoutMs);
-  });
-  const bumped = notificationCache.incrementUser(userId, category).then(
-    () => true,
-    () => false
+  const bumped = await redisWithin(
+    'increment',
+    () => notificationCache.incrementUser(userId, category),
+    counterBumpTimeoutMs
   );
-  try {
-    return await Promise.race([bumped, timedOut]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return bumped.ok;
 }
 
 type Lane = 'normal' | 'bulk';
@@ -277,9 +267,7 @@ export const handleDebounce = async (
 // Exported for behavioral unit tests. Export-for-test only — logic unchanged.
 export const create = async (row: PendingReturnRow): Promise<RetData[] | undefined> => {
   if (row.category === 'Other')
-    logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } }).catch(
-      () => {}
-    );
+    logToAxiom({ type: 'warning', message: 'Missing category', data: { type: row.type } });
 
   const client = await notifDbWrite().connect();
   // pg drops its own error handler from a checked-out client — the consumer owns it. This connection is
@@ -377,7 +365,7 @@ function logBulkRow(row: PendingReturnRow, start: number, delivered: number | nu
       delivered,
       ms: Date.now() - start,
     },
-  }).catch(() => {});
+  });
 }
 
 /**

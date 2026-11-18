@@ -18,6 +18,7 @@ import type { BlockHostSurface } from './blockInitFragmentGate';
 import {
   APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_SENT_TOAST_MS,
+  appFeedbackAttachmentNotice,
   appFeedbackCharacterCounter,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -28,8 +29,9 @@ import {
 } from './appFeedbackChrome';
 
 /**
- * "Send feedback to developer": private, text-only feedback from a running App Block to its
- * developer (their collaborators and moderators read it too). The entry point is a button in the
+ * "Send feedback to developer": private feedback from a running App Block to its developer (their
+ * collaborators and moderators read it too): the reporter's text plus the app session's own
+ * diagnostics (`withAppFeedbackDiagnostics`), never anything about the host page. The entry point is a button in the
  * chrome bar itself, beside the ⋮ trigger, on every surface (page host and model slot, desktop
  * bar and compact shell): labelled "Feedback" on a wide bar, icon-only on a narrow one. It used
  * to be a ⋮ menu item, which buried the one action whose whole point is to be reached while the
@@ -185,6 +187,7 @@ export function AppFeedbackModal({
   });
   const errorMessage = create.error ? appFeedbackSubmitErrorMessage(create.error) : null;
   const counter = appFeedbackCharacterCounter(message.length);
+  const attachmentNotice = appFeedbackAttachmentNotice(request.context);
 
   const submit = () => {
     if (!canSubmitAppFeedback(message) || sending.current) return;
@@ -235,6 +238,11 @@ export function AppFeedbackModal({
           </Text>
         )}
       </Stack>
+      {attachmentNotice && (
+        <Text size="xs" c="dimmed" data-testid="app-feedback-attachments">
+          {attachmentNotice}
+        </Text>
+      )}
       {errorMessage && (
         <Alert color="red" variant="light" data-testid="app-feedback-error">
           {errorMessage}

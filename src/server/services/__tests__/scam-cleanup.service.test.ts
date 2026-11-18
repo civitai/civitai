@@ -40,8 +40,7 @@ describe('runScamCleanup', () => {
     expect(dbMock.dbWrite.chatMessage.deleteMany).not.toHaveBeenCalled();
   });
 
-  // commentsV2, which also reaches CommentV3, runs against Postgres in
-  // commentv3/__tests__/scam-cleanup.sql.behavior.test.ts.
+  // The comments kind runs against Postgres in commentv3/__tests__/scam-cleanup.sql.behavior.test.ts.
 
   it('caps the recorded ids but keeps the true count', async () => {
     const rows = Array.from({ length: SCAM_CLEANUP_MAX_RECORDED_IDS + 5 }, (_, i) => ({

@@ -8,8 +8,7 @@ import { dbRead } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { isApprovedAndServing } from '~/shared/constants/app-block-deploy.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -225,7 +224,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // leak). An OAuth token authorized for some unrelated scope must not be able
   // to enumerate a mod's submissions.
   if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
+    if (!hasScope(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
           'App status requires a personal API key or an OAuth token with the Apps submit scope',

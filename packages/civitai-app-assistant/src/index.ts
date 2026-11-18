@@ -14,3 +14,5 @@ export * from './cover';
 export * from './app-feedback';
 export * from './sandbox-tools';
 export * from './docs';
+export * from './source-save';
+export * from './sleeping-apps';

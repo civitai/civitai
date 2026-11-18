@@ -18,8 +18,7 @@ name: App suites
 # that list on every run of this job and fails when an entry is missing or matches nothing.
 # So when it fails, add the path it names here; do not weaken the scan.
 #
-#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs +
-#   scripts/ci/component-quarantine.mjs
+#   vitest.config.mts + scripts/test-cache/{core,sequencer,load-core}.mjs
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
@@ -59,12 +58,20 @@ name: App suites
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
 # added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
-# here even with the label.
+# here, label or not.
 #
-# ── PUSH TO `main` IS UNFILTERED ─────────────────────────────────────────────────────────────
+# ── PUSH TO `main` USES THE SAME FILTER ────────────────────────────────────────────────────────
 #
-# Every commit on `main` gets a verdict whatever it touched. That is the backstop for a filter
-# entry that is missing: the break shows red on `main` right after the merge, instead of never.
+# `push:` reads the same list as `pull_request:` (the `app-inputs` YAML anchor), so a push to
+# `main` that touches nothing these suites read starts no run. Push used to be unfiltered, as the
+# backstop for a filter entry that is missing. That backstop still holds, later: a push run is
+# never scoped (every app suite runs, see below), so the next push that touches anything in the
+# list goes red on such a break, and scripts/ci/assert-apps-paths-filter.mjs names the missing
+# entry when its scan can see it. What is lost is attribution: the red lands on that later
+# commit, not on the one that caused it.
+#
+# Why: once push runs queued instead of cancelling (#8877), every push run that started reached
+# its end (a pending one is still replaced by a newer push) and this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
 #
 # ── ON A PR, THE MODERATOR SUITE RUNS ONLY WHEN SOMETHING IT READS CHANGED ───────────────────
 #
@@ -79,7 +86,8 @@ on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
+    # `push:` below reuses this list (see the header).
+    paths: &app-inputs
       - 'apps/**'
       - 'packages/**'
       - 'package.json'
@@ -94,7 +102,6 @@ on:
       - 'scripts/test-cache/core.mjs'
       - 'scripts/test-cache/sequencer.mjs'
       - 'scripts/test-cache/load-core.mjs'
-      - 'scripts/ci/component-quarantine.mjs'
       - 'scripts/ci/assert-workspace-suites-ran.mjs'
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
@@ -105,22 +112,24 @@ on:
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
+    paths: *app-inputs
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run, and a newer
-# commit on `main` cancels the older one's run (the newest run checks a tree containing every
-# older commit, so `main` keeps a verdict). A `ready_for_review` run shares the PR's group, so
+# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run. On `main` the
+# group queues instead, for the reason in lint.yml's `concurrency` comment: the running push run
+# finishes and only the newest waiting push runs after it. A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
 # `dispatch-` groups so one on `main` cannot cancel the push run.
 concurrency:
   group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   apps:
@@ -224,6 +233,25 @@ jobs:
       - name: Assert every app suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
+
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # own `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
+      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
+      # missing report is already failed, by name, by this suite's own ledger step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-apps-a${{ github.run_attempt }}
+          path: apps-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
       # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
       # entry. See the header and the script.

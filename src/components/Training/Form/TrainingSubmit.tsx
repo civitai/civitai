@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import {
   Accordion,
   Alert,
@@ -46,17 +47,17 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import {
-  blockedCustomModels,
-  isClassicTrainerRetired,
-} from '~/shared/constants/training.constants';
+import { isClassicTrainerRetired } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -260,7 +261,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   );
 
   const status = useTrainingServiceStatus();
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -364,6 +364,20 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         lr: selectedRun.params.unetLR,
         textEncoderLr: selectedRun.params.textEncoderLR || null,
         trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        ...pickAiToolkitOptions(
+          {
+            engine: 'ai-toolkit',
+            ecosystem,
+            lrScheduler,
+            steps: features.trainingStepsPricing ? selectedRun.params.targetSteps : undefined,
+          },
+          {
+            lrWarmupSteps: selectedRun.params.lrWarmupSteps,
+            captionDropoutRate: selectedRun.params.captionDropoutRate,
+            rankDropout: selectedRun.params.rankDropout,
+            trainConv: selectedRun.params.trainConv,
+          }
+        ),
         lrScheduler: lrScheduler as any,
         optimizerType: optimizerType as any,
         networkDim: selectedRun.params.networkDim,
@@ -417,6 +431,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.numRepeats,
     selectedRun.params.unetLR,
     selectedRun.params.textEncoderLR,
+    selectedRun.params.lrWarmupSteps,
+    selectedRun.params.captionDropoutRate,
+    selectedRun.params.rankDropout,
+    selectedRun.params.trainConv,
     selectedRun.params.lrScheduler,
     selectedRun.params.optimizerType,
     selectedRun.params.networkDim,
@@ -589,7 +607,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      if (blockedModels.includes(r.base)) {
+      if (isTrainingModelBlocked(status, r.base)) {
         showErrorNotification({
           error: new Error('This model has been blocked from training - please try another one.'),
           autoClose: false,
@@ -823,6 +841,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         sampleCfgScale: _sampleCfgScale,
         sampleStrength: _sampleStrength,
         saveEvery: _saveEvery,
+        lrWarmupSteps: _warmup,
+        captionDropoutRate: _captionDropout,
+        rankDropout: _rankDropout,
+        trainConv: _trainConv,
         ...legacyEngineParams
       } = paramData;
       let finalParams: any = legacyEngineParams;
@@ -865,6 +887,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           lr: paramData.unetLR,
           textEncoderLr: paramData.textEncoderLR || null,
           trainTextEncoder: !!paramData.textEncoderLR,
+          ...pickAiToolkitOptions(
+            {
+              engine: 'ai-toolkit',
+              ecosystem,
+              lrScheduler,
+              steps: features.trainingStepsPricing ? paramData.targetSteps : undefined,
+            },
+            paramData
+          ),
           lrScheduler: lrScheduler as any,
           optimizerType: optimizerType as any,
           networkDim: paramData.networkDim,
@@ -1405,6 +1436,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
+              {dryRunResult.data?.warnings?.map((warning) => (
+                <Alert key={warning} color="yellow" title="Setting not applied">
+                  {warning}
+                </Alert>
+              ))}
               {(dryRunResult.isLoading || isDefined(dryRunResult.data?.precedingJobs)) && (
                 <>
                   <Badge>
@@ -1608,7 +1644,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Button
             loading={awaitInvalidate || dryRunResult.isLoading}
             disabled={
-              blockedModels.includes(formBaseModel ?? '') ||
+              isTrainingModelBlocked(status, formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
               isClassicTrainerRetired() ||

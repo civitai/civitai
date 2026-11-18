@@ -21,7 +21,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: bearer
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
@@ -130,7 +129,7 @@ const USER = {
   emailVerified: new Date('2026-01-01'),
 };
 
-const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 11,
   apiKeyType,
@@ -138,9 +137,9 @@ const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number) => nonOauthKey('User', tokenScope);
+const personalKey = (tokenScope: bigint) => nonOauthKey('User', tokenScope);
 
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 12,
   apiKeyType: 'Access',

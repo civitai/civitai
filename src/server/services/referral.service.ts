@@ -55,7 +55,7 @@ function emitSignal(userId: number, target: SignalMessages, data: Record<string,
       target,
       userId,
       err: String(err),
-    }).catch(() => undefined)
+    })
   );
 }
 
@@ -101,12 +101,12 @@ async function recordAttribution(params: {
     });
   } catch (err) {
     // Attribution logging is best-effort — never block core reward flow on it.
-    await logToAxiom({
+    logToAxiom({
       name: 'referral-attribution-write-failed',
       err: String(err),
       refereeId,
       eventType,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -229,7 +229,7 @@ export async function recordMembershipPaymentReward(params: {
       refereeId,
       tier,
       sourceEventId,
-    }).catch(() => undefined);
+    });
     return null;
   }
   if (ctx.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) {
@@ -255,7 +255,7 @@ export async function recordMembershipPaymentReward(params: {
       refereeId,
       tier,
       sourceEventId,
-    }).catch(() => undefined);
+    });
     return null;
   }
 
@@ -346,7 +346,7 @@ export async function recordMembershipPaymentReward(params: {
           type: 'error',
           rewardId: refereeBonusReward.id,
           err: String(err),
-        }).catch(() => undefined)
+        })
       );
     }
 
@@ -399,7 +399,7 @@ export async function recordBuzzPurchaseKickback(params: {
         refereeId,
         buzzAmount,
         sourceEventId,
-      }).catch(() => undefined);
+      });
     }
     return null;
   }
@@ -473,12 +473,12 @@ export async function settleDueRewards(now: Date = new Date()) {
       await settleRewardRow(reward);
       settledCount++;
     } catch (err) {
-      await logToAxiom({
+      logToAxiom({
         name: 'referral-settle',
         type: 'error',
         rewardId: reward.id,
         err: String(err),
-      }).catch(() => undefined);
+      });
     }
   }
   return { settled: settledCount };
@@ -609,7 +609,7 @@ async function clawBackSettledReward(
       userId: reward.userId,
       owed: reward.buzzAmount,
       taken,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -1067,12 +1067,12 @@ async function grantReferralSubscription(
   const [active, ...queue] = ordered;
   const product = await findReferralProductForTier(active.tier);
   if (!product || !product.defaultPriceId) {
-    await logToAxiom({
+    logToAxiom({
       name: 'referral-grant-missing-product',
       type: 'error',
       userId,
       tier: active.tier,
-    }).catch(() => undefined);
+    });
     throw new Error(
       'Referral tier products are not yet configured. Your tokens have not been spent.'
     );
@@ -1185,7 +1185,7 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
           type: 'error',
           subId: sub.id,
           tier: next.tier,
-        }).catch(() => undefined);
+        });
         return 'noop' as const;
       }
 
@@ -1229,7 +1229,7 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
           type: 'error',
           userId: sub.userId,
           error: (error as Error)?.message,
-        }).catch(() => undefined);
+        });
       });
     }
   }

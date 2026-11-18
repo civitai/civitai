@@ -43,6 +43,15 @@
  */
 export const USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;
 
+/**
+ * The userId of a canonical `user:<id>` subject, or null for `anon` or anything that is not
+ * canonical. Never throws: for readers that only REPORT the subject (a log line), and for a guard
+ * that refuses `null` (`assertBlockSubjectIsSessionUser`).
+ */
+export function subjectUserIdOrNull(sub: string): number | null {
+  return USER_SUB_RE.test(sub) ? Number(sub.slice('user:'.length)) : null;
+}
+
 /** The literal anonymous subject. Never equal to any {@link subjectForUserId} output. */
 export const ANON_SUBJECT = 'anon';
 

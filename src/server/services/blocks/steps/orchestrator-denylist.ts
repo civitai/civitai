@@ -1,3 +1,4 @@
+import { foldCase } from '~/server/services/blocks/workflow-graph';
 import { TRAINING_STEP_TYPES } from './output';
 
 /**
@@ -150,6 +151,9 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // graph → `createComfyInput`) never reach this guard. Arbitrary graphs go
   // through `kind: 'customComfy'`.
   'comfy',
+  // The same raw graph under its other `$type`. `kind: 'customComfy'` builds this
+  // step itself, after its own graph checks, and never reaches this guard.
+  'customComfy',
 ]);
 
 /**
@@ -206,15 +210,14 @@ export function isPlatformInternalStepType(stepType: string): boolean {
   return PLATFORM_INTERNAL_LOOKUP.has(foldStepTypeCase(stepType));
 }
 
-/**
- * THE one case fold for comparing a caller-supplied `$type` against a server-owned
- * list. The comparisons that use it: `isPlatformInternalStepType` (the denylist) and
- * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
- * listed there), so two lists cannot disagree about what "the same step type" means.
- */
+/** `foldCase` for a `$type`: the denylist and every training check compare through it. */
 export function foldStepTypeCase(stepType: string): string {
-  return stepType.toLowerCase();
+  return foldCase(stepType);
 }
+
+// Every orchestrator `$type` is ASCII letters and digits. Anything else could fold to a
+// denied type under a matcher other than `toLowerCase`, so it is refused outright.
+export const STEP_TYPE_RE = /^[A-Za-z0-9]+$/;
 
 const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
   TRAINING_STEP_TYPES.map(foldStepTypeCase)
@@ -234,11 +237,9 @@ const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
  *   - `buildMultiStepWorkflowTags` / `multiStepTrainingType` — the same two rules for
  *     every step of a `kind:'workflow'` body.
  *
- * `isTrainingStepType` (exact) is kept ONLY where the `$type` was read off a workflow
- * the orchestrator RETURNED, and as the type guard narrowing to `TrainingStepType`:
- *   - `splitPassThroughStep` (`steps/output.ts`) — splitting a returned step's output;
- *   - `hasBlockTrainingStep` / `projectAppWorkflow` (`workflow.service.ts`) — reading a
- *     returned training step.
+ * A `$type` read off a workflow the orchestrator RETURNED goes through
+ * `canonicalTrainingStepType` (`steps/output.ts`), which also ignores case: the
+ * orchestrator may echo the submitted casing.
  */
 export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
   return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));
@@ -269,7 +270,7 @@ export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
  * `$type` is refused on both router arms too.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
-  if (isPlatformInternalStepType(stepType)) {
+  if (!STEP_TYPE_RE.test(stepType) || isPlatformInternalStepType(stepType)) {
     throw new PlatformInternalStepTypeError(stepType, where);
   }
 }

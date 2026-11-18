@@ -33,7 +33,9 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticsForEntity: vi.fn(async () => ({})),
 }));
 
-const { getModelSearchIndexRecords } = await import('~/server/search-index/models.search-index');
+const { getModelSearchIndexRecords, pullModelsData } = await import(
+  '~/server/search-index/models.search-index'
+);
 const { modelTagCache } = await import('~/server/redis/caches');
 const { imagesForModelVersionsCache } = await import('~/server/services/image.service');
 
@@ -137,6 +139,29 @@ describe("a model's search document, built by the real transform", () => {
     expect(doc.images).toEqual([]);
     expect(doc.coverImageId).toBeNull();
     expect(doc.sfwCoverImageId).toBeNull();
+  });
+
+  // bypassLocal reaches imagesForModelVersionsCache's appendFn, which reads the images' tag ids. The
+  // index builder's document keeps them until the next reindex, so they must not come from this
+  // process's L1; the request path (resource picker) stores nothing and must stay on the L1.
+  it("the index builder reads the version images past this process's L1", async () => {
+    const db = { model: { findMany: vi.fn(async () => [modelRow(null)]) } };
+    await pullModelsData({ db, logger: () => undefined } as never, {
+      type: 'update',
+      ids: [MODEL],
+    });
+    expect(imagesForModelVersionsCache.fetch).toHaveBeenCalledTimes(1);
+    expect(imagesForModelVersionsCache.fetch).toHaveBeenCalledWith([VERSION], {
+      bypassLocal: true,
+    });
+  });
+
+  it('the request-path records read the version images through the L1', async () => {
+    await documentFor(null);
+    expect(imagesForModelVersionsCache.fetch).toHaveBeenCalledTimes(1);
+    const [ids, options] = vi.mocked(imagesForModelVersionsCache.fetch).mock.calls[0] as unknown[];
+    expect(ids).toEqual([VERSION]);
+    expect((options as { bypassLocal?: boolean } | undefined)?.bypassLocal).not.toBe(true);
   });
 
   it('keeps the images and cover ids of an archived model', async () => {

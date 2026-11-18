@@ -167,7 +167,7 @@ export const modelFileUpdateSchema = z.object({
 
 export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
 export const modelFileUpsertSchema = z.union([
-  modelFileCreateSchema.extend({ id: z.undefined() }),
+  modelFileCreateSchema.extend({ id: z.undefined().optional() }),
   modelFileUpdateSchema,
 ]);
 

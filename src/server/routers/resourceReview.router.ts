@@ -3,13 +3,16 @@ import {
   getRatingTotalsSchema,
   getResourceReviewsInfiniteSchema,
   updateResourceReviewSchema,
+  getRecommendedBySchema,
   getResourceReviewPagedSchema,
+  getResourceReviewImagesSchema,
   getUserResourceReviewSchema,
 } from './../schema/resourceReview.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createResourceReviewHandler,
   deleteResourceReviewHandler,
+  getResourceReviewImagesHandler,
   getUserRatingTotalHandler,
   toggleExcludeResourceReviewHandler,
   updateResourceReviewHandler,
@@ -27,6 +30,7 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   getPagedResourceReviews,
+  getRecommendedBy,
   getRatingTotals,
   getResourceReview,
   getResourceReviewsInfinite,
@@ -79,6 +83,14 @@ export const resourceReviewRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getResourceReviewPagedSchema)
     .query(({ input, ctx }) => getPagedResourceReviews({ input, userId: ctx.user?.id })),
+  getRecommendedBy: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getRecommendedBySchema)
+    .query(({ input, ctx }) => getRecommendedBy({ input, userId: ctx.user?.id })),
+  getImages: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getResourceReviewImagesSchema)
+    .query(getResourceReviewImagesHandler),
   getRatingTotals: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getRatingTotalsSchema)

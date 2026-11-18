@@ -1,7 +1,21 @@
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  assertCollectionItemsVisibleToViewer,
+  type CollectionItemKey,
+} from '~/server/services/collection-item-visibility';
 import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
+import {
+  fallbackUserImageColumn,
+  servableProfilePictureSql,
+} from '~/server/services/profile-picture.sql';
+import {
+  clearHeldUserImages,
+  dropStaleHeldImageMarkers,
+  restoreClearedUserImages,
+} from '~/server/services/held-image-keys';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -18,7 +32,6 @@ import {
   deleteCommentsV3,
   setUserCommentsV3Tos,
 } from '~/server/services/commentv3/moderation.service';
-import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 
 import {
   accountHoldSql,
@@ -80,7 +93,7 @@ import {
   readUserCosmeticsViaPrisma,
 } from '~/server/services/hot-reads-8.reads';
 
-import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { preventReplicationLag, preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -96,6 +109,7 @@ import type { DetailsCanceledBid } from '~/server/notifications/auction.notifica
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
+  dataForModelsCache,
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
@@ -104,6 +118,7 @@ import {
   userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { bustEventEngineProfilePictures } from '@civitai/redis';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   DeleteUserInput,
@@ -124,10 +139,10 @@ import {
   bountiesSearchIndex,
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -234,6 +249,7 @@ import {
   type ShowcaseHat,
 } from '~/server/events/showcase-hat';
 import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -348,7 +364,7 @@ export async function getUsersWithSearch({
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
       ...user,
       avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
       meta: null,
     }))
     .slice(0, limit);
@@ -384,8 +400,8 @@ export const getUsers = async ({
       END AS status`);
   if (include?.includes('avatar'))
     select.push(
-      'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
+      `COALESCE(i.url, ${fallbackUserImageColumn}) AS "avatarUrl"`,
+      'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 
   if (contestBanned) {
@@ -410,9 +426,11 @@ export const getUsers = async ({
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
-      ${Prisma.raw(
-        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-      )}
+      ${
+        include?.includes('avatar')
+          ? Prisma.sql`LEFT JOIN "Image" i ON i.id = u."profilePictureId" AND ${servableProfilePictureSql}`
+          : Prisma.empty
+      }
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
@@ -428,9 +446,9 @@ export const getUsers = async ({
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
-  return result.map(({ avatarNsfwLevel, ...user }) => ({
+  return result.map((user) => ({
     ...user,
-    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
+    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(user.avatarNsfwLevel),
   }));
 };
 
@@ -596,6 +614,12 @@ export async function forceUpdateUserIdentity({
   if (name !== undefined) data.name = name;
   if (Object.keys(data).length === 0) return { updated: false };
 
+  const previousUsername =
+    username !== undefined
+      ? (await dbWrite.user.findUnique({ where: { id: userId }, select: { username: true } }))
+          ?.username
+      : undefined;
+
   let user;
   try {
     user = await dbWrite.user.update({
@@ -642,6 +666,8 @@ export async function forceUpdateUserIdentity({
         })
       );
   }
+  // Not awaited: it reads every owned id, and it never throws.
+  if (username !== undefined && username !== previousUsername) void queueOwnedContentUpdate(userId);
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
   await invalidateSession(userId, 'moderation');
@@ -687,12 +713,15 @@ export const updateUserById = async ({
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
-  if (typeof data.username === 'string' && data.username !== previousUsername)
-    queueScamScan({ entityType: 'User', entityId: id });
+  const renamed = typeof data.username === 'string' && data.username !== previousUsername;
+  if (renamed) queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
   }
+
+  // Not awaited: it reads every owned id, and it never throws.
+  if (renamed) void queueOwnedContentUpdate(id);
 
   if (
     data.showNsfw !== undefined ||
@@ -1152,6 +1181,55 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
+type DeletedVersionRow = { id: number };
+
+/** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
+async function dropDeletedVersionCaches(versionIds: number[]) {
+  // Imported here: a static import joins user.service to the model-version import cycle.
+  const { bustMvCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', ids);
+    // No owner: the orchestrator's copy is dropped for every caller, not one user.
+    await bustMvCache(ids);
+  }
+}
+
+async function dropDeletedModelCaches(userId: number) {
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  await dropDeletedModelIdCaches(models.map((m) => m.id));
+}
+
+/** The caches and search entries of models already set to Deleted. */
+export async function dropDeletedModelIdCaches(modelIds: number[]) {
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(modelIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('model', ids);
+    await dataForModelsCache.refresh(ids);
+    await bustPublicModelResponseCache(ids);
+    await modelsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+  }
+}
+const DELETED_MODEL_CACHE_CHUNK = 500;
+
+/** `deleteUser`'s sleeping-app step; imported lazily so the account path loads no S3 client. */
+async function deleteSleepingAppsOfDeletedAccount(userId: number) {
+  const [{ deleteSleepingAppsForAccount }, { hibernationRepo }, { isMissingTableError }, s3] =
+    await Promise.all([
+      import('~/server/services/app-hibernation/app-hibernation.service'),
+      import('~/server/services/app-hibernation/hibernation.repo'),
+      import('~/server/services/blocks/app-access.service'),
+      import('~/utils/app-archive-s3'),
+    ]);
+  const config = s3.archiveStoreConfig();
+  return deleteSleepingAppsForAccount(userId, {
+    repo: hibernationRepo,
+    store: config ? s3.createArchiveStore(config) : null,
+    isMissingTable: isMissingTableError,
+  });
+}
+
 export const deleteUser = async ({
   id,
   username,
@@ -1228,11 +1306,27 @@ export const deleteUser = async ({
       // The rest of the scrub is in `guardedAccountScrubSql`; meta is here because it carries the
       // account's own data, which the guarded statement cannot take as a parameter.
       dbWrite.user.update({ where: { id: user.id }, data: { meta } }),
+      // Last, so it can be taken off the result below. The status `deleteModelById` writes on the
+      // versions of a model it deletes; the version rows and their files stay.
+      ...(removeModels
+        ? [
+            dbWrite.$queryRaw<DeletedVersionRow[]>`
+              UPDATE "ModelVersion" mv
+              SET status = 'Deleted'::"ModelStatus", "updatedAt" = now()
+              FROM "Model" m
+              WHERE m.id = mv."modelId"
+                AND m."userId" = ${user.id}
+                AND mv.status IN ('Published'::"ModelStatus", 'Scheduled'::"ModelStatus")
+              RETURNING mv.id
+            `,
+          ]
+        : []),
     ])
     .catch((e) => {
       if (isLegalHoldAbort(e)) throw new LegalHoldError();
       throw e;
     });
+  const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
   void syncOwnerEventHats(user.id);
@@ -1245,13 +1339,13 @@ export const deleteUser = async ({
     try {
       await fn();
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: step,
         type: 'error',
         source: 'deleteUser',
         userId: user.id,
         message: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   };
 
@@ -1271,10 +1365,19 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  // A ban never reaches here, so a banned user's sleeping apps are kept.
+  await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
   );
+
+  if (removeModels) {
+    await runStep('deleted-version-caches', () =>
+      dropDeletedVersionCaches(deletedVersions.map((v) => v.id))
+    );
+    await runStep('deleted-model-caches', () => dropDeletedModelCaches(user.id));
+  }
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1467,7 +1570,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       source: 'restoreUser',
       userId: id,
       message: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
 
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
@@ -1495,7 +1598,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       source: 'restoreUser',
       userId: id,
       message: (error as Error)?.message,
-    }).catch(() => null);
+    });
   }
 
   return {
@@ -1547,6 +1650,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // block's scope are the same set, which is what makes the wide form correct in this one place.
   await clearAccountDeletionImageMarkers({ userId: id });
   await refreshProfilePicturesForUsers([id]);
+  await refreshOwnModelShowcases(id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1695,7 +1799,7 @@ function alertBidRefundFailures(
       userId: wipe.userId,
       moderatorId: wipe.actorUserId,
       ...failure,
-    }).catch(() => undefined);
+    });
   return failures;
 }
 
@@ -1781,9 +1885,6 @@ export const removeAllContent = async ({
   // sort deletes by least impactful to most impactful
   await dbWrite.imageReaction.deleteMany({ where: { userId: id } });
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
-  await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // A reaction on a comment written to CommentV3 directly has no CommentV2Reaction row to mirror.
   await dbWrite.$executeRaw`DELETE FROM "CommentV3Reaction" WHERE "userId" = ${id}`;
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
   // unsettled payout is settled first and an open bounty's supporters are refunded.
@@ -1820,7 +1921,7 @@ export const removeAllContent = async ({
           message: `Bounty payout failed - ${(e as Error).message}`,
           userId: id,
           bountyId,
-        }).catch(() => undefined);
+        });
       }
       if (!settled) keptBountyIds.push(bountyId);
     }
@@ -1831,7 +1932,7 @@ export const removeAllContent = async ({
         message: 'Kept bounties whose payout is not settled, hidden until it settles',
         userId: id,
         bountyIds: keptBountyIds,
-      }).catch(() => undefined);
+      });
   }
   // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
   const bounties = await dbWrite.bounty.findMany({
@@ -1885,32 +1986,16 @@ export const removeAllContent = async ({
     const v3Ids = (
       await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "CommentV3"
-        WHERE "userId" = ${id} AND "deletedAt" IS NULL
-          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}`
+        WHERE "userId" = ${id} AND "deletedAt" IS NULL`
     ).map((r) => r.id);
     for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: deleting a CommentV2 placeholder blanks it, and deleting
-    // a v1 row cascades to its replies' live CommentV3 rows. A v1 row the mirror never copied is
-    // removed by nothing else when its author's content is removed.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentV2" c2
-      WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    await dbWrite.$executeRaw`
-      DELETE FROM "Comment" c
-      WHERE c."userId" = ${id}
-        AND NOT EXISTS (SELECT 1 FROM "CommentV3" v WHERE v."legacyV1Id" = c.id)`;
-    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
-    // reaches CommentV2.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic"
-      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
-        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
-          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
-    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned(
+      'Post'
+    )} AND NOT ${postHoldsHeldTextSql(Prisma.raw('o.id'))})`;
     const formerOwnerHeld = heldModelIdsSql(
       Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
       markerView
@@ -1952,7 +2037,10 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
+      {
+        onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        moderatorDelete: true,
+      }
     );
     await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
       ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
@@ -1974,7 +2062,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
-    }).catch(() => undefined);
+    });
     await unindexDeleted([
       [articlesSearchIndex, 'Article', articles],
       [collectionsSearchIndex, 'Collection', collections],
@@ -1999,7 +2087,7 @@ export const removeAllContent = async ({
           type: 'error',
           message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
           userId: id,
-        }).catch(() => undefined)
+        })
       );
     const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
     await removedModels(models.map((m) => m.id))
@@ -2014,7 +2102,7 @@ export const removeAllContent = async ({
             (e as Error).message
           }`,
           userId: id,
-        }).catch(() => undefined)
+        })
       );
     throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
@@ -2031,7 +2119,7 @@ export const removeAllContent = async ({
       step,
       userId: id,
       ...details,
-    }).catch(() => undefined);
+    });
   };
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
     try {
@@ -2065,7 +2153,6 @@ export const removeAllContent = async ({
   if (keptModelIds.length)
     await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
   else await runStep('content-counts', () => userContentOverviewCache.refresh(id));
-  await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
   await unindex('index-collections', collectionsSearchIndex, collections);
@@ -2093,7 +2180,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold before the App Blocks stores',
       userId: id,
-    }).catch(() => undefined);
+    });
     throw new LegalHoldStoppedError(incomplete);
   });
 
@@ -2331,6 +2418,9 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+  await bustEventEngineProfilePictures(redis, [userId]).catch((error) =>
+    logProfilePictureRefreshError(error, { userIds: String(userId), step: 'event-engine-cache' })
+  );
 }
 
 /** The users whose profile picture is one of `imageIds`, from the primary. */
@@ -2343,27 +2433,68 @@ export async function getProfilePictureUserIds(imageIds: number[]) {
   return users.map((x) => x.id);
 }
 
+export const PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY = 10;
+
 function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
   logToAxiom({
     type: 'error',
     name: 'profile-picture-cache-refresh',
     message: (error as Error)?.message,
     ...meta,
-  }).catch(() => undefined);
+  });
 }
 
 /**
- * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
- * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
+ * their sessions, whose shape carries the picture's url. For a user whose picture is under an
+ * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
+ * (`clearHeldUserImages`); once the picture is servable again it is put back
+ * (`restoreClearedUserImages`). Either way their basic-user cache entry and
+ * search document are refreshed too. The event engine's copy of the
+ * picture is busted as well. Never throws: the write it follows has committed, and a moderation
+ * action must not fail on a cache refill.
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
   if (!ids.length) return;
-  try {
-    await profilePictureCache.refresh(ids);
-  } catch (error) {
-    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  const step = async (name: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+    } catch (error) {
+      logProfilePictureRefreshError(error, { userIds: ids.join(','), step: name });
+    }
+  };
+  let heldIds: number[] = [];
+  await step('clear-image', async () => {
+    heldIds = await clearHeldUserImages(dbWrite, ids);
+  });
+  let restoredIds: number[] = [];
+  await step('restore-image', async () => {
+    restoredIds = await restoreClearedUserImages(dbWrite, ids);
+  });
+  await step('drop-stale-markers', () => dropStaleHeldImageMarkers(dbWrite, ids));
+  const imageChangedIds = [...heldIds, ...restoredIds];
+  await step('picture-cache', () => profilePictureCache.refresh(ids));
+  await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
+  if (imageChangedIds.length) {
+    await step('basic-cache', () => userBasicCache.refresh(imageChangedIds));
+    await step('search-index', () =>
+      usersSearchIndex.queueUpdate(
+        imageChangedIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
+    );
   }
+  // Bulk moderation (an adjust-tag-level batch, a bulk block) can pass many users.
+  await limitConcurrency(
+    ids.map((id) => async () => {
+      try {
+        await refreshSession(id, { sendSignal: false, caller: 'profile' });
+      } catch (error) {
+        logProfilePictureRefreshError(error, { userIds: String(id) });
+      }
+    }),
+    PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY
+  );
 }
 
 /**
@@ -2442,12 +2573,38 @@ const leaderboardRankInsert = ({
   leaderboardFilter,
   userFilter,
   onConflict = Prisma.empty,
+  carriedBoardIds = [],
 }: {
   leaderboardFilter: Prisma.Sql;
   userFilter: Prisma.Sql;
   onConflict?: Prisma.Sql;
-}) => Prisma.sql`
-  WITH user_positions AS (
+  /**
+   * Boards not populated for today: read their latest day in the last week so their badges carry
+   * over. Older than that they drop out, so a long-dead board can't bring back stale ranks.
+   */
+  carriedBoardIds?: string[];
+}) => {
+  // Bound only when a board is carried: the plain rebuild binds nothing, which
+  // leaderboard-rank-showcase.test.ts relies on to catch a board list hiding in a parameter.
+  const carried = carriedBoardIds.length;
+  // One index-backed max per carried board, not per row: a board can miss more than one night.
+  const carriedDays = carried
+    ? Prisma.sql`carried_day AS (
+        SELECT c.id, (
+          SELECT max(r.date) FROM "LeaderboardResult" r
+          WHERE r."leaderboardId" = c.id AND r.date < current_date AND r.date >= current_date - 7
+        ) AS day
+        FROM unnest(${carriedBoardIds}::text[]) AS c(id)
+      ),`
+    : Prisma.empty;
+  const dayFilter = carried
+    ? Prisma.sql`(
+        (lr.date = current_date AND lr."leaderboardId" <> ALL(${carriedBoardIds}::text[]))
+        OR (lr."leaderboardId", lr.date) IN (SELECT id, day FROM carried_day)
+      )`
+    : Prisma.sql`lr.date = current_date`;
+  return Prisma.sql`
+  WITH ${carriedDays} user_positions AS (
     SELECT
       lr."userId",
       lr."leaderboardId",
@@ -2467,7 +2624,7 @@ const leaderboardRankInsert = ({
     FROM "User" u
     JOIN "LeaderboardResult" lr ON lr."userId" = u.id
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-    WHERE lr.date = current_date
+    WHERE ${dayFilter}
       AND lr.position <= 100
       ${leaderboardFilter}
       ${userFilter}
@@ -2497,11 +2654,17 @@ const leaderboardRankInsert = ({
   FROM lowest_position
   ${onConflict};
 `;
+};
 
 export const updateLeaderboardRank = async ({
   leaderboardIds,
+  carriedBoardIds,
+  builtMarkerKey,
 }: {
   leaderboardIds?: string | string[];
+  carriedBoardIds?: string[];
+  /** KeyValue key set to Postgres `current_date` in the same transaction as the rebuild. */
+  builtMarkerKey?: string;
 } = {}) => {
   if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
 
@@ -2513,7 +2676,17 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
+    dbWrite.$executeRaw(
+      leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty, carriedBoardIds })
+    ),
+    // current_date is fixed at transaction start, so the marker names the day the insert read.
+    ...(builtMarkerKey
+      ? [
+          dbWrite.$executeRaw`
+            INSERT INTO "KeyValue" (key, value) VALUES (${builtMarkerKey}, to_jsonb(current_date::text))
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        ]
+      : []),
   ]);
 };
 
@@ -2770,6 +2943,28 @@ export class AlreadyBannedError extends Error {
   }
 }
 
+/** The ban's media block: every image of the user not already Blocked. Keeps an existing CSAM reason. */
+export async function blockBannedUserImages(userId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      ingestion = 'Blocked'::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+        ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+  `;
+  await refreshOwnModelShowcases(userId);
+}
+
+/** Never throws: the block has committed. Call-site import: post.service imports this module. */
+async function refreshOwnModelShowcases(userId: number) {
+  await import('~/server/services/post.service')
+    .then(({ refreshShowcasesForUserModels }) => refreshShowcasesForUserModels(userId))
+    .catch(handleLogError);
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -2925,6 +3120,20 @@ export const toggleBan = async ({
           })
         ),
 
+      // Take away their git access to App Blocks SOURCE repos (`civitai-apps-src/<slug>`): the
+      // collaborator rows of every repo they own or hold a seat on. Credential hand-outs already
+      // refuse a banned account; this removes the rows a token they already hold would use.
+      // Isolated like every other leg: it must never fail the ban.
+      import('~/server/services/blocks/app-source-repo.service')
+        .then(({ revokeSourceRepoAccessForUser }) => revokeSourceRepoAccessForUser(id))
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-source-repos',
+            message: (error as Error).message,
+          })
+        ),
+
       // Group B: External operations (subscription + search indexes)
       Promise.all([
         // Stop the recurring membership from auto-renewing while banned. Cancel
@@ -3004,14 +3213,7 @@ export const toggleBan = async ({
           });
         }
 
-        await dbWrite.image.updateMany({
-          where: { userId: id, ingestion: { not: 'Blocked' } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-          },
-        });
+        await blockBannedUserImages(id);
 
         // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
         // actually blocked rather than to the account: a ban outranks a grace block, so the
@@ -3029,24 +3231,8 @@ export const toggleBan = async ({
     }
 
     // Flagged, not deleted, and the ToS flag rather than `hidden` — `hidden` is a fold any viewer can
-    // reopen. See `bulkSetCommentV2TosViolation`.
+    // reopen.
     if (removeComments) {
-      try {
-        // Not a comment on a CommentV3-write surface: `setUserCommentsV3Tos` flags those, locking
-        // CommentV3 first as every write there does, so the two cannot deadlock.
-        await dbWrite.$executeRaw`
-          UPDATE "CommentV2" c2 SET "tosViolation" = true, "updatedAt" = now()
-          WHERE c2."userId" = ${id} AND NOT c2."tosViolation"
-            AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-      } catch (error) {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-remove-comments',
-          message: (error as Error).message,
-          error,
-        });
-      }
-      // Its own try, so a failure above still leaves these flagged.
       await setUserCommentsV3Tos(id).catch((error: Error) =>
         logToAxiom({
           type: 'error',
@@ -3277,10 +3463,12 @@ export const toggleUserArticleEngagement = async ({
 export const toggleBookmarkedArticle = async ({
   articleId,
   userId,
+  isModerator,
 }: {
   articleId: number;
   userId: number;
-}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
+  isModerator?: boolean;
+}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId, isModerator });
 
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
@@ -3309,11 +3497,13 @@ export const toggleBookmarked = async ({
   entityId,
   type,
   userId,
+  isModerator,
   setTo,
 }: {
   entityId: number;
   type: CollectionType;
   userId: number;
+  isModerator?: boolean;
   setTo?: boolean;
 }) => {
   let collection = await dbWrite.collection.findFirst({
@@ -3373,6 +3563,12 @@ export const toggleBookmarked = async ({
     });
     metricsEngine?.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: entityProp as CollectionItemKey,
+      ids: [entityId],
+      userId,
+      isModerator,
+    });
     // Race #2: the collection item is guarded by prod-only partial unique indexes
     // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the
     // analogous image/post/article indexes — NOT in the Prisma schema). Concurrent bookmarks both
@@ -3700,31 +3896,43 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
   };
 }
 
+/** The user may not equip this cosmetic, and asking again will not change that. */
+export class CosmeticEquipRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CosmeticEquipRefusedError';
+  }
+}
+
 export async function equipCosmetic({
   cosmeticId,
   userId,
+  readOwnershipFromPrimary = false,
 }: {
   cosmeticId: number | number[];
   userId: number;
+  /** For a caller that equips right after granting: the replica may not have the grant yet. */
+  readOwnershipFromPrimary?: boolean;
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
   if (!cosmeticId.length) return;
 
-  const userCosmetics = await dbRead.userCosmetic.findMany({
+  const userCosmetics = await (readOwnershipFromPrimary ? dbWrite : dbRead).userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true, data: true } } },
   });
-  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics.length) throw new CosmeticEquipRefusedError("You don't have that cosmetic");
   // An event decoration is placed on content, never worn by the user: equipped here it would show
   // on every user-level read, none of which applies the event's preview gate.
   if (userCosmetics.some((x) => isEventDecorationData(x.cosmetic.data)))
-    throw new Error('Event decorations are placed on content, not equipped');
+    throw new CosmeticEquipRefusedError('Event decorations are placed on content, not equipped');
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
   // Stickers are owned, not equipped — everything you own is already in the
   // picker, so equipping has nothing to mean. Guarded here and not only in the
   // UI so an equipped sticker can't exist for the buckets to have to explain.
-  if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
+  if (types.includes(CosmeticType.Sticker))
+    throw new CosmeticEquipRefusedError('Stickers cannot be equipped');
   if ((await getWithheldCosmeticIds(cosmeticId, dbWrite)).size)
     throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 

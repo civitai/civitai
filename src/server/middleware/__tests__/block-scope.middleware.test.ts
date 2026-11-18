@@ -211,6 +211,19 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(claims?.blockInstanceId).toBe('bki_a');
   });
 
+  it('🔴 a real mint carries viewerBrowsingLevel through verify, and omits it when not given', async () => {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    const withLevel = await BlockTokenService.sign({
+      userId: 1,
+      ...baseClaims,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 3,
+    });
+    expect((await verifyBlockToken(withLevel.token))?.viewerBrowsingLevel).toBe(3);
+    const without = await BlockTokenService.sign({ userId: 1, ...baseClaims });
+    expect(await verifyBlockToken(without.token)).not.toHaveProperty('viewerBrowsingLevel');
+  });
+
   it('rejects a validly-signed token that omits kid (no fan-out to all keys)', async () => {
     // Same RSA key the service signs with, but the header carries no kid.
     // The previous code fell open and tried every configured key; the fix
@@ -292,8 +305,26 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel: Infinity }))).toBeNull();
   });
 
+  it('accepts a non-negative integer viewerBrowsingLevel, and rejects anything else', async () => {
+    expect(
+      (await verifyBlockToken(await signRaw({ viewerBrowsingLevel: 3 })))?.viewerBrowsingLevel
+    ).toBe(3);
+    for (const viewerBrowsingLevel of [-1, 1.5, '3', NaN, null]) {
+      expect(await verifyBlockToken(await signRaw({ viewerBrowsingLevel }))).toBeNull();
+    }
+  });
+
   it('rejects a token with a non-numeric maxBrowsingLevel', async () => {
     expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel: '3' }))).toBeNull();
+  });
+
+  it('rejects a negative or fractional maxBrowsingLevel (-1 would read as every level)', async () => {
+    for (const maxBrowsingLevel of [-1, 1.5]) {
+      expect(await verifyBlockToken(await signRaw({ maxBrowsingLevel }))).toBeNull();
+    }
+    expect((await verifyBlockToken(await signRaw({ maxBrowsingLevel: 0 })))?.maxBrowsingLevel).toBe(
+      0
+    );
   });
 
   it('rejects a token with a non-string domain', async () => {

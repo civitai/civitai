@@ -42,6 +42,10 @@ vi.mock('~/components/CreatorShop/Services/deals/deal.util', async (importOrigin
     hiddenOffDomain: 0,
   }),
 }));
+// Its tRPC mutations need a provider this harness lacks; it sits over the cover, not the footer.
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
+}));
 vi.mock('~/components/CreatorShop/Services/deals/ServiceRequestModal', () => ({
   ServiceRequestModal: () => null,
 }));
@@ -63,7 +67,7 @@ async function renderCard(containerWidth: number, viewportWidth: number) {
   );
   const cascade = cascadeEvidence();
   expect(cascade.ruleCount, 'the app cascade did not load').toBeGreaterThan(1000);
-  const card = document.querySelector('.mantine-Paper-root') as HTMLElement;
+  const card = document.querySelector('[data-testid="service-offering-card"]') as HTMLElement;
   expect(card, 'offering card not rendered').not.toBeNull();
   const buttons = [...card.querySelectorAll('a')].filter((a) =>
     /Manage|Open deal/.test(a.textContent ?? '')

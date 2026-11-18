@@ -19,22 +19,31 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { resolveSsrPrefetchCohort } from '~/server/utils/ssr-skip-prefetch';
 import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, session, features }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
+    let deferredSsr = false;
     if (username) {
+      // `ssrSignedInSkipPrefetchUser`: `skip` keeps the profile, its overview and the milestone
+      // check, which decide the layout's NotFound, its blocked-by-them panel and every tag of its
+      // `<head>` (title, description, og:image, canonical, noindex), and leaves the creator card's
+      // `user.getCreator` to the client; the sidebar, header and sections render as a loading
+      // shell until the client has mounted (`ProfileLayout2`).
+      deferredSsr =
+        resolveSsrPrefetchCohort({ ctx, session, features, route: '/user/[username]' }) === 'skip';
       // Prefetch under the route's own spelling, not the slugified `username`: the layout queries
       // `router.query.username` as-is, and a lowercased key misses for `/user/JustMaier`, so the
       // server render (and every crawler's og:image) falls back to the empty profile meta.
       const routeUsername = ctx.params?.username as string;
       const milestone = parseMilestoneShareToken(ctx.query.milestone);
       const [, profile] = await Promise.all([
-        ssg?.user.getCreator.prefetch({ username: routeUsername }),
+        deferredSsr ? undefined : ssg?.user.getCreator.prefetch({ username: routeUsername }),
         milestone
           ? ssg?.userProfile.get.fetch({ username: routeUsername }).catch(() => null)
           : ssg?.userProfile.get.prefetch({ username: routeUsername }).then(() => null),
@@ -49,7 +58,8 @@ export const getServerSideProps = createServerSideProps({
     }
 
     return {
-      props: removeEmpty({ id, username }),
+      // `deferredSsr` only on `skip`, so every other arm's props are exactly what they were.
+      props: removeEmpty({ id, username, ...(deferredSsr ? { deferredSsr } : {}) }),
     };
   },
 });

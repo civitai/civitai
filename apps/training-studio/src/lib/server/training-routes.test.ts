@@ -6,10 +6,14 @@ const train = vi.hoisted(() => ({
   submitTrainingBatch: vi.fn(),
   continueTraining: vi.fn(),
   continueTrainingWhatIf: vi.fn(),
-  MatureAckRequiredError: class extends Error {},
+  MatureRepriceError: class extends Error {},
 }));
 vi.mock('$lib/server/train', () => train);
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
+vi.mock('$lib/server/withheld', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/withheld')>()),
+  assertNotWithheld: async () => undefined,
+}));
 // The routes load train-core only for its error classes; the real client's dist cannot load under
 // Node's ESM loader (see train-core.test.ts).
 vi.mock('@civitai/orchestration-client', () => ({}));
@@ -18,6 +22,11 @@ import { POST as trainPost } from '../../routes/api/train/+server';
 import { POST as continuePost } from '../../routes/api/continue-training/+server';
 import { TrainingTextCheckError, TrainingTextRefusedError } from '$lib/training-text';
 import { TrainingBatchValidationError } from '$lib/train-core';
+import {
+  FILES_PROCESSING_CODE,
+  FILES_PROCESSING_MESSAGE,
+  FilesProcessingError,
+} from '$lib/files-processing';
 
 function event(body: unknown) {
   return {
@@ -83,5 +92,26 @@ describe.each(routes)('POST /api/%s', (_name, run, submit, cookieArg) => {
   ])('answers a check that failed with %s as %i', async (from, to) => {
     submit.mockRejectedValue(new TrainingTextCheckError('failed', from));
     expect(await statusOf(run)).toBe(to);
+  });
+});
+
+describe('POST /api/train refused while files are still processing', () => {
+  it('answers 400 with the neutral message and a code the browser can match', async () => {
+    train.submitTrainingBatch.mockReset().mockRejectedValue(new FilesProcessingError());
+    await expect(trainPost(event({ runs: [] }))).rejects.toMatchObject({
+      status: 400,
+      body: { message: FILES_PROCESSING_MESSAGE, code: FILES_PROCESSING_CODE },
+    });
+  });
+});
+
+describe('POST /api/train with a checkpoint to continue from', () => {
+  it('is refused before anything is submitted', async () => {
+    train.submitTrainingBatch.mockReset();
+    const status = await statusOf(() =>
+      trainPost(event({ runs: [{ continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@k' }] }))
+    );
+    expect(status).toBe(400);
+    expect(train.submitTrainingBatch).not.toHaveBeenCalled();
   });
 });

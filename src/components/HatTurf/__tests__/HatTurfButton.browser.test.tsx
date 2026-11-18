@@ -738,15 +738,17 @@ describe('hats on a feed ImageCard', () => {
     expect(document.body.textContent).not.toMatch(/would take it/);
   });
 
-  test('hats past what is drawn show as a +N chip', async () => {
+  test('hats past what is drawn show no +N chip on a feed card', async () => {
     renderCard({
       images: {
         77: summary({ shown: { blue: 9, pink: 3 }, counted: { blue: 9, pink: 3 }, leader: 'blue' }),
       },
       stickers: { 77: [sticker(1, 'blue'), sticker(2, 'pink')] },
     });
-    await vi.waitFor(() => expect(q('hat-turf-more')).not.toBeNull());
-    expect(q('hat-turf-more')!.textContent).toContain('+10');
+    await vi.waitFor(() =>
+      expect(document.body.querySelectorAll('[data-testid="hat-turf-hat"]').length).toBe(2)
+    );
+    expect(q('hat-turf-more')).toBeNull();
   });
 
   test('turning Show hats off in the gear menu logs it, and the card keeps its hat button and gear', async () => {

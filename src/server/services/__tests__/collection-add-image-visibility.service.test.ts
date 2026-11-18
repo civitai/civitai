@@ -35,10 +35,11 @@ vi.mock('~/server/services/image-visibility.service', async (importOriginal) => 
   ...(await importOriginal<typeof ImageVisibility>()),
   assertImagesVisibleToViewer: assertVisible,
 }));
+const { createNotification } = vi.hoisted(() => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', () => ({ createNotification }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockCache>()),
@@ -166,16 +167,156 @@ describe('saveItemInCollections with an image', () => {
     ).resolves.toBeDefined();
   });
 
-  it('leaves non-image items alone', async () => {
-    mockDbRead.collection.findMany.mockResolvedValue([{ ...collectionRow, type: 'Model' }]);
-    mockDbRead.model.findMany.mockResolvedValue([{ id: HIDDEN_IMAGE, userId: SUBMITTER_ID }]);
+  it('refuses a caller who cannot add to the collection the same way whether or not the image is in it', async () => {
+    const privateRow = { ...collectionRow, read: 'Private', write: 'Private' };
+    mockDbRead.collection.findMany.mockResolvedValue([privateRow]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Private',
+        write: 'Private',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    const refusal = async (listed: boolean) => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue(
+        listed
+          ? [{ id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null }]
+          : []
+      );
+      return save({ imageId: HIDDEN_IMAGE, collections: [{ collectionId: COLLECTION_ID }] }).then(
+        () => 'saved',
+        (error: TRPCError) => ({ code: error.code, message: error.message })
+      );
+    };
 
-    await save({
-      modelId: HIDDEN_IMAGE,
-      type: 'Model',
-      collections: [{ collectionId: COLLECTION_ID }],
-    });
+    const notListed = await refusal(false);
+    expect(notListed).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(await refusal(true)).toEqual(notListed);
     expect(assertVisible).not.toHaveBeenCalled();
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not consult a contest the caller cannot add to', async () => {
+    // A closed contest refuses with BAD_REQUEST, and its checks can charge an entry fee.
+    mockDbRead.collection.findMany.mockResolvedValue([
+      {
+        ...collectionRow,
+        read: 'Private',
+        write: 'Private',
+        mode: 'Contest',
+        metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+      },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Private',
+        write: 'Private',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: 'Contest',
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    await expect(
+      save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  describe('a contest anyone may enter but only its owner may browse', () => {
+    const closedContest = {
+      ...collectionRow,
+      read: 'Private',
+      write: 'Public',
+      mode: 'Contest',
+      metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+    };
+    beforeEach(() => {
+      mockDbRead.collection.findMany.mockResolvedValue([closedContest]);
+      mockDbRead.$queryRaw.mockResolvedValue([
+        {
+          id: COLLECTION_ID,
+          read: 'Private',
+          write: 'Public',
+          userId: OWNER_ID,
+          type: 'Image',
+          mode: 'Contest',
+          contributorPermissions: null,
+          collaborationDisabledAt: null,
+        },
+      ]);
+    });
+    const entry = (addedById: number) => [
+      { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById, note: null },
+    ];
+    const outcome = () =>
+      save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] }).then(
+        () => 'saved',
+        (error: TRPCError) => ({ code: error.code, message: error.message })
+      );
+
+    it("answers the same whether or not someone else's image is entered", async () => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+      const notEntered = await outcome();
+      expect(notEntered).toMatchObject({ code: 'BAD_REQUEST' });
+      mockDbRead.collectionItem.findMany.mockResolvedValue(entry(OWNER_ID));
+      expect(await outcome()).toEqual(notEntered);
+    });
+
+    it('still lets a submitter re-save their own entry after it closes (control)', async () => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue(entry(SUBMITTER_ID));
+      expect(await outcome()).toBe('saved');
+    });
+  });
+
+  it('re-saves an entry in a contest whose items the caller can read, without its checks', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      {
+        ...collectionRow,
+        mode: 'Contest',
+        metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+      },
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null },
+    ]);
+    await expect(
+      save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] })
+    ).resolves.toBe('added');
+  });
+
+  it("does not announce a re-save of someone else's entry as a submission", async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      { ...collectionRow, read: 'Private', write: 'Review' },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Private',
+        write: 'Review',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null },
+    ]);
+    await save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] });
+    expect(createNotification).not.toHaveBeenCalled();
+
+    // Control: a new entry is announced.
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    await save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] });
+    expect(createNotification).toHaveBeenCalled();
   });
 });
 
@@ -206,6 +347,30 @@ describe('bulkSaveItems with images', () => {
 
   it('adds images the caller can open', async () => {
     await expect(bulk([VISIBLE_IMAGE])).resolves.toMatchObject({ imageIds: [VISIBLE_IMAGE] });
+  });
+
+  it('lets staff add an image others cannot open', async () => {
+    await expect(
+      bulkSaveItems({
+        input: {
+          collectionId: COLLECTION_ID,
+          imageIds: [HIDDEN_IMAGE],
+          userId: SUBMITTER_ID,
+          isModerator: true,
+        } as never,
+        permissions: {
+          collectionId: COLLECTION_ID,
+          read: true,
+          write: true,
+          writeReview: false,
+          manage: false,
+          follow: true,
+          isContributor: true,
+          isOwner: false,
+          isCollaborator: false,
+        } as never,
+      })
+    ).resolves.toMatchObject({ imageIds: [HIDDEN_IMAGE] });
   });
 
   it("lets the image's owner add it", async () => {

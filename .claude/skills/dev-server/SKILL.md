@@ -47,8 +47,8 @@ had no `pnpm` at all — which silently disables the daemon's own auto-install p
 **The fix, whatever your setup: start it from a shell whose `node --version` matches `.nvmrc` and which
 has `pnpm` on `PATH`.** `nvm use` at the repo root gives you both.
 
-**On NixOS (optional)** the flake wrapper does that for you — it pins node to the same version `.nvmrc`
-names (until nixpkgs ships 24.22.1 it gives 24.19.0; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
+**On NixOS (optional)** the flake wrapper does that for you — it takes node's major from `.nvmrc`
+(the locked nixpkgs can lag `.nvmrc`'s patch; see the note in `flake.nix`), puts pnpm on `PATH`, and exports the Prisma engine paths NixOS needs:
 
 ```bash
 nix run .#dev-server -- status
@@ -494,7 +494,7 @@ Redbird binds ports 80 and 443. On Windows the daemon must be launched from an e
 
 ## Apps
 
-`moderator` and `creator-studio` run through the daemon the same way the main app does — started
+`moderator`, `creator-studio` and `training-studio` run through the daemon the same way the main app does — started
 from the worktree you are in, logs in the same place, port reserved by the same allocator.
 
 ```bash
@@ -515,12 +515,13 @@ appear under `apps` in `status`, beside the main-app sessions.
 |-----|----------------|
 | moderator | 5174 |
 | creator-studio | 5175 |
+| training-studio | 5176 |
 
 **Preferred, not fixed.** The first worktree to start an app gets the number in that table; a second
 worktree starting the same app drifts to the next free port instead of dying on EADDRINUSE, so two
 branches of the same app can run side by side. Nothing has to be rewritten to follow the drift:
-neither app's `.env` carries its own port or base URL. Every app's preferred port is held back from
-the drift search, so moderator drifting never displaces creator-studio.
+no app's `.env` carries its own port or base URL. Every app's preferred port is held back from
+the drift search, so one app drifting never displaces another.
 
 🔴 **Read the `path` field, not just the fact that it started.** An app serving the wrong checkout
 answers 200s and looks completely healthy — the only thing that contradicts you is `path`.

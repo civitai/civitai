@@ -32,7 +32,8 @@ import { ChromeForkMenuItem } from './ChromeForkEntry';
 import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
-import { resolveAppFeedbackRequest } from './appFeedbackChrome';
+import { resolveAppFeedbackRequest, withAppFeedbackDiagnostics } from './appFeedbackChrome';
+import { readAppFeedbackEnvironment } from './appFeedbackDiagnostics';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -78,6 +79,8 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
@@ -102,6 +105,7 @@ import {
   resolveSetEntityReactionRequest,
 } from './reactionGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
@@ -409,6 +413,8 @@ export function AppBlockChrome({
   hostSurface,
   canOpenPage = false,
   launchOrigin = 'store',
+  getRecentFailures,
+  appRoute,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -463,6 +469,10 @@ export function AppBlockChrome({
    *  (`/apps/store`). See `appsRunBackTarget`. Omitted → the store, which is what every
    *  surface other than a home launch should say. */
   launchOrigin?: AppsRunOrigin;
+  /** The host bridge's failed replies to this app, attached to a feedback report. */
+  getRecentFailures?: () => AppFeedbackRecentError[];
+  /** The app's own route on the page host, attached to a feedback report. */
+  appRoute?: string;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -492,6 +502,14 @@ export function AppBlockChrome({
   // up the snapshot it took at click time.
   const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
   const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
+  const openFeedback = (target: AppFeedbackModalTarget) =>
+    setFeedbackTarget({
+      ...target,
+      request: withAppFeedbackDiagnostics(target.request, {
+        recentErrors: getRecentFailures?.(),
+        environment: readAppFeedbackEnvironment(appRoute),
+      }),
+    });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -955,7 +973,7 @@ export function AppBlockChrome({
             request={feedbackRequest}
             hostSurface={hostSurface}
             labelled={!geometry.compact}
-            onOpenFeedback={setFeedbackTarget}
+            onOpenFeedback={openFeedback}
           />
           {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
             was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
@@ -1466,7 +1484,7 @@ export function IframeHost({
     enabled: true,
   });
 
-  const { send, onMessage, reportNoToken } = usePostMessage({
+  const { send, onMessage, reportNoToken, recentFailures } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
@@ -2198,6 +2216,11 @@ export function IframeHost({
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  const dailyLimitRaise = useDailyLimitRaiseBridge({
+    appBlockId: install.appBlockId,
+    appName: install.manifest.name,
+  });
+  const outputUnlock = useOutputUnlockBridge({ appName: install.manifest.name });
 
   useEffect(() => {
     const off = onMessage<
@@ -2222,6 +2245,7 @@ export function IframeHost({
         });
         reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
         reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
@@ -2231,7 +2255,67 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, countAppSubmit, install.appBlockId]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    countAppSubmit,
+    install.appBlockId,
+    dailyLimitRaise,
+  ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. Same
+  // handler as PageBlockHost; see `useDailyLimitRaiseBridge` for when the dialog may open.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -3480,6 +3564,7 @@ export function IframeHost({
         slotId={slotId}
         hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+        getRecentFailures={recentFailures}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not
           exist until now. Every term of the decision is in `resolveHostConsentNotice`

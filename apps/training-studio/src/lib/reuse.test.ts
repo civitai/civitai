@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { toReuseItems } from './reuse';
+import { isPairDataset, toReuseItems } from './reuse';
 
 // train-core (for trainingBlobKey) loads the SDK, whose dist Node's ESM loader refuses.
 vi.mock('@civitai/orchestration-client', () => ({}));
@@ -29,5 +29,27 @@ describe('toReuseItems', () => {
       undefined,
     ]);
     expect(items[0]).toMatchObject({ path: 'control_1/pair_1.png', workflowId: 'wf-1' });
+  });
+});
+
+describe('a run trained with per-image repeats', () => {
+  const blob = (key: string) => `urn:air:sdxl:image:civitai:blob@${key}.png`;
+  const dataset = [
+    { air: blob('KEYA'), caption: 'a', path: 'repeat_0001_1.png' },
+    { air: blob('KEYA'), caption: 'a', path: 'repeat_0001_2.png' },
+    { air: blob('KEYA'), caption: 'a', path: 'repeat_0001_3.png' },
+    { air: blob('KEYB'), caption: 'b' },
+  ];
+
+  it('is not an edit-pair dataset', () => {
+    expect(isPairDataset(dataset)).toBe(false);
+    expect(isPairDataset([{ path: 'control_1/pair_1.png' }])).toBe(true);
+  });
+
+  it('reuses each repeated image once, with its repeat count', () => {
+    expect(toReuseItems(dataset, 'wf-1')).toEqual([
+      { air: blob('KEYA'), caption: 'a', name: 'image 1', workflowId: 'wf-1', repeats: 3 },
+      { air: blob('KEYB'), caption: 'b', name: 'image 4', workflowId: 'wf-1' },
+    ]);
   });
 });

@@ -33,14 +33,35 @@ const OWNER = { id: 7, isModerator: false };
 const OTHER_USER = { id: 42, isModerator: false };
 const MODERATOR = { id: 1, isModerator: true };
 
-function call(user: { id: number; isModerator: boolean }) {
+function call(user: { id: number; isModerator: boolean }, input: { type?: string } = {}) {
   return getDownloadCommandHandler({
-    input: { modelId: 1, modelVersionId: 123 },
+    input: { modelId: 1, modelVersionId: 123, ...input },
     ctx: { user, track: { modelVersionEvent: vi.fn() } },
   } as unknown as Parameters<typeof getDownloadCommandHandler>[0]);
 }
 
-function givenModel(model: { status?: string; mode?: string | null }, usageControl = 'Download') {
+const MODEL_FILE = {
+  id: 10,
+  url: 'https://example.invalid/model.safetensors',
+  name: 'model.safetensors',
+  type: 'Model',
+  metadata: {},
+  hashes: [{ hash: 'abc' }],
+};
+const DATASET_FILE = {
+  id: 11,
+  url: 'https://example.invalid/data.zip',
+  name: 'data.zip',
+  type: 'Training Data',
+  metadata: {},
+  hashes: [{ hash: 'def' }],
+};
+
+function givenModel(
+  model: { status?: string; mode?: string | null },
+  usageControl = 'Download',
+  files: object[] = [MODEL_FILE]
+) {
   dbMock.dbRead.modelVersion.findFirst.mockResolvedValue({
     id: 123,
     status: 'Published',
@@ -58,16 +79,7 @@ function givenModel(model: { status?: string; mode?: string | null }, usageContr
       nsfw: false,
       ...model,
     },
-    files: [
-      {
-        id: 10,
-        url: 'https://example.invalid/model.safetensors',
-        name: 'model.safetensors',
-        type: 'Model',
-        metadata: {},
-        hashes: [{ hash: 'abc' }],
-      },
-    ],
+    files,
   } as never);
 }
 
@@ -120,5 +132,47 @@ describe('model.getDownloadCommand on a taken-down or deleted model', () => {
     givenModel({});
 
     expect((await call(user))?.commands).toHaveLength(1);
+  });
+});
+
+describe('model.getDownloadCommand returns model files only', () => {
+  it.each([
+    ['a signed-in non-owner', OTHER_USER],
+    ['its owner', OWNER],
+    ['a moderator', MODERATOR],
+  ])('is not found for a training data file asked for by type, for %s', async (_who, user) => {
+    // The read is filtered by the requested type, so only the dataset comes back.
+    givenModel({}, 'Download', [DATASET_FILE]);
+
+    await expect(call(user, { type: 'Training Data' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a signed-in non-owner', OTHER_USER],
+    ['its owner', OWNER],
+    ['a moderator', MODERATOR],
+  ])('never picks a training data file as the primary file, for %s', async (_who, user) => {
+    givenModel({}, 'Download', [DATASET_FILE]);
+
+    await expect(call(user)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(resolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('gives the model file when the version also has a training data file (control)', async () => {
+    givenModel({}, 'Download', [DATASET_FILE, MODEL_FILE]);
+
+    const result = await call(OTHER_USER);
+    expect(result?.commands).toHaveLength(1);
+    expect(resolveDownloadUrl).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(resolveDownloadUrl).mock.calls[0][0]).toBe(MODEL_FILE.id);
+  });
+
+  it('still gives a model file asked for by type (control)', async () => {
+    givenModel({}, 'Download', [MODEL_FILE]);
+
+    expect((await call(OTHER_USER, { type: 'Model' }))?.commands).toHaveLength(1);
   });
 });

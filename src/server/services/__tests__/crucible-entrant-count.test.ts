@@ -103,3 +103,131 @@ describe('entrant count surfaces', () => {
     expect(valuesOf(queryRaw.mock.calls[0])).toEqual([[1]]);
   });
 });
+
+describe('the detail page cover and hero', () => {
+  const UPLOADER = 7;
+  const image = (id: number) => ({
+    id,
+    url: `u${id}`,
+    nsfwLevel: 4,
+    modelRestricted: true,
+    userId: UPLOADER,
+    ingestion: 'Scanned',
+    needsReview: null,
+    tosViolation: false,
+  });
+
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: UPLOADER,
+      freeEntriesPerUser: 1,
+      _count: { entries: 0 },
+      status: CrucibleStatus.Active,
+      ingestion: 'Scanned',
+      imageId: 10,
+      image: image(10),
+      heroImage: image(11),
+    });
+    queryRaw.mockResolvedValue([]);
+  });
+
+  it('withholds a restricted image from a signed-out viewer', async () => {
+    const detail = await getCrucibleDetail({ id: 1 });
+
+    expect(detail?.image).toBeNull();
+    expect(detail?.imageId).toBeNull();
+    expect(detail?.heroImage).toBeNull();
+    // The page itself still shows, without them.
+    expect(detail?.hiddenByScan).toBe(false);
+  });
+
+  it.each([
+    ['its uploader', { userId: UPLOADER }],
+    ['a moderator', { userId: 99, isModerator: true }],
+  ])('shows %s the images', async (_, viewer) => {
+    const detail = await getCrucibleDetail({ id: 1, ...viewer });
+
+    expect(detail?.image).toMatchObject({ id: 10, url: 'u10', nsfwLevel: 4 });
+    expect(detail?.imageId).toBe(10);
+    expect(detail?.heroImage).toMatchObject({ id: 11, url: 'u11', nsfwLevel: 4 });
+  });
+
+  it.each([
+    ['in review', { needsReview: 'minor' }],
+    ['a ToS violation', { tosViolation: true }],
+  ])(
+    'still hides the page from a signed-out viewer while its restricted cover is %s',
+    async (_, cover) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        id: 1,
+        userId: UPLOADER,
+        freeEntriesPerUser: 1,
+        _count: { entries: 0 },
+        status: CrucibleStatus.Active,
+        ingestion: 'Scanned',
+        imageId: 10,
+        image: { ...image(10), ...cover },
+        heroImage: image(11),
+      });
+      expect((await getCrucibleDetail({ id: 1 }))?.hiddenByScan).toBe(true);
+      expect(
+        (await getCrucibleDetail({ id: 1, userId: 99, isModerator: true }))?.hiddenByScan
+      ).toBe(false);
+    }
+  );
+});
+
+describe('the crucible page notice for a restricted cover', () => {
+  const crucibleWith = (cover: Record<string, unknown>, crucible: Record<string, unknown> = {}) =>
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 7,
+      freeEntriesPerUser: 1,
+      _count: { entries: 0 },
+      status: CrucibleStatus.Active,
+      ingestion: 'Scanned',
+      imageId: 10,
+      image: {
+        id: 10,
+        url: 'u10',
+        nsfwLevel: 4,
+        modelRestricted: true,
+        userId: 7,
+        ingestion: 'Scanned',
+        needsReview: null,
+        tosViolation: false,
+        ...cover,
+      },
+      heroImage: null,
+      ...crucible,
+    });
+
+  beforeEach(() => queryRaw.mockResolvedValue([]));
+
+  it('tells its owner, who uploaded the cover and still sees it, and moderators, and no one else', async () => {
+    crucibleWith({});
+    expect((await getCrucibleDetail({ id: 1, userId: 7 }))?.coverRestricted).toBe(true);
+    expect(
+      (await getCrucibleDetail({ id: 1, userId: 99, isModerator: true }))?.coverRestricted
+    ).toBe(true);
+    expect((await getCrucibleDetail({ id: 1, userId: 8 }))?.coverRestricted).toBe(false);
+    expect((await getCrucibleDetail({ id: 1 }))?.coverRestricted).toBe(false);
+  });
+
+  it('says nothing while the crucible itself awaits its scan', async () => {
+    crucibleWith({}, { ingestion: 'Pending' });
+    expect((await getCrucibleDetail({ id: 1, userId: 7 }))?.coverRestricted).toBe(false);
+  });
+
+  it.each([
+    ['unrestricted', { modelRestricted: false }],
+    ['SFW', { nsfwLevel: 1 }],
+    ['in review', { needsReview: 'minor' }],
+    ['a ToS violation', { tosViolation: true }],
+    ['still scanning', { ingestion: 'Pending' }],
+  ])('says nothing of a cover that is %s', async (_, cover) => {
+    crucibleWith(cover);
+    expect((await getCrucibleDetail({ id: 1, userId: 7 }))?.coverRestricted).toBe(false);
+  });
+});

@@ -4,7 +4,9 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
-import { FILTER_MAX_BYTES, refusesFilter } from '~/server/registry-adapter/json-schema';
+import { FILTER_MAX_BYTES, filterRefusal } from '~/server/registry-adapter/json-schema';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { ServeOptions } from '~/server/registry-adapter/serve';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
@@ -162,6 +164,93 @@ describe('the HTTP/SSE binding', () => {
   it('a missing schema is bad_request', async () => {
     const res = await get(adapter(), '/subscribe');
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
+
+describe('🔴 each HTTP subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const META_DE = `&meta=${encodeURIComponent('{"country":"DE"}')}`;
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to its end; its region lines and the
+   * error code it was refused with, if any.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      query = sub(APPS, META_DE),
+      headers = {},
+      opts = {},
+    }: { query?: string; headers?: Record<string, string>; opts?: ServeOptions } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const logged: string[] = [];
+    server = createRegistryServer(adapter(), { ...opts, onRegion: (line) => logged.push(line) });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: {
+        'cf-ipcountry': 'CA',
+        'cf-connecting-ip': '192.0.2.7',
+        'x-forwarded-for': '198.51.100.1',
+        ...headers,
+      },
+    });
+    const text = await res.text();
+    const error = res.status === 200 ? undefined : (JSON.parse(text) as { error: string }).error;
+    return { status: res.status, error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { status, logged } = await lines('1');
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=DE region=none source=meta restricted=false',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { logged } = await lines(undefined);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=false',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { status, logged } = await lines(undefined, { opts: { regionRestricted: () => true } });
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=true',
+    ]);
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { status, error, logged } = await lines('1', { query: '/subscribe' });
+    expect([status, error]).toEqual([400, 'bad_request']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { status, error, logged } = await lines('1', { opts: { limiter } });
+    expect([status, error]).toEqual([503, 'unavailable']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { status, error, logged } = await lines('1', {
+      headers: { authorization: 'Bearer x' },
+    });
+    expect([status, error]).toEqual([401, 'invalid_token']);
+    expect(logged).toEqual([]);
   });
 });
 
@@ -352,35 +441,90 @@ describe('a request filter', () => {
     expect(res.text).not.toContain('renamed-orbit');
   });
 
+  // `^orbit` is anchored, so `renamed-orbit` (which holds `orbit`, not at its start) stops
+  // matching; `notes` is not, so `orbit-notes` matches it in the middle.
+  it('🔴 a change that stops matching a pattern arrives as a delete', async () => {
+    const res = await get(
+      withChange,
+      sub(APPS, filter({ properties: { slug: { pattern: '^orbit' } } }))
+    );
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect(res.text).toContain(
+      'event: delete\nid: c1.after-rename\n' +
+        'data: {"urn":"urn:apps.civitai.com:app/orbit-notes","cursor":"c1.after-rename"}'
+    );
+    expect(res.text).not.toContain('renamed-orbit');
+  });
+
+  it('a pattern is unanchored: a match in the middle keeps the entity', async () => {
+    const res = await get(
+      withChange,
+      sub(APPS, filter({ properties: { slug: { pattern: 'notes' } } }))
+    );
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
   it('a filter that is not a schema is bad_request', async () => {
     const res = await get(withChange, sub(APPS, filter({ type: 12 })));
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
   });
 });
 
-describe('🔴 a filter this source will not evaluate is not applied', () => {
-  it('a regular expression is never compiled: the entity it would exclude is still sent', async () => {
+/**
+ * The registry spec's rule 6: a registry that accepts a filter applies it in full, and one it
+ * does not apply is answered `bad_request`, never ignored (the consumer would take what it got for
+ * filtered). The wire contract is the status and `error`; the message only has to name the keyword.
+ */
+
+describe('🔴 a filter this source will not evaluate is bad_request, never ignored (rule 6)', () => {
+  // A pattern is applied (on a linear-time engine), not refused: the entity it excludes is not
+  // sent, and the one it matches is.
+  it('🔴 a pattern is applied: one that excludes the entity sends none', async () => {
     const res = await get(
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { pattern: '^zzz' } } }))
     );
-    expect(res.text.startsWith('event: upsert')).toBe(true);
-  });
-
-  it('positive control: the same filter without the regex is applied', async () => {
-    const res = await get(
-      adapter(),
-      sub(APPS, asFilter({ properties: { slug: { const: 'zzz' } } }))
-    );
+    expect(res.status).toBe(200);
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 
-  it.each([
-    ['dependencies', { dependencies: { slug: { properties: { slug: { pattern: '^zzz' } } } } }],
-    ['a $ref to a member', { $ref: '#/x', x: { properties: { slug: { pattern: '^zzz' } } } }],
-  ])('🔴 a regex reached through %s is never compiled either', async (_name, f) => {
-    const res = await get(adapter(), sub(APPS, asFilter(f)));
+  it('🔴 positive control: a pattern that matches the entity sends it', async () => {
+    const res = await get(
+      adapter(),
+      sub(APPS, asFilter({ properties: { slug: { pattern: '^orbit-' } } }))
+    );
+    expect(res.status).toBe(200);
     expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('🔴 a pattern the linear-time engine cannot run (a lookahead) is bad_request, saying why', async () => {
+    const res = await get(
+      adapter(),
+      sub(APPS, asFilter({ properties: { slug: { pattern: '^(?!zzz)' } } }))
+    );
+    const body = JSON.parse(res.text);
+    expect([res.status, res.type, body.error]).toEqual([400, 'application/json', 'bad_request']);
+    expect(body.message).toContain('a lookahead');
+  });
+
+  it.each([
+    [
+      'dependencies',
+      { dependencies: { slug: { properties: { slug: { pattern: '(a)\\1' } } } } },
+      'a backreference',
+    ],
+    [
+      'a $ref to a member',
+      { $ref: '#/x', x: { properties: { slug: { pattern: '^zzz' } } } },
+      '"$ref"',
+    ],
+  ])('🔴 a refused construct reached through %s is bad_request too', async (_name, f, why) => {
+    const res = await get(adapter(), sub(APPS, asFilter(f)));
+    const body = JSON.parse(res.text);
+    expect([res.status, body.error]).toEqual([400, 'bad_request']);
+    expect(body.message).toContain(why);
   });
 
   it('a filter whose string value merely contains the word "pattern" is still applied', async () => {
@@ -388,36 +532,96 @@ describe('🔴 a filter this source will not evaluate is not applied', () => {
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { const: 'pattern' } } }))
     );
+    expect(res.status).toBe(200);
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 
-  it('a filter over the size bound is not applied', async () => {
+  it('a filter over the size bound is bad_request', async () => {
     const big = {
       properties: { slug: { const: 'zzz' } },
       description: 'x'.repeat(FILTER_MAX_BYTES),
     };
     const res = await get(adapter(), sub(APPS, asFilter(big)));
-    expect(res.text.startsWith('event: upsert')).toBe(true);
+    expect([res.status, JSON.parse(res.text)]).toEqual([
+      400,
+      {
+        error: 'bad_request',
+        message:
+          'filter is longer than 8192 characters as JSON, which this registry does not apply',
+      },
+    ]);
+  });
+
+  it('positive control: a filter just under the size bound is applied', async () => {
+    const f = { properties: { slug: { const: 'zzz' } }, description: '' };
+    const room = FILTER_MAX_BYTES - JSON.stringify(f).length;
+    const res = await get(adapter(), sub(APPS, asFilter({ ...f, description: 'x'.repeat(room) })));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: live')).toBe(true);
   });
 });
 
-describe('refusesFilter', () => {
+describe('🔴 a filter whose data holds a refused key is applied: const, enum, default and examples are data', () => {
+  // A filter matching a whole body that has a key named `pattern` (a release body's
+  // `manifestHash` schema, say) is not refused.
   it.each([
-    [{ pattern: 'a' }, true],
-    [{ patternProperties: { '^a': {} } }, true],
-    [{ allOf: [{ properties: { a: { items: { pattern: 'x' } } } }] }, true],
+    [
+      'const',
+      { properties: { slug: { const: 'zzz' } }, const: { manifestHash: { pattern: 'x' } } },
+    ],
+    ['enum', { properties: { slug: { const: 'zzz' } }, enum: [{ $ref: '#', $defs: {} }, 1] }],
+  ])('a refused key inside %s: applied (the entity it excludes is not sent)', async (_n, f) => {
+    const res = await get(adapter(), sub(APPS, asFilter(f)));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+
+  it('positive control: a body matched whole by const is sent', async () => {
+    const res = await get(adapter(), sub(APPS, asFilter({ const: { slug: 'orbit-notes' } })));
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('a real $ref keyword beside the data is still bad_request', async () => {
+    const f = { const: { manifestHash: { $ref: '#' } }, properties: { slug: { $ref: '#' } } };
+    const res = await get(adapter(), sub(APPS, asFilter(f)));
+    expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
+
+/** Whether `filterRefusal` refuses `schema`. */
+const refused = (schema: unknown) => filterRefusal(schema) !== null;
+
+describe('filterRefusal', () => {
+  it.each([
+    // `pattern` and `patternProperties` are applied (on a linear-time engine), not refused.
+    [{ pattern: 'a' }, false],
+    [{ patternProperties: { '^a': {} } }, false],
+    [{ dependencies: { a: { properties: { b: { pattern: '^(a+)+$' } } } } }, false],
+    [{ allOf: [{ properties: { a: { items: { $ref: '#' } } } }] }, true],
     [{ $defs: { d: { not: { pattern: 'x' } } } }, true],
     // The two shapes a keyword-list walk missed: `dependencies`, and a `$ref` to any member.
-    [{ dependencies: { a: { properties: { b: { pattern: '^(a+)+$' } } } } }, true],
+    [{ dependencies: { a: { properties: { b: { $ref: '#' } } } } }, true],
     [{ $ref: '#/x', x: { properties: { b: { pattern: '^(a+)+$' } } } }, true],
-    // Refused too, deliberately: the whole JSON is walked, whatever the key above.
-    [{ properties: { pattern: { const: 'a property named pattern' } } }, true],
-    [{ enum: [{ pattern: 'a value, not a keyword' }] }, true],
+    // Under `patternProperties` a key is a pattern and its value a schema: walked.
+    [{ patternProperties: { '^a': { $ref: '#' } } }, true],
+    // Refused too, deliberately: every schema object is walked, whatever the key above.
+    [{ properties: { $ref: { const: 'a property named $ref' } } }, true],
+    // The value of a data keyword is data, never evaluated: not walked.
+    [{ enum: [{ $ref: 'a value, not a keyword' }] }, false],
+    [{ const: { manifestHash: { $defs: {} } } }, false],
+    [{ default: { $ref: '#' }, examples: [{ $defs: {} }, { definitions: {} }] }, false],
+    [{ allOf: [{ const: { $ref: '#' } }, { not: { enum: [{ $ref: '#' }] } }] }, false],
+    // But under a name map the same key is a NAME whose value is a schema: walked.
+    [{ properties: { const: { $ref: '#' } } }, true],
+    [{ properties: { enum: { properties: { a: { $ref: '#' } } } } }, true],
+    [{ dependentSchemas: { default: { $ref: '#' } } }, true],
+    [{ properties: { a: { properties: { examples: { items: { $ref: '#' } } } } } }, true],
+    // A schema named `properties` holds keywords again: its `const` is data.
+    [{ properties: { properties: { const: { $ref: '#' } } } }, false],
+    // A real keyword beside the data is still refused.
+    [{ const: { $ref: '#' }, items: { $ref: '#' } }, true],
     // A string VALUE mentioning the word is not a key.
-    [
-      { properties: { slug: { const: 'pattern' } }, description: 'no patternProperties here' },
-      false,
-    ],
+    [{ properties: { slug: { const: '$ref' } }, description: 'no $defs here' }, false],
     [{ properties: { a: { type: 'string', maxLength: 3 } } }, false],
     // A reference, a definition or a dynamic reference, whatever it points at: references can
     // build a DAG whose evaluation doubles at every level.
@@ -428,6 +632,6 @@ describe('refusesFilter', () => {
     [{ $recursiveRef: '#' }, true],
     [{ anyOf: [{ const: 1 }, { enum: [2, 3] }], properties: { a: { const: '$ref' } } }, false],
   ])('%o → %s', (schema, expected) => {
-    expect(refusesFilter(schema)).toBe(expected);
+    expect(refused(schema)).toBe(expected);
   });
 });

@@ -679,7 +679,7 @@ describe('a report a send run has claimed', () => {
       expect(rows).toHaveLength(3);
       expect(rows[2]).toMatchObject({ userId: 101, images: [{ id: 4 }], sendClaimId: null });
       expect(skipLines()).toEqual([
-        expect.objectContaining({ reportId: held.id, newReportId: rows[2].id }),
+        expect.objectContaining({ reportId: held.id, payload: { newReportId: rows[2].id } }),
       ]);
     }
   );

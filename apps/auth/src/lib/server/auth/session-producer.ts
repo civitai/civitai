@@ -1,4 +1,5 @@
 import { isRefusedModerationAccount } from './moderation-account';
+import { sql } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -29,7 +30,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      'User.image',
+      // The legacy `User.image` follows the same holds when it names the profile picture.
+      sql<string | null>`CASE WHEN EXISTS (
+        SELECT 1 FROM "Image" held
+        WHERE held.id = "User"."profilePictureId"
+          AND held."needsReview" IN ('csam', 'minor')
+          AND strpos(replace(lower("User".image), '%2d', '-'), lower(held.url)) > 0
+      ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',
       'User.showNsfw',
@@ -52,6 +59,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           .selectFrom('Image')
           .select(['Image.url'])
           .whereRef('Image.id', '=', 'User.profilePictureId')
+          // The main app's owner-hidden review holds: not shown even to the picture's owner.
+          .where((w) =>
+            w.or([
+              w('Image.needsReview', 'is', null),
+              w('Image.needsReview', 'not in', ['csam', 'minor']),
+            ])
+          )
       ).as('profilePicture'),
       jsonObjectFrom(
         eb

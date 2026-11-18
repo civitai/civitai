@@ -1,14 +1,19 @@
+import { randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
+import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import {
   REMIX_BLOCK_ID_PREFIX,
+  REMIX_CODE_APP_SLUGS,
+  REMIX_SAVABLE_SLOT_IDS,
   REMIX_STATUS,
   REMIX_STATUSES,
   remixEngineIssues,
@@ -94,8 +99,8 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       type: 'error',
       message: 'Skipped a remix app row that does not validate',
       blockId: row.blockId,
-      issues: parsed.error?.issues.slice(0, 5),
-    }).catch(() => undefined);
+      payload: { issues: parsed.error?.issues.slice(0, 5) },
+    });
     return null;
   }
   const manifest = parsed.data;
@@ -107,8 +112,8 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       type: 'warning',
       message: 'A remix app row names an engine no longer on the allowlist',
       blockId: row.blockId,
-      issues: engineIssues,
-    }).catch(() => undefined);
+      payload: { issues: engineIssues },
+    });
   return register({
     slug: row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length),
     name: manifest.name,
@@ -129,6 +134,8 @@ function seedRegistry() {
 }
 
 const REGISTRY_TTL = CacheTTL.hour;
+/** Bounds how long an idle generation key lives; a missing key just starts a new generation. */
+const GENERATION_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * On the primary: a mod's write is followed by this read, and a lagging replica would cache the
@@ -167,21 +174,39 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
  * that read the rows before a write landed fills the old generation's entry, which no reader uses
  * once the bump is done: a bust or a set can't promise that, since a refill already in flight
  * writes after either. `null` when Redis can't say; the caller then reads the primary uncached.
+ *
+ * The generation is a cache key's version, so it lives on the cache cluster with a TTL, and the
+ * cluster can evict it at any time. A reader that finds no key starts a fresh generation (SET NX,
+ * so concurrent readers agree on one). It must not fall back to a fixed name: an entry filled under
+ * that name before a mod write would be served again once the bumped key was evicted. Losing the
+ * key costs one read of the primary per reader until the new generation's entry is filled.
  */
 async function registryGeneration() {
+  const key = REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION;
+  const bounded = <T>(op: () => Promise<T>) =>
+    boundedClusterCall('remixAppRegistryGeneration', op);
   try {
-    const generation = await withSysReadDeadline(
-      sysRedis.get(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION)
-    );
-    return generation ?? '0';
+    const generation = await bounded(() => redis.get(key));
+    if (generation) return generation;
+    const fresh = randomUUID();
+    if (await bounded(() => redis.set(key, fresh, { NX: true, EX: GENERATION_TTL_SECONDS })))
+      return fresh;
+    // Another reader started one between the GET and the SET NX.
+    return (await bounded(() => redis.get(key))) ?? null;
   } catch {
     return null;
   }
 }
 
-/** After a mod write has committed: moves every reader to a fresh read of the primary. */
+/**
+ * After a mod write has committed: moves every reader to a fresh read of the primary. A random
+ * token rather than a counter, so a generation that expired and started again can never name an
+ * entry an earlier generation filled.
+ */
 export async function bumpRemixAppRegistry() {
-  await sysRedis.incr(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION);
+  await redis.set(REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION, randomUUID(), {
+    EX: GENERATION_TTL_SECONDS,
+  });
 }
 
 /** The apps the menu lists and the quote prices. */
@@ -253,9 +278,13 @@ export async function saveRemixApp(input: RemixAppInput) {
   if (existing && !REMIX_STATUSES.includes(existing.status))
     throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
 
+  const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
+  const storedTarget = previous?.success ? previous.data.targets[0].slotId : undefined;
+  if (!isSavableTarget(input.target) && input.target !== storedTarget)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: `New apps cannot target ${input.target}` });
+
   let runVersion = 1;
-  if (existing) {
-    const previous = remixManifestSchema.safeParse(existing.manifest);
+  if (existing && previous) {
     runVersion = previous.success
       ? runVersionOf(previous.data) +
         (runShape(previous.data.remix) === runShape(input.spec) ? 0 : 1)
@@ -290,6 +319,61 @@ export async function saveRemixApp(input: RemixAppInput) {
   return { slug: input.slug, version: runVersion };
 }
 
+const isSavableTarget = (target: string) =>
+  (REMIX_SAVABLE_SLOT_IDS as readonly string[]).includes(target);
+
+const BUILT_IN_SLUGS = new Set<string>([
+  ...SEED_REMIX_APPS.map((app) => app.slug),
+  ...REMIX_CODE_APP_SLUGS,
+]);
+
+/** Only a disabled app that is not a built-in default can be deleted. */
+const isDeletable = (slug: string, status: string) =>
+  status === REMIX_STATUS.disabled && !BUILT_IN_SLUGS.has(slug);
+
+/**
+ * Deletes a disabled, non-default app row for good. Rows hanging off it (BlockUserSubscription
+ * among them) go by FK cascade or SET NULL; a Restrict FK (attribution, a platform default) refuses.
+ */
+export async function deleteRemixApp({ slug }: { slug: string }) {
+  const blockId = remixBlockId(slug);
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId },
+    select: remixAppRowSelect,
+  });
+  if (!row || !REMIX_STATUSES.includes(row.status))
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  if (BUILT_IN_SLUGS.has(slug))
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Built-in default apps cannot be deleted' });
+  if (row.status !== REMIX_STATUS.disabled)
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+
+  // The only record of what was deleted.
+  logToAxiom({
+    name: 'remix-app-registry',
+    type: 'info',
+    message: 'Deleted a remix app row',
+    row,
+  });
+  let count: number;
+  try {
+    // Conditional on the status, so an enable that lands after the read above wins.
+    ({ count } = await dbWrite.appBlock.deleteMany({
+      where: { id: row.id, status: REMIX_STATUS.disabled },
+    }));
+  } catch (error) {
+    if (isPrismaForeignKeyViolation(error))
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'Other records still point at this app, so it cannot be deleted',
+      });
+    throw error;
+  }
+  if (!count)
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+  await bumpRemixAppRegistry();
+}
+
 export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enabled: boolean }) {
   const { count } = await dbWrite.appBlock.updateMany({
     where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
@@ -320,10 +404,12 @@ export async function listRemixAppsForAdmin() {
       const slug = row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length);
       const enabled = row.status === REMIX_STATUS.enabled;
       const order = row.featuredOrder ?? Number.MAX_SAFE_INTEGER;
+      const deletable = isDeletable(slug, row.status);
       if (!parsed.success)
         return {
           slug,
           enabled,
+          deletable,
           order,
           version: row.version,
           invalid: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
@@ -332,6 +418,7 @@ export async function listRemixAppsForAdmin() {
       return {
         slug,
         enabled,
+        deletable,
         order,
         version: parsed.data.version,
         input: { slug, name, description, target: targets[0].slotId, spec: remix } as RemixAppInput,

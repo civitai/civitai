@@ -1273,7 +1273,7 @@ export const blockEventBatchSchema = z.object({
       z.object({
         appBlockId: z.string().trim().min(1).max(256),
         blockInstanceId: z.string().trim().min(1).max(256),
-        eventName: z.unknown(),
+        eventName: z.unknown().optional(),
         properties: z.unknown().optional(),
       })
     )

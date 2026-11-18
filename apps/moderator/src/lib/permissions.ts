@@ -156,8 +156,11 @@ export const PERMISSIONS = [
   // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
   // its own call; reading a ticket view is the page grant.
   { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
-  // Hands a moderation ticket to support, naming the moderator who did it.
-  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
+  // Every hand-off of a moderation ticket (support, bug report, mod lead), each naming the moderator.
+  // Privacy needs it too.
+  { id: 'tickets.escalate', label: 'Hand off a moderation ticket (support, bug report, mod lead)' },
+  // Its own grant because the privacy hand-off emails the requester Legal's acknowledgment.
+  { id: 'tickets.privacy', label: 'Hand a moderation ticket to Legal as a privacy request' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
   // Submits a real scan with the site's system account; the page shows signals only.
   { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
@@ -206,6 +209,14 @@ export const PERMISSIONS = [
   // Sends account registration emails to the model provider, a separate call from running turns. Also
   // needs User Lookup, where a moderator reads emails today.
   { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
+  // The `/cases` PAGE grant opens the takedown case list. These are the rights inside it. Three ids
+  // because the harms differ:
+  // - acting sends legal notices;
+  // - reading claimants' names and addresses is personal data, and every read is recorded;
+  // - resuming sends overrides a pause someone else (or the hourly ceiling) set.
+  { id: 'cases.act', label: 'Import, send, pause and act on takedown cases' },
+  { id: 'cases.pii', label: 'Read claimant and recipient details on takedown cases' },
+  { id: 'cases.unpause', label: 'Resume paused takedown notice sends' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

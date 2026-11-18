@@ -1,4 +1,5 @@
 import { eventEngine } from '~/server/events';
+import { SETTLE_LOCK_S } from '~/server/events/points/referee';
 import { reconcileEventRosters } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
 import { reconcileAllTurf } from '~/server/events/turf/turf.service';
@@ -41,9 +42,9 @@ export const eventEngineLeaderboardUpdate = createJob(
   async () => {
     await eventEngine.updateLeaderboard();
   },
-  // Outlasts both referee queries (REFEREE_QUERY_MAX_SECONDS each), and stays held when the
+  // Outlasts a settle (REFEREE_CLICKHOUSE_BUDGET_S), and stays held when the
   // scheduler hangs up, so its retry cannot start a second run beside a long one.
-  { lockExpiration: 15 * 60, keepLockOnDisconnect: true }
+  { lockExpiration: SETTLE_LOCK_S, keepLockOnDisconnect: true }
 );
 
 // export const eventEngineApplyDiscordRoles = createJob(

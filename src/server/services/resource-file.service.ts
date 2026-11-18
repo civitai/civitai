@@ -5,6 +5,7 @@ import { isOpenAvailability } from '~/server/services/common.service';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { Flags } from '~/shared/utils/flags';
+import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
 import { ModelFileVisibility, ModelType } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -97,6 +98,7 @@ export async function resolveResourceFileForUser({
           id: true,
           type: true,
           name: true,
+          nsfw: true,
           userId: true,
           availability: true,
           poi: true,
@@ -154,7 +156,11 @@ export async function resolveResourceFileForUser({
   }
 
   const browsingLevel = getServerBrowsingLevel({ canViewNsfw, user });
-  if (!Flags.hasFlag(browsingLevel, version.nsfwLevel ?? 0)) {
+  // A mature model needs a mature ceiling, whatever its version is rated.
+  if (
+    !Flags.hasFlag(browsingLevel, version.nsfwLevel ?? 0) ||
+    (version.model.nsfw && allowMatureContentForCeiling(browsingLevel) === false)
+  ) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This resource exceeds your content maturity setting',

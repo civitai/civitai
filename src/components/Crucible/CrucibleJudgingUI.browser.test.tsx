@@ -1,6 +1,6 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -462,6 +462,84 @@ describe('CrucibleJudgingUI — skipping', () => {
     skipPairButton()!.click();
 
     expect(onSkip).toHaveBeenCalledWith({ unavailable: true });
+  });
+
+  test('Space on a focused image card votes and does not also skip', async () => {
+    const onVote = vi.fn();
+    const onSkip = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={{ left: entry(1, 'image'), right: entry(2, 'image') } as never}
+        onVote={onVote}
+        onSkip={onSkip}
+      />
+    );
+    const imageCard = () =>
+      document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+
+    imageCard()!.focus();
+    await userEvent.keyboard(' ');
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][0]).toBe(1);
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+});
+
+describe("CrucibleJudgingUI — Don't show again", () => {
+  const dismissButton = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="judge-dismiss"]');
+
+  test('dismisses the pair without voting or skipping', async () => {
+    const onVote = vi.fn();
+    const onSkip = vi.fn();
+    const onDismiss = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onSkip={onSkip}
+        onDismiss={onDismiss}
+      />
+    );
+    await expectBothCardsRendered();
+
+    dismissButton()!.click();
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('a vote already chosen wins over a dismiss clicked inside the feedback delay', async () => {
+    const onVote = vi.fn();
+    const onDismiss = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onSkip={vi.fn()}
+        onDismiss={onDismiss}
+      />
+    );
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+    dismissButton()!.click();
+    await new Promise((resolve) => setTimeout(resolve, 400)); // past the 200ms feedback delay
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  test('offers no button where the page cannot dismiss', async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+    expect(skipPairButton(), 'control: the pill rendered').not.toBeNull();
+    expect(dismissButton()).toBeNull();
   });
 });
 

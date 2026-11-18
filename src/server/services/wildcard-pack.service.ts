@@ -85,6 +85,7 @@ export async function resolveWildcardPackForUser({
           id: true,
           type: true,
           name: true,
+          nsfw: true,
           user: { select: { username: true } },
         },
       },
@@ -107,7 +108,11 @@ export async function resolveWildcardPackForUser({
   //    a request we're going to reject on maturity anyway).
   const browsingLevel = getServerBrowsingLevel({ canViewNsfw, user });
   const packLevel = version.nsfwLevel ?? 0;
-  if (!Flags.hasFlag(browsingLevel, packLevel)) {
+  // A mature model needs a mature ceiling, whatever its version is rated.
+  if (
+    !Flags.hasFlag(browsingLevel, packLevel) ||
+    (version.model.nsfw && allowMatureContentForCeiling(browsingLevel) === false)
+  ) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This wildcard pack exceeds your content maturity setting',

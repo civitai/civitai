@@ -1,0 +1,539 @@
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { childBrowsingTagIds } from '@civitai/shared';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+
+// The SQL runs on an in-memory Postgres with only the columns it reads.
+
+const { refresh, fetch, queueModelsReindex, collectionsQueueUpdate, getDocuments, storedDocs } =
+  vi.hoisted(() => ({
+    // The collections search index as stored: each document's cover and item images.
+    storedDocs: new Map<number, { image?: { id: number }; images?: { id: number }[] }>(),
+    getDocuments: vi.fn(),
+    refresh: vi.fn(async (_ids: number[]) => undefined),
+    fetch: vi.fn(),
+    queueModelsReindex: vi.fn(async (ids: number[], opts: { dryRun: boolean }) => ({
+      dryRun: opts.dryRun,
+      modelCount: ids.length,
+    })),
+    collectionsQueueUpdate: vi.fn(async (_items: { id: number; action: string }[]) => undefined),
+  }));
+vi.mock('~/server/redis/caches', () => ({ tagIdsForImagesCache: { refresh, fetch } }));
+vi.mock('~/server/meilisearch/client', () => ({
+  searchClient: { index: () => ({ getDocuments }) },
+}));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: collectionsQueueUpdate },
+}));
+vi.mock('~/server/search-index/queue-models-reindex', () => ({ queueModelsReindex }));
+
+const { runChildLabelReindex } = await import('~/server/services/child-label-reindex.service');
+
+const CHILD = childBrowsingTagIds[0];
+const CHILD_2 = childBrowsingTagIds[1];
+const OTHER = 9002;
+
+let db: PGlite;
+beforeAll(async () => {
+  db = new PGlite();
+  await db.exec(`
+    CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14');
+    CREATE TYPE "CollectionReadConfiguration" AS ENUM ('Private', 'Public', 'Unlisted');
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" int NOT NULL, "tagId" int NOT NULL, source "TagSource" NOT NULL,
+      disabled boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int, "userId" int);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
+    CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
+    CREATE TABLE "Model3D" (id int PRIMARY KEY, "thumbnailImageId" int);
+    CREATE TABLE "Collection" (
+      id int PRIMARY KEY, "imageId" int, "userId" int,
+      read "CollectionReadConfiguration" NOT NULL DEFAULT 'Public',
+      availability "Availability" NOT NULL DEFAULT 'Public'
+    );
+    CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "postId" int,
+      "modelId" int, "articleId" int, "model3dId" int
+    );
+  `);
+});
+afterAll(() => db.close());
+
+let queries = 0;
+// Fails the candidate lookup (the collection-media-index query), which never throws on its own.
+let failCollectionLookup = false;
+// The documents read ignores its filter and returns the first page of the index.
+let ignoreFilter = false;
+// The cover-index probe: 'throws', 'missing' (the index is not valid), or undefined (as created).
+let coverProbe: 'throws' | 'missing' | undefined;
+beforeEach(async () => {
+  vi.clearAllMocks();
+  queries = 0;
+  failCollectionLookup = false;
+  ignoreFilter = false;
+  coverProbe = undefined;
+  // Throws past a cap, so a loop that never ends fails by name.
+  // Prisma.Sql from the service, or a tagged template from the collection lookup.
+  const run = (async (sqlOrStrings: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+    if (++queries > 50) throw new Error('query loop did not end');
+    if (coverProbe && !('text' in sqlOrStrings) && sqlOrStrings.join('').includes('indisvalid')) {
+      if (coverProbe === 'throws') throw new Error('probe failed');
+      return [{ present: false }];
+    }
+    if (failCollectionLookup && !('text' in sqlOrStrings)) {
+      if (sqlOrStrings.join('').includes('"profilePictureId"')) throw new Error('lookup failed');
+    }
+    const sql = 'text' in sqlOrStrings ? sqlOrStrings : Prisma.sql(sqlOrStrings, ...values);
+    return (await db.query(sql.text, sql.values as unknown[])).rows;
+  }) as never;
+  dbMock.dbRead.$queryRaw.mockImplementation(run);
+  // Documents as last built: each shows the selected image that reached it, except 82, which
+  // reaches image 2 only through its owner's avatar and shows an unrelated image.
+  storedDocs.clear();
+  storedDocs.set(70, { image: { id: 1 } });
+  for (const [id, image] of [
+    [72, 3],
+    [73, 2],
+    [75, 1],
+    [77, 2],
+    [78, 3],
+    [80, 1],
+    [82, 500],
+  ])
+    storedDocs.set(id, { images: [{ id: image }] });
+  // As Meilisearch: a page of `limit` documents (20 when unset), only the `fields` asked for.
+  getDocuments.mockImplementation(
+    async ({
+      filter,
+      limit = 20,
+      fields,
+    }: {
+      filter: string;
+      limit?: number;
+      fields?: string[];
+    }) => {
+      const ids = (
+        ignoreFilter ? [...storedDocs.keys()] : (filter.match(/\d+/g) ?? []).map(Number)
+      ).sort((a, b) => a - b);
+      const docs = ids
+        .filter((id) => storedDocs.has(id))
+        .slice(0, limit)
+        .map((id) => ({ id, ...storedDocs.get(id), unrelated: true } as Record<string, unknown>));
+      const pick = (doc: Record<string, unknown>) =>
+        fields ? Object.fromEntries(fields.filter((f) => f in doc).map((f) => [f, doc[f]])) : doc;
+      return { results: docs.map(pick) };
+    }
+  );
+  dbMock.dbWrite.$queryRaw.mockImplementation(run);
+  // The fixed lookup: a refreshed entry holds the child tag, read past the per-process L1 only.
+  fetch.mockImplementation(async (ids: number[], opts?: { bypassLocal?: boolean }) =>
+    Object.fromEntries(
+      ids.map((id) => [id, { imageId: id, tags: opts?.bypassLocal ? [9001, CHILD] : [9001] }])
+    )
+  );
+  await db.exec(`
+    TRUNCATE "TagsOnImageDetails", "Image", "Post", "ModelVersion", "Model", "User", "Article",
+      "Model3D", "Collection", "CollectionItem";
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source, disabled) VALUES
+      (3, ${CHILD}, 'Rekognition', false), (3, 9001, 'WD14', false),
+      (2, ${CHILD}, 'Rekognition', false), (2, ${CHILD_2}, 'Rekognition', false),
+      (2, 9001, 'WD14', false),
+      (1, ${CHILD}, 'Rekognition', false), (1, 9001, 'WD14', false), (1, 9005, 'WD14', false),
+      (10, ${CHILD}, 'Rekognition', false),
+      (11, ${CHILD}, 'Rekognition', true), (11, 9001, 'WD14', false),
+      (12, ${OTHER}, 'Rekognition', false), (12, 9001, 'WD14', false),
+      (13, ${CHILD}, 'WD14', false),
+      (14, ${CHILD}, 'Rekognition', false), (14, 9001, 'WD14', true);
+    INSERT INTO "Image" (id, "postId") VALUES (1, 100), (2, 200), (3, NULL), (10, 300), (20, 200);
+    INSERT INTO "Post" (id, "modelVersionId", "userId") VALUES (100, 1000, 7), (200, NULL, 7), (300, 3000, 8);
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (1000, 50), (3000, 60);
+    INSERT INTO "Model" (id, "userId") VALUES (50, 7), (60, 8);
+    INSERT INTO "User" (id, "profilePictureId") VALUES (7, 2), (8, 10);
+    INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (500, 2, NULL), (501, NULL, 3), (502, 10, NULL);
+    INSERT INTO "Model3D" (id, "thumbnailImageId") VALUES (600, 1), (601, 10);
+    INSERT INTO "Collection" (id, "imageId", "userId") VALUES (70, 1, NULL), (71, 10, NULL),
+      (72, NULL, 1), (73, NULL, 1), (74, NULL, 1), (75, NULL, 1), (76, NULL, 1), (77, NULL, 1),
+      (78, NULL, 1), (79, NULL, 1), (80, NULL, 1), (81, NULL, 1), (82, NULL, 7), (83, NULL, 8);
+    INSERT INTO "CollectionItem" ("collectionId", "imageId", "postId", "modelId", "articleId", "model3dId") VALUES
+      (72, 3, NULL, NULL, NULL, NULL),
+      (73, NULL, 200, NULL, NULL, NULL),
+      (74, 10, NULL, NULL, NULL, NULL),
+      (75, NULL, NULL, 50, NULL, NULL),
+      (76, NULL, NULL, 60, NULL, NULL),
+      (77, NULL, NULL, NULL, 500, NULL),
+      (78, NULL, NULL, NULL, 501, NULL),
+      (79, NULL, NULL, NULL, 502, NULL),
+      (80, NULL, NULL, NULL, NULL, 600),
+      (81, NULL, NULL, NULL, NULL, 601);
+  `);
+});
+
+const refreshedIds = () => refresh.mock.calls.flatMap(([ids]) => ids);
+const queuedCollections = () => {
+  const items = collectionsQueueUpdate.mock.calls.flatMap(([items]) => items);
+  expect(items.every((x) => x.action === SearchIndexUpdateQueueAction.Update)).toBe(true);
+  return items.map((x) => x.id).sort();
+};
+
+describe('child-label reindex: bust', () => {
+  it('refreshes only Rekognition child labels, enabled, on images WD14 also tagged', async () => {
+    await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    // 10: no WD14. 11: label disabled. 12: not a child tag. 13: child tag from WD14 itself.
+    // 14: its only WD14 tag is disabled, so the cache lookup never drops its label.
+    // Ascending and once each, whatever the row order and however many tags an image has.
+    expect(refreshedIds()).toEqual([1, 2, 3]);
+    expect(fetch).toHaveBeenCalledWith(expect.any(Array), { bypassLocal: true, writeBack: false });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refreshes in chunks and reports the entries read back with the child tag', async () => {
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh.mock.calls).toEqual([[[1, 2]], [[3]]]);
+    expect(result).toMatchObject({
+      images: 3,
+      chunks: 2,
+      refreshed: 3,
+      verified: 3,
+      lastImageId: 3,
+    });
+  });
+
+  it('resumes above `after` and stops at maxChunks', async () => {
+    const result = await runChildLabelReindex({
+      step: 'bust',
+      dryRun: false,
+      chunkSize: 1,
+      after: 1,
+      maxChunks: 1,
+    });
+    expect(refreshedIds()).toEqual([2]);
+    expect(result).toMatchObject({ images: 1, chunks: 1, lastImageId: 2 });
+  });
+
+  it('stops after the first chunk when the refreshed entries still lack the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // Resuming from lastImageId re-runs the chunk that failed.
+    expect(result).toMatchObject({
+      refreshed: 2,
+      verified: 0,
+      lastImageId: 0,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('a stopped bust resumed above `after` hands back that same `after`', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({
+      step: 'bust',
+      dryRun: false,
+      chunkSize: 2,
+      after: 1,
+    });
+    expect(refreshedIds()).toEqual([2, 3]);
+    expect(result).toMatchObject({ lastImageId: 1, aborted: expect.any(String) });
+  });
+
+  it('stops when any entry of the first chunk lacks the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 1 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ verified: 1, aborted: expect.any(String) });
+  });
+
+  it('counts per image and does not stop when only a later chunk lacks the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 3 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ refreshed: 3, verified: 2, lastImageId: 3 });
+    expect(result).not.toHaveProperty('aborted');
+  });
+
+  it('a dry run counts and refreshes nothing', async () => {
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: true, chunkSize: 500 });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ images: 3, chunks: 1, refreshed: 0 });
+  });
+});
+
+describe('child-label reindex: reindex', () => {
+  it('queues the models and every collection that can show a selected image', async () => {
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: false, chunkSize: 500 });
+    // Collections whose stored document shows a selected image: 70 cover (1); 72 item image (3);
+    // 73 item post (200: image 2); 75 item model 50 (1); 77 article cover (2); 78 article banner
+    // (3); 80 3D thumbnail (1). Not 82: it reaches image 2 only through its owner's avatar, and
+    // its document shows none of them. Not 71/74/76/79/81/83: only image 10 or model 60.
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80]);
+    expect(result).toMatchObject({
+      images: 3,
+      collections: 7,
+      collectionsUnread: 0,
+      collectionsMissingEligible: 0,
+      collectionsMissingIneligible: 0,
+      collectionsQueued: 7,
+    });
+  });
+
+  it("queues a collection whose stored document still shows the image, whatever today's rows pick", async () => {
+    // Model 50's document was built when its first image was 1; only the document says so.
+    storedDocs.set(75, { images: [{ id: 999 }, { id: 1 }] });
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toContain(75);
+  });
+
+  it('skips a collection whose stored document no longer shows the image', async () => {
+    storedDocs.set(75, { images: [{ id: 31 }] });
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).not.toContain(75);
+  });
+
+  it('reads every document of a batch past the default page of 20', async () => {
+    const extra = Array.from({ length: 25 }, (_, i) => 900 + i);
+    for (const id of extra) storedDocs.set(id, { images: [{ id: 3 }] });
+    await db.exec(
+      `INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES ${extra
+        .map((id) => `(${id}, 3)`)
+        .join(',')}`
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual(expect.arrayContaining(extra));
+    expect(result).toMatchObject({
+      collections: 32,
+      collectionsMissingEligible: 0,
+      collectionsMissingIneligible: 0,
+      collectionsUnread: 0,
+    });
+  });
+
+  it('queues a candidate the index should hold but has no document for', async () => {
+    storedDocs.delete(72);
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toContain(72);
+    expect(result).toMatchObject({
+      collections: 7,
+      collectionsMissingEligible: 1,
+      collectionsMissingIneligible: 0,
+    });
+  });
+
+  for (const [why, sql] of [
+    ['private', `UPDATE "Collection" SET read = 'Private' WHERE id = 72`],
+    ['unsearchable', `UPDATE "Collection" SET availability = 'Unsearchable' WHERE id = 72`],
+  ])
+    it(`counts and does not queue a ${why} candidate, which the index never holds`, async () => {
+      storedDocs.delete(72);
+      await db.exec(sql);
+      const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+      expect(queuedCollections()).not.toContain(72);
+      expect(result).toMatchObject({
+        collections: 6,
+        collectionsMissingEligible: 0,
+        collectionsMissingIneligible: 1,
+      });
+    });
+
+  it('counts a missing candidate once across chunks', async () => {
+    // With one image per chunk, 72 is reached from images 1 and 3, so it is missing twice.
+    for (const id of [72, 78]) storedDocs.delete(id);
+    await db.exec(`UPDATE "Collection" SET read = 'Private' WHERE id IN (72, 78)`);
+    await db.exec(`INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES (72, 1)`);
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 1 });
+    expect(result).toMatchObject({ collectionsMissingIneligible: 2 });
+  });
+
+  it('treats a read that ignores the id filter as unread and queues the batch whole', async () => {
+    ignoreFilter = true;
+    // Sorts first, so it lands in the page the batch asked for.
+    storedDocs.set(1, { images: [{ id: 500 }] });
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80, 82]);
+    expect(result).toMatchObject({ collectionsUnread: 8, collectionsMissingIneligible: 0 });
+  });
+
+  it('queues only the batch whose documents it cannot read', async () => {
+    // One image per chunk; the first chunk's document read fails.
+    getDocuments.mockRejectedValueOnce(new Error('meili down'));
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 1 });
+    // Image 1's candidates 70, 75, 80 are queued unread; 82 is still read and skipped.
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80]);
+    expect(result).toMatchObject({ collectionsUnread: 3 });
+  });
+
+  it('stops before queuing anything when the collection lookup fails', async () => {
+    failCollectionLookup = true;
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 500,
+      after: 0,
+    });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ lastImageId: 0, done: false, aborted: expect.any(String) });
+  });
+
+  for (const probe of ['throws', 'missing'] as const)
+    it(`stops before queuing anything when the cover leg cannot run (probe ${probe})`, async () => {
+      coverProbe = probe;
+      const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+      expect(queueModelsReindex).not.toHaveBeenCalled();
+      expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ lastImageId: 0, done: false, aborted: expect.any(String) });
+    });
+
+  it('queues every candidate it cannot read the documents of', async () => {
+    getDocuments.mockRejectedValue(new Error('meili down'));
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80, 82]);
+    expect(result).toMatchObject({ collections: 8, collectionsUnread: 8 });
+  });
+
+  it('resumes above `after` and stops at maxChunks', async () => {
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 1,
+      after: 1,
+      maxChunks: 1,
+    });
+    // Image 2 only: 73 item post 200, 77 article cover. Not 82, reached by the avatar.
+    expect(queuedCollections()).toEqual([73, 77]);
+    expect(result).toMatchObject({ images: 1, lastImageId: 2 });
+  });
+
+  it('refuses to queue while cached entries still lack the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(fetch).toHaveBeenCalledWith([1, 3], { bypassLocal: true, writeBack: false });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      probe: 2,
+      probeVerified: 0,
+      lastImageId: 0,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('a reindex stopped above `after` hands back that same `after`', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 2,
+      after: 1,
+    });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      images: 2,
+      lastImageId: 1,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('a dry run over stale entries counts and does not stop', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: true, chunkSize: 2 });
+    expect(result).toMatchObject({
+      probe: 3,
+      probeVerified: 0,
+      collections: 7,
+      collectionsQueued: 0,
+    });
+    expect(result).not.toHaveProperty('aborted');
+    expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 2 });
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('looks up models and collections a chunk of images at a time', async () => {
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
+    const modelLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([sql]) =>
+      (sql as unknown as Prisma.Sql).text?.includes('"ModelVersion"')
+    );
+    expect(modelLookups.map(([sql]) => (sql as unknown as Prisma.Sql).values[0])).toEqual([
+      [1, 2],
+      [3],
+    ]);
+  });
+
+  it('refuses to queue after a bust that stopped before the last chunk', async () => {
+    // A bust with chunkSize 2 that stopped after its first chunk: only images 1 and 2 are fixed.
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 3 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ probe: 3, probeVerified: 2, aborted: expect.any(String) });
+  });
+
+  it('a dry run counts and queues nothing', async () => {
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: true, chunkSize: 500 });
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+    expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 500 });
+    expect(result).toMatchObject({ collections: 7, collectionsQueued: 0 });
+  });
+});
+
+describe('child-label reindex: done', () => {
+  for (const step of ['bust', 'reindex'] as const) {
+    it(`step=${step} past maxChunks is not done and resumes after the last selected image`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 1,
+        maxChunks: 2,
+      });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+
+    it(`step=${step} whose selection runs out within maxChunks is done`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 2,
+        maxChunks: 5,
+      });
+      expect(result).toMatchObject({ images: 3, lastImageId: 3, done: true });
+    });
+
+    it(`a dry run of step=${step} reports done the same way`, async () => {
+      const result = await runChildLabelReindex({ step, dryRun: true, chunkSize: 1, maxChunks: 2 });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+  }
+});

@@ -27,10 +27,14 @@ vi.mock('~/server/db/kyselyDb', () => ({
   get kyselyV3Read() {
     return holder.kysely;
   },
+  get kyselyWrite() {
+    return holder.kysely;
+  },
 }));
 
 const {
   getCsamContextCandidates,
+  readHeldCsamContextText,
   snapshotCsamContextText,
   reportedUserIdsOf,
   foldContextText,
@@ -80,12 +84,19 @@ CREATE TABLE "Post" (
   "createdAt" TIMESTAMP(3) NOT NULL, "publishedAt" TIMESTAMP(3)
 );
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "userId" INTEGER NOT NULL);
-CREATE TABLE "Thread" (
-  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "imageId" INTEGER, "rootThreadId" INTEGER
+CREATE TABLE "PostText" (
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "index" INTEGER NOT NULL, "content" TEXT NOT NULL,
+  "userId" INTEGER NOT NULL DEFAULT 20, "csamHeld" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-10-02', "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-10-02'
 );
-CREATE TABLE "CommentV2" (
-  "id" INTEGER PRIMARY KEY, "threadId" INTEGER NOT NULL, "userId" INTEGER NOT NULL,
-  "content" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, "hidden" BOOLEAN DEFAULT false
+CREATE TABLE "TextScanHold" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "label" TEXT NOT NULL, "status" TEXT NOT NULL, "decidedById" INTEGER, "decidedAt" TIMESTAMP(3),
+  "meta" JSONB, "createdAt" TIMESTAMP(3) NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
+  "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 CREATE TABLE "CommentV3" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -106,24 +117,18 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(
-    `TRUNCATE "Post", "Image", "Thread", "CommentV2", "CommentV3";
+    `TRUNCATE "Post", "Image", "CommentV3", "PostText", "TextScanHold", "ModActivity";
      INSERT INTO "Post" VALUES (100, ${OWNER}, '<p>caption &amp; <b>more</b></p>', '2026-10-01', '2026-10-02 08:30');
      INSERT INTO "Post" VALUES (200, ${OTHER}, '<p>unrelated post</p>', '2026-10-01', NULL);
      INSERT INTO "Post" VALUES (501, ${OTHER}, 'a post sharing an image id', '2026-10-01', NULL);
      INSERT INTO "Image" VALUES (501, 100, ${OWNER}), (502, NULL, ${OWNER}), (601, 200, ${OTHER});
-     INSERT INTO "Thread" VALUES (1, 100, NULL, NULL), (2, NULL, 502, NULL), (3, NULL, NULL, 1), (4, 200, NULL, NULL), (5, 501, NULL, NULL);
      INSERT INTO "CommentV3" VALUES
        (11, 'post', 100, ${OTHER}, '<p>v3 on the post</p>', '2026-10-03', NULL, false),
        (12, 'image', 501, ${OWNER}, 'v3 on the image', '2026-10-04', '2026-10-05', false),
        (13, 'post', 200, ${OWNER}, 'v3 on an unrelated post', '2026-10-04', NULL, false),
-       (21, 'post', 100, ${OTHER}, 'mirrored copy of 21', '2026-10-03', NULL, false),
-       (14, 'post', 501, ${OTHER}, 'v3 on post 501, not image 501', '2026-10-04', NULL, false);
-     INSERT INTO "CommentV2" VALUES
-       (21, 1, ${OTHER}, 'v2 original of 21', '2026-10-03', false),
-       (22, 3, ${OWNER}, 'v2 reply in the post thread', '2026-10-06', false),
-       (23, 2, ${OTHER}, 'v2 on the loose image', '2026-10-07', true),
-       (24, 4, ${OTHER}, 'v2 on an unrelated post', '2026-10-07', false),
-       (25, 5, ${OTHER}, 'v2 on post 501, not image 501', '2026-10-07', false);`
+       (14, 'post', 501, ${OTHER}, 'v3 on post 501, not image 501', '2026-10-04', NULL, false),
+       (22, 'post', 100, ${OWNER}, 'a reply on the post', '2026-10-06', NULL, false),
+       (23, 'image', 502, ${OTHER}, 'on the loose image', '2026-10-07', NULL, true);`
   );
 });
 
@@ -131,7 +136,7 @@ const ids = (rows: { source: string; id: number }[]) =>
   rows.map((r) => `${r.source}:${r.id}`).sort();
 
 describe('candidates', () => {
-  it("lists the images' post descriptions and comments from both tables, each once", async () => {
+  it("lists the images' post descriptions and comments", async () => {
     const { candidates: rows, more } = await getCsamContextCandidates({
       userId: OWNER,
       imageIds: [501, 502],
@@ -139,16 +144,8 @@ describe('candidates', () => {
     expect(more).toBe(false);
 
     expect(ids(rows)).toEqual(
-      [
-        'postDescription:100',
-        'comment:11',
-        'comment:12',
-        'comment:21',
-        'comment:22',
-        'comment:23',
-      ].sort()
+      ['postDescription:100', 'comment:11', 'comment:12', 'comment:22', 'comment:23'].sort()
     );
-    expect(rows.find((r) => r.id === 21)?.text).toBe('mirrored copy of 21');
     expect(rows.find((r) => r.source === 'postDescription')?.text).toBe('caption & more');
     expect(rows.find((r) => r.id === 22)).toMatchObject({ postId: 100 });
     expect(rows.find((r) => r.id === 23)).toMatchObject({ imageId: 502, hidden: true });
@@ -157,11 +154,21 @@ describe('candidates', () => {
     expect(rows.find((r) => r.id === 22)).toMatchObject({ authorIsReportedUser: true });
   });
 
+  it("adds the post's storyline text items to its text, in reading order", async () => {
+    await db.pg.exec(`
+      INSERT INTO "PostText" VALUES (1, 100, 5, '<p>second</p>'), (2, 100, 1, '<p>first</p>'),
+        (3, 100, 9, '');
+    `);
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(candidates.find((r) => r.source === 'postDescription')?.text).toBe(
+      'caption & more\n\nfirst\n\nsecond'
+    );
+  });
+
   it('says more comments exist past the page size, listing each once', async () => {
     await db.pg.exec(`
       INSERT INTO "CommentV3" SELECT g, 'image', 502, ${OTHER}, 'c' || g, '2026-10-01', NULL, false
-        FROM generate_series(1000, 1600) g;
-      INSERT INTO "CommentV2" SELECT g, 2, ${OTHER}, 'c' || g, '2026-10-01', false
         FROM generate_series(1000, 1600) g;
     `);
     const { candidates, more } = await getCsamContextCandidates({ userId: OWNER, imageIds: [502] });
@@ -232,11 +239,9 @@ describe('snapshot', () => {
 
   it.each([
     ['a comment on a post outside the report', { postIds: [], commentIds: [13] }],
-    ['a V2 comment on a post outside the report', { postIds: [], commentIds: [24] }],
     ['a post outside the report', { postIds: [200], commentIds: [] }],
     ['an id that does not exist', { postIds: [], commentIds: [999] }],
     ['a comment on a post whose id is a report image id', { postIds: [], commentIds: [14] }],
-    ['a V2 comment on a post whose id is a report image id', { postIds: [], commentIds: [25] }],
   ])('refuses %s', async (_, sources) => {
     await expect(snapshot(sources)).rejects.toThrow(/not on the images in this report/);
   });
@@ -362,5 +367,143 @@ describe('what NCMEC is sent', () => {
         CSAM_CONTEXT_TEXT_MAX_CHARS
       )}"\n[Truncated: 7 further characters are preserved by Civitai with this report.]`
     );
+  });
+});
+
+describe('held text items', () => {
+  const MOD_B = 11;
+  // Item 1 is unheld; 2 has a Pending hold; 3 is held by its flag alone; 4's hold was confirmed
+  // on its own, 5's in a batch.
+  beforeEach(async () => {
+    await db.pg.exec(`
+      INSERT INTO "PostText" ("id", "postId", "index", "content", "csamHeld") VALUES
+        (1, 100, 1, '<p>open words</p>', false), (2, 100, 2, '<p>pending words</p>', false),
+        (3, 100, 3, '<p>flagged words</p>', true), (4, 100, 4, '<p>decided words</p>', true),
+        (5, 100, 5, '<p>batched words</p>', true);
+      INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "decidedById", "decidedAt", "meta", "createdAt", "updatedAt") VALUES
+        ('PostText', 2, 'csam', 'Pending', NULL, NULL, '{}', '2026-10-03', '2026-10-03'),
+        ('PostText', 4, 'csam', 'Confirmed', ${MOD_B}, '2026-10-04', '{"decision":"confirm","reviewedDecision":true}', '2026-10-03', '2026-10-04'),
+        ('PostText', 5, 'csam', 'Confirmed', ${MOD_B}, '2026-10-04', '{"decision":"confirm","reviewedDecision":false}', '2026-10-03', '2026-10-04');
+    `);
+  });
+
+  const snapshot = (capturedById = MOD, capturedAt = at(8)) =>
+    snapshotCsamContextText({
+      imageIds: [501],
+      sources: { postIds: [100], commentIds: [] },
+      reportedUserIds: [OWNER],
+      capturedById,
+      capturedAt,
+    });
+  const read = (postTextId: number, moderatorId = MOD) =>
+    readHeldCsamContextText({ userId: OWNER, imageIds: [501], postTextId, moderatorId });
+  const readAt = (postTextId: number, moderatorId: number, when: string) =>
+    db.pg.query(
+      `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId", "createdAt")
+       VALUES ($1, 'csamContextTextRead', 'PostText', $2, $3)`,
+      [moderatorId, postTextId, when]
+    );
+  const byId = (rows: { source: string; id: number }[], id: number) =>
+    rows.find((r) => r.source === 'postText' && r.id === id) as
+      | { reviewed?: { byId: number; at: string }; text: string }
+      | undefined;
+
+  it('are captured on their own, not inside the post text, and their words are not previewed', async () => {
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(candidates.find((r) => r.source === 'postDescription')?.text).toBe(
+      'caption & more\n\nopen words'
+    );
+    expect(candidates.filter((r) => r.source === 'postText').map((r) => r.id)).toEqual([
+      2, 3, 4, 5,
+    ]);
+    expect(candidates.filter((r) => r.source === 'postText').every((r) => r.text === '')).toBe(
+      true
+    );
+  });
+
+  it('go out marked not reviewed, unless confirmed on their own; filing alone marks nothing', async () => {
+    const rows = await snapshot();
+
+    expect(byId(rows, 2)?.reviewed).toBeUndefined();
+    expect(byId(rows, 3)?.reviewed).toBeUndefined();
+    expect(byId(rows, 5)?.reviewed).toBeUndefined();
+    expect(byId(rows, 4)?.reviewed).toEqual({
+      byId: MOD_B,
+      at: at(4).toISOString().replace('14:05', '00:00'),
+    });
+    const [incident] = contextWebPageIncidents(rows);
+    expect(incident.additionalInfo).toContain(
+      `Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed by Civitai:\n"pending words"`
+    );
+    expect(incident.additionalInfo).toContain(
+      'Text item 4 of this post, posted 10/02/2026 00:00 UTC by the reported account:\n"decided words"'
+    );
+    // Reading order: description, then items 2-5.
+    expect(incident.additionalInfo.indexOf('pending words')).toBeLessThan(
+      incident.additionalInfo.indexOf('batched words')
+    );
+  });
+
+  it("are marked reviewed by the filing moderator's own read, with who and when", async () => {
+    const result = await read(2);
+    expect(result.text).toBe('pending words');
+
+    const rows = await snapshot(MOD, new Date());
+    expect(byId(rows, 2)?.reviewed).toEqual({ byId: MOD, at: result.readAt });
+    expect(contextWebPageIncidents(rows)[0].additionalInfo).not.toContain(
+      'Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed'
+    );
+  });
+
+  it("are not marked reviewed by another moderator's read", async () => {
+    await read(2, MOD_B);
+
+    expect(byId(await snapshot(MOD, new Date()), 2)?.reviewed).toBeUndefined();
+    expect(byId(await snapshot(MOD_B, new Date()), 2)?.reviewed).toMatchObject({ byId: MOD_B });
+  });
+
+  it('are not marked reviewed by a read from before the hold last changed, or after filing', async () => {
+    await readAt(2, MOD, '2026-10-02 12:00');
+    await readAt(3, MOD, '2026-10-09 12:00');
+
+    const rows = await snapshot();
+    expect(byId(rows, 2)?.reviewed).toBeUndefined();
+    expect(byId(rows, 3)?.reviewed).toBeUndefined();
+  });
+
+  it('can be read only as held text on the report images', async () => {
+    await expect(read(1)).rejects.toThrow(/not held text/);
+    await expect(
+      readHeldCsamContextText({ userId: OWNER, imageIds: [502], postTextId: 2, moderatorId: MOD })
+    ).rejects.toThrow(/not held text/);
+    const { rows } = await db.pg.query('SELECT 1 FROM "ModActivity"');
+    expect(rows).toHaveLength(0);
+  });
+
+  it('leave their holds and flags as they were', async () => {
+    const before = await db.pg.query('SELECT * FROM "TextScanHold" ORDER BY id');
+    const flags = await db.pg.query('SELECT id, "csamHeld" FROM "PostText" ORDER BY id');
+    await read(2);
+    await snapshot();
+
+    expect((await db.pg.query('SELECT * FROM "TextScanHold" ORDER BY id')).rows).toEqual(
+      before.rows
+    );
+    expect((await db.pg.query('SELECT id, "csamHeld" FROM "PostText" ORDER BY id')).rows).toEqual(
+      flags.rows
+    );
+  });
+
+  it('let a post holding only held text be ticked, sending no empty description', async () => {
+    await db.pg.exec(
+      `UPDATE "Post" SET detail = NULL WHERE id = 100; DELETE FROM "PostText" WHERE id = 1;`
+    );
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+    expect(candidates.some((c) => c.source === 'postDescription' && c.id === 100)).toBe(true);
+
+    const rows = await snapshot();
+    expect(rows.some((r) => r.source === 'postDescription')).toBe(false);
+    expect(rows.filter((r) => r.source === 'postText')).toHaveLength(4);
   });
 });

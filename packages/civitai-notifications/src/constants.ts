@@ -44,4 +44,10 @@ export const emailNotificationTypes: readonly string[] = [
   'service-deal-cancellation-requested',
   'service-deal-completed',
   'service-deal-paid-out',
+  'app-block-approved',
+  'app-block-rejected',
+  'app-listing-rejected',
+  'app-listing-reset-to-pending',
+  'app-access-request-approved',
+  'app-access-request-declined',
 ];

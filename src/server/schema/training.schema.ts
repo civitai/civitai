@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { autoCaptionSchema, autoLabelLimits } from '~/store/training.store';
 
 // Auto-label workflow batches map 1 step per image; the orchestrator can ingest larger
@@ -114,7 +113,7 @@ export const getTrainingEpochArchiveSchema = z.object({
 export const trainingServiceStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
-  blockedModels: z.array(z.string()).optional().default(blockedCustomModels),
+  blockedModels: z.array(z.string()).optional().default([]),
   // Optional note per blocked key. A malformed value drops the notes, never the blocks.
   blockedModelReasons: z.record(z.string(), z.string()).optional().default({}).catch({}),
 });

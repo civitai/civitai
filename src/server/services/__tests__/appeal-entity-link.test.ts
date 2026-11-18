@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as EmailTemplates from '~/server/email/templates';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as UrlHelpers from '~/server/utils/url-helpers';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   appealEntityLink,
   getAppealDetails,
@@ -12,6 +15,17 @@ const { mockCreateNotification } = vi.hoisted(() => ({ mockCreateNotification: v
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: mockCreateNotification,
+}));
+
+const { mockSendEmail } = vi.hoisted(() => ({ mockSendEmail: vi.fn() }));
+vi.mock('~/server/email/templates', async (importOriginal) => ({
+  ...(await importOriginal<typeof EmailTemplates>()),
+  moderationActionEmail: { send: mockSendEmail },
+}));
+
+vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof UrlHelpers>()),
+  getBaseUrl: (color?: string) => (color ? `https://${color}.test` : 'https://pod.test'),
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -118,5 +132,93 @@ describe('resolveEntityAppeal — resolved notification key', () => {
       `entity-appeal-resolved:Bounty:9:11:${first.getTime()}`,
       `entity-appeal-resolved:Bounty:9:11:${second.getTime()}`,
     ]);
+  });
+});
+
+describe('resolveEntityAppeal — email links go to the domain that serves the item', () => {
+  const appealRow = (entityId: number, entityType: EntityType = EntityType.Model) => ({
+    id: entityId,
+    entityId,
+    entityType,
+    resolvedAt: null,
+    buzzTransactionId: null,
+    status: AppealStatus.Pending,
+    userId: 5,
+    createdAt: new Date('2026-09-01T00:00:00Z'),
+  });
+
+  it('links mature, mixed-rating and unrated models to .red, PG models to the pod host, and a missing row to .red', async () => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue(
+      [1, 2, 3, 4, 5].map((id) => appealRow(id))
+    );
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      { id: 1, nsfwLevel: NsfwLevel.X },
+      { id: 2, nsfwLevel: NsfwLevel.PG },
+      { id: 3, nsfwLevel: NsfwLevel.PG | NsfwLevel.X },
+      { id: 4, nsfwLevel: 0 },
+    ]);
+
+    await resolveEntityAppeal({
+      ids: [1, 2, 3, 4, 5],
+      entityType: EntityType.Model,
+      status: AppealStatus.Rejected,
+      userId: 3,
+    });
+
+    const urls = mockSendEmail.mock.calls[0][0].items.map((i: { url?: string }) => i.url);
+    expect(urls).toEqual([
+      'https://red.test/models/1',
+      'https://pod.test/models/2',
+      'https://red.test/models/3',
+      'https://red.test/models/4',
+      'https://red.test/models/5',
+    ]);
+  });
+
+  const resolve = () =>
+    resolveEntityAppeal({
+      ids: [7],
+      entityType: EntityType.Model,
+      status: AppealStatus.Rejected,
+      userId: 3,
+    });
+  const sentUrls = () => mockSendEmail.mock.calls[0][0].items.map((i: { url?: string }) => i.url);
+
+  it('rates each entity type from its own table, sends a bounty marked mature to .red, and leaves unrated types on the pod host', async () => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([
+      appealRow(7, EntityType.Image),
+      appealRow(7, EntityType.Model),
+      appealRow(7, EntityType.Bounty),
+      appealRow(8, EntityType.Bounty),
+      appealRow(7, EntityType.Storyline),
+    ]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 7, nsfwLevel: NsfwLevel.PG }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 7, nsfwLevel: NsfwLevel.R }]);
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      { id: 7, nsfwLevel: NsfwLevel.PG13, nsfw: false },
+      { id: 8, nsfwLevel: NsfwLevel.PG, nsfw: true },
+    ]);
+
+    await resolve();
+
+    expect(sentUrls()).toEqual([
+      'https://pod.test/images/7',
+      'https://red.test/models/7',
+      'https://pod.test/bounties/7',
+      'https://red.test/bounties/8',
+      'https://pod.test/storylines/7',
+    ]);
+  });
+
+  it('still sends the email, linking to .red, when the rating read fails', async () => {
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([appealRow(7)]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 5, email: 'a@b.test', username: 'a' }]);
+    dbMock.dbRead.model.findMany.mockRejectedValue(new Error('read failed'));
+
+    await resolve();
+
+    expect(sentUrls()).toEqual(['https://red.test/models/7']);
   });
 });

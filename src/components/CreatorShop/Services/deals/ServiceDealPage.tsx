@@ -145,7 +145,8 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
   // A mature deal opened on green redirects to red. Exits stay open on the server either way.
   return (
     <Gated contentNsfwLevel={deal.maxNsfwLevel} meta={{ title: 'Service deal', deIndex: true }}>
-      <Stack gap="lg" py="md">
+      {/* Room under the last card for the fixed footer bar and its floating buttons on a phone. */}
+      <Stack gap="lg" pt="md" pb={{ base: 96, sm: 'md' }}>
         <Stack gap={4}>
           <Text size="sm" c="dimmed">
             Deal #{deal.id} ·{' '}

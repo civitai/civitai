@@ -1,4 +1,8 @@
-import { ecosystemDefaultVersion, findByAir, MODEL_CARDS } from './data/trainingModels';
+import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
+} from '@civitai/shared/training-custom-model';
+import { ecosystemDefaultVersion, findByAir, isFlux2, MODEL_CARDS } from './data/trainingModels';
 
 // The training service status the main app's moderators set (`training.setStatus`, stored in the sys
 // redis `training:status` hash field). `blockedModels` holds the main app's `trainingDetails.baseModel`
@@ -39,6 +43,17 @@ export function parseServiceStatus(raw: unknown): TrainingServiceStatus {
   };
 }
 
+export const FLUX2_UNAVAILABLE_REASON = 'Use another base model for now.';
+
+// The Flux.2 engines' step (`imageResourceTraining`) takes the dataset as one zip URL, and the Studio
+// holds its datasets as blobs it can't bundle with their captions. Down until the orchestrator takes
+// blobs there; whatever the moderator status says.
+const STUDIO_UNAVAILABLE: ReadonlyMap<string, string> = new Map(
+  MODEL_CARDS.flatMap((c) => c.versions)
+    .filter((v) => isFlux2(v.engine))
+    .map((v) => [v.key, FLUX2_UNAVAILABLE_REASON])
+);
+
 const CATALOG_KEYS = new Set(MODEL_CARDS.flatMap((c) => c.versions.map((v) => v.key)));
 
 /** The status the browser gets: blocked catalog models and their notes only. Blocked custom-model AIRs
@@ -61,6 +76,8 @@ export function modelUnavailability(
   status: TrainingServiceStatus | null | undefined,
   key: string
 ): { reason: string | null } | null {
+  const studioReason = STUDIO_UNAVAILABLE.get(key);
+  if (studioReason) return { reason: studioReason };
   if (!status?.blockedModels.includes(key)) return null;
   return { reason: status.blockedModelReasons[key] ?? null };
 }
@@ -79,16 +96,14 @@ export function blockedRunMessage(
   run: RunModelRef,
   status: TrainingServiceStatus | null | undefined
 ): string | null {
-  if (!status) return null;
   // The checkpoint the run trains, as the submit sends it: a custom base wins over the pinned base AIR,
   // and a run naming neither trains on the ecosystem's default base.
   const trained = run.customModel || run.model;
+  if (trained && isBlockedCustomModel(trained)) return BLOCKED_CUSTOM_MODEL_MESSAGE;
   const match = trained ? findByAir(trained) : ecosystemDefaultVersion(run);
   if (!match) {
     // Not a catalog checkpoint: a custom base, refused only when that AIR itself is blocked.
-    return trained && status.blockedModels.includes(trained)
-      ? 'This custom model is blocked from training. Pick another.'
-      : null;
+    return trained && status?.blockedModels.includes(trained) ? BLOCKED_CUSTOM_MODEL_MESSAGE : null;
   }
   const down = modelUnavailability(status, match.version.key);
   if (!down) return null;

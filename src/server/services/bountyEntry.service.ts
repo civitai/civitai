@@ -18,6 +18,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -112,6 +113,26 @@ export const getBountyEntryEarnedBuzz = async ({
   return data;
 };
 
+export const BOUNTY_ENTRY_LIMIT_REACHED =
+  'You have reached the maximum number of entries for this bounty';
+
+// Locks the same Bounty row, the same way, as `lockBountyForPayout`, so a create racing an award
+// or refund waits rather than deadlocks, and reads `complete` as the payout left it.
+async function assertEntryAllowedUnderLock(
+  tx: Prisma.TransactionClient,
+  { bountyId, userId }: { bountyId: number; userId: number }
+) {
+  const [bounty] = await tx.$queryRaw<{ entryLimit: number; complete: boolean }[]>`
+    SELECT "entryLimit", complete FROM "Bounty" WHERE id = ${bountyId} FOR UPDATE
+  `;
+  if (!bounty) throw throwBadRequestError('Bounty not found');
+  if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+
+  const existing = await tx.bountyEntry.count({ where: { bountyId, userId } });
+  if (bounty.entryLimit && existing >= bounty.entryLimit)
+    throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
+}
+
 export const upsertBountyEntry = async ({
   id,
   bountyId,
@@ -120,7 +141,15 @@ export const upsertBountyEntry = async ({
   images,
   description,
   userId,
-}: UpsertBountyEntryInput & { userId: number }) => {
+  shownImageIds,
+  replaceImages,
+}: UpsertBountyEntryInput & {
+  userId: number;
+  /** Replace every linked image, for a caller that never read the entry's images. */
+  replaceImages?: boolean;
+}) => {
+  if (!id && images?.length === 0)
+    throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
@@ -153,6 +182,8 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
+          shownImageIds: replaceImages ? 'all' : shownImageIds,
+          maxLinked: constants.bounties.maxEntryImagesForEdit,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -160,6 +191,11 @@ export const upsertBountyEntry = async ({
 
       return entry;
     } else {
+      // First statement of the create: the controller's limit check reads outside this
+      // transaction, so two parallel submits could both pass it. The row lock makes the second
+      // wait and then count the first one's committed entry.
+      await assertEntryAllowedUnderLock(tx, { bountyId, userId });
+
       const entry = await tx.bountyEntry.create({
         data: {
           bountyId,
@@ -215,7 +251,7 @@ export const upsertBountyEntry = async ({
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
   const logData = { entryId: id, userId, bountyId: 0 };
   const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
-    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
+    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra });
 
   await log('info', 'Award bounty entry started');
   const fileCheckOn = await isBountyEntryFileCheckOn();

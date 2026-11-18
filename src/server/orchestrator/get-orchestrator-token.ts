@@ -11,7 +11,7 @@ import {
   decodeOwnedToken,
   encodeOwnedToken,
 } from '~/server/orchestrator/orchestrator-token-identity';
-import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -19,8 +19,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** The caller's request, whose credential is checked. Server-side callers with no request in hand
  *  (e.g. the publish → workflow stamp) omit it. */
@@ -87,7 +86,7 @@ export async function getOrchestratorToken(
     // ~11min on every authenticated generation call. A fast DOWN already
     // rejects into the catch below; the SLOW half-open needs the race.
     const raw = decodeRedisString(
-      await withSysReadDeadline(
+      await withSysReadBreaker(
         sysRedis.hGet<string | Buffer>(REDIS_KEYS.GENERATION.TOKENS_OWNED, redisKey)
       )
     );
@@ -193,7 +192,7 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
   const credential = getRequestCredential(ctx.req);
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
-  if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+  if (!presentedBearer || hasScope(tokenScope, TokenScope.AIServicesWrite)) return;
 
   const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
     .context?.session?.user;

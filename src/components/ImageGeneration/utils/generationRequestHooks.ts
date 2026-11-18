@@ -452,7 +452,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         }
 
         const clone = cloneDeep(metadata) as Record<string, unknown>;
-        applyPatch(clone, jsonPatch.operations);
+        applyPatch(clone, jsonPatch.operations as Parameters<typeof applyPatch>[1]);
         const patchedOutput =
           (clone.output as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};
         // Per-id merge of legacy and patched state. Used for tag-sync checks and the

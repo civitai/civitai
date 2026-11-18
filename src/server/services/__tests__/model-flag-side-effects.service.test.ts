@@ -11,12 +11,20 @@ const {
   mockModelTagRefresh,
   mockModelVotableBust,
   mockModelsQueueUpdate,
+  mockCollectionsReindex,
+  mockArticlesReindex,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
+  mockPurgeShowcaseEdge,
+  mockQueueImageDocuments,
 } = vi.hoisted(() => ({
+  mockQueueImageDocuments: vi.fn(async () => undefined),
+  mockPurgeShowcaseEdge: vi.fn(),
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
+  mockCollectionsReindex: vi.fn(),
+  mockArticlesReindex: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
 }));
@@ -38,10 +46,17 @@ vi.mock('~/server/redis/caches', () => ({
   userModelCountCache: { refresh: vi.fn() },
 }));
 
+vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelCollectionsReindex: mockCollectionsReindex,
+}));
+vi.mock('~/server/services/article-cover-reindex', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelArticlesReindex: mockArticlesReindex,
+}));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -77,12 +92,16 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueModelsForImageChildTagChanges: mockQueueImageDocuments,
+}));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: mockBustMvCache,
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
+  purgePublicModelShowcaseEdgeCache: mockPurgeShowcaseEdge,
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
@@ -219,6 +238,26 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     expect(mockBustMvCache).toHaveBeenCalledWith([100], 42);
   });
 
+  it('rebuilds the articles its images cover when minor changes, and not otherwise', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
+    expect(mockArticlesReindex).toHaveBeenCalledTimes(1);
+    expect(mockArticlesReindex).toHaveBeenCalledWith(42);
+
+    mockArticlesReindex.mockClear();
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter } });
+    expect(mockArticlesReindex).not.toHaveBeenCalled();
+  });
+
+  it('🔴 requeues the documents showing the images it flagged minor', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
+    expect(mockQueueImageDocuments).toHaveBeenCalledWith({ minorImageIds: [900] });
+  });
+
+  it('does not requeue them for a poi-only change (control)', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(mockQueueImageDocuments).not.toHaveBeenCalled();
+  });
+
   it('skips image propagation entirely when neither minor nor poi changed', async () => {
     await applyModelFlagSideEffects({
       before: baseBefore,
@@ -344,5 +383,61 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
     });
 
     expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
+  });
+});
+
+describe('applyModelFlagSideEffects — public API edge cache', () => {
+  it.each([
+    ['minor', { minor: true }],
+    ['SFW-only', { sfwOnly: true }],
+  ])('purges the edge copies of every version when %s is set', async (_name, flags) => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, ...flags } });
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['minor', { minor: true }],
+    ['SFW-only', { sfwOnly: true }],
+  ])('purges when the gallery level of a %s model changes', async (_name, flags) => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, ...flags },
+      after: { ...baseAfter, ...flags, gallerySettings: { level: 4 } },
+    });
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    // The search document carries the showcase, so it is rebuilt at the new level.
+    expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
+    expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
+    // Collection documents carry covers judged at the gallery level too.
+    expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
+    // So do the documents of articles whose cover or banner is on the model.
+    expect(mockArticlesReindex).toHaveBeenCalledTimes(1);
+    expect(mockArticlesReindex).toHaveBeenCalledWith(42);
+  });
+
+  it('does not purge when the gallery level of an unheld model changes', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, gallerySettings: { level: 4 } },
+    });
+    expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
+    expect(mockArticlesReindex).not.toHaveBeenCalled();
+  });
+
+  it('does not purge when only poi changes', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();
+  });
+
+  it('keeps the flag change when the purge fails', async () => {
+    mockPurgeShowcaseEdge.mockRejectedValueOnce(new Error('cloudflare down'));
+    await expect(
+      applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } })
+    ).resolves.toBeUndefined();
+    expect(mockBustMvCache).toHaveBeenCalled();
   });
 });

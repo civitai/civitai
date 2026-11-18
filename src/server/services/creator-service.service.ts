@@ -1,6 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import type { ImageReferenceInput } from '~/server/schema/image.schema';
+import { profileImageSelect } from '~/server/selectors/image.selector';
+import { withServableImage } from '~/server/common/image-visibility';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import { isImageOwner } from '~/server/services/util.service';
+import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
+import {
+  requeueBlockedServiceOffering,
+  scanServiceOffering,
+} from '~/server/services/service-offering-moderation.adapter';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
@@ -13,7 +25,9 @@ import {
 import { NotificationCategory } from '~/server/common/enums';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
+  GetServiceOfferingFeedInput,
   GetShopServiceOfferingsInput,
+  ServiceOfferingFeedSort,
   SetServiceOfferingStatusInput,
   TakedownServiceOfferingInput,
   UpsertServiceOfferingInput,
@@ -21,6 +35,7 @@ import type {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { NsfwLevel } from '~/server/common/enums';
@@ -37,7 +52,13 @@ import {
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
-import { ServiceOfferingStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { escapeLike } from '~/server/utils/ilike';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+  StrikeStatus,
+} from '~/shared/utils/prisma/enums';
 
 export const serviceOfferingSelect = {
   id: true,
@@ -52,6 +73,16 @@ export const serviceOfferingSelect = {
   status: true,
   createdAt: true,
   updatedAt: true,
+  coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
+} satisfies Prisma.ServiceOfferingSelect;
+
+/** What only the seller and moderators see: the seller's own rating and the content check. */
+const ownServiceOfferingSelect = {
+  ...serviceOfferingSelect,
+  coverImage: { select: { ...profileImageSelect, needsReview: true, tosViolation: true } },
+  declaredNsfwLevel: true,
+  ingestion: true,
+  sellerAffirmation: true,
 } satisfies Prisma.ServiceOfferingSelect;
 
 /**
@@ -185,7 +216,7 @@ export async function getMyServiceOfferings({
   const [rows, hiddenOffDomain] = await Promise.all([
     dbRead.serviceOffering.findMany({
       where: { ...where, maxNsfwLevel: { in: shown } },
-      select: { ...serviceOfferingSelect, sellerAffirmation: true },
+      select: ownServiceOfferingSelect,
       orderBy: { createdAt: 'desc' },
     }),
     shown.length === SERVICE_OFFERING_RATINGS.length
@@ -195,9 +226,61 @@ export async function getMyServiceOfferings({
   const items = rows.map(({ sellerAffirmation, ...offering }) => ({
     ...offering,
     termsAffirmed: hasCurrentAffirmation(sellerAffirmation),
+    review: serviceOfferingReviewState(offering),
   }));
   return { items, hiddenOffDomain };
 }
+
+export type ServiceOfferingReviewState = 'reviewing' | 'held' | null;
+
+/** What the seller is told about their offering's content checks; null once it can be shown. */
+export function serviceOfferingReviewState(offering: {
+  ingestion: ServiceOfferingIngestionStatus;
+  coverImage: {
+    ingestion: ImageIngestionStatus;
+    needsReview: string | null;
+    tosViolation: boolean;
+  } | null;
+}): ServiceOfferingReviewState {
+  const cover = offering.coverImage;
+  if (
+    offering.ingestion === ServiceOfferingIngestionStatus.Blocked ||
+    cover?.tosViolation ||
+    cover?.ingestion === ImageIngestionStatus.Blocked ||
+    cover?.ingestion === ImageIngestionStatus.NotFound
+  )
+    return 'held';
+  if (
+    offering.ingestion !== ServiceOfferingIngestionStatus.Scanned ||
+    (cover && (cover.ingestion !== ImageIngestionStatus.Scanned || cover.needsReview !== null))
+  )
+    return 'reviewing';
+  return null;
+}
+
+/**
+ * Offerings whose content checks have completed, with a cover (if any) that has too and is at a
+ * rating this viewer may see. `matureRatings` as for `shopRatingFilter`.
+ */
+export const serviceOfferingShowableWhere = (matureRatings: readonly number[]) =>
+  ({
+    ingestion: ServiceOfferingIngestionStatus.Scanned,
+    AND: [
+      {
+        OR: [
+          { coverImageId: null },
+          {
+            coverImage: {
+              ingestion: ImageIngestionStatus.Scanned,
+              needsReview: null,
+              tosViolation: false,
+              nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13, ...matureRatings] },
+            },
+          },
+        ],
+      },
+    ],
+  } satisfies Prisma.ServiceOfferingWhereInput);
 
 /** Offerings rated PG/PG-13, plus the mature ratings this viewer may see (see `visibleMatureServiceRatings`). */
 export const shopRatingFilter = (matureRatings: readonly number[]) =>
@@ -209,6 +292,41 @@ export const shopRatingFilter = (matureRatings: readonly number[]) =>
         ],
       }
     : { maxNsfwLevel: { lte: NsfwLevel.PG13 } };
+
+/**
+ * The storefront's listing rule, shared by a seller's storefront and the cross-seller feed: Active
+ * offerings of a seller in good standing, at the ratings this viewer and domain may see, whose
+ * content checks have completed.
+ */
+const listableServiceOfferingWhere = ({
+  browsingLevel,
+  servable,
+}: {
+  browsingLevel: number | undefined;
+  servable: number;
+}) => {
+  const matureRatings = visibleMatureServiceRatings({ browsingLevel, servable });
+  return {
+    status: ServiceOfferingStatus.Active,
+    seller: { bannedAt: null, deletedAt: null, muted: false },
+    ...shopRatingFilter(matureRatings),
+    ...serviceOfferingShowableWhere(matureRatings),
+  } satisfies Prisma.ServiceOfferingWhereInput;
+};
+
+// Display only: `requestServiceDeal` enforces the cap against the same count.
+async function withOpenSlots<T extends { id: number; maxOpenDeals: number | null }>(
+  offerings: T[]
+) {
+  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
+  return offerings.map((offering) => ({
+    ...offering,
+    slotsOpen:
+      offering.maxOpenDeals == null
+        ? null
+        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
+  }));
+}
 
 export async function getShopServiceOfferings({
   userId,
@@ -224,24 +342,78 @@ export async function getShopServiceOfferings({
 }) {
   await assertCreatorShopVisible({ userId, viewerId, isModerator });
   const offerings = await dbRead.serviceOffering.findMany({
-    where: {
-      sellerId: userId,
-      status: ServiceOfferingStatus.Active,
-      seller: { bannedAt: null, deletedAt: null, muted: false },
-      ...shopRatingFilter(visibleMatureServiceRatings({ browsingLevel, servable })),
-    },
+    where: { sellerId: userId, ...listableServiceOfferingWhere({ browsingLevel, servable }) },
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
-  // Display only: `requestServiceDeal` enforces the cap against the same count.
-  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
-  return offerings.map((offering) => ({
-    ...offering,
-    slotsOpen:
-      offering.maxOpenDeals == null
-        ? null
-        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
-  }));
+  // No viewer: a restricted cover is withheld from its seller too, as the storefront shows what
+  // visitors see. The offering stays listed without it.
+  return withOpenSlots(offerings.map((offering) => withServableImage(offering, 'coverImage')));
+}
+
+const feedOrderBy = {
+  newest: [{ createdAt: 'desc' }, { id: 'desc' }],
+  price_asc: [{ price: 'asc' }, { id: 'asc' }],
+  price_desc: [{ price: 'desc' }, { id: 'desc' }],
+} satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
+
+/**
+ * Active offerings across every seller whose storefront a visitor could open: the storefront's
+ * listing rule, plus a published shop and no block either way (`assertCreatorShopVisible`), and
+ * minus the creators this viewer hid. Owners and moderators get no bypass: the feed is what
+ * visitors see.
+ */
+export async function getServiceOfferingFeed({
+  browsingLevel,
+  servable,
+  viewerId,
+  sort,
+  query,
+  cursor,
+  limit,
+}: GetServiceOfferingFeedInput & {
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+}) {
+  const excludedSellerIds = viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [];
+  const listable = listableServiceOfferingWhere({ browsingLevel, servable });
+  const rows = await dbRead.serviceOffering.findMany({
+    where: {
+      ...listable,
+      // Keep the listing rule's AND; the query only narrows it.
+      AND: [
+        ...listable.AND,
+        ...(query
+          ? [
+              {
+                // Prisma passes `%` and `_` through to LIKE as wildcards.
+                OR: [
+                  { title: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                  { description: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
+      seller: {
+        ...listable.seller,
+        // The card links to the storefront, which is addressed by username.
+        username: { not: null },
+        settings: { path: ['creatorShop', 'enabled'], equals: true },
+      },
+      ...(excludedSellerIds.length ? { sellerId: { notIn: excludedSellerIds } } : {}),
+    },
+    select: { ...serviceOfferingSelect, seller: { select: userWithCosmeticsSelect } },
+    orderBy: feedOrderBy[sort],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+  const page = rows.slice(0, limit);
+  return {
+    items: await withOpenSlots(page.map((offering) => withServableImage(offering, 'coverImage'))),
+    nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
+  };
 }
 
 export async function upsertServiceOffering({
@@ -251,7 +423,7 @@ export async function upsertServiceOffering({
   sellerId: number;
   input: UpsertServiceOfferingInput;
 }) {
-  const { id, publish, affirmedTermsVersion, ...fields } = input;
+  const { id, publish, affirmedTermsVersion, coverImage, ...fields } = input;
   await assertCanSellServices(sellerId);
   await throwOnBlockedUserContent([fields.title, fields.description], {
     surface: 'creator-service-offering',
@@ -263,16 +435,22 @@ export async function upsertServiceOffering({
       affirmationForPublish({ sellerId, offeringId: 0, existing: null, affirmedTermsVersion });
       await assertUnderActiveOfferingCap(sellerId);
     }
+    const coverImageId = coverImage
+      ? await resolveServiceCoverImageId({ coverImage, sellerId, currentCoverId: null })
+      : null;
+    const declaredNsfwLevel = fields.declaredNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING;
     // The record carries the offering's id, which exists only once it is created.
-    return dbWrite.$transaction(async (tx) => {
+    const created = await dbWrite.$transaction(async (tx) => {
       const created = await tx.serviceOffering.create({
         data: {
           ...fields,
-          maxNsfwLevel: fields.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+          declaredNsfwLevel,
+          maxNsfwLevel: declaredNsfwLevel,
+          coverImageId,
           sellerId,
           status: publish ? ServiceOfferingStatus.Active : ServiceOfferingStatus.Draft,
         },
-        select: serviceOfferingSelect,
+        select: { id: true },
       });
       if (publish)
         await tx.serviceOffering.update({
@@ -281,14 +459,34 @@ export async function upsertServiceOffering({
         });
       return created;
     });
+    return afterServiceOfferingWrite(created.id, { textChanged: true });
   }
 
   const owned = { id, sellerId, status: { not: ServiceOfferingStatus.Removed } };
   const existing = await dbWrite.serviceOffering.findFirst({
     where: owned,
-    select: { status: true, sellerAffirmation: true },
+    select: {
+      status: true,
+      sellerAffirmation: true,
+      title: true,
+      description: true,
+      ingestion: true,
+      coverImageId: true,
+    },
   });
   if (!existing) throw throwNotFoundError('Service not found');
+  const textChanged =
+    existing.title !== fields.title || existing.description !== fields.description;
+  const coverImageId =
+    coverImage === undefined
+      ? undefined
+      : coverImage === null
+      ? null
+      : await resolveServiceCoverImageId({
+          coverImage,
+          sellerId,
+          currentCoverId: existing.coverImageId,
+        });
 
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
   const affirmation = activating
@@ -303,17 +501,56 @@ export async function upsertServiceOffering({
 
   // Re-scoped so a remove that lands after the read above can't be undone by this write.
   const { count } = await dbWrite.serviceOffering.updateMany({
-    where: owned,
+    // New text resets the check only from the state read above, so a block landing since is kept.
+    where: textChanged ? { ...owned, ingestion: existing.ingestion } : owned,
     data: {
       ...fields,
+      ...(coverImageId !== undefined ? { coverImageId } : {}),
+      // New text is shown once it is checked; a blocked offering's goes back below.
+      ...(textChanged && existing.ingestion !== ServiceOfferingIngestionStatus.Blocked
+        ? { ingestion: ServiceOfferingIngestionStatus.Pending, scanWorkflowId: null }
+        : {}),
       ...(activating ? { status: ServiceOfferingStatus.Active } : {}),
       ...(affirmation ? { sellerAffirmation: affirmation } : {}),
     },
   });
-  if (count === 0) throw throwNotFoundError('Service not found');
+  if (count === 0)
+    throw textChanged
+      ? throwConflictError('This service changed while you were editing it. Reload and try again.')
+      : throwNotFoundError('Service not found');
+  if (textChanged && existing.ingestion === ServiceOfferingIngestionStatus.Blocked)
+    await requeueBlockedServiceOffering(id);
+  return afterServiceOfferingWrite(id, { textChanged });
+}
+
+async function resolveServiceCoverImageId({
+  coverImage,
+  sellerId,
+  currentCoverId,
+}: {
+  coverImage: ImageReferenceInput;
+  sellerId: number;
+  currentCoverId: number | null;
+}) {
+  return resolveCoverImageId({
+    coverImage,
+    userId: sellerId,
+    currentCoverId,
+    assertOwnership: async (imageId) => {
+      if (imageId === currentCoverId) return;
+      if (!(await isImageOwner({ userId: sellerId, imageId, allowMods: false })))
+        throw throwAuthorizationError('Invalid cover image');
+    },
+  });
+}
+
+/** The rating follows the new declared level and cover at once; new text goes to its check. */
+async function afterServiceOfferingWrite(id: number, { textChanged }: { textChanged: boolean }) {
+  await updateServiceOfferingNsfwLevels([id]);
+  if (textChanged) await scanServiceOffering(id);
   return dbWrite.serviceOffering.findUniqueOrThrow({
     where: { id },
-    select: serviceOfferingSelect,
+    select: ownServiceOfferingSelect,
   });
 }
 

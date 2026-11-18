@@ -354,7 +354,8 @@ describe('creator card invalidation ledger', () => {
     expect(calls).toEqual({
       'src/server/controllers/user-link.controller.ts': 3,
       'src/server/controllers/user-profile.controller.ts': 2,
-      'src/server/controllers/user.controller.ts': 1,
+      // updateUserHandler, and completeOnboardingHandler's Profile step on a username change.
+      'src/server/controllers/user.controller.ts': 2,
       'src/server/services/creator-milestone-grant.service.ts': 1,
       'src/server/services/creator-shop.service.ts': 1,
       // A showcase hat pick: the card carries it beside the cached entry, so only the edge copy is stale.

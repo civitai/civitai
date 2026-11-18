@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as ImageVisibility from '~/server/common/image-visibility';
 
 // The minor exclusion exempts the VIEWER's own images, matched by user id. Every image-feed
@@ -10,16 +10,13 @@ import type * as ImageVisibility from '~/server/common/image-visibility';
 // profile owner instead would show a creator's minor-flagged images to everyone on their
 // profile. So each case below also browses the owner's profile as a stranger.
 //
-// Mock recipe follows image-db-unpublished-authorization.test.ts and
-// image-search-scheduled-owner.test.ts.
+// Mock recipe follows image-db-unpublished-authorization.test.ts.
 
-const { queryWithTimeoutMock, fetchDocumentsAbortableMock, pendingOthersMock, pendingLevelMock } =
-  vi.hoisted(() => ({
-    queryWithTimeoutMock: vi.fn(),
-    fetchDocumentsAbortableMock: vi.fn(),
-    pendingOthersMock: vi.fn(),
-    pendingLevelMock: vi.fn(),
-  }));
+const { queryWithTimeoutMock, pendingOthersMock, pendingLevelMock } = vi.hoisted(() => ({
+  queryWithTimeoutMock: vi.fn(),
+  pendingOthersMock: vi.fn(),
+  pendingLevelMock: vi.fn(),
+}));
 
 vi.mock('~/server/common/image-visibility', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageVisibility>();
@@ -32,10 +29,6 @@ vi.mock('~/server/common/image-visibility', async (importOriginal) => {
   };
 });
 
-vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
-  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
-);
-
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
   return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
@@ -43,15 +36,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof DbHelpers>();
   return { ...actual, queryWithTimeout: queryWithTimeoutMock };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return {
-    ...actual,
-    metricsSearchClient: {},
-    getMetricsSearchClient: () => ({}),
-    fetchDocumentsAbortable: fetchDocumentsAbortableMock,
-  };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -65,14 +49,9 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-import {
-  getAllImages,
-  getImagesForModelVersion,
-  getImagesForPosts,
-  getImagesFromSearchPostFilter,
-  getImagesFromSearchPreFilter,
-} from '../image.service';
+import { getAllImages, getImagesForModelVersion, getImagesForPosts } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { restrictedMinorClause } from '~/__tests__/minor-clause';
 
 const OWNER = 3300;
 const STRANGER = 4400;
@@ -109,6 +88,9 @@ const POSTS_MINOR = /\(i\."minor" = false OR i\."minor" IS NULL(?: OR i\."userId
 
 async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',
@@ -124,6 +106,33 @@ async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
   return minorClauseIn(stmt.text, stmt.values, ALL_IMAGES_MINOR);
 }
 
+// `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
+// minor-mature-image-visibility.behavior.test.ts.
+const RESTRICTED_MINOR = restrictedMinorClause();
+
+/** getAllImages with the viewer's minor setting OFF, as a viewer who never turned it on. */
+async function getAllImagesStatement(
+  viewer: { id: number; isModerator?: boolean } | undefined,
+  profileUserId?: number
+) {
+  await getAllImages({
+    limit: 20,
+    period: 'AllTime',
+    periodMode: 'published',
+    sort: 'Newest',
+    browsingLevel: 31,
+    include: [],
+    disableMinor: false,
+    user: viewer ? { isModerator: false, ...viewer } : undefined,
+    // A session's views (credentialViews); the feed reads neither without them.
+    asModerator: true,
+    asOwner: true,
+    userId: profileUserId,
+  } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+  expect(queryWithTimeoutMock, 'the build no longer reaches queryWithTimeout').toHaveBeenCalled();
+  return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
+}
+
 async function postImagesMinor(viewer: Viewer) {
   await getImagesForPosts({
     postIds: [1],
@@ -137,54 +146,27 @@ async function postImagesMinor(viewer: Viewer) {
   return minorClauseIn(stmt.text, stmt.values, POSTS_MINOR);
 }
 
-async function meiliMinor(
-  fn: typeof getImagesFromSearchPreFilter,
-  viewer: Viewer,
-  profileUserId?: number
-) {
-  await expect(
-    fn({
-      currentUserId: viewer?.id,
-      isModerator: false,
-      limit: 20,
-      period: 'AllTime',
-      sort: 'Newest',
-      browsingLevel: 31,
-      include: [],
-      headers: { src: 'test' },
-      disableMinor: true,
-      userId: profileUserId,
-    } as unknown as Parameters<typeof getImagesFromSearchPreFilter>[0])
-  ).rejects.toThrow('stop here');
-  const [, request] = fetchDocumentsAbortableMock.mock.calls[0];
-  const filter = String((request as { filter: string }).filter);
-  const match = onlyMinorClause(filter, /\(NOT minor = true(?: OR "userId" = (\d+))?\)/);
-  return { clause: match[0], exemptedId: match[1] ? Number(match[1]) : null };
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
-  fetchDocumentsAbortableMock.mockRejectedValue(new Error('stop here'));
 });
 
-describe.each([
-  ['getAllImages', getAllImagesMinor],
-  ['getImagesFromSearchPreFilter', meiliMinor.bind(null, getImagesFromSearchPreFilter)],
-  ['getImagesFromSearchPostFilter', meiliMinor.bind(null, getImagesFromSearchPostFilter)],
-] as const)('%s minor exclusion', (_name, minorFor) => {
-  it('exempts the signed-in viewer by id', async () => {
-    expect((await minorFor({ id: OWNER })).exemptedId).toBe(OWNER);
-  });
+describe.each([['getAllImages', getAllImagesMinor]] as const)(
+  '%s minor exclusion',
+  (_name, minorFor) => {
+    it('exempts the signed-in viewer by id', async () => {
+      expect((await minorFor({ id: OWNER })).exemptedId).toBe(OWNER);
+    });
 
-  it("exempts the viewer, not the profile owner, on someone else's profile", async () => {
-    expect((await minorFor({ id: STRANGER }, OWNER)).exemptedId).toBe(STRANGER);
-  });
+    it("exempts the viewer, not the profile owner, on someone else's profile", async () => {
+      expect((await minorFor({ id: STRANGER }, OWNER)).exemptedId).toBe(STRANGER);
+    });
 
-  it('exempts no one for a signed-out viewer, even on a profile', async () => {
-    expect((await minorFor(undefined, OWNER)).exemptedId).toBeNull();
-  });
-});
+    it('exempts no one for a signed-out viewer, even on a profile', async () => {
+      expect((await minorFor(undefined, OWNER)).exemptedId).toBeNull();
+    });
+  }
+);
 
 describe('getImagesForPosts minor exclusion', () => {
   it('exempts the signed-in viewer by id', async () => {
@@ -270,5 +252,56 @@ describe.each([
     expect(stmt.text).not.toContain('pending_level_marker');
     // A moderator's pending read still checks the level.
     expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
+  });
+});
+
+describe('getAllImages restricted minor images, with the minor setting off', () => {
+  const restrictedFor = async (
+    viewer: { id: number; isModerator?: boolean } | undefined,
+    profileUserId?: number
+  ) => {
+    const stmt = await getAllImagesStatement(viewer, profileUserId);
+    return minorClauseIn(stmt.text, stmt.values, RESTRICTED_MINOR);
+  };
+
+  it('hides them from everyone but the signed-in viewer, by id', async () => {
+    expect((await restrictedFor({ id: OWNER })).exemptedId).toBe(OWNER);
+  });
+
+  it("exempts the viewer, not the profile owner, on someone else's profile", async () => {
+    expect((await restrictedFor({ id: STRANGER }, OWNER)).exemptedId).toBe(STRANGER);
+  });
+
+  it('exempts no one for a signed-out viewer, even on a profile', async () => {
+    expect((await restrictedFor(undefined, OWNER)).exemptedId).toBeNull();
+  });
+
+  // The clause the feed sends, run over rows: what it hides and what it keeps.
+  it('drops a restricted minor image for a stranger and keeps an unflagged R image (control)', async () => {
+    const stmt = await getAllImagesStatement({ id: STRANGER });
+    const { clause, exemptedId } = minorClauseIn(stmt.text, stmt.values, RESTRICTED_MINOR);
+    expect(exemptedId).toBe(STRANGER);
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, minor boolean, "nsfwLevel" int);
+      INSERT INTO "Image" VALUES
+        (1, ${OWNER}, true, 4), (2, ${OWNER}, false, 4), (3, ${OWNER}, NULL, 8),
+        (4, ${OWNER}, true, 2), (5, ${STRANGER}, true, 4);
+    `);
+    const inlined = clause.replace(/\$(\d+)/g, (_, n) => String(stmt.values[Number(n) - 1]));
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM "Image" i WHERE ${inlined} ORDER BY id`
+    );
+    // 1: another user's restricted minor image, hidden; 5: the viewer's own, kept.
+    expect(rows.map((r) => r.id)).toEqual([2, 3, 4, 5]);
+    await db.close();
+  });
+
+  it('applies no such clause for a moderator', async () => {
+    // The same read for a stranger carries it, so the pattern still finds the clause.
+    expect((await getAllImagesStatement({ id: STRANGER })).text).toMatch(RESTRICTED_MINOR);
+    queryWithTimeoutMock.mockClear();
+    const stmt = await getAllImagesStatement({ id: STRANGER, isModerator: true });
+    expect(stmt.text).not.toMatch(RESTRICTED_MINOR);
   });
 });

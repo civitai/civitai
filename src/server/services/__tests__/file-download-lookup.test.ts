@@ -828,9 +828,6 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       redCapable: false,
     });
 
-    // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
-    // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
-    // is exactly the distinction the comment above claims this assertion makes.
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
   });
@@ -1034,6 +1031,7 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     name: 'data.zip',
     type: 'Training Data',
     metadata: { nsfwLevel: 1 },
+    virusScanResult: 'Success',
   };
   const download = (user: { id: number; isModerator?: boolean }) =>
     getFileForModelVersion({
@@ -1074,6 +1072,35 @@ describe('getFileForModelVersion — a shared training dataset', () => {
     expect((await download(user)).status).toBe('success');
   });
 
+  it.each(['Pending', 'Error', null])(
+    'is the same not-found as a missing file for others until its scan is a Success (%s)',
+    async (virusScanResult) => {
+      listDownloadFilesMock.mockResolvedValue([{ ...dataset, virusScanResult }]);
+      const result = await download({ id: 1 });
+      expect(result).toEqual({ status: 'not-found' });
+      expect(resolveDownloadUrlMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['its owner', { id: 999 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is served to %s before its scan completes', async (_, user) => {
+    listDownloadFilesMock.mockResolvedValue([{ ...dataset, virusScanResult: 'Pending' }]);
+    expect((await download(user)).status).toBe('success');
+  });
+
+  it('does not hold a model file to a completed scan', async () => {
+    listDownloadFilesMock.mockResolvedValue([{ ...aFile, virusScanResult: 'Pending' }]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1 },
+      attribution: { path: 'test', actor: 'test' } as never,
+      redCapable: true,
+    });
+    expect(result.status).toBe('success');
+  });
+
   it('does not gate a model file', async () => {
     shareRestrictedMock.mockResolvedValue(true);
     listDownloadFilesMock.mockResolvedValue([aFile]);
@@ -1101,6 +1128,7 @@ describe('getFileForModelVersion — a training dataset on each host', () => {
     name: 'data.zip',
     type: 'Training Data',
     metadata,
+    virusScanResult: 'Success',
   });
   const download = (redCapable: boolean, user: { id: number; isModerator?: boolean } = { id: 1 }) =>
     getFileForModelVersion({

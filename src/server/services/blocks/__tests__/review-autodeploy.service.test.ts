@@ -22,6 +22,7 @@ const m = vi.hoisted(() => ({
   autodeployOn: vi.fn(async () => true),
   agentAutostartOn: vi.fn(async () => true),
   agentBaseOn: vi.fn(async () => true),
+  automationOn: vi.fn(async (): Promise<boolean> => true),
   startClaimedReviewBuild: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   startAgentReview: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
   notifyModAlert: vi.fn(async (..._a: unknown[]): Promise<string> => 'delivered'),
@@ -32,6 +33,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksReviewAutodeployEnabled: () => m.autodeployOn(),
   isAppBlocksAgenticReviewAutostartEnabled: () => m.agentAutostartOn(),
   isAppBlocksAgenticReviewEnabled: () => m.agentBaseOn(),
+  isAgentReviewAutomationEnabled: () => m.automationOn(),
 }));
 vi.mock('~/server/services/blocks/publish-request.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PublishRequestService>()),
@@ -57,6 +59,7 @@ const {
   notifyModsOfNewSubmission,
   onNewPendingSubmission,
   onReviewBuildSettled,
+  readAutoBuildBudget,
 } = await import('~/server/services/blocks/review-autodeploy.service');
 
 // ---------------------------------------------------------------------------
@@ -151,10 +154,10 @@ const building = () => row({ deployState: 'preview-building' });
 const queued = () => row({ deployState: 'preview-queued' });
 const states = () => rows.map((r) => r.deployState);
 
-/** sysRedis MULTI whose INCR answers `count` (or throws). */
+/** A MULTI whose INCR answers `count` (or throws). */
 /**
- * Today's agent-review auto-start reservation, in cents: a real counter shared by the MULTI's
- * INCRBY and the plain INCRBY that releases it, so concurrent starts see each other.
+ * Today's agent-review auto-start reservation, in cents: one counter behind the MULTI that takes
+ * and releases it, so concurrent starts see each other.
  */
 const reservation = { cents: 0, fail: false };
 
@@ -179,11 +182,10 @@ function budgetCounter(count: number | Error) {
       return ['OK', count];
     }),
   };
+  // The build budget's MULTI is in system Redis; the reservation's MULTI and its release are on the
+  // cache cluster.
   redisMock.sysRedis.multi.mockImplementation(() => chain);
-  redisMock.sysRedis.incrBy.mockImplementation(async (_k: string, cents: number) => {
-    reservation.cents += cents;
-    return reservation.cents;
-  });
+  redisMock.redis.multi.mockImplementation(() => chain);
   return chain;
 }
 
@@ -196,6 +198,10 @@ beforeEach(() => {
   m.autodeployOn.mockResolvedValue(true);
   m.agentAutostartOn.mockResolvedValue(true);
   m.agentBaseOn.mockResolvedValue(true);
+  // The shared pair, as the real helper composes it, so tests that flip one flag still work.
+  m.automationOn.mockImplementation(
+    async () => (await m.agentAutostartOn()) && (await m.agentBaseOn())
+  );
   m.startClaimedReviewBuild.mockReset();
   m.startClaimedReviewBuild.mockResolvedValue({});
   m.startAgentReview.mockReset();
@@ -223,9 +229,13 @@ describe('autoStartReviewPreview', () => {
     rows = [r];
     const counter = budgetCounter(1);
 
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'disabled'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('disabled');
     expect(r.deployState).toBeNull();
     expect(counter.exec).not.toHaveBeenCalled();
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
@@ -235,9 +245,13 @@ describe('autoStartReviewPreview', () => {
     const r = row({});
     rows = [r];
 
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'queued'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('queued');
     expect(startedIds()).toEqual([r.id]);
     expect(m.startClaimedReviewBuild.mock.calls[0][1]).toEqual({ kind: 'system' });
     expect(r.deployState).toBe('preview-building');
@@ -252,9 +266,13 @@ describe('autoStartReviewPreview', () => {
   it('never queues over a preview a moderator already started', async () => {
     const r = row({ deployState: 'preview-live' });
     rows = [r];
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'not-queued'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('not-queued');
     expect(r.deployState).toBe('preview-live');
   });
 
@@ -265,9 +283,13 @@ describe('autoStartReviewPreview', () => {
     rows = [r];
     const counter = budgetCounter(AUTO_REVIEW_BUILDS_PER_USER_PER_DAY + 1);
 
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'budget-refused'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('budget-refused');
     expect(r.deployState).toBeNull();
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
     // Keyed on the submitter and the UTC date.
@@ -281,18 +303,26 @@ describe('autoStartReviewPreview', () => {
     const r = row({});
     rows = [r];
     budgetCounter(AUTO_REVIEW_BUILDS_PER_USER_PER_DAY);
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'queued'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('queued');
   });
 
   it('an unreadable budget fails CLOSED: nothing queued, and no throw', async () => {
     const r = row({});
     rows = [r];
     budgetCounter(new Error('redis down'));
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'budget-unavailable'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('budget-unavailable');
     expect(r.deployState).toBeNull();
   });
 
@@ -320,9 +350,13 @@ describe('the platform build cap', () => {
     const r = row({});
     rows.push(r);
 
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'queued'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('queued');
     expect(r.deployState).toBe('preview-queued');
     expect(m.startClaimedReviewBuild).not.toHaveBeenCalled();
   });
@@ -579,6 +613,26 @@ describe('agent review auto-start', () => {
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
   });
 
+  it("🔴 listing-edit impersonation checks' spend counts against the same daily budget", async () => {
+    // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
+    spend(37);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    // The listing checks' spend is a day counter in system Redis: it must survive eviction.
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+      key.includes('listing-check-spend') ? '150' : null) as never);
+    redisMock.redis.get.mockClear();
+    try {
+      expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+      expect(
+        redisMock.redis.get.mock.calls.filter(([k]: unknown[]) =>
+          String(k).includes('listing-check-spend')
+        )
+      ).toEqual([]);
+    } finally {
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
+    }
+  });
+
   it('the budget is env-configurable', async () => {
     envMock.set({ AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: 100 });
     spend(90);
@@ -592,6 +646,13 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
+  it('🔴 reads the ONE shared switch pair (isAgentReviewAutomationEnabled), not its own copy', async () => {
+    spend(0);
+    m.automationOn.mockResolvedValue(false);
+    expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('disabled');
+    expect(m.startAgentReview).not.toHaveBeenCalled();
+  });
+
   it('flag OFF: no auto-start', async () => {
     spend(0);
     m.agentAutostartOn.mockResolvedValue(false);
@@ -599,12 +660,16 @@ describe('agent review auto-start', () => {
     expect(m.startAgentReview).not.toHaveBeenCalled();
   });
 
-  it('a live preview triggers it; a failed one does not', async () => {
+  it('🔴 every settled review build triggers it — a failed preview too (the agent reads the bundle)', async () => {
     spend(0);
     await onReviewBuildSettled({ publishRequestId: PUBREQ, live: false });
-    expect(m.startAgentReview).not.toHaveBeenCalled();
-    await onReviewBuildSettled({ publishRequestId: PUBREQ, live: true });
     expect(m.startAgentReview).toHaveBeenCalledTimes(1);
+    await onReviewBuildSettled({ publishRequestId: 'pubreq_other', live: true });
+    expect(m.startAgentReview).toHaveBeenCalledTimes(2);
+    expect(m.startAgentReview).toHaveBeenLastCalledWith({
+      publishRequestId: 'pubreq_other',
+      modUserId: null,
+    });
   });
 
   it('a start failure is reported, never thrown', async () => {
@@ -627,7 +692,8 @@ describe('moderator alert throttle', () => {
   /** One counter per Redis key, like the real INCR: the alert key and the budget key apart. */
   function countersByKey(fail?: (key: string) => boolean) {
     const counts = new Map<string, number>();
-    redisMock.sysRedis.multi.mockImplementation(() => {
+    // The alert window is on the cache cluster.
+    redisMock.redis.multi.mockImplementation(() => {
       let key = '';
       const chain = {
         set: vi.fn((k: string) => {
@@ -651,6 +717,7 @@ describe('moderator alert throttle', () => {
   });
 
   it('posts 10 alerts per submitter per hour, then ONE roll-up, then nothing', async () => {
+    redisMock.sysRedis.multi.mockClear();
     const counts = countersByKey();
     const outcomes: string[] = [];
     for (let i = 0; i < 13; i++) outcomes.push(await notifyModsOfNewSubmission(sub));
@@ -663,6 +730,7 @@ describe('moderator alert throttle', () => {
     expect(titles[10]).toBe('More app submissions from alice');
     const hour = new Date().toISOString().slice(0, 13);
     expect([...counts.keys()]).toEqual([`system:blocks:review-submission-alerts:9:${hour}`]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('counts per submitter: another account still gets its alerts', async () => {
@@ -687,9 +755,13 @@ describe('automatic-build budget refund', () => {
     rows = [r];
     budgetCounter(1);
     const day = new Date().toISOString().slice(0, 10);
-    expect(await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: 9 })).toBe(
-      'not-queued'
-    );
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: 9,
+        slug: 'some-app',
+      })
+    ).toBe('not-queued');
     expect(redisMock.sysRedis.decr).toHaveBeenCalledWith(
       `system:blocks:review-auto-builds:9:${day}`
     );
@@ -698,7 +770,11 @@ describe('automatic-build budget refund', () => {
   it('CONTROL: a queued submit keeps its token', async () => {
     rows = [row({})];
     budgetCounter(1);
-    await autoStartReviewPreview({ publishRequestId: rows[0].id, submittedByUserId: 9 });
+    await autoStartReviewPreview({
+      publishRequestId: rows[0].id,
+      submittedByUserId: 9,
+      slug: 'some-app',
+    });
     expect(redisMock.sysRedis.decr).not.toHaveBeenCalled();
   });
 });
@@ -775,8 +851,7 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
   // instant: under the suite's module sharing, one of two CONCURRENT first-time dynamic imports
   // of a mocked module was measured resolving the real module (its env failed to validate).
   const deps = {
-    autostartOn: async () => true,
-    agentReviewOn: async () => true,
+    automationOn: async () => true,
     startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
   };
   beforeEach(() => {
@@ -830,5 +905,273 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
     m.startAgentReview.mockRejectedValue(new Error('k8s down'));
     expect(await maybeAutoStartAgentReview('pubreq_a', deps)).toBe('error');
     expect(reservation.cents).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('test-fixture accounts: an automatic-build budget per app slug', () => {
+  const FIXTURE = 2000000001;
+  // A literal, not the exported constant: the expectation must not come from the code under test.
+  const AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY = 20;
+  const AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY = 200;
+  const day = () => new Date().toISOString().slice(0, 10);
+  const slugKey = (slug: string) =>
+    `system:blocks:review-auto-builds:fixture:${FIXTURE}:${slug}:${day()}`;
+  const totalKey = () => `system:blocks:review-auto-builds:fixture:${FIXTURE}:${day()}`;
+
+  /** A real counter per Redis key, shared by the MULTI's INCR, DECR (refund) and GET (read). */
+  function realCounters() {
+    const counts = new Map<string, number>();
+    redisMock.sysRedis.multi.mockImplementation(() => {
+      // Like a real MULTI: commands queue, EXEC answers one reply per queued command, in order.
+      const queued: string[] = [];
+      const chain = {
+        set: vi.fn(() => {
+          queued.push('');
+          return chain;
+        }),
+        incr: vi.fn((k: string) => {
+          queued.push(k);
+          return chain;
+        }),
+        exec: vi.fn(async () =>
+          queued.map((k) => {
+            if (!k) return 'OK';
+            const n = (counts.get(k) ?? 0) + 1;
+            counts.set(k, n);
+            return n;
+          })
+        ),
+      };
+      return chain;
+    });
+    redisMock.sysRedis.decr.mockImplementation(async (k: string) => {
+      const n = (counts.get(k) ?? 0) - 1;
+      counts.set(k, n);
+      return n;
+    });
+    redisMock.sysRedis.get.mockImplementation(async (k: string) =>
+      counts.has(k) ? String(counts.get(k)) : null
+    );
+    return counts;
+  }
+
+  /** Submit `n` times as `userId` for `slug`; each submit is a fresh pending row. */
+  async function submitN(n: number, userId: number, slug: string) {
+    const outcomes: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = row({ slug });
+      rows.push(r);
+      outcomes.push(
+        await autoStartReviewPreview({ publishRequestId: r.id, submittedByUserId: userId, slug })
+      );
+    }
+    return outcomes;
+  }
+
+  beforeEach(() => {
+    // A submit past the build cap still answers `queued`; these cases are about the budget.
+    envMock.set({ APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: [FIXTURE] });
+  });
+
+  it('a fixture account is charged per slug, in its own key space, with its own limit', async () => {
+    const counts = realCounters();
+    const outcomes = await submitN(
+      AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY + 1,
+      FIXTURE,
+      'ci-a'
+    );
+    expect(outcomes.slice(0, AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY)).toEqual(
+      Array(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY).fill('queued')
+    );
+    expect(outcomes[AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY]).toBe('budget-refused');
+    expect([...counts.keys()]).toEqual([slugKey('ci-a'), totalKey()]);
+  });
+
+  it("a fixture account's total across slugs is capped, so test runs cannot grow without bound", async () => {
+    const counts = realCounters();
+    // The day's total already at its ceiling, from other slugs.
+    counts.set(totalKey(), AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY);
+    expect(await submitN(1, FIXTURE, 'ci-new')).toEqual(['budget-refused']);
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-new')).toEqual({
+      available: true,
+      scope: 'fixture-slug',
+      counter: 'fixture-total',
+      limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY,
+      remaining: 0,
+    });
+  });
+
+  it("a refused fixture attempt charges nothing: the slug and the fixture's total are unchanged", async () => {
+    const counts = realCounters();
+    counts.set(slugKey('ci-a'), AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    counts.set(totalKey(), 37);
+    expect(await submitN(3, FIXTURE, 'ci-a')).toEqual([
+      'budget-refused',
+      'budget-refused',
+      'budget-refused',
+    ]);
+    expect(counts.get(slugKey('ci-a'))).toBe(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    expect(counts.get(totalKey())).toBe(37);
+  });
+
+  it('CONTROL: one build under the total ceiling still starts', async () => {
+    const counts = realCounters();
+    counts.set(totalKey(), AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY - 1);
+    expect(await submitN(1, FIXTURE, 'ci-new')).toEqual(['queued']);
+  });
+
+  it('one slug spending its allowance leaves another slug of the same fixture account untouched', async () => {
+    realCounters();
+    const spent = await submitN(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY + 1, FIXTURE, 'ci-a');
+    expect(spent.at(-1)).toBe('budget-refused');
+    expect(await submitN(1, FIXTURE, 'ci-b')).toEqual(['queued']);
+  });
+
+  it('INVARIANT: a real account keeps ONE per-account budget across its slugs, with the fixture list set', async () => {
+    const counts = realCounters();
+    const outcomes = [
+      ...(await submitN(AUTO_REVIEW_BUILDS_PER_USER_PER_DAY, 9, 'app-one')),
+      ...(await submitN(1, 9, 'app-two')),
+    ];
+    expect(outcomes.slice(0, AUTO_REVIEW_BUILDS_PER_USER_PER_DAY)).toEqual(
+      Array(AUTO_REVIEW_BUILDS_PER_USER_PER_DAY).fill('queued')
+    );
+    expect(outcomes[AUTO_REVIEW_BUILDS_PER_USER_PER_DAY]).toBe('budget-refused');
+    expect([...counts.keys()]).toEqual([`system:blocks:review-auto-builds:9:${day()}`]);
+  });
+
+  it("INVARIANT: a fixture's builds never touch a real account's budget", async () => {
+    const counts = realCounters();
+    await submitN(3, FIXTURE, 'ci-a');
+    await submitN(1, 9, 'app-one');
+    expect(counts.get(`system:blocks:review-auto-builds:9:${day()}`)).toBe(1);
+  });
+
+  it("a fixture's refund goes back to the slug it was taken from", async () => {
+    const counts = realCounters();
+    const r = row({ slug: 'ci-a', deployState: 'preview-live' });
+    rows = [r];
+    expect(
+      await autoStartReviewPreview({
+        publishRequestId: r.id,
+        submittedByUserId: FIXTURE,
+        slug: 'ci-a',
+      })
+    ).toBe('not-queued');
+    expect(counts.get(slugKey('ci-a'))).toBe(0);
+    expect(counts.get(totalKey())).toBe(0);
+  });
+
+  it('readAutoBuildBudget reports what is left without spending any', async () => {
+    const counts = realCounters();
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toEqual({
+      available: true,
+      scope: 'fixture-slug',
+      counter: 'fixture-slug',
+      limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
+      remaining: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
+    });
+    await submitN(3, FIXTURE, 'ci-a');
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toMatchObject({
+      remaining: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY - 3,
+    });
+    // At the limit it reads 0; the refused takes past it were given back, so it never goes negative.
+    await submitN(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY, FIXTURE, 'ci-a');
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toMatchObject({ remaining: 0 });
+    // The reads themselves took nothing.
+    expect(counts.get(slugKey('ci-a'))).toBe(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    expect(await readAutoBuildBudget(9, 'app-one')).toEqual({
+      available: true,
+      scope: 'account',
+      counter: 'account',
+      limit: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY,
+      remaining: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY,
+    });
+  });
+
+  it('readAutoBuildBudget on an unreadable counter says so, as the take would refuse', async () => {
+    redisMock.sysRedis.get.mockRejectedValue(new Error('redis down'));
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toEqual({
+      available: false,
+      scope: 'fixture-slug',
+    });
+  });
+});
+
+describe('agent review auto-start: a release after the reservation key was evicted', () => {
+  /** The cache cluster as a key store with TTLs: a key missing from `ttls` never expires. */
+  const store = new Map<string, number>();
+  const ttls = new Map<string, number>();
+  const incrBy = (key: string, by: number) => {
+    const next = (store.get(key) ?? 0) + by;
+    store.set(key, next);
+    return next;
+  };
+  const deps = {
+    automationOn: async () => true,
+    startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
+  };
+
+  beforeEach(() => {
+    store.clear();
+    ttls.clear();
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockResolvedValue(0);
+    redisMock.redis.multi.mockImplementation(() => {
+      const ops: Array<() => unknown> = [];
+      const chain = {
+        set: vi.fn((key: string, value: string, opts: { NX?: boolean; EX?: number }) => {
+          ops.push(() => {
+            if (opts.NX && store.has(key)) return null;
+            store.set(key, Number(value));
+            if (opts.EX) ttls.set(key, opts.EX);
+            return 'OK';
+          });
+          return chain;
+        }),
+        incr: vi.fn((key: string) => {
+          ops.push(() => incrBy(key, 1));
+          return chain;
+        }),
+        incrBy: vi.fn((key: string, by: number) => {
+          ops.push(() => incrBy(key, by));
+          return chain;
+        }),
+        exec: vi.fn(async () => ops.map((op) => op())),
+      };
+      return chain;
+    });
+    // A bare INCRBY, as Redis does it: creates a missing key with no TTL.
+    redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => incrBy(key, by));
+  });
+
+  it('leaves no reservation key without a TTL', async () => {
+    m.startAgentReview.mockImplementation(async () => {
+      // The cluster evicts the reservation while the start is in flight.
+      store.clear();
+      ttls.clear();
+      return {};
+    });
+
+    expect(await maybeAutoStartAgentReview('pubreq_evicted', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toEqual([
+      expect.stringMatching(/^system:blocks:agent-review-autostart-reserved:\d{4}-\d{2}-\d{2}$/),
+    ]);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
+  });
+
+  it('CONTROL: a release on a live key hands the reservation back and keeps its TTL', async () => {
+    m.startAgentReview.mockResolvedValue({});
+
+    expect(await maybeAutoStartAgentReview('pubreq_live_key', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toHaveLength(1);
+    expect(store.get(keys[0])).toBe(0);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
   });
 });

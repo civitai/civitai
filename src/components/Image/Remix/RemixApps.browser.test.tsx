@@ -158,8 +158,7 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.quoteEnabled.at(-1)).toBe(true);
     for (const app of REMIX_MENU_APPS.slice(0, REMIX_MENU_ROWS))
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
-    if (REMIX_MENU_APPS.length > REMIX_MENU_ROWS)
-      await expect.element(page.getByRole('menuitem', { name: 'See more' })).toBeVisible();
+    await expect.element(page.getByRole('menuitem', { name: 'See more' })).toBeVisible();
   });
 
   test('lists neither a disabled app nor one for videos', async () => {
@@ -336,6 +335,10 @@ describe('Remix apps in the Remix menu', () => {
       await expect
         .element(page.getByRole('menuitem', { name: 'App one' }).getByTitle(/pin/i))
         .not.toBeInTheDocument();
+
+      await page.getByRole('menuitem', { name: 'App one' }).click();
+      expect(h.openModal).toHaveBeenCalledTimes(1);
+      expect(h.openModal.mock.calls[0][0]).toMatchObject({ app: { slug: 'app-one' } });
     });
 
     test('the pin icon unpins an app without opening it, and saves the rest', async () => {

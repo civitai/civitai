@@ -568,7 +568,7 @@ version of this section said the study had been "removed before merge" and was
 since the runnable evaluator was in the tree the whole time.
 
 It has two parts, both drawn under ONE eligibility rule — the publicly searchable image
-(`imageWhere` in `src/server/search-index/images.search-index.ts`) with a public,
+(the retired images search index's `imageWhere`) with a public,
 non-empty prompt and no attached model flagged POI or minor, since those prompts go to the vendor. The matched draw is shared:
 part one takes a prefix, part two the first `sampleSize`; part one's unmatched half is
 a separate draw. **Part one** measures **stage-1 agreement** against that

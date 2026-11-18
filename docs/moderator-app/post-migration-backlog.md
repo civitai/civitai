@@ -271,9 +271,10 @@ findings are done — see the parity checklist.
 - [x] **Grant cosmetic items** from the shop panel — `grantCosmetic`, behind `user.cosmetics.grant`.
       🎥 *"Check their cosmetic shop, potentially grant them items."*
 - [x] **Multi-select comments to ToS/delete them.** **Built 2026-08-24 on `moderator-feedback-3` — not
-      merged or deployed.** Both lists in User Lookup → Comments carry a select-all over the *filtered*
-      rows, and the ids post from the selection rather than the rendered checkboxes, so it reaches past
-      the card's "Show more" fold. Actioned rows drop in place instead of refetching the account.
+      merged or deployed.** Since 2026-11 User Lookup → Comments is one list, paged 50 at a time
+      (`/api/user-comments`), with a select-all over the current page's *filtered* rows. Ticks persist
+      across pages, and the shared `SelectionBar` acts on all of them and counts those not shown. The
+      server refuses ids owned by another account and sends them in batches of 500.
 - [ ] **`/users` page grant doubles as the ban / purge / bulk-comment permission.** `contentAction`,
       `purgeContent` and `setBanned` in User Lookup all gate on `canAccess(user, '/users')`. Page grants
       and permissions are meant to be independent axes here; these are welded, so granting a page is
@@ -313,7 +314,8 @@ findings are done — see the parity checklist.
       all** (`commentTrackTypes` in `clickhouse/tracker.ts` has no type for them), and editing a model
       comment emitted a second event, inflating counts (the v1 path; gone with the model flip, 2026-11-06).
 - [ ] **`getJudgeCommentForImage` returns comment content with no ToS predicate.**
-      `commentsv2.service.ts` reads a challenge judge's comment by raw SQL and returns the body. Every
+      `challenge-judge-review.service.ts` (moved from `commentsv2.service.ts`, deleted in CommentV3
+      Phase 5) reads a challenge judge's comment from CommentV3 by raw SQL and returns the body. Every
       other v2 read filters `tosViolation` for non-moderators as of 2026-08-24; this one does not. The
       authors are challenge judges, so the exposure is small — filed rather than fixed, and it is the
       one v2 content read left unfiltered.

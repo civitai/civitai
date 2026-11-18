@@ -27,8 +27,6 @@ BEGIN
     'ComicProjectEngagement', -- reads `type`,`readChapters` (PK: userId,projectId)
     'CollectionContributor',  -- reads `permissions` (PK: userId,collectionId)
     'CollectionItem',         -- reads entity ids,addedById,status (PK: id)
-    'Comment',                -- reads userId,modelId (PK: id)
-    'CommentV2',              -- reads userId,threadId (PK: id)
     'CommentV3',              -- reads userId,entityType,entityId,deletedAt (PK: id)
     'Article',                -- reads status,userId (PK: id)
     'Bounty',                 -- reads userId (PK: id)

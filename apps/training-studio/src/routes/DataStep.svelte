@@ -27,11 +27,13 @@
     IconLayoutList,
     IconLayoutRows,
     IconTrash,
+    IconFilter,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
@@ -50,6 +52,7 @@
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
+  import { triggerForImport } from './triggerSuggest';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -64,9 +67,13 @@
     isLabeled,
     labelTextAfterSwitch,
     isTrainable,
+    repeatsOf,
+    clampRepeats,
+    selectionTakesRepeats,
     isTriggerTag,
     labelOptions,
     labelString,
+    matchesTagFilter,
     mergeAutoLabel,
     nextImgId,
     parseLabel,
@@ -75,11 +82,14 @@
     splitTags,
     startLabelPass,
     tagsHaveTrigger,
+    withFilterTags,
     type DatasetFilter,
     type Img,
     type LabelPosition,
     type Selection,
+    type TagFilter,
   } from './trainingFlow';
+  import { groupTags } from './tagReplace';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
@@ -88,6 +98,7 @@
   import { datasetEpoch, planRemoval } from './datasetRemoval';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
+  import RepeatsStepper from './RepeatsStepper.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
@@ -103,6 +114,7 @@
     excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
+    findReplace = false,
     onContinue,
     onBack,
   }: {
@@ -123,6 +135,7 @@
     excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
+    findReplace?: boolean;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -156,6 +169,7 @@
           name: r.name,
           caption: r.caption,
           previewWorkflowId: r.workflowId,
+          repeats: r.repeats,
         })),
         { silent: true }
       );
@@ -260,12 +274,34 @@
   // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
   const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
   const matureTotal = $derived(images.filter(isMature).length);
-  // "Show images" from Manage tags: the images that carried the tag when it was picked — a snapshot,
-  // so removing the tag from one while reviewing doesn't hide it.
-  let tagFilter = $state<{ tag: string; ids: number[] } | null>(null);
-  function showTag(tag: string) {
-    tagFilter = { tag, ids: images.filter((i) => i.tags.includes(tag)).map((i) => i.id) };
+  // With/without tag filter (and Manage tags' "Show images"): the images that matched when the filter
+  // last changed — a snapshot, so adding a missing tag to one while reviewing doesn't hide it.
+  let tagFilter = $state<(TagFilter & { ids: number[] }) | null>(null);
+  function setTagFilter(next: TagFilter) {
+    tagFilter =
+      next.include.length || next.exclude.length
+        ? { ...next, ids: images.filter((i) => matchesTagFilter(i.tags, next)).map((i) => i.id) }
+        : null;
   }
+  const showTag = (tag: string) => setTagFilter({ include: [tag], exclude: [] });
+  let tagFilterDraft = $state('');
+  function addFilterTags(side: keyof TagFilter) {
+    if (tagFilterDraft.trim())
+      setTagFilter(withFilterTags(tagFilter ?? { include: [], exclude: [] }, tagFilterDraft, side));
+    tagFilterDraft = '';
+  }
+  function dropFilterTag(tag: string) {
+    if (!tagFilter) return;
+    setTagFilter({
+      include: tagFilter.include.filter((t) => t !== tag),
+      exclude: tagFilter.exclude.filter((t) => t !== tag),
+    });
+  }
+  function flipFilterTag(tag: string) {
+    if (!tagFilter) return;
+    setTagFilter(withFilterTags(tagFilter, tag, tagFilter.include.includes(tag) ? 'exclude' : 'include'));
+  }
+  const tagVocabId = $props.id();
   // A card being edited inline stays under Labeled/Unlabeled until the filter changes, or the first
   // keystroke of a caption would label it and pull it out of the grid mid-word.
   let editedInline = $state<{ filter: DatasetFilter; ids: number[] }>({ filter: 'all', ids: [] });
@@ -289,13 +325,28 @@
             ? images.filter(isFailed)
             : images
   );
+  // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
+  // ×N badge only on images that repeat.
+  const takesRepeats = $derived(selectionTakesRepeats(selection));
+  let bulkRepeats = $state(2);
+  let bulkRepeatsOpen = $state(false);
+  function applyBulkRepeats() {
+    for (const img of shownImages) img.repeats = bulkRepeats > 1 ? bulkRepeats : undefined;
+    bulkRepeatsOpen = false;
+  }
+  // A skipped duplicate the user meant to keep is a weighting: one more repeat on the image it copies.
+  function keepDuplicatesAsRepeats() {
+    for (const id of dupOwnerIds) {
+      const img = images.find((i) => i.id === id);
+      if (img) img.repeats = clampRepeats(repeatsOf(img) + 1);
+    }
+    dupOwnerIds = [];
+  }
   const shownImages = $derived.by(() => {
     if (!tagFilter) return statusShownImages;
     const ids = new Set(tagFilter.ids);
     return statusShownImages.filter((i) => ids.has(i.id));
   });
-  // Unknown membership is treated as not a member, as on Review.
-  const isMember = hostConfig().isPaidMember === true;
   // Where the host has no auto-label, none of its actions are offered (the toggle, the Auto-label
   // and Label-all buttons, the editor's Re-run, the switch dialog's Re-label); the guards below back
   // that up for the callers that don't go through a button.
@@ -376,6 +427,7 @@
       caption?: string;
       previewWorkflowId?: string;
       nsfwLevel?: string;
+      repeats?: number;
     }[],
     { silent = false }: { silent?: boolean } = {}
   ) {
@@ -422,6 +474,7 @@
         // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
+        repeats: item.repeats,
       };
     });
     images = [...images, ...added];
@@ -470,45 +523,78 @@
 
   // Import a dataset .zip (round-trips with the detail page's Download): each media file becomes an
   // uploaded + scanned tile; a same-named `.txt` supplies its caption (standard LoRA layout). Captioned
-  // images are pre-labeled and skip auto-label; un-captioned ones still get it.
+  // images are pre-labeled and skip auto-label; un-captioned ones still get it. Several zips (one drop,
+  // a multi-pick, or a drop mid-import) queue and are handled one at a time — each zip's uploads finish
+  // before the next is unpacked, which bounds both upload concurrency and memory to one zip.
   let importing = $state(false);
+  let importNotice = $state('');
   let zipInput: HTMLInputElement;
-  async function importZip(file: File) {
+  // Each zip captures the epoch when it is queued, not when the drain starts: a Remove all drops the
+  // zips queued before it, while one dropped after it still imports.
+  const zipQueue: { file: File; current: () => boolean }[] = [];
+  async function importZips(files: File[]) {
+    zipQueue.push(...files.map((file) => ({ file, current: epoch.capture() })));
     if (importing) return;
     importing = true;
-    const current = epoch.capture();
+    importNotice = '';
+    const unreadable: string[] = [];
+    const empty: string[] = [];
+    let suggested: string | null = null;
     try {
-      const zip = await JSZip.loadAsync(file);
-      const captions = new Map<string, string>();
-      const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
-        [];
-      const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
-      for (const entry of ordered) {
-        if (entry.dir) continue;
-        const name = entry.name.split('/').pop() ?? entry.name;
-        if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
-        const dot = name.lastIndexOf('.');
-        const base = dot >= 0 ? name.slice(0, dot) : name;
-        const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
-        if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
-        else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
+      for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
+        const { file, current } = next;
+        if (!current()) continue;
+        let entries: Awaited<ReturnType<typeof readZip>>;
+        try {
+          entries = await readZip(file);
+        } catch {
+          unreadable.push(file.name);
+          continue;
+        }
+        if (entries.length === 0) empty.push(file.name);
+        // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
+        // One fill per batch: a user who clears it while the next zip unpacks has said no.
+        else if (current()) suggested = (await addImported(entries, suggested === null)) ?? suggested;
       }
-      const entries = await Promise.all(
-        mediaFiles.map(async (m) => ({
-          file: new File([await m.entry.async('blob')], m.name, {
-            type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
-          }),
-          caption: captions.get(m.base) ?? '',
-          // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
-          // folders must be told apart.
-          path: m.entry.name,
-        }))
-      );
-      // A Remove all while the zip was extracting: the user emptied the dataset this would refill.
-      if (current()) await addImported(entries);
     } finally {
       importing = false;
+      importNotice = [
+        unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
+        empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+        // Not if the user has since changed or cleared it.
+        suggested && trigger === suggested && `Trigger word set to "${suggested}" from the imported tags.`,
+      ]
+        .filter(Boolean)
+        .join(' ');
     }
+  }
+  async function readZip(file: File) {
+    const zip = await JSZip.loadAsync(file);
+    const captions = new Map<string, string>();
+    const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
+      [];
+    const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
+    for (const entry of ordered) {
+      if (entry.dir) continue;
+      const name = entry.name.split('/').pop() ?? entry.name;
+      if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
+      const dot = name.lastIndexOf('.');
+      const base = dot >= 0 ? name.slice(0, dot) : name;
+      const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+      if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
+      else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
+    }
+    return Promise.all(
+      mediaFiles.map(async (m) => ({
+        file: new File([await m.entry.async('blob')], m.name, {
+          type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
+        }),
+        caption: captions.get(m.base) ?? '',
+        // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
+        // folders must be told apart.
+        path: m.entry.name,
+      }))
+    );
   }
 
   // Exports the current labels so a dataset can be tagged across sessions: nothing in this step
@@ -541,7 +627,8 @@
             caption: labelString(img, labelMode),
             load: () => imgBytes(img),
           };
-        })
+        }),
+        trigger
       );
       if (!blob) {
         exportNotice = "Couldn't fetch any of the files — nothing to download.";
@@ -562,8 +649,16 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  async function addImported(entries: { file: File; caption: string; path: string }[]) {
-    if (entries.length === 0) return;
+  /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
+  async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
+    if (entries.length === 0) return null;
+    const suggested = triggerForImport({
+      labelMode,
+      trigger,
+      mayFill,
+      captions: entries.map((e) => e.caption),
+    });
+    if (suggested) trigger = suggested;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -583,10 +678,10 @@
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     void maybeAutoLabel();
+    return suggested;
   }
   function onPickZip(e: Event) {
-    const [file] = pickedFiles(e);
-    if (file) void importZip(file);
+    void importZips(pickedFiles(e));
   }
 
   function remove(id: number) {
@@ -765,9 +860,9 @@
     (v) => (dragging = v),
     (files) => {
       // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
-      // before. One zip per drop: `find` imports the first and the filter below discards the rest.
-      const zip = files.find(isZip);
-      if (zip) void importZip(zip);
+      // before. Every zip in the drop is imported, as the classic trainer did.
+      const zips = files.filter(isZip);
+      if (zips.length > 0) void importZips(zips);
       void addFiles(files.filter((f) => !isZip(f)));
     }
   );
@@ -837,14 +932,10 @@
     if (next !== undefined) editorId = next;
   }
 
-  // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
-  // and the Manage-tags panel.
-  const tagFreq = $derived.by(() => {
-    const freq = new Map<string, number>();
-    for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
-    return [...freq.entries()].sort((a, b) => b[1] - a[1]);
-  });
-  const tagVocab = $derived(tagFreq.map(([t]) => t));
+  // This dataset's tags, casings folded and frequency-ranked — feeds the editor's autocomplete and the
+  // Manage-tags panel.
+  const tagGroups = $derived(groupTags(images));
+  const tagVocab = $derived(tagGroups.map((g) => g.tag));
 
   let manageOpen = $state(false);
 
@@ -915,12 +1006,9 @@
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
             {#if !buzzMode.blueFirst}
               Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
-            {:else if isMember}
+            {:else}
               Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
               Blue Buzz is charged in Yellow.
-            {:else}
-              Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
-              Buzz. Remove it to pay in Blue.
             {/if}
           </Tooltip.Content>
         </Tooltip.Root>
@@ -962,6 +1050,31 @@
       </span>
     {/if}
   </div>
+{/snippet}
+
+{#snippet filterChip(tag: string, excluded: boolean)}
+  <span
+    class="inline-flex items-center rounded border font-mono {excluded
+      ? 'border-red-400/30 bg-red-400/10 text-red-300'
+      : 'border-dark-4 bg-dark-6 text-dark-0'}"
+  >
+    <button
+      type="button"
+      class="py-0.5 pl-2 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      title={excluded ? 'Switch to images with this tag' : 'Switch to images without this tag'}
+      onclick={() => flipFilterTag(tag)}
+    >
+      {excluded ? 'without' : 'with'} {tag}
+    </button>
+    <button
+      type="button"
+      class="py-0.5 pl-0.5 pr-1.5 opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      aria-label="Remove {tag} from the filter"
+      onclick={() => dropFilterTag(tag)}
+    >
+      <IconX size={11} stroke={2} />
+    </button>
+  </span>
 {/snippet}
 
 {#snippet triggerCaption(caption: string)}
@@ -1027,12 +1140,23 @@
   {#if exportNotice}
     <p class="text-sm text-amber-400" role="status">{exportNotice}</p>
   {/if}
+  {#if importNotice}
+    <p class="text-sm text-amber-400" role="status">{importNotice}</p>
+  {/if}
 
   {#if dupNotice.count > 0}
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
       <span>
         Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
         <strong class="text-dark-0">{dupNotice.names}</strong>.
+        {#if takesRepeats}
+          Meant to train {dupNotice.count === 1 ? 'it' : 'them'} more?
+          <button
+            type="button"
+            class="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+            onclick={keepDuplicatesAsRepeats}>Count as repeats</button
+          >
+        {/if}
       </span>
       <Button
         variant="ghost"
@@ -1057,6 +1181,7 @@
   <input
     bind:this={zipInput}
     type="file"
+    multiple
     accept=".zip,application/zip"
     class="hidden"
     onchange={onPickZip}
@@ -1184,7 +1309,7 @@
           </label>
         </div>
         {/if}
-        {#if tagFreq.length}
+        {#if tagGroups.length}
           <Button
             variant="outline"
             size="xs"
@@ -1306,7 +1431,7 @@
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
     <div
       {...drop}
-      class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
+      class="relative grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
     >
       {#if dragging}
         <!-- pointer-events-none: the overlay must not intercept the drag, or its appearance would
@@ -1431,16 +1556,75 @@
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          {#if tagFilter}
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
-              <span>Showing {mediaCount(shownImages.length, media)} tagged</span>
-              <span class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-dark-0">
-                {tagFilter.tag}
-              </span>
-              <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
-                <IconX size={12} stroke={2} class="mr-1 inline" />Clear
+          {#if tagGroups.length > 0 || tagFilter}
+            <form
+              class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2"
+              onsubmit={(e) => {
+                e.preventDefault();
+                addFilterTags('include');
+              }}
+            >
+              <IconFilter size={14} stroke={2} aria-hidden="true" />
+              <Input
+                bind:value={tagFilterDraft}
+                list={tagVocabId}
+                placeholder="Filter by tag…"
+                aria-label="Tag to filter the images by"
+                class="h-7 w-44 font-mono text-xs"
+              />
+              <datalist id={tagVocabId}>
+                {#each tagVocab as t (t)}<option value={t}></option>{/each}
+              </datalist>
+              <Button
+                type="submit"
+                variant="outline"
+                size="xs"
+                disabled={!tagFilterDraft.trim()}
+                title="Show only images that have this tag"
+              >
+                With
               </Button>
-            </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={!tagFilterDraft.trim()}
+                title="Show only images that don't have this tag"
+                onclick={() => addFilterTags('exclude')}
+              >
+                Without
+              </Button>
+              {#if tagFilter}
+                {#each tagFilter.include as t (t)}
+                  {@render filterChip(t, false)}
+                {/each}
+                {#each tagFilter.exclude as t (t)}
+                  {@render filterChip(t, true)}
+                {/each}
+                <span>Showing {mediaCount(shownImages.length, media)}</span>
+                {#if takesRepeats && shownImages.length > 0}
+                  <Popover.Root bind:open={bulkRepeatsOpen}>
+                    <Popover.Trigger
+                      class="rounded px-2 py-1 font-mono text-xs text-dark-2 hover:bg-dark-5 hover:text-white"
+                    >
+                      Set repeats…
+                    </Popover.Trigger>
+                    <Popover.Content class="w-64 text-xs" portalProps={portalProps()}>
+                      <p class="mb-2 text-dark-2">
+                        Repeats for the {mediaCount(shownImages.length, media)} shown. 1 trains each once.
+                      </p>
+                      <div class="flex items-center justify-between gap-2">
+                        <RepeatsStepper label="Repeats for the shown images" bind:value={bulkRepeats} />
+                        <Button size="xs" type="button" onclick={applyBulkRepeats}>Apply</Button>
+                      </div>
+                    </Popover.Content>
+                  </Popover.Root>
+                {/if}
+                <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
+                  <IconX size={12} stroke={2} class="mr-1 inline" />Clear
+                </Button>
+              {/if}
+            </form>
           {/if}
         </div>
 
@@ -1455,15 +1639,17 @@
           <div
             class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-8 text-center font-mono text-xs text-dark-2"
           >
-            {filter === 'unlabeled'
-              ? 'No unlabeled images — every image has a label.'
-              : filter === 'labeled'
-                ? 'No labeled images yet.'
-                : filter === 'mature'
-                  ? 'No images rated mature.'
-                  : filter === 'failed'
-                    ? 'No failed uploads.'
-                    : 'No images.'}
+            {tagFilter && statusShownImages.length > 0
+              ? 'No images match this tag filter.'
+              : filter === 'unlabeled'
+                ? 'No unlabeled images — every image has a label.'
+                : filter === 'labeled'
+                  ? 'No labeled images yet.'
+                  : filter === 'mature'
+                    ? 'No images rated mature.'
+                    : filter === 'failed'
+                      ? 'No failed uploads.'
+                      : 'No images.'}
           </div>
         {/if}
 
@@ -1578,6 +1764,17 @@
                     <IconCheck size={12} stroke={3} />
                   </span>
                   {@render ratingBadge(img)}
+                  {#if takesRepeats && repeatsOf(img) > 1}
+                    <button
+                      type="button"
+                      title="Trained {repeatsOf(img)} times — change in the label editor"
+                      aria-label="Repeats ×{repeatsOf(img)}"
+                      onclick={() => openEditor(img.id)}
+                      class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs font-semibold text-on-accent hover:bg-primary"
+                    >
+                      ×{repeatsOf(img)}
+                    </button>
+                  {/if}
                 {/if}
               </div>
 
@@ -1728,12 +1925,20 @@
   onRelabel={canAutoLabel ? relabelOne : undefined}
   position={{ index: editorIndex, total: editorSteps.length }}
   onStep={stepEditor}
+  repeatsEnabled={takesRepeats}
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
+<ManageTagsModal
+  bind:open={manageOpen}
+  {tagGroups}
+  {images}
+  {media}
+  {findReplace}
+  onShowTag={showTag}
+/>
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

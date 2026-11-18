@@ -22,7 +22,7 @@ vi.mock('$lib/server/image-moderation.service', async (importOriginal) => ({
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 
-const { FlagOnlyRemovedError } = await import('$lib/server/image-moderation.service');
+const { RemovedImageNotRestorableError } = await import('$lib/server/image-moderation.service');
 const { actions } = await import('../[slug]/+page.server');
 
 const request = (fields: Record<string, string>) =>
@@ -47,7 +47,7 @@ const ACCEPTABLE = 53;
 beforeEach(() => {
   vi.resetAllMocks();
   acceptImage.mockImplementation(async ({ imageId }: { imageId: number }) => {
-    if (imageId === REFUSED) throw new FlagOnlyRemovedError(imageId);
+    if (imageId === REFUSED) throw new RemovedImageNotRestorableError(imageId);
     return undefined;
   });
 });

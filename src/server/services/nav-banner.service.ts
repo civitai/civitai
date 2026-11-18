@@ -64,7 +64,7 @@ export async function getNavBanners({
           name: 'nav-banner',
           message: (e as Error).message,
           event: event.name,
-        }).catch(() => undefined);
+        });
         return null;
       }
     })
@@ -102,7 +102,7 @@ async function joinedOrNot(
       name: 'nav-banner-joined',
       message: (e as Error).message,
       event: event.name,
-    }).catch(() => undefined);
+    });
     return false;
   }
 }

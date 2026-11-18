@@ -32,6 +32,7 @@ import type {
 import {
   boxActions,
   boxEventOf,
+  boxNoun,
   shelfPricesByCosmetic,
   collectedCount,
   formatChance,
@@ -44,6 +45,8 @@ import {
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useMysteryBoxOpen, useMysteryBoxViews } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { edgeMediaOptions, resolveEdgeImageUrl } from '~/client-utils/edge-url';
+import { reportApplicationError } from '~/utils/application-error';
 import { boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -191,6 +194,7 @@ function BoxSummary({
   /** The buy and open buttons, where the layout puts them. */
   children: ReactNode;
 }) {
+  const noun = boxNoun(view);
   return (
     <Stack gap="md" className="md:sticky md:top-0">
       <Group justify="space-between" align="flex-start" wrap="nowrap">
@@ -208,8 +212,8 @@ function BoxSummary({
         )}
       </div>
       <Text size="sm">
-        You get <b>1 hat you don&apos;t own yet</b>. The rarity is rolled first, then every hat you
-        don&apos;t own in that rarity is equally likely.
+        You get <b>{`1 ${noun} you don't own yet`}</b>.{' '}
+        {`The rarity is rolled first, then every ${noun} you don't own in that rarity is equally likely.`}
       </Text>
       <MysteryBoxOddsBar tiers={tiers} legend={false} />
       {view.packListing && <PackOdds view={view} pack={view.packListing} />}
@@ -233,7 +237,7 @@ function BoxSummary({
         ))}
       </Stack>
       <Text size="xs" c="dimmed">
-        Your odds change as you collect: once you own every hat in a rarity, it drops out and the
+        Your odds change as you collect: once you own every {noun} in a rarity, it drops out and the
         others share its chance.{' '}
         <Anchor href={mysteryBoxOddsPageUrl(view)} target="_blank" inherit>
           Full odds &amp; history
@@ -252,6 +256,7 @@ function PackOdds({
   view: MysteryBoxView;
   pack: NonNullable<MysteryBoxView['packListing']>;
 }) {
+  const noun = boxNoun(view);
   const guaranteed = guaranteedTierSummaries(view, pack.guaranteedTierIds);
   const names = guaranteed.map((t) => t.tier.name).join(' or ');
   const anyLeft = guaranteed.some((t) => t.left > 0);
@@ -274,11 +279,11 @@ function PackOdds({
         ))
       ) : (
         <Text size="xs" c="dimmed">
-          You own every {names} hat, so the pack isn&apos;t offered.
+          You own every {names} {noun}, so the pack isn&apos;t offered.
         </Text>
       )}
       <Text size="xs" c="dimmed">
-        If you own every {names} hat by the time you open the guaranteed box, it uses the odds
+        If you own every {names} {noun} by the time you open the guaranteed box, it uses the odds
         above.
       </Text>
     </Stack>
@@ -300,6 +305,7 @@ function BoxActions({
   onBuyPack: () => void;
   onOpen: () => void;
 }) {
+  const noun = boxNoun(view);
   const { left, total } = collectedCount(view);
   const actions = boxActions(view);
   const held = view.heldBoxItemIds.length;
@@ -349,7 +355,7 @@ function BoxActions({
         </>
       )}
       <Text size="xs" c="dimmed" ta="center">
-        {left} {left === 1 ? 'hat' : 'hats'} left for you
+        {left} {left === 1 ? noun : `${noun}s`} left for you
         {view.listing ? ' · paid Buzz only' : ''}
       </Text>
     </Stack>
@@ -416,6 +422,8 @@ function BoxContents({
   );
 }
 
+const REWARD_ART_WIDTH = 256;
+
 function OpenStage({
   view,
   color,
@@ -440,6 +448,7 @@ function OpenStage({
   onOpenNext: () => void;
   onDone: () => void;
 }) {
+  const noun = boxNoun(view);
   const tier = result ? view.tiers.find((t) => t.id === result.tierId) : undefined;
   const reward = result ? view.contents.find((c) => c.contentId === result.contentId) : undefined;
   const glow = tier ? tierColor(tier) : color;
@@ -447,6 +456,16 @@ function OpenStage({
   const shelfPrice = reward ? shelfPrices[reward.cosmeticId] : undefined;
   const actions = boxActions(view);
   const revealed = phase === 'revealed';
+
+  // Warm the cache while the lid is still on, so the reveal's <img> doesn't start cold mid-pop.
+  const rewardUrl = reward?.url;
+  useEffect(() => {
+    if (phase !== 'glowing' || !rewardUrl) return;
+    new Image().src = resolveEdgeImageUrl(
+      rewardUrl,
+      edgeMediaOptions({ width: REWARD_ART_WIDTH })
+    ).url;
+  }, [phase, rewardUrl]);
 
   return (
     <div
@@ -502,19 +521,28 @@ function OpenStage({
                   url={reward.url}
                   fit={reward.fit as EventDecorationFit | undefined}
                   color={glow}
-                  width={256}
+                  width={REWARD_ART_WIDTH}
+                  loading="eager"
+                  onError={() =>
+                    reportApplicationError(new Error('mystery box reward art failed to load'), {
+                      name: 'mystery-box-reveal-art',
+                      message: `cosmeticId=${reward.cosmeticId} url=${reward.url}`,
+                    })
+                  }
                   className="!bg-transparent"
                 />
               )}
             </div>
             <Text c="white" fw={800} size="xl" ta="center">
-              {reward?.name ?? 'A new hat'}
+              {reward?.name ?? `A new ${noun}`}
             </Text>
-            <Text size="sm" c="dimmed">
-              {shelfPrice
-                ? `Also on the shelf at ${numberWithCommas(shelfPrice)} Buzz`
-                : 'Only in the Mystery Box'}
-            </Text>
+            {!view.seller && (
+              <Text size="sm" c="dimmed">
+                {shelfPrice
+                  ? `Also on the shelf at ${numberWithCommas(shelfPrice)} Buzz`
+                  : 'Only in the Mystery Box'}
+              </Text>
+            )}
             <Group gap="xs" justify="center">
               {onPlace && (
                 <Button onClick={onPlace} data-testid="box-place">
@@ -536,7 +564,8 @@ function OpenStage({
               </Button>
             </Group>
             <Text size="sm" c="white">
-              <b>{collected}</b> / {total} {view.team ? `Team ${view.team} ` : ''}hats collected
+              <b>{collected}</b> / {total} {view.team ? `Team ${view.team} ` : ''}
+              {noun}s collected
             </Text>
           </Stack>
         )}

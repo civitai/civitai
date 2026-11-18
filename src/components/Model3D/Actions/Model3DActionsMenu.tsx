@@ -568,6 +568,7 @@ export function Model3DActionsMenu({
                 setNsfwLevelMutation.mutate({
                   id: model3d.id,
                   nsfwLevel: pendingLevel,
+                  thumbnailImageId: model3d.thumbnailImageId ?? null,
                   lock: lockNsfwLevel,
                 })
               }

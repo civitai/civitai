@@ -21,12 +21,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // The hub declines (null) when the target isn't linked to this device / has aged out / is unreachable →
   // the client falls back to a re-login.
-  const result = await deviceAccounts.switch(req.headers.cookie ?? '', userId);
+  const result = await deviceAccounts.switch(req.headers.cookie ?? '', userId, req.headers.host);
   if (!result) return res.status(403).json({ error: 'switch not allowed' });
 
   // Set the new session cookie + roll the device cookie in lockstep (the hub slid the device record).
   setSessionCookie(res, result.token, {
-    deviceCookie: readDeviceId(req.cookies)?.value,
+    deviceCookie: readDeviceId(req.cookies, { host: req.headers.host })?.value,
     host: req.headers.host,
     requestCookies: req.cookies,
   });

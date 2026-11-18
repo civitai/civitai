@@ -3,6 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
@@ -57,7 +61,10 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 vi.mock('../storage', () => ({
-  getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
+  getStorage: () => ({
+    deleteObject: vi.fn(async () => undefined),
+    purgeObjectVersions: vi.fn(async () => ({ versionsDeleted: 1, remaining: 0 })),
+  }),
 }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');
@@ -88,6 +95,8 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
@@ -96,7 +105,8 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,
@@ -230,6 +240,19 @@ describe('moderator writes that change a custom thumbnail', () => {
 
     expect(bustedKeys()).toEqual(expect.arrayContaining([key(VIDEO_ID), key(OTHER_VIDEO_ID)]));
     expect(reindexed().sort()).toEqual([VIDEO_ID, OTHER_VIDEO_ID]);
+  });
+});
+
+// The version showcase is cached for a day and filtered by level when it is built, so a re-rate has
+// to drop it for the image's post.
+describe('updateImageNsfwLevel and the post gallery caches', () => {
+  it("busts the caches of the image's post", async () => {
+    await db.query(`UPDATE "Image" SET "postId" = 42 WHERE "id" = $1`, [PLAIN_IMAGE_ID]);
+    vi.mocked(bustPostGalleryCaches).mockClear();
+
+    await updateImageNsfwLevel({ id: PLAIN_IMAGE_ID, nsfwLevel: 16, userId: 1 });
+
+    expect(bustPostGalleryCaches).toHaveBeenCalledWith([42]);
   });
 });
 

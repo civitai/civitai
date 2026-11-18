@@ -20,6 +20,11 @@ import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { IMAGE_PREP_ERROR, ImagePrepError } from '~/shared/utils/canvas-utils';
 import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 import { uploadGenerationSourceImage } from './generationSourceImageUpload';
+import {
+  toGenerationSource,
+  type ScannedGenerationSource,
+  type ScannedRowsPath,
+} from './generationSourceScannedRows';
 
 /**
  * App Blocks — the host modal behind PageBlockHost's `OPEN_IMAGE_UPLOAD` bridge
@@ -40,17 +45,28 @@ import { uploadGenerationSourceImage } from './generationSourceImageUpload';
  * ends in `.civitai.com`, so the returned url passes the img2img
  * `blockSourceImageSchema` host allowlist (workflow.schema) unchanged — no
  * loosening of that allowlist is required.
+ *
+ * SCANNED ROWS. While `app-block-source-scanned-rows` is on, the generation gate refuses
+ * that blob for an app, so (given `scannedRows`) the modal has the server copy it into a
+ * PRIVATE, scanned `Image` row and resolves THAT row's url plus `imageId` and `ready`
+ * (`toGenerationSource`). Off, or with the flag unreadable, it resolves the blob as above.
  */
 
-export type BlockSourceImageInfo = { url: string; width: number; height: number };
+/** The blob as uploaded, or (scanned rows on) the private scanned row it was copied into. */
+export type BlockSourceImageInfo =
+  | { url: string; width: number; height: number }
+  | ScannedGenerationSource;
 
 type UploadStatus = 'idle' | 'uploading' | 'ready' | 'error';
 
 export default function BlockGenerationSourceUploadModal({
   onResolved,
+  scannedRows,
 }: {
   /** Called ONCE with the source projection when the consumer blob lands. */
   onResolved: (result: BlockSourceImageInfo) => void;
+  /** The scanned-row path (`toGenerationSource`); absent → the blob, as before. */
+  scannedRows?: ScannedRowsPath | null;
 }) {
   const dialog = useDialogContext();
   const [status, setStatus] = useState<UploadStatus>('idle');
@@ -108,13 +124,20 @@ export default function BlockGenerationSourceUploadModal({
     }
 
     try {
-      // NO createImage, NO scan, NO gate: the orchestrator scans the generation output.
+      // The upload itself: a consumer blob, no createImage here.
       const uploaded = await uploadGenerationSourceImage(file, () => epoch === epochRef.current);
       if (!uploaded || epoch !== epochRef.current) return;
       const { url, width, height } = uploaded;
+      // Scanned rows on: the server's private scanned copy of that blob instead.
+      const source = await toGenerationSource(
+        { url, width, height },
+        scannedRows,
+        () => epoch === epochRef.current
+      );
+      if (!source || epoch !== epochRef.current) return;
       setStatus('ready');
       setMessage(null);
-      onResolved({ url, width, height });
+      onResolved(source);
       dialog.onClose();
     } catch (err) {
       if (epoch !== epochRef.current) return;

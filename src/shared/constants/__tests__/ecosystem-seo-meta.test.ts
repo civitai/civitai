@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { EcosystemSeoConfig } from '~/shared/constants/ecosystem-seo.constants';
 import {
   ECOSYSTEM_SEO,
+  ECOSYSTEM_SEO_PAGES,
   LORA_COUNT_TOKEN,
+  getEcosystemSeoSlug,
   getLoraCountKeys,
 } from '~/shared/constants/ecosystem-seo.constants';
 
@@ -20,6 +22,22 @@ const resolveWidest = (value: string) => value.replace(LORA_COUNT_TOKEN, WIDEST_
 
 const configs = Object.values(ECOSYSTEM_SEO) as EcosystemSeoConfig[];
 const withTitle = configs.filter((c) => c.seoTitle);
+
+/**
+ * A config alone makes the page serve at its URL; the sitemap, the /ecosystems index, the hub
+ * footer and the model-page link all read ECOSYSTEM_SEO_PAGES. A config with no entry there is
+ * an orphan: reachable only by typing the URL, invisible to search engines.
+ */
+describe('ecosystem SEO page list', () => {
+  it.each(configs.map((c) => [c.key, getEcosystemSeoSlug(c)]))(
+    '%s is listed under its slug, so it reaches the sitemap and index',
+    (key, slug) => {
+      const page = ECOSYSTEM_SEO_PAGES.find((p) => p.slug === slug);
+      expect(page, `no ECOSYSTEM_SEO_PAGES entry for slug "${slug}"`).toBeDefined();
+      expect(page?.ecosystemKeys).toContain(key);
+    }
+  );
+});
 
 describe('ecosystem SEO meta', () => {
   it('has at least one page using a custom title, so the checks below run', () => {

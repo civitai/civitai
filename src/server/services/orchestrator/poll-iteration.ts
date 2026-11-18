@@ -13,6 +13,7 @@ import { formatGenerationResponse2 } from '~/server/services/orchestrator/orches
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -50,7 +51,7 @@ async function downloadAndUploadImage(
   tracker?: Tracker
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
-    const imageResponse = await fetch(imageUrl);
+    const imageResponse = await outboundFetch(imageUrl, { timeoutMs: 120_000 });
     if (!imageResponse.ok) throw new Error(`Failed to download: ${imageResponse.status}`);
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 

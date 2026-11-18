@@ -13,12 +13,13 @@ import { leaderboardPopulatedKey } from '~/server/services/new-creators.service'
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 /**
- * A board is populated for today when it has rows dated today, or when `prepare-leaderboard` marked it
- * complete for today. The marker covers a board that legitimately yields no rows, which the rows cannot
- * show. The job writes the marker with `current_date + addDays` at 23:00, so the 00:01 readers see it as
- * `current_date`.
+ * Every active board with a query, split two ways. `unpopulated`: no rows dated today and no marker
+ * for today (the marker covers a board that legitimately yields no rows). `unmarked`: no marker for
+ * today, or a later one without today's rows, since rows alone can be a batch of a board still being
+ * written. The 23:00 run writes markers as `current_date + 1`, so from then a finished board's marker
+ * reads as tomorrow.
  */
-export async function getUnpopulatedLeaderboards() {
+export async function getLeaderboardPopulation() {
   const rows = await dbWrite.$queryRaw<
     { id: string; hasRows: boolean; marker: string | null; today: string }[]
   >`
@@ -36,7 +37,19 @@ export async function getUnpopulatedLeaderboards() {
       WHERE l.query != '' AND l.active
     `;
 
-  return rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id);
+  return {
+    boards: rows.length,
+    unpopulated: rows.filter((x) => !x.hasRows && x.marker !== x.today).map((x) => x.id),
+    // ISO dates compare as text. A marker for tomorrow proves tomorrow's rows, so it counts for
+    // today only when today's rows exist too.
+    unmarked: rows
+      .filter((x) => !x.marker || x.marker < x.today || (x.marker > x.today && !x.hasRows))
+      .map((x) => x.id),
+  };
+}
+
+export async function getUnpopulatedLeaderboards() {
+  return (await getLeaderboardPopulation()).unpopulated;
 }
 
 export async function isLeaderboardPopulated() {
@@ -93,6 +106,15 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
   return leaderboards;
 }
 
+/**
+ * The board day (YYYY-MM-DD) for `date`, default now: the UTC calendar day. prepare-leaderboard's
+ * 23:00 UTC run writes the next day's rows, so day D's rows exist from D-1 23:00 and a reader
+ * on day D always finds them, including in the hour after that run.
+ */
+export function leaderboardDay(date?: Date) {
+  return dayjs.utc(date ?? new Date()).format('YYYY-MM-DD');
+}
+
 type LeaderboardPosition = {
   leaderboardId: string;
   position: number;
@@ -103,9 +125,7 @@ export async function getLeaderboardPositions(input: GetLeaderboardPositionsInpu
   const userId = input.userId;
   if (!userId) return [] as LeaderboardPosition[];
 
-  // strip time from date
-  let date = input.date ?? new Date();
-  date = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const date = new Date(leaderboardDay(input.date));
 
   const positions = await dbRead.leaderboardResult.findMany({
     where: {
@@ -158,7 +178,7 @@ type LeaderboardRaw = {
   } | null;
 };
 export async function getLeaderboard(input: GetLeaderboardInput) {
-  const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
+  const date = leaderboardDay(input.date);
 
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
     WITH yesterday AS (

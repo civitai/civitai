@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isCivitaiSiteUrl, parseCivitaiUrlSafe } from '~/utils/civitai-url';
+import { isCivitaiSiteUrl, parseCivitaiImageId, parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
 describe('parseCivitaiUrlSafe', () => {
   it('reads a model id and ignores the slug', () => {
@@ -224,5 +224,23 @@ describe('isCivitaiSiteUrl', () => {
     expect(isCivitaiSiteUrl('https://image.civitai.com/abc/original=true/a.jpeg')).toBe(false);
     expect(isCivitaiSiteUrl('https://example.com/a.jpg')).toBe(false);
     expect(isCivitaiSiteUrl('civitai.com/images/123')).toBe(false);
+  });
+});
+
+describe('parseCivitaiImageId', () => {
+  it('reads the image of an image-page link on a site host, or a relative one', () => {
+    expect(parseCivitaiImageId('https://civitai.com/images/123')).toBe(123);
+    expect(parseCivitaiImageId('https://civitai.red/images/123?postId=9')).toBe(123);
+    expect(parseCivitaiImageId('/images/123')).toBe(123);
+    expect(
+      parseCivitaiImageId('http://localhost:3000/images/123', { hosts: ['localhost:3000'] })
+    ).toBe(123);
+  });
+
+  it('refuses another host, the image CDN, and a feed link', () => {
+    expect(parseCivitaiImageId('https://example.com/images/123')).toBeUndefined();
+    expect(parseCivitaiImageId('https://image.civitai.com/images/123')).toBeUndefined();
+    expect(parseCivitaiImageId('https://civitai.com/images?tags=5')).toBeUndefined();
+    expect(parseCivitaiImageId('https://civitai.com/models/123')).toBeUndefined();
   });
 });

@@ -3,7 +3,8 @@ import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { buildEntities } from '~/server/registry-adapter/entities';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
-const SCHEMA = 'urn:schema:registry:schema@v1';
+// The schema stream: the root, JSON Schema 2020-12's own meta-schema.
+const SCHEMA = 'https://json-schema.org/draft/2020-12/schema';
 const APP = 'urn:schema:apps.civitai.com:app@v1';
 const RELEASE = 'urn:schema:apps.civitai.com:app-release@v1';
 const SERVICE = 'urn:schema:apps.civitai.com:service@v1';

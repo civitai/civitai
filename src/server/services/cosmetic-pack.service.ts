@@ -764,7 +764,7 @@ export const purchaseCosmeticPack = async ({
           data: { shopItemId: shopItem.id, userId, transactionId, price },
           // `.catch`, not `await`: a degraded Axiom returns a rejecting promise,
           // and unattached that is an unhandled rejection.
-        }).catch(() => undefined);
+        });
       const recipients = [
         ...components.map((c) => ({
           userId: c.userId,

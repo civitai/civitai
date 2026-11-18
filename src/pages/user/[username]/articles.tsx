@@ -131,6 +131,7 @@ function UserArticlesFeed({ profileUserId }: { profileUserId: number }) {
                   pending: true,
                 }}
                 showEmptyCta={selfView}
+                searchable
               />
             ) : (
               <UserDraftArticles />

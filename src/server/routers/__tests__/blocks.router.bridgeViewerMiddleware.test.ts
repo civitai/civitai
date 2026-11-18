@@ -7,7 +7,7 @@ import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as BridgeAuth from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccess from '~/server/services/blocks/block-token-access.service';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
-import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
+import type * as RefusalService from '~/server/services/blocks/rate-limit-refusal.service';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
 
@@ -70,9 +70,9 @@ vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof CatalogRateLimit>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogLimit(...a),
 }));
-vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
-  ...(await importOriginal<typeof RuntimeMetrics>()),
-  recordBlockBridgeRateLimitRefusal: (...a: unknown[]) => h.recordRefusal(...a),
+vi.mock('~/server/services/blocks/rate-limit-refusal.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof RefusalService>()),
+  recordBridgeRateLimitRefusal: (...a: unknown[]) => h.recordRefusal(...a),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -149,6 +149,7 @@ const OPTIONS: BlockBridgeViewerOptions = {
   scope: 'buzz:read:self',
   anonMessage: 'probe requires a viewer',
   rateLimit: {
+    bucket: 'catalog',
     check: (viewer) => {
       h.events.push('rate-limit');
       return check(viewer);
@@ -272,8 +273,21 @@ describe('the buzz reads on the middleware', () => {
 
     h.catalogLimit.mockResolvedValue({ allowed: false });
     await expect(read('getMyBuzzBalance')).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(h.recordRefusal.mock.calls).toEqual([['getMyBuzzBalance', 'catalog']]);
+    expect(h.recordRefusal.mock.calls.map((c) => c.slice(0, 2))).toEqual([
+      ['getMyBuzzBalance', 'catalog'],
+    ]);
   });
+
+  // Pins: the middleware records the refusal for every procedure on buzzReadOptions, not only
+  // the one that passes its own check.
+  it.each(READS.filter(([proc]) => proc !== 'getMyBuzzBalance'))(
+    '%s counts a refusal as itself on the catalog bucket',
+    async (proc, extra) => {
+      h.catalogLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 4 });
+      await expect(read(proc, extra)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+      expect(h.recordRefusal.mock.calls.map((c) => c.slice(0, 2))).toEqual([[proc, 'catalog']]);
+    }
+  );
 });
 
 describe('blocks.getMyViewer on the middleware', () => {
@@ -301,13 +315,15 @@ describe('blocks.getMyViewer on the middleware', () => {
     expect(h.catalogLimit.mock.calls).toEqual([[INSTANCE_ID]]);
   });
 
-  it('past the ceiling it refuses without counting the refusal or reading the primary', async () => {
+  it('past the ceiling it refuses, counts the refusal, and does not read the primary', async () => {
     h.catalogLimit.mockResolvedValue({ allowed: false });
 
     await expect(
       blocksRouter.createCaller(ctx() as never).getMyViewer({ blockToken: await mint() })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(h.recordRefusal).not.toHaveBeenCalled();
+    expect(h.recordRefusal.mock.calls.map((c) => c.slice(0, 2))).toEqual([
+      ['getMyViewer', 'catalog'],
+    ]);
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 });

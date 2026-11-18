@@ -1,3 +1,4 @@
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '~/server/createContext';
 import type * as ImageService from '~/server/services/image.service';
@@ -92,6 +93,35 @@ describe('Hat Turf sorts on the image feed', () => {
     expect(result.nextCursor).toBe('5|10');
     expect(result.source).toBe('turf');
   });
+
+  it.each([
+    ['a scoped key', { tokenScope: TokenScope.ModelsRead }, false],
+    ['a session (control)', {}, true],
+  ])(
+    "hydrates a moderator's page on %s with moderator and owner views: %s",
+    async (_, key, view) => {
+      mocks.readTurfRankPage.mockResolvedValue({ ids: [30], nextCursor: undefined });
+      mocks.getAllImages.mockResolvedValue({ items: rows(30) });
+      const viewer = {
+        ...ctx(),
+        user: { id: 7, isModerator: true },
+        ...(Object.keys(key).length && {
+          apiKeyId: 1,
+          apiKeyType: 'User',
+          subject: { type: 'apiKey', id: 1 },
+          ...key,
+        }),
+      } as unknown as Context;
+      await getInfiniteImagesHandler({
+        input: feed({ hatSort: 'most', hatTeams: ['Blue'] }),
+        ctx: viewer,
+      });
+      expect(mocks.getAllImages.mock.calls[0][0]).toMatchObject({
+        asModerator: view,
+        asOwner: view,
+      });
+    }
+  );
 
   it("drops an image held at its model's level, as the feed does for images picked by id", async () => {
     mocks.readTurfRankPage.mockResolvedValue({ ids: [10, 11], nextCursor: undefined });

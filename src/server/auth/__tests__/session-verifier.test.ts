@@ -1,14 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 
-// Leg 3 of the SPOF fix: the sysRedis revocation read is now bounded by withSysReadDeadline and FAILS OPEN on
-// a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
+// Leg 3 of the SPOF fix: the sysRedis revocation read (the shared createRevocationCheck) is bounded by
+// withRevocationReadBreaker and FAILS OPEN on a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
 const h = vi.hoisted(() => ({
   observeSessionLeg: vi.fn(),
+  observeRevocationDegraded: vi.fn(),
   hGet: vi.fn(),
   get: vi.fn(),
-  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  withSysReadBreaker: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
   logSysRedisFailOpen: vi.fn(),
 }));
 
@@ -17,31 +18,43 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   createAuthVerifier: () => ({}),
 }));
-vi.mock('~/server/auth/session-metrics', () => ({ observeSessionLeg: h.observeSessionLeg }));
+vi.mock('~/server/auth/session-metrics', () => ({
+  observeSessionLeg: h.observeSessionLeg,
+  observeRevocationDegraded: h.observeRevocationDegraded,
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRedisFailOpen }));
 // 🔴 Spread the REAL package for the key constants rather than re-typing them. Hand-typed
 // copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
 // ALL as 'sys:all' while production uses 'session:token-state' and 'session:all', so the
 // suite exercised keys Redis never sees and could not have caught a key-name regression.
-// The client and the withSysReadDeadline control surface stay overridden.
+// The client and the revocation read's bound (h.withSysReadBreaker is its control surface) stay overridden.
 vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: { hGet: h.hGet, get: h.get },
-  withSysReadDeadline: h.withSysReadDeadline,
+  withRevocationReadBreaker: h.withSysReadBreaker,
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
-import { isRevoked } from '../session-verifier';
+import { envMock } from '~/__tests__/mocks';
+import type * as Verifier from '../session-verifier';
+
+// Loaded fresh per test: the shared check keeps the revocation markers it has read, so a marker one test
+// returns would otherwise decide another test's verdict when its read fails.
+let isRevoked: typeof Verifier.isRevoked;
 
 const claims = (over: Partial<SessionClaims> = {}): SessionClaims =>
   ({ jti: 't7', signedAt: 1000, ...over } as SessionClaims);
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
-  h.withSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  h.withSysReadBreaker.mockImplementation((p) => p); // transparent by default
   h.hGet.mockResolvedValue(null);
   h.get.mockResolvedValue(null);
+  vi.resetModules();
+  ({ isRevoked } = await import('../session-verifier'));
 });
+
+afterEach(() => envMock.reset());
 
 describe('isRevoked — bounded revocation read (leg 3)', () => {
   it('returns false and records outcome "hit" when the token is not revoked', async () => {
@@ -85,22 +98,76 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
   });
 
   it('FAILS OPEN (false) on a read-deadline timeout and records outcome "timeout"', async () => {
-    // withSysReadDeadline rejects with a "…read timed out after Nms" Error when the deadline trips.
-    h.withSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    // withSysReadBreaker rejects with an error tagged `reason: 'timeout'` when the deadline trips.
+    h.withSysReadBreaker.mockRejectedValue(
+      Object.assign(new Error('sysRedis read timed out after 1000ms'), { reason: 'timeout' })
+    );
     expect(await isRevoked(claims())).toBe(false); // a stalled revocation check must NOT block login
     expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'timeout', expect.any(Number));
-    expect(h.logSysRedisFailOpen).toHaveBeenCalled();
+    expect(h.observeRevocationDegraded).toHaveBeenCalledWith('allow_unknown');
+    expect(h.logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'session-verifier isRevoked',
+      expect.any(Error),
+      expect.objectContaining({ tokenId: 't7', verdict: 'allow_unknown' })
+    );
   });
 
   it('FAILS OPEN (false) on a generic read error and records outcome "error"', async () => {
-    h.withSysReadDeadline.mockRejectedValue(new Error('ECONNRESET'));
+    h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
     expect(await isRevoked(claims())).toBe(false);
     expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'error', expect.any(Number));
   });
 
+  it.each([
+    ['a read error', () => h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'))],
+    [
+      'an open read breaker',
+      () =>
+        h.withSysReadBreaker.mockRejectedValue(
+          Object.assign(new Error('sys read breaker open'), { reason: 'breaker-open' })
+        ),
+    ],
+  ])(
+    'still DENIES on %s a token whose revocation this process has already read',
+    async (_name, fail) => {
+      h.hGet.mockImplementation(async (key: string, field: string) =>
+        key === REDIS_SYS_KEYS.SESSION.TOKEN_STATE && field === 't7' ? 'invalid' : null
+      );
+      expect(await isRevoked(claims())).toBe(true);
+
+      fail();
+      expect(await isRevoked(claims())).toBe(true);
+      expect(h.observeRevocationDegraded).toHaveBeenCalledWith('deny_cached');
+      expect(h.logSysRedisFailOpen).toHaveBeenCalledWith(
+        'read-degraded',
+        'session-verifier isRevoked',
+        expect.any(Error),
+        expect.objectContaining({ verdict: 'deny_cached' })
+      );
+      // A token this process never saw revoked is still allowed (the fail-open policy).
+      expect(await isRevoked(claims({ jti: 'unseen' }))).toBe(false);
+      expect(h.observeRevocationDegraded).toHaveBeenLastCalledWith('allow_unknown');
+    }
+  );
+
+  it('with SESSION_REVOCATION_CACHE off, a failed read fails open even for a revocation already read', async () => {
+    envMock.set({ SESSION_REVOCATION_CACHE: false });
+    vi.resetModules();
+    ({ isRevoked } = await import('../session-verifier'));
+    h.hGet.mockImplementation(async (key: string, field: string) =>
+      key === REDIS_SYS_KEYS.SESSION.TOKEN_STATE && field === 't7' ? 'invalid' : null
+    );
+    expect(await isRevoked(claims())).toBe(true);
+
+    h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
+    expect(await isRevoked(claims())).toBe(false);
+    expect(h.observeRevocationDegraded).toHaveBeenCalledWith('allow_unknown');
+  });
+
   it('returns false without reading when the token has no jti', async () => {
     expect(await isRevoked(claims({ jti: undefined }))).toBe(false);
-    expect(h.withSysReadDeadline).not.toHaveBeenCalled();
+    expect(h.withSysReadBreaker).not.toHaveBeenCalled();
     expect(h.observeSessionLeg).not.toHaveBeenCalled();
   });
 });

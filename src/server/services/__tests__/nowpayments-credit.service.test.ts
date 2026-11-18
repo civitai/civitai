@@ -13,6 +13,7 @@ type LedgerRow = {
   toAccountType: string;
   amount: number;
   description?: string;
+  details?: Record<string, unknown>;
   date: string;
 };
 
@@ -274,6 +275,19 @@ describe('creditDeposit', () => {
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
   });
 
+  it('refuses a payment the deposit flow settled as paid by hand', async () => {
+    dbMock.dbRead.cryptoDeposit.findUnique.mockResolvedValue({
+      status: 'hand_paid',
+      buzzCredited: null,
+    });
+
+    const result = await credit();
+
+    expect(result).toMatchObject({ credited: false, decision: 'refused' });
+    expect(result.reason).toMatch(/paid by hand/);
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
   it('refuses a payment credited by hand against its payin hash', async () => {
     ledger.push({
       externalTransactionId: `np-payin-${PAYIN_HASH}`,
@@ -326,6 +340,27 @@ describe('creditDeposit', () => {
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
 
     expect(await credit(['support-ticket-90001'])).toMatchObject({ credited: true });
+  });
+
+  it('refuses on a hand-paid top-up with an unreadable entityId until it is acknowledged', async () => {
+    ledger.push({
+      externalTransactionId: 'top-up-1',
+      type: 'Reward',
+      fromAccountId: 0,
+      toAccountId: USER_ID,
+      toAccountType: 'User',
+      amount: 5_000,
+      description: 'Crypto deposit top-up to value at payment',
+      details: { kind: 'hand-paid', entityId: 'np-x' },
+      date: '2026-10-24T10:00:00.000Z',
+    });
+
+    const held = await credit();
+    expect(held).toMatchObject({ credited: false, decision: 'refused' });
+    expect(held.reason).not.toMatch(/cites this payment/);
+    expect(held.matches).toEqual([expect.objectContaining({ strength: 'soft', ref: 'top-up-1' })]);
+
+    expect(await credit(['top-up-1'])).toMatchObject({ credited: true });
   });
 
   it('holds a staff Tip worth 80% of the deposit until it is acknowledged', async () => {
@@ -423,6 +458,7 @@ describe('matchManualCredit', () => {
     accountType: 'yellow',
     fromAccountId: 0,
     externalTransactionId: null,
+    handPaidFor: null,
   };
   const ctx = {
     paymentId: PAYMENT_ID,

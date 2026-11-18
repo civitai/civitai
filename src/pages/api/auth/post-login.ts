@@ -19,7 +19,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
   logToAxiom(
     { name: 'auth-flow', step: 'post-login', outcome, host: req.headers.host, ...extra },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 
 // Post-login landing for the hub flow. The main app sends users to the hub with
 // returnUrl = <origin>/api/auth/post-login?dest=<original>. After the hub mints the civ-token and redirects

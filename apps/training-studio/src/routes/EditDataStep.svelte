@@ -343,13 +343,15 @@
     setAllOpen = false;
   }
 
-  function openImport(file: File) {
-    importFile = file;
+  // Each zip of a multi-drop or multi-pick gets its own import dialog, one after another.
+  const zipQueue = $state<File[]>([]);
+  $effect(() => {
+    if (importOpen || zipQueue.length === 0) return;
+    importFile = zipQueue.shift()!;
     importOpen = true;
-  }
+  });
   function takeFiles(files: File[]) {
-    const zip = files.find(isZip);
-    if (zip) openImport(zip);
+    zipQueue.push(...files.filter(isZip));
     void addStarts(files.filter((f) => !isZip(f)));
   }
 
@@ -498,10 +500,14 @@
   </div>
 
   <input bind:this={fileInput} type="file" multiple accept="image/*" class="hidden" onchange={(e) => takeFiles(pickedFiles(e))} />
-  <input bind:this={zipInput} type="file" accept=".zip,application/zip" class="hidden" onchange={(e) => {
-    const [zip] = pickedFiles(e);
-    if (zip) openImport(zip);
-  }} />
+  <input
+    bind:this={zipInput}
+    type="file"
+    multiple
+    accept=".zip,application/zip"
+    class="hidden"
+    onchange={(e) => zipQueue.push(...pickedFiles(e))}
+  />
   <input
     bind:this={afterInput}
     type="file"

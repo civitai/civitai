@@ -1,15 +1,16 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { ModelPayload } from './source';
 
 /**
  * The search service reads these names (contract agreed with it 2026-11-06); exact-title and
  * quoted-phrase search switch on only once the first two show in the collection's payload_schema.
- * name, username, tags, triggerWords and docHash are stored, never filtered; versionIds is only
- * for the live sync's version-delete lookup.
+ * name is also word-indexed, for the search service's all-words name match. username, tags,
+ * triggerWords and docHash are stored, never filtered; versionIds is only for the live sync's
+ * version-delete lookup. A missing index is built on the live collection when the sync starts.
  */
 export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
+  ...SITE_REPLICATION,
   // The demo's measured setting (model-search-demo docs/handoff.md).
   quantile: 0.99,
   indexes: [
@@ -27,6 +28,18 @@ export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
         enable_hnsw: false,
       },
     ],
+    [
+      'name',
+      {
+        type: 'text',
+        tokenizer: 'word',
+        lowercase: true,
+        on_disk: true,
+        min_token_len: 1,
+        max_token_len: 100,
+        enable_hnsw: false,
+      },
+    ],
     ['type', { type: 'keyword', on_disk: true }],
     ['checkpointType', { type: 'keyword', on_disk: true }],
     ['baseModels', { type: 'keyword', on_disk: true }],
@@ -41,10 +54,9 @@ export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
 };
 
 export function modelVectorStore() {
-  const { qdrantUrl, qdrantApiKey, modelCollection } = config.vectorSync;
   return new VectorStore<ModelPayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    modelCollection,
+    qdrantClient(),
+    config.vectorSync.modelCollection,
     MODEL_COLLECTION
   );
 }

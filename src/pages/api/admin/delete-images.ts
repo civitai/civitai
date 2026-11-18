@@ -10,7 +10,9 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const { imageIds } = schema.parse(req.query);
 
-  await Promise.all(imageIds.map((imageId) => deleteImageById({ id: imageId })));
+  await Promise.all(
+    imageIds.map((imageId) => deleteImageById({ id: imageId, moderatorDelete: true }))
+  );
 
   res.status(200).json({ imageIds });
 });

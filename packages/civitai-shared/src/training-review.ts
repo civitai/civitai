@@ -44,6 +44,8 @@ export const TRAINING_REVIEW_COPY = {
   pendingLabel: 'Pending review',
   pendingTitle: 'Waiting for review',
   pendingBody: `This run is waiting for review before it starts training. ${TRAINING_REVIEW_EXPECTED_WAIT}. No action is needed from you while it waits.`,
+  pendingPartwayBody: `This run is paused for review partway through training. ${TRAINING_REVIEW_EXPECTED_WAIT}. No action is needed from you while it waits.`,
+  pendingFinishedBody: `Training has finished, and this run is waiting for review before it completes. ${TRAINING_REVIEW_EXPECTED_WAIT}. No action is needed from you while it waits.`,
   raiseBody: "Still waiting? You can raise it with support. Include this run's ID in your ticket.",
   contactSupport: 'Contact support',
   notApprovedLabel: 'Not approved',
@@ -54,3 +56,15 @@ export const TRAINING_REVIEW_COPY = {
   unreviewedBody:
     'This run was not reviewed in time, so it did not train. You can submit it again.',
 } as const;
+
+/** The pending-review body for where the hold caught the run: the gate holds runs at submit and
+ *  after their last epoch, so "before it starts training" is only true with no checkpoints yet. */
+export function trainingReviewPendingBody(
+  completedEpochs: number,
+  plannedEpochs: number | null | undefined
+): string {
+  if (completedEpochs <= 0) return TRAINING_REVIEW_COPY.pendingBody;
+  if (plannedEpochs && completedEpochs >= plannedEpochs)
+    return TRAINING_REVIEW_COPY.pendingFinishedBody;
+  return TRAINING_REVIEW_COPY.pendingPartwayBody;
+}

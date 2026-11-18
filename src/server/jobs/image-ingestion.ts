@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { keepPermanentScanFailureSql } from '~/server/common/image-visibility';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, type JobContext } from '~/server/jobs/job';
@@ -13,9 +14,15 @@ import {
   newRetractionGate,
 } from '~/server/services/image-cacher-retraction';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import {
+  classifyImageScanFailure,
+  getImageScanRetryDelayMinutes,
+  ImageScanFailureClass,
+  getImageScanRetryLimit,
+  IMAGE_RESCAN_RETRY_LIMIT as IMAGE_SCANNING_RETRY_LIMIT,
+} from '~/server/services/image-scan-failure';
 import {
   legalHoldUserIdsSql,
   PLACEHOLDER_OWNER_ID,
@@ -32,9 +39,6 @@ import {
   appealTrainingHeld,
   isAppealTrainingConfigured,
 } from '~/server/jobs/appeal-decision-records';
-
-const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
-const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
 // Minutes a just-created image counts as "submit in flight" (see the double-submit
 // note below). Must stay above the upload-path submit's own ceiling or the window it
@@ -74,6 +78,17 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
 
+// The orchestrator's scan slot (a fixed number of concurrent scans, fleet-wide) refuses work when full instead of
+// queueing it, so a run that creates its workflows in one burst fills the slot and the refusals
+// come back as the next run's Error retries. Above INGEST_PACE_BURST submits, starts are spaced
+// evenly across INGEST_PACE_WINDOW_MS: in-flight scans ≈ start rate × scan time. The window ends
+// inside INGEST_RUN_BUDGET_MS, so the deadline still decides the last start.
+const INGEST_PACE_BURST = 16;
+const INGEST_PACE_WINDOW_MS = 3 * 60 * 1000;
+// Rows each lane is guaranteed per run (capped at cap / lane count) before the rest goes in lane
+// order.
+const INGEST_LANE_FLOOR = 25;
+
 // remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
 // 30-minute lock: a second run taking the lock would double the retractions in flight. A chunk is
 // five rounds of `MAX_IN_FLIGHT_RETRACTIONS` rows, each a storage delete of up to
@@ -107,16 +122,21 @@ type IngestImageRow = IngestImageInput & {
   ingestion: string;
   retryCount: number | null;
   /**
-   * Reason-derived failure class stamped by the scan webhook
-   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
-   * Null for images that have never errored or errored before classification shipped.
+   * Reason-derived failure class stamped by the scan webhook, used to pick the Error retry
+   * ceiling: `COALESCE(scanJobs.error, scanJobs.lastFailure).failureClass`, so `error` wins and
+   * `lastFailure` (where a re-submit moves the error) is the fallback.
+   * Null for images with neither, or that errored before classification shipped.
    */
   failureClass: string | null;
+  /** `scanJobs.error.reason`, to reclassify a row stamped before a reason pattern was added. */
+  failureReason: string | null;
   /**
    * When its current run of 429 submits began; null unless the last submit was a 429.
    * A successful submit clears `scanJobs.error`, and with it this.
    */
   rateLimitedSince: Date | null;
+  /** True once a successful re-submit has moved the error to `lastFailure`: a scan is in flight. */
+  resubmitted: boolean;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -179,10 +199,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
-           i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'reason' as "failureReason",
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",
+           (i."scanJobs" ? 'lastFailure' AND NOT i."scanJobs" ? 'error') as "resubmitted",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -194,9 +216,34 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
+  // A row stamped Unknown before its reason was recognised retries as what it is now.
+  for (const img of images) {
+    if (
+      img.failureReason &&
+      (!img.failureClass || img.failureClass === ImageScanFailureClass.Unknown)
+    )
+      img.failureClass = classifyImageScanFailure({ reason: img.failureReason });
+  }
+
+  // `id = ANY(...)` returns rows in no set order; queue order (oldest first) decides which rows
+  // the per-run send cap reaches, so the ones it defers lead the next run's pull.
+  const queuePosition = new Map(imageIds.map((id, i) => [id, i]));
+  images.sort((a, b) => (queuePosition.get(a.id) ?? 0) - (queuePosition.get(b.id) ?? 0));
+
   // Filter based on status and retry logic
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
-  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
+  // Shared by the retry filter and the waiting-for-retry mirror below, which must agree or a
+  // cooling-down Error row is neither sent nor kept, and gets pruned.
+  const errorRetryDue = (img: IngestImageRow) =>
+    !!img.scanRequestedAt &&
+    new Date(img.scanRequestedAt).getTime() <=
+      decreaseDate(
+        now,
+        // An in-flight re-submit waits the full delay: the shorter transient one is a failure
+        // cooldown, and would duplicate the workflow of any scan slower than it.
+        getImageScanRetryDelayMinutes(img.resubmitted ? null : img.failureClass),
+        'minutes'
+      ).getTime();
 
   // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
   // trigger queues a new image immediately, but `ingestImage` stamps
@@ -289,13 +336,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Error retries use a reason-aware ceiling: transient infra churn (Siglip
   // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
   // bounded cap; permanent (unscannable media) gives up almost immediately;
-  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt
-  // (not on a 429), so the cap is a hard backstop against re-flooding the scanner.
+  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt (not on
+  // a 429), and on each re-send of an Error row whose last scan never called back, so the cap
+  // is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
-      img.scanRequestedAt &&
-      new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+      errorRetryDue(img) &&
       Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass)
   );
 
@@ -334,8 +381,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         // Error but waiting for retry delay or under retry limit. Mirror the
         // reason-aware ceiling used by errorImages above.
         if (img.ingestion === 'Error') {
-          const waitingForDelay =
-            img.scanRequestedAt && new Date(img.scanRequestedAt).getTime() > errorRetryDate;
+          const waitingForDelay = !!img.scanRequestedAt && !errorRetryDue(img);
           const underRetryLimit =
             Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass);
           return waitingForDelay && underRetryLimit;
@@ -401,9 +447,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     .filter((img) => img.ingestion === 'Rescan' && staleIdSet.has(img.id))
     .map((img) => img.id);
   if (exhaustedRescanIds.length > 0) {
+    // The flip to Error re-queues the row (the Image scan-queue trigger). Dropping lastFailure
+    // keeps an earlier episode's class from re-opening its retries: the row takes its class
+    // from `error` if it has one, else the unknown cap.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus",
+        "scanJobs" = ("scanJobs" - 'lastFailure') || ${keepPermanentScanFailureSql()}
       WHERE id = ANY(${exhaustedRescanIds})
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
@@ -422,27 +472,50 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   if (agedOutPendingIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus",
+        "scanJobs" = ("scanJobs" - 'lastFailure') || ${keepPermanentScanFailureSql()}
       WHERE id = ANY(${agedOutPendingIds})
         AND ingestion = 'Pending'::"ImageIngestionStatus"
     `;
   }
 
-  // Lanes are sent in priority order (user uploads first, error last). Each honors
-  // the shared run deadline + cancellation and stops starting new submits once the
-  // budget is spent, so the run always reaches the metric/return tail below.
-  const userLane = await sendImagesForScanBulk(pendingUserUploads, { deadline, ctx });
-  const backfillLane = await sendImagesForScanBulk(pendingBackfill, {
-    lowPriority: true,
+  // The cap is split in lane priority order (user uploads first, error last). The sends honor
+  // the run deadline + cancellation and stop starting new submits once the budget is spent, so
+  // the run always reaches the metric/return tail below.
+  // Rows past the per-run send cap are not attempted: they stay queued (they are in
+  // `processedIds`, so never pruned) with scanRequestedAt and retryCount untouched.
+  const [userPick, backfillPick, rescanPick, errorPick] = allocateSendCap(
+    [pendingUserUploads, pendingBackfill, rescanImages, errorImages],
+    env.IMAGE_SCANNING_RETRY_MAX_PER_RUN
+  );
+  const sendable =
+    pendingUserUploads.length + pendingBackfill.length + rescanImages.length + errorImages.length;
+  const deferred = {
+    userPending: pendingUserUploads.length - userPick.length,
+    backfill: pendingBackfill.length - backfillPick.length,
+    rescan: rescanImages.length - rescanPick.length,
+    error: errorImages.length - errorPick.length,
+  };
+  const deferredByCap = deferred.userPending + deferred.backfill + deferred.rescan + deferred.error;
+  // One task list, round-robin across lanes, under one pacer and one concurrency limit, so each
+  // lane's floor rows take early slots: against a slow orchestrator only the first slots of a
+  // run start before the deadline.
+  const picks = [userPick, backfillPick, rescanPick, errorPick];
+  const lowPriorityLane = [false, true, true, true];
+  const items = interleave(
+    picks.map((pick, lane) => pick.map((image) => ({ image, lowPriority: lowPriorityLane[lane] })))
+  );
+  const { sent, failed } = await sendScanItems(items, {
     deadline,
     ctx,
+    pacer: createSendPacer(items.length),
   });
-  const rescanLane = await sendImagesForScanBulk(rescanImages, {
-    lowPriority: true,
-    deadline,
-    ctx,
-  });
-  const errorLane = await sendImagesForScanBulk(errorImages, { lowPriority: true, deadline, ctx });
+  const sentSet = new Set(sent);
+  const failedSet = new Set(failed);
+  const [userLane, backfillLane, rescanLane, errorLane] = picks.map((pick) => ({
+    sent: pick.filter((img) => sentSet.has(img.id)).map((img) => img.id),
+    failed: pick.filter((img) => failedSet.has(img.id)).map((img) => img.id),
+  }));
 
   const sentUserPendingIds = userLane.sent;
   const sentBackfillIds = backfillLane.sent;
@@ -460,6 +533,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
   imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
+  imageIngestCronCounter.inc({ bucket: 'deferredByCap' }, deferredByCap);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -469,6 +543,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     backfillLane.failed.length +
     rescanLane.failed.length +
     errorLane.failed.length;
+  // Under the cap but not started: the run deadline or a cancel came first. Stays queued.
+  const notReached = sendable - deferredByCap - totalSent - failedSends;
 
   logToAxiom(
     {
@@ -487,9 +563,16 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
+      sendable,
+      deferredByCap,
+      notReached,
+      deferredUserPending: deferred.userPending,
+      deferredBackfill: deferred.backfill,
+      deferredRescan: deferred.rescan,
+      deferredError: deferred.error,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   if (failedSends > 0) {
     logToAxiom(
@@ -501,7 +584,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         failedSends,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return {
@@ -515,15 +598,84 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
+    sendable,
+    deferredByCap,
+    notReached,
+    deferredUserPending: deferred.userPending,
+    deferredBackfill: deferred.backfill,
+    deferredRescan: deferred.rescan,
+    deferredError: deferred.error,
   };
 });
 
-export async function sendImagesForScanBulk(
+/**
+ * Splits the per-run send cap across lanes given in priority order. Each lane first gets a
+ * floor (so a large Pending or backfill backlog can't starve the Error lane every run), then
+ * the rest of the cap goes to lanes in order. Returns each lane's head: rows arrive oldest first.
+ */
+export function allocateSendCap<T>(lanes: T[][], cap: number): T[][] {
+  const floor = Math.min(INGEST_LANE_FLOOR, Math.floor(cap / lanes.length));
+  const take = lanes.map((lane) => Math.min(lane.length, floor));
+  let left = cap - take.reduce((sum, n) => sum + n, 0);
+  for (let i = 0; i < lanes.length && left > 0; i++) {
+    const extra = Math.min(lanes[i].length - take[i], left);
+    take[i] += extra;
+    left -= extra;
+  }
+  return lanes.map((lane, i) => lane.slice(0, take[i]));
+}
+
+export type SendPacer = { intervalMs: number; claimStart: () => number };
+
+/**
+ * Start times for `total` submits: all at once up to INGEST_PACE_BURST, else spaced evenly
+ * across INGEST_PACE_WINDOW_MS. Claimed in submit order, one per submit. A claim made after its
+ * slot has passed (slow submits held every concurrency slot) starts now and pushes the rest back, so a
+ * stall slips the schedule instead of firing the overdue starts together; whatever slips past
+ * the run deadline stays queued.
+ */
+export function createSendPacer(total: number, startAt = Date.now()): SendPacer {
+  const intervalMs = total > INGEST_PACE_BURST ? INGEST_PACE_WINDOW_MS / total : 0;
+  let next = startAt;
+  return {
+    intervalMs,
+    claimStart: () => {
+      const at = Math.max(next, Date.now());
+      next = at + intervalMs;
+      return at;
+    },
+  };
+}
+
+/** Round-robin merge: the first of each list, then the second of each, and so on. */
+function interleave<T>(lists: T[][]): T[] {
+  const out: T[] = [];
+  const longest = Math.max(0, ...lists.map((list) => list.length));
+  for (let i = 0; i < longest; i++)
+    for (const list of lists) if (i < list.length) out.push(list[i]);
+  return out;
+}
+
+type SendOptions = { deadline?: number; ctx?: JobContext; pacer?: SendPacer };
+type ScanItem = { image: IngestImageInput; lowPriority?: boolean };
+
+export function sendImagesForScanBulk(
   images: IngestImageInput[],
-  options?: { lowPriority?: boolean; deadline?: number; ctx?: JobContext }
+  options?: SendOptions & { lowPriority?: boolean }
 ): Promise<{ sent: number[]; failed: number[] }> {
-  if (!images.length) return { sent: [], failed: [] };
-  const { lowPriority, deadline, ctx } = options ?? {};
+  const lowPriority = options?.lowPriority;
+  return sendScanItems(
+    images.map((image) => ({ image, lowPriority })),
+    options
+  );
+}
+
+async function sendScanItems(
+  items: ScanItem[],
+  options?: SendOptions
+): Promise<{ sent: number[]; failed: number[] }> {
+  if (!items.length) return { sent: [], failed: [] };
+  const { deadline, ctx, pacer } = options ?? {};
 
   const sent: number[] = [];
   const failed: number[] = [];
@@ -532,11 +684,22 @@ export async function sendImagesForScanBulk(
   // in-batch retry). A single pass per run: a failed/timed-out submit leaves the
   // image Error/Pending, so it is retried on the NEXT cron run after the cooldown —
   // in-run resends just tripled the time under failure and burned the run budget.
-  const tasks = images.map((image) => async () => {
+  // A function, not an inline test: the status can change while a paced submit sleeps.
+  const canceled = () => ctx?.status === 'canceled';
+  const tasks = items.map(({ image, lowPriority }) => async () => {
     // Out of budget or canceled/superseded: don't start this submit. The image is
     // neither sent nor failed — it stays queued and is retried next run.
     if (deadline && Date.now() >= deadline) return;
-    if (ctx?.status === 'canceled') return;
+    if (canceled()) return;
+    if (pacer) {
+      const startAt = pacer.claimStart();
+      if (deadline && startAt >= deadline) return;
+      const wait = startAt - Date.now();
+      if (wait > 0) {
+        await sleep(wait);
+        if (canceled()) return;
+      }
+    }
 
     let imageSuccess = false;
     try {
@@ -657,7 +820,7 @@ export const removeBlockedImages = createJob(
         message: 'finished',
         ...summary,
         durationMs: Date.now() - startedAt,
-      }).catch(() => undefined);
+      });
       return summary;
     };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
@@ -717,7 +880,7 @@ export const removeBlockedImages = createJob(
         type: 'warning',
         name: 'remove-blocked-images',
         message: 'hold marker view missing: nothing deleted this run',
-      }).catch(() => undefined);
+      });
       return { skipped: 'hold-marker-view-missing' };
     }
 
@@ -732,7 +895,7 @@ export const removeBlockedImages = createJob(
           name: 'remove-blocked-images',
           message: 'evidence hold sweep failed',
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
 
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
@@ -908,10 +1071,6 @@ export const removeBlockedImages = createJob(
     //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
     //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
     //       `ModActivity`.
-    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
-    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
-    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
-    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
     //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
     //       with an id but NO `moderatorId`, so no activity row is written. A community rating
     //       consensus is not a staff takedown decision.
@@ -993,7 +1152,7 @@ export const removeBlockedImages = createJob(
           type: 'error',
           message: 'could not queue takedown retractions; not deleting takedowns this run',
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        });
         retractionStoppedBy = 'retry-queue-unavailable';
         retractionDeferred.push(...ids);
         continue;
@@ -1002,6 +1161,7 @@ export const removeBlockedImages = createJob(
         retractPublicBlobs: true,
         onlyWhere,
         retractionGate,
+        moderatorDelete: true,
       });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
@@ -1051,9 +1211,12 @@ export const removeBlockedImages = createJob(
         message: 'retracting deletes stopped for this run; the rest stay queued',
         reason: retractionStoppedBy,
         count: retractionDeferred.length,
-      }).catch(() => undefined);
+      });
     if (deletedWithoutRetraction.length > 0) {
-      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      const rows = await deleteImages(deletedWithoutRetraction, true, {
+        onlyWhere,
+        moderatorDelete: true,
+      });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);

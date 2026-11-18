@@ -16,11 +16,26 @@ type OddsView<C extends OddsContent> = { tiers: MysteryBoxTier[]; contents: C[] 
 /** What a box says about itself when it has no description. */
 export const MYSTERY_BOX_FALLBACK_DESCRIPTION = "1 random hat you don't own yet.";
 
-/** Rarity colours for a tier with none of its own, rarest last. */
-const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
+export const MYSTERY_PACK_FALLBACK_DESCRIPTION = "1 random item you don't own yet.";
 
-export function tierColor(tier: Pick<MysteryBoxTier, 'color' | 'sortOrder'>) {
-  return tier.color ?? FALLBACK_TIER_COLORS[Math.min(tier.sortOrder, 3)] ?? FALLBACK_TIER_COLORS[0];
+/** Rarity colours for a tier with none of its own, rarest last. */
+export const FALLBACK_TIER_COLORS = ['#9ca3af', '#22c55e', '#3b82f6', '#f59e0b'];
+
+/** A creator pack's tiers have fixed names (and no stored colour), so the colour follows the name. */
+export const CREATOR_TIER_COLORS: Record<string, string> = {
+  common: '#9ca3af',
+  uncommon: '#22c55e',
+  rare: '#3b82f6',
+  legendary: '#f59e0b',
+};
+
+export function tierColor(tier: Pick<MysteryBoxTier, 'color' | 'sortOrder'> & { key?: string }) {
+  return (
+    tier.color ??
+    (tier.key ? CREATOR_TIER_COLORS[tier.key] : undefined) ??
+    FALLBACK_TIER_COLORS[Math.min(tier.sortOrder, 3)] ??
+    FALLBACK_TIER_COLORS[0]
+  );
 }
 
 /** The viewer's odds: the shared rule the draw uses, over what is left for them. */
@@ -118,8 +133,11 @@ export function afterOpen<T extends MysteryBoxView>(view: T, result: MysteryBoxO
 
 export type HeldMysteryBox = RouterOutput['mysteryBox']['getHeld'][number];
 
-/** Where a box modal reads its boxes: an event page's, or every box the viewer holds. */
-export type MysteryBoxSource = { event: string } | { inventory: true };
+/**
+ * Where a box modal reads its boxes: an event page's, every box the viewer holds, or one creator's
+ * packs (no event, no teams).
+ */
+export type MysteryBoxSource = { event: string } | { inventory: true } | { seller: number };
 
 export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult): HeldMysteryBox {
   return {
@@ -127,6 +145,8 @@ export function afterHeldOpen(view: HeldMysteryBox, result: MysteryBoxOpenResult
     heldItems: view.heldItems.filter((item) => item.id !== result.boxItemId),
   };
 }
+
+export const boxNoun = (view: Pick<MysteryBoxView, 'seller'>) => (view.seller ? 'item' : 'hat');
 
 export function boxEventOf(source: MysteryBoxSource, view?: MysteryBoxView | HeldMysteryBox) {
   if ('event' in source) return source.event;

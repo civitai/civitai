@@ -44,6 +44,16 @@ export const MIGRATION_SCHEMA_MAJOR_DOWN = path.resolve(
   '../migrations/20261106130000_appdata_doc_schema_major.down.sql'
 );
 
+/** The content-level columns on doc. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_DOC_LEVELS_UP = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.sql'
+);
+export const MIGRATION_DOC_LEVELS_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.down.sql'
+);
+
 export type Row = Record<string, unknown>;
 
 export type StatementRecord = { sql: string; params: unknown[]; app: string; ns: string };
@@ -180,11 +190,14 @@ export async function createPgliteHarness(opts: {
   appPurgePolicy?: boolean;
   /** Apply the `doc.schema_major` migration too (default false). */
   schemaMajor?: boolean;
+  /** Apply the content-level columns migration too (default false). */
+  docLevels?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
   if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
   if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
+  if (opts.docLevels) await pg.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
