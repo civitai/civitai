@@ -27,7 +27,7 @@ async function storedIds(sequence: QueryRefusal[]) {
   for (const v of sequence) audit.verdict(v);
   const guard = { outcome: 'pass' as const, rules: [], mode: 'shadow', version: 'v1' };
   const compute = vi.fn(async () => ({ ids: [5, 6, 7], guard }));
-  audit.refused({ items: [] }, 1, compute);
+  audit.refused('refused_query', { items: [] }, 1, compute);
   const [entry] = h.recordRefused.mock.calls[0] as [SemanticAuditEntry];
 
   const batches: SemanticAuditRow[][] = [];
