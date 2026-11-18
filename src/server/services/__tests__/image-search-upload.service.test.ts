@@ -61,6 +61,13 @@ describe('the global daily upload cap', () => {
     );
   });
 
+  it('counts the upload against the bucket once admitted', async () => {
+    const record = vi.fn(async () => undefined);
+    h.claim.mockResolvedValue(record);
+    await claimSearchUploadSlot(req);
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses when the bucket is full', async () => {
     h.claim.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
     await expect(claimSearchUploadSlot(req)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
