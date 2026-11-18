@@ -2447,12 +2447,13 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   }
   // Bulk moderation (an adjust-tag-level batch, a bulk block) can pass many users.
   await limitConcurrency(
-    ids.map(
-      (id) => () =>
-        refreshSession(id, { sendSignal: false, caller: 'profile' }).catch((error) =>
-          logProfilePictureRefreshError(error, { userIds: String(id) })
-        )
-    ),
+    ids.map((id) => async () => {
+      try {
+        await refreshSession(id, { sendSignal: false, caller: 'profile' });
+      } catch (error) {
+        logProfilePictureRefreshError(error, { userIds: String(id) });
+      }
+    }),
     PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY
   );
 }
