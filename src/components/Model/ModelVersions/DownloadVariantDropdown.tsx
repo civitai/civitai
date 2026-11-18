@@ -25,7 +25,10 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { NOT_COMMERCIALLY_AVAILABLE_LABEL } from '~/server/common/constants';
+import {
+  NOT_AVAILABLE_FOR_DOWNLOAD,
+  NOT_COMMERCIALLY_AVAILABLE_LABEL,
+} from '~/server/common/constants';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -163,6 +166,7 @@ export function DownloadVariantDropdown({
             href={archived || isLoadingAccess || !canDownload ? undefined : downloadUrl}
             onClick={handleDownloadClick}
             canDownload={canDownload}
+            unavailableReason={notCommerciallyLocked ? NOT_COMMERCIALLY_AVAILABLE_LABEL : undefined}
             downloadPrice={downloadPrice}
             listedPrice={listedPrice}
             acceptsBlueBuzz={acceptsBlueBuzz}
@@ -175,9 +179,13 @@ export function DownloadVariantDropdown({
               borderColor: 'rgba(34, 139, 230, 0.3)',
             }}
           >
-            <Text ta="center">
-              Download <Text span>({formatKBytes(file.sizeKB)})</Text>
-            </Text>
+            {notCommerciallyLocked ? (
+              <Text ta="center">{NOT_AVAILABLE_FOR_DOWNLOAD}</Text>
+            ) : (
+              <Text ta="center">
+                Download <Text span>({formatKBytes(file.sizeKB)})</Text>
+              </Text>
+            )}
           </DownloadButton>
         </Box>
       </Box>
@@ -302,21 +310,25 @@ export function DownloadVariantDropdown({
                         ? NOT_COMMERCIALLY_AVAILABLE_LABEL
                         : 'Purchase to download'
                     }
+                    events={{ hover: true, focus: true, touch: true }}
                   >
-                    <ActionIcon
-                      component="a"
-                      href={
-                        archived || isLoadingAccess || !canDownload ? undefined : fileDownloadUrl
-                      }
-                      onClick={handleVariantDownload}
-                      variant="light"
-                      color="gray"
-                      size={32}
-                      radius="md"
-                      disabled={archived || isLoadingAccess || notCommerciallyLocked}
-                    >
-                      <IconDownload size={16} />
-                    </ActionIcon>
+                    {/* A disabled ActionIcon takes no hover or tap; the span does. */}
+                    <span className="inline-flex">
+                      <ActionIcon
+                        component="a"
+                        href={
+                          archived || isLoadingAccess || !canDownload ? undefined : fileDownloadUrl
+                        }
+                        onClick={handleVariantDownload}
+                        variant="light"
+                        color="gray"
+                        size={32}
+                        radius="md"
+                        disabled={archived || isLoadingAccess || notCommerciallyLocked}
+                      >
+                        <IconDownload size={16} />
+                      </ActionIcon>
+                    </span>
                   </Tooltip>
                 </Group>
               </Group>
@@ -408,6 +420,7 @@ export function DownloadVariantDropdown({
           }
           onClick={handleDownloadClick}
           canDownload={canDownload}
+          unavailableReason={notCommerciallyLocked ? NOT_COMMERCIALLY_AVAILABLE_LABEL : undefined}
           downloadPrice={downloadPrice}
           listedPrice={listedPrice}
           acceptsBlueBuzz={acceptsBlueBuzz}
@@ -420,7 +433,7 @@ export function DownloadVariantDropdown({
           variant="light"
           color="blue"
         >
-          Download Selected
+          {notCommerciallyLocked ? NOT_AVAILABLE_FOR_DOWNLOAD : 'Download Selected'}
         </DownloadButton>
       </Box>
     </Box>
