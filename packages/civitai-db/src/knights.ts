@@ -17,6 +17,8 @@ export const REFERENCE_SOURCE = {
 export const REFERENCE_STATUS = {
   active: 'active',
   pending: 'pending',
+  /** A hidden check served to collect answers before it grades anyone: never graded, promoted or retired by agreement. */
+  probation: 'probation',
   retired: 'retired',
 } as const;
 

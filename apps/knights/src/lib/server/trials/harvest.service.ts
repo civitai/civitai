@@ -13,9 +13,11 @@ import {
   servableImage,
 } from '@civitai/db/knights';
 import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
+import { takeAgreementIntake } from './agreement-intake.service';
 import { poolFor } from './pool';
+import { reviewProbation, type ProbationReview } from './probation.service';
 
-const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
+export const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
 const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
 const DAY_MS = 86_400_000;
@@ -31,18 +33,28 @@ export type HarvestResult = {
 };
 
 /**
- * The harvest job. While paused it takes in no rulings and the cursor holds where it was, but references whose ruling
- * no longer stands are still retired.
+ * The harvest job. While paused it takes in no rulings or agreement verdicts and the cursor holds where it was, but
+ * references whose ruling no longer stands are still retired and probation is still reviewed.
  */
 export async function runHarvestJob(
   db: Kysely<DB>,
   { now, settings }: { now: Date; settings: HarvestSettings }
-): Promise<HarvestResult | { paused: true; retired: number }> {
-  if (settings.paused) return { paused: true, retired: await retireStale(db, now, HARVEST) };
-  return harvestRulings(db, {
+): Promise<
+  | (HarvestResult & { probation: ProbationReview; agreementAdded: number })
+  | { paused: true; retired: number; probation: ProbationReview }
+> {
+  if (settings.paused) {
+    const retired = await retireStale(db, now, HARVEST);
+    return { paused: true, retired, probation: await reviewProbation(db, { now }) };
+  }
+  const harvest = await harvestRulings(db, {
     now,
     config: { ...HARVEST, hiddenCheckShare: settings.hiddenCheckShare },
   });
+  // Reviewed before the intake, so a level whose references were just retired refills in the same run.
+  const probation = await reviewProbation(db, { now });
+  const { added } = await takeAgreementIntake(db, { now });
+  return { ...harvest, probation, agreementAdded: added };
 }
 
 /** Idempotent; safe to re-run. */
@@ -176,7 +188,11 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
   const result = await db
     .updateTable('KnightsReferenceImage as r')
     .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
-    .where('r.status', 'in', [REFERENCE_STATUS.active, REFERENCE_STATUS.pending])
+    .where('r.status', 'in', [
+      REFERENCE_STATUS.active,
+      REFERENCE_STATUS.pending,
+      REFERENCE_STATUS.probation,
+    ])
     .where('r.source', '!=', REFERENCE_SOURCE.core)
     .where((eb) =>
       eb.or([
