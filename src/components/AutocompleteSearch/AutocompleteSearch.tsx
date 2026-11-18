@@ -148,7 +148,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -272,12 +272,10 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   );
 });
 
-AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
-
-const IndexSearch = withSearchBrowsingScope(AutocompleteSearchInner);
+IndexSearch.displayName = 'IndexSearch';
 
 /** The header bar: a plain search of the page on pages that search their own content, else the index search. */
-export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((props, ref) => {
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>((props, ref) => {
   const features = useFeatureFlags();
   const page = pageSearchFor(features, useRouter().pathname);
   if (!page) return <IndexSearch {...props} ref={ref} />;
@@ -292,7 +290,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((prop
     />
   );
 });
-AutocompleteSearch.displayName = 'AutocompleteSearch';
+AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
+
+export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
