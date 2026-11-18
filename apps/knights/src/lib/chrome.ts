@@ -6,6 +6,18 @@ export const rankPill = ({ rank, level }: { rank: string; level: number }) =>
 export const heartsLeft = ({ smites, maxSmites }: { smites: number; maxSmites: number }) =>
   Math.max(0, maxSmites - smites);
 
+/** Progress toward the next heart back, as the hearts' tooltip and rail say it. */
+export const heartBackLine = (heartBack: { done: number; needed: number } | null) =>
+  heartBack ? `${heartBack.done} of ${heartBack.needed} right verdicts to win back a heart` : null;
+
+/** The compact count beside the hearts: the rail and the meta row below 1024px, where a tooltip cannot be reached. */
+export const heartBackShort = (heartBack: { done: number; needed: number } | null) =>
+  heartBack ? `${heartBack.done}/${heartBack.needed}` : null;
+
+/** A toast of close calls only is information, not an alarm; any warning or smite in it keeps the alarm. */
+export const noticeTone = (notices: { consequence: string }[]): 'calm' | 'alarm' =>
+  notices.length > 0 && notices.every((n) => n.consequence === 'close') ? 'calm' : 'alarm';
+
 export type Watch = {
   votes: number;
   watchSize: number;

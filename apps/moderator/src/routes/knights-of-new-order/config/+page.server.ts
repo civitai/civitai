@@ -21,11 +21,29 @@ const percent = (label: string) =>
     return rate;
   });
 
+// A blank box leaves the stored share as it is (undefined is not sent to the service).
+const optionalPercent = (label: string) =>
+  z
+    .string()
+    .optional()
+    .transform((text, ctx) => {
+      if (text === undefined || text.trim() === '') return undefined;
+      const rate = percentToRate(text);
+      if (rate === null) {
+        ctx.addIssue({ code: 'custom', message: `${label} must be 0 to 100, up to two decimals.` });
+        return z.NEVER;
+      }
+      return rate;
+    });
+
 // The form posts percentages; the transforms turn them into the stored 0–1 rates.
 const sourcesForm = z.object({
   enabled: z.enum(['true', 'false']).transform((value) => value === 'true'),
   sfwPercent: percent('The SFW rate'),
   nsfwPercent: percent('The NSFW rate'),
+  yesNoPercent: optionalPercent('The yes/no share'),
+  // Ticked: clear the stored share, so Knights uses its environment default; it wins over the box.
+  yesNoDefault: z.enum(['true']).optional(),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -45,7 +63,16 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     try {
       const result = await saveSourcesConfig(
-        { enabled: input.enabled, sfwRate: input.sfwPercent, nsfwRate: input.nsfwPercent },
+        {
+          enabled: input.enabled,
+          sfwRate: input.sfwPercent,
+          nsfwRate: input.nsfwPercent,
+          ...(input.yesNoDefault
+            ? { yesNoShare: null }
+            : input.yesNoPercent === undefined
+            ? {}
+            : { yesNoShare: input.yesNoPercent }),
+        },
         locals.user.id
       );
       return result.ok

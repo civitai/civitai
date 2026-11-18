@@ -11,6 +11,9 @@ import {
   describeOutcome,
   itemKey,
   postVote,
+  NETWORK_NOTICE,
+  refusedNote,
+  skillCheckCue,
   sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
@@ -366,6 +369,27 @@ describe('sendWithRetry', () => {
   });
 });
 
+describe('refusedNote', () => {
+  it('says the press was not counted, once', () => {
+    expect(refusedNote('This one has already been settled.')).toBe(
+      'This one has already been settled. That judgment was not counted.'
+    );
+    expect(refusedNote(NETWORK_NOTICE)).toBe(NETWORK_NOTICE);
+  });
+});
+
+describe('skillCheckCue', () => {
+  const check = (verdict: string) => ({ success: true, check: { verdict, smites: 1 } });
+
+  it('cheers a right skill check only while a smite weighed on the player when they answered', () => {
+    expect(skillCheckCue(check('correct'), 1)).toBe('+1 toward your next heart');
+    expect(skillCheckCue(check('correct'), 0)).toBeNull();
+    expect(skillCheckCue(check('failed'), 2)).toBeNull();
+    expect(skillCheckCue({ success: true }, 2)).toBeNull();
+    expect(skillCheckCue(undefined, 2)).toBeNull();
+  });
+});
+
 describe('postVote', () => {
   const setup = (sends: (signal: AbortSignal) => Promise<{ reached: boolean; result: any }>) => {
     const tracker = createVoteTracker();
@@ -391,6 +415,71 @@ describe('postVote', () => {
     new Promise<{ reached: boolean; result: null }>((done) =>
       signal.addEventListener('abort', () => done({ reached: false, result: null }))
     );
+
+  it('hands a recorded vote its answer, and a refused one none', async () => {
+    const tracker = createVoteTracker();
+    const onSuccess = vi.fn();
+    const check = { verdict: 'correct', consequence: null, smites: 1, reset: false };
+    const results = [
+      { type: 'success', status: 200, data: { success: true, check } },
+      { type: 'failure', status: 409, data: { message: 'nope' } },
+    ];
+    for (const key of ['a', 'b']) {
+      tracker.claim(key, `t-${key}`);
+      await postVote(key, {
+        queue: createSerialQueue(),
+        tracker,
+        send: async () => ({ reached: true, result: results.shift()! }),
+        wait: async () => undefined,
+        onFailure: () => undefined,
+        onSuccess,
+        onSettled: async () => undefined,
+      });
+    }
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledWith({ success: true, check });
+  });
+
+  it('shows the heart cue for a right skill check under a smite, and still settles the vote', async () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 't-a');
+    const check = { verdict: 'correct', consequence: null, smites: 1, reset: false };
+    let cue: string | null = null;
+    const onSettled = vi.fn(async () => undefined);
+    await postVote('a', {
+      queue: createSerialQueue(),
+      tracker,
+      send: async () => ({
+        reached: true,
+        result: { type: 'success', status: 200, data: { success: true, check } },
+      }),
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSuccess: (data) => (cue = skillCheckCue(data, 1)),
+      onSettled,
+    });
+    expect(cue).toBe('+1 toward your next heart');
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it('settles the vote even when the success handler throws', async () => {
+    const tracker = createVoteTracker();
+    tracker.claim('a', 't-a');
+    const onSettled = vi.fn(async () => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await postVote('a', {
+      queue: createSerialQueue(),
+      tracker,
+      send: async () => ({ reached: true, result: ok }),
+      wait: async () => undefined,
+      onFailure: () => undefined,
+      onSuccess: () => {
+        throw new Error('boom');
+      },
+      onSettled,
+    });
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
 
   it('gives up on a hung post, frees its item, and lets the votes queued behind it go out', async () => {
     const sends = [hangs, async () => ({ reached: true, result: ok })];
