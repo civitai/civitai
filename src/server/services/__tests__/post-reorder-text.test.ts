@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from '~/types/session';
 
-const { reorderPostImages } = await import('~/server/services/post.service');
+const { reorderPostImages, shiftsPinnedRank } = await import('~/server/services/post.service');
 const { imageOnlyReorderIndexes } = await import('~/components/Post/EditV2/post-edit-items');
 
 const w = dbMock.dbWrite;
@@ -96,5 +96,33 @@ describe('reorderPostImages with storyline text items', () => {
       [12, 0],
       [11, 1],
     ]);
+  });
+});
+
+describe('shiftsPinnedRank', () => {
+  // Rated A at 0, pinned held P at 1, unrated U at 2: one counted image is ahead of P.
+  const images = [
+    { id: 1, index: 0, counted: true, pinned: false },
+    { id: 2, index: 1, counted: true, pinned: true },
+    { id: 3, index: 2, counted: false, pinned: false },
+  ];
+
+  it('flags a write that moves a counted image past a pinned one', () => {
+    expect(
+      shiftsPinnedRank(images, [
+        { type: 'image', id: 3, index: 0 },
+        { type: 'image', id: 1, index: 2 },
+      ])
+    ).toBe(true);
+  });
+
+  it("control: passes a write that keeps every pinned image's count ahead of it", () => {
+    expect(
+      shiftsPinnedRank(images, [
+        { type: 'image', id: 1, index: 0 },
+        { type: 'image', id: 3, index: 2 },
+        { type: 'text', id: 9, index: 3 },
+      ])
+    ).toBe(false);
   });
 });

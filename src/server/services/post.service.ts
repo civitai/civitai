@@ -2252,7 +2252,36 @@ async function editorHiddenImages(
     ids: new Set(hidden.map((image) => image.id)),
     indexes: new Set(hidden.map((image) => image.index ?? 0)),
     movable,
+    images: images.map((image) => ({
+      id: image.id,
+      index: image.index ?? 0,
+      counted: countsTowardVersionLevel(image.nsfwLevel),
+      pinned: isHidden(image),
+    })),
   };
+}
+
+type RankedImage = { id: number; index: number; counted: boolean; pinned: boolean };
+
+/**
+ * Whether writing `positions` would change, for any pinned image, how many images the version
+ * level counts sit ahead of it (or level with it). The reorder refuses such a write.
+ */
+export function shiftsPinnedRank(
+  images: RankedImage[],
+  positions: Array<{ type: 'image' | 'text'; id: number; index: number }>
+) {
+  const moved = new Map(positions.filter((p) => p.type === 'image').map((p) => [p.id, p.index]));
+  const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {
+    const others = images.filter((image) => image.counted && image.id !== pin.id);
+    const pinAt = at(pin);
+    return `${others.filter((image) => at(image) < pinAt).length}:${
+      others.filter((image) => at(image) === pinAt).length
+    }`;
+  };
+  const before = (image: RankedImage) => image.index;
+  const after = (image: RankedImage) => moved.get(image.id) ?? image.index;
+  return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
 }
 
 type Hidden = Awaited<ReturnType<typeof editorHiddenImages>>;
@@ -2348,7 +2377,7 @@ async function imageOnlyReorder(postId: number, imageIds: number[], editor: Edit
   const order = imageIds
     .filter((id) => !hidden.ids.has(id) && (!hasText || hidden.movable.has(id)))
     .map((id) => ({ type: 'image' as const, id }));
-  return placeAroundPinned(order, hidden, { ownSlots: !!hasText });
+  return { hidden, positions: placeAroundPinned(order, hidden, { ownSlots: !!hasText }) };
 }
 
 /**
@@ -2368,10 +2397,13 @@ async function itemsReorder(
     where: { postId, id: { notIn: ids('text') } },
     select: { index: true },
   });
-  return placeAroundPinned(order, hidden, {
-    ownSlots: false,
-    reserved: new Set(unlistedTexts.map((text) => text.index)),
-  });
+  return {
+    hidden,
+    positions: placeAroundPinned(order, hidden, {
+      ownSlots: false,
+      reserved: new Set(unlistedTexts.map((text) => text.index)),
+    }),
+  };
 }
 
 /** Writes the editor's order and returns the index each item it may move now has. */
@@ -2381,9 +2413,12 @@ export const reorderPostImages = async ({
   items,
   ...editor
 }: ReorderPostImagesInput & Editor) => {
-  const positions = items
+  const { hidden, positions } = items
     ? await itemsReorder(postId, items, editor)
     : await imageOnlyReorder(postId, imageIds, editor);
+  // Fail closed: placement is meant to keep this, and a write that breaks it is refused.
+  if (shiftsPinnedRank(hidden.images, positions))
+    throw throwBadRequestError('This order could not be saved. Reload the post and try again.');
   await dbWrite.$transaction(
     positions.map(({ type, id, index }) =>
       type === 'image'

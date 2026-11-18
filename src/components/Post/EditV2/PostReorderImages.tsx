@@ -11,6 +11,7 @@ import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadg
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageStore } from '~/store/image.store';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
@@ -270,6 +271,9 @@ export function ReorderImagesButton() {
       setTexts((current) => withSavedPositions([], current, positions).texts);
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Order not saved', error: new Error(error.message) });
     },
   });
   const previous = usePrevious({ images, texts });
