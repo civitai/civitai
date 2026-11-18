@@ -1,7 +1,9 @@
 import type { MantineColor } from '@mantine/core';
 import {
+  Alert,
   Anchor,
   Badge,
+  Button,
   Card,
   Group,
   Indicator,
@@ -11,10 +13,12 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconCheck, IconExclamationCircle } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
+import { GenerationLicenseTermsText } from '~/components/generation_v2/GenerationLicenseTermsText';
 import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
@@ -85,6 +89,7 @@ import {
   isSamplePromptsRequired,
   parseAudioCaption,
   type TrainingBaseModelType,
+  trainingLicenseEcosystem,
   trainingModelInfo,
 } from '~/utils/training';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -442,6 +447,7 @@ export const ModelSelect = ({
   const formBaseModel = selectedRun.base;
   const selectedDown = modelUnavailability(status, formBaseModel);
   const isCustomModel = !!selectedRun.customModel;
+  const license = useGenerationLicenseFor(trainingLicenseEcosystem(formBaseModel));
 
   const baseModelInfo = !isCustomModel
     ? trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
@@ -1033,6 +1039,22 @@ export const ModelSelect = ({
                     subject to change.
                   </AlertWithIcon>
                 ) : undefined}
+                {license.blocked && license.terms && (
+                  <Alert color="yellow" title={license.terms.title}>
+                    <GenerationLicenseTermsText terms={license.terms} />
+                    <Button
+                      color="yellow"
+                      variant="light"
+                      onClick={license.accept}
+                      loading={license.accepting}
+                      leftSection={<IconCheck />}
+                      mt="sm"
+                      fullWidth
+                    >
+                      I agree to these terms
+                    </Button>
+                  </Alert>
+                )}
               </Stack>
             </Card.Section>
           )}

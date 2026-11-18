@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as UserService from '~/server/services/user.service';
 
 /** The Training Studio's call into the trigger word check (real rule, classifier mocked): how its
  *  verdicts reach the Studio. */
@@ -16,6 +17,11 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer,
 }));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
+const getUserSettings = vi.hoisted(() => vi.fn(async (_userId: number) => ({} as unknown)));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  getUserSettings,
+}));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 // The auth wrapper is the shared one; here it only supplies the caller. Errors go through the real
 // handler, so the response bodies are the ones the Studio receives.
@@ -28,6 +34,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/training-studio/check-text';
+import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 
 async function call(body: unknown) {
   const req = { method: 'POST', body };
@@ -125,5 +132,24 @@ describe('POST /api/training-studio/check-text', () => {
     const res = await call({ editPrompt: 'something bad' });
     expect(res.statusCode).toBe(400);
     expect(res.body).toEqual({ message: 'Your prompt was flagged.' });
+  });
+
+  it('refuses a run on a model whose licence the user has not accepted, as a 400 the Studio shows', async () => {
+    getUserSettings.mockResolvedValueOnce({});
+    const res = await call({ licenseEcosystem: 'minimaxh3image' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ message: expect.stringMatching(/licence terms before training/) });
+  });
+
+  it('passes the licence check once the user has accepted', async () => {
+    const terms = getTrainingLicenseTerms('minimaxh3image')!;
+    getUserSettings.mockResolvedValueOnce({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date() },
+      },
+    });
+    const res = await call({ licenseEcosystem: 'minimaxh3image' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true });
   });
 });

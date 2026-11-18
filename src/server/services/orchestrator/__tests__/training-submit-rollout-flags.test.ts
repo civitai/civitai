@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *  workflow is submitted; the flag is not only the form's. */
 
 import type * as TrainingConstants from '~/shared/constants/training.constants';
+import type * as UserService from '~/server/services/user.service';
+import type * as S3Utils from '~/utils/s3-utils';
 
 // The classic trainer's submit is date-gated; these cases cover a run it still accepts.
 vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
@@ -12,10 +14,15 @@ vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
   isClassicTrainerRetired: () => false,
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  getUserSettings: vi.fn(async () => ({})),
+}));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
 }));
-vi.mock('~/utils/s3-utils', () => ({
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof S3Utils>()),
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
   getB2S3Client: vi.fn(),
   isB2Url: vi.fn(() => false),
@@ -195,6 +202,20 @@ describe('createTrainingWorkflow rollout flags', () => {
     givenVersion({ baseModelType: 'qwen' });
     await submit(true);
     expect(submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a MiniMax H3 Image run before submitting while its licence is not accepted', async () => {
+    const info = trainingModelInfo.minimaxh3image;
+    givenVersion({
+      baseModel: 'minimaxh3image',
+      baseModelType: info.type,
+      params: aiToolkitParams(info.aiToolkit!.ecosystem),
+    });
+    await expect(submitWith({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/licence terms before training/),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('submits a MiniMax H3 run while the flag is on', async () => {

@@ -7,6 +7,7 @@ import type {
 } from '@civitai/orchestration-client';
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
+import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
@@ -847,6 +848,13 @@ export function getAiToolkitEcosystem(
 
   console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
   return null;
+}
+
+/** The site ecosystem whose licence a catalog entry trains under, when it has one. */
+export function trainingLicenseEcosystem(baseModel: string | undefined): string | undefined {
+  const ecosystem =
+    trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.aiToolkit?.ecosystem;
+  return getTrainingLicenseTerms(ecosystem)?.ecosystems[0];
 }
 
 /**

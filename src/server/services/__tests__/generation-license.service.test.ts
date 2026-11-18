@@ -10,9 +10,13 @@ vi.mock('~/server/services/user.service', () => ({
 import {
   acceptGenerationLicense,
   assertGenerationLicenseAccepted,
+  assertTrainingLicenseAccepted,
+  pendingTrainingLicenseEcosystems,
 } from '~/server/services/generation-license.service';
 import { setUserSettingsInput } from '~/server/schema/user.schema';
+import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { getGenerationLicenseTerms } from '~/shared/constants/generation-license.constants';
+import { trainingModelInfo } from '~/utils/training';
 
 const terms = getGenerationLicenseTerms('MiniMaxH3Image')!;
 
@@ -91,5 +95,50 @@ describe('generation licence acceptance', () => {
       generationLicenseAcceptances: { [terms.key]: { version: 99, acceptedAt: new Date() } },
     });
     expect(parsed).not.toHaveProperty('generationLicenseAcceptances');
+  });
+});
+
+describe('training licence acceptance', () => {
+  const accepted = {
+    generationLicenseAcceptances: {
+      [terms.key]: { version: terms.version, acceptedAt: new Date() },
+    },
+  };
+
+  it('refuses an H3 Image training run until the user has accepted', async () => {
+    getUserSettings.mockResolvedValue({});
+    await expect(
+      assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3image', userId: 7 })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/before training/),
+    });
+    expect(await pendingTrainingLicenseEcosystems(7)).toEqual(['minimaxh3image']);
+  });
+
+  it('takes the acceptance the generator records', async () => {
+    getUserSettings.mockResolvedValue(accepted);
+    await expect(
+      assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3image', userId: 7 })
+    ).resolves.toBeUndefined();
+    expect(await pendingTrainingLicenseEcosystems(7)).toEqual([]);
+  });
+
+  it('asks nothing of other training ecosystems', async () => {
+    await expect(
+      assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3', userId: 7 })
+    ).resolves.toBeUndefined();
+    expect(getUserSettings).not.toHaveBeenCalled();
+  });
+
+  // A catalog entry missing from its licence's training ecosystems would train unasked.
+  it.each(
+    Object.entries(trainingModelInfo).filter(([, info]) =>
+      getGenerationLicenseTerms(getEcosystem(info.baseModel)?.key)
+    )
+  )('%s trains under its base model licence', (_, info) => {
+    expect(
+      getGenerationLicenseTerms(getEcosystem(info.baseModel)?.key)!.trainingEcosystems
+    ).toContain(info.aiToolkit?.ecosystem);
   });
 });

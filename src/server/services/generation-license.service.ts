@@ -1,8 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import {
   GENERATION_LICENSE_NOT_ACCEPTED,
+  GENERATION_LICENSE_TERMS,
   getGenerationLicenseTerms,
+  getTrainingLicenseTerms,
   hasAcceptedGenerationLicense,
+  type GenerationLicenseTerms,
 } from '~/shared/constants/generation-license.constants';
 
 /** Records the user's acceptance of the licence an ecosystem requires, at the server's time. */
@@ -43,13 +46,46 @@ export async function assertGenerationLicenseAccepted({
   userId: number | undefined;
 }) {
   const terms = getGenerationLicenseTerms(ecosystem);
-  if (!terms) return;
-  const { getUserSettings } = await import('~/server/services/user.service');
-  const settings = userId ? await getUserSettings(userId) : undefined;
-  if (hasAcceptedGenerationLicense(settings?.generationLicenseAcceptances, terms)) return;
+  if (!terms || (await hasAccepted(terms, userId))) return;
   throw new TRPCError({
     code: 'FORBIDDEN',
     message: `Accept the ${terms.title} in the Civitai generator before generating with this model.`,
     cause: GENERATION_LICENSE_NOT_ACCEPTED,
   });
+}
+
+/** Refuses a training run on an AI Toolkit ecosystem whose licence the user has not accepted. */
+export async function assertTrainingLicenseAccepted({
+  ecosystem,
+  userId,
+}: {
+  ecosystem: string | undefined;
+  userId: number | undefined;
+}) {
+  const terms = getTrainingLicenseTerms(ecosystem);
+  if (!terms || (await hasAccepted(terms, userId))) return;
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: `Accept the ${terms.title} before training with this model.`,
+    cause: GENERATION_LICENSE_NOT_ACCEPTED,
+  });
+}
+
+/** The AI Toolkit training ecosystems whose licence the user has yet to accept. */
+export async function pendingTrainingLicenseEcosystems(userId: number): Promise<string[]> {
+  const settings = await loadSettings(userId);
+  return GENERATION_LICENSE_TERMS.filter(
+    (terms) => !hasAcceptedGenerationLicense(settings?.generationLicenseAcceptances, terms)
+  ).flatMap((terms) => terms.trainingEcosystems);
+}
+
+async function loadSettings(userId: number | undefined) {
+  if (!userId) return undefined;
+  const { getUserSettings } = await import('~/server/services/user.service');
+  return getUserSettings(userId);
+}
+
+async function hasAccepted(terms: GenerationLicenseTerms, userId: number | undefined) {
+  const settings = await loadSettings(userId);
+  return hasAcceptedGenerationLicense(settings?.generationLicenseAcceptances, terms);
 }

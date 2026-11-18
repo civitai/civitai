@@ -36,6 +36,7 @@ import { useSelfHostedBlock, SelfHostedBlockedAlert } from '~/components/Generat
 import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
 import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
 import { FooterTermsGate, pickFooterTakeover } from '~/components/generation_v2/FooterTermsGate';
+import { GenerationLicenseTermsText } from '~/components/generation_v2/GenerationLicenseTermsText';
 import { FooterStrips, footerStripsFrame } from '~/components/generation_v2/FooterStrips';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 import classes from './GenerationLayout.module.scss';
@@ -175,30 +176,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
             onConfirm={license.accept}
             loading={license.accepting}
           >
-            <div className="flex flex-col gap-2">
-              <Text size="xs">{license.terms.intro}</Text>
-              <ul className="list-disc pl-5">
-                {license.terms.restrictions.map((line) => (
-                  <li key={line}>
-                    <Text size="xs">{line}</Text>
-                  </li>
-                ))}
-              </ul>
-              <Text size="xs">
-                Read the{' '}
-                <Text
-                  component="a"
-                  href={license.terms.licenseUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  td="underline"
-                  inherit
-                >
-                  {license.terms.licenseName}
-                </Text>
-                .
-              </Text>
-            </div>
+            <GenerationLicenseTermsText terms={license.terms} />
           </FooterTermsGate>
         ) : takeover === 'membershipUpsell' ? (
           // A choice to make, not a notice: it keeps its full height.

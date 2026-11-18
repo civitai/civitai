@@ -13919,6 +13919,7 @@ async function submitPassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  await assertBlockTrainingLicensesAccepted(userId, [body]);
   const { capOutput } = await checkAppStepResources(body.input);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14605,6 +14606,7 @@ async function submitMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  await assertBlockTrainingLicensesAccepted(userId, prepared.steps);
   const { capOutput } = await checkAppStepResources(body);
   const stepCount = prepared.steps.length;
 
@@ -16592,6 +16594,24 @@ async function assertBlockTrainingModelsAllowed(
   if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
 }
 
+/** The base model licence rule for the training `$type`s an app names itself, as `kind:'training'`
+ *  applies it. Submit only: a quote binds the user to nothing. */
+async function assertBlockTrainingLicensesAccepted(
+  userId: number,
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+): Promise<void> {
+  const { collectTrainingStepModels } = await import(
+    '~/server/services/blocks/block-training-model-check'
+  );
+  const collected = collectTrainingStepModels(steps);
+  if ('error' in collected) return;
+  const { assertTrainingLicenseAccepted } = await import(
+    '~/server/services/generation-license.service'
+  );
+  for (const ecosystem of new Set(collected.models.flatMap((model) => model.ecosystem)))
+    await assertTrainingLicenseAccepted({ ecosystem, userId });
+}
+
 function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
   return {
     userId,
@@ -16682,6 +16702,10 @@ async function submitTrainingWorkflow(opts: {
           userId,
           steps: trainingBodyTriggerWordSteps(body),
         });
+        const { assertTrainingLicenseAccepted } = await import(
+          '~/server/services/generation-license.service'
+        );
+        await assertTrainingLicenseAccepted({ ecosystem: run.ecosystem, userId });
         // `name` is what the snapshot/publish extractors key on.
         const step = { ...run.step, name: BLOCK_STEP_NAME };
         return {

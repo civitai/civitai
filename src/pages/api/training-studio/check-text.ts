@@ -1,6 +1,8 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
+import { assertTrainingLicenseAccepted } from '~/server/services/generation-license.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
@@ -19,6 +21,7 @@ const schema = z.union([
     })
     .strict(),
   z.object({ triggerWord: z.string().max(1000) }).strict(),
+  z.object({ licenseEcosystem: z.string().min(1).max(100) }).strict(),
 ]);
 
 function auditEditPrompt(input: {
@@ -38,9 +41,10 @@ function auditEditPrompt(input: {
 }
 
 /**
- * The text checks for the Training Studio, which submits to the orchestrator itself: both of its
+ * The checks for the Training Studio, which submits to the orchestrator itself: both of its
  * surfaces call this before submitting. POST { triggerWord } runs the training trigger word check
- * for a run; POST { editPrompt, inputImages } runs the generator's prompt check before the Studio
+ * for a run; POST { licenseEcosystem } refuses a run whose base model licence the user has not
+ * accepted; POST { editPrompt, inputImages } runs the generator's prompt check before the Studio
  * generates an edit with it. 200 { ok: true }; 400 with the refusal's reason in `message`.
  */
 export default AuthedEndpoint(
@@ -58,6 +62,16 @@ export default AuthedEndpoint(
           userId: user.id,
           isGreen: getRequestDomainColor(req) === 'green',
           isModerator: user.isModerator,
+        });
+      else if ('licenseEcosystem' in input.data)
+        await assertTrainingLicenseAccepted({
+          ecosystem: input.data.licenseEcosystem,
+          userId: user.id,
+        }).catch((e: unknown) => {
+          // The Studio shows only a 400 to the user as a refusal.
+          if (e instanceof TRPCError && e.code === 'FORBIDDEN')
+            throw new TRPCError({ code: 'BAD_REQUEST', message: e.message });
+          throw e;
         });
       else
         await assertTrainingTriggerWordAllowed({

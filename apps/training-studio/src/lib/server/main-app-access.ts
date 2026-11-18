@@ -11,6 +11,7 @@ export const EMBED_FORWARDED_PATHS: ReadonlySet<string> = new Set([
   '/api/edit-image',
   '/api/suggest-instruction',
   '/api/epoch-archive',
+  '/api/license',
 ]);
 
 /**
