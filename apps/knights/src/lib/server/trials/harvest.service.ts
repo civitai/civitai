@@ -155,8 +155,8 @@ export async function harvestRulings(
         // A moderator ruling outranks players' agreement: it replaces an agreement reference, retired or not, that
         // never graded anyone. Its id is reused, and graded votes under it would then read the ruling as their answer,
         // so a promoted one that graded players is left to retireStale. `answers` counts every graded answer (close
-        // ones too) and is bumped in the grading transaction, so the conflict check, which re-reads the locked row,
-        // cannot miss a grade committed meanwhile. Every other existing reference is left alone.
+        // ones too) in the grading transaction, and the conflict check re-reads the locked row, so a grade that has
+        // updated it is never missed; one still in flight can be. Every other existing reference is left alone.
         .onConflict((oc) =>
           oc
             .column('imageId')
