@@ -18,20 +18,21 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 import { getImagesByEntity } from '../image.service';
 
-const sent: { current?: Prisma.Sql } = {};
+const sent: Prisma.Sql[] = [];
 beforeAll(() => {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
     async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      sent.current = Prisma.sql(strings, ...values);
+      sent.push(Prisma.sql(strings, ...values));
       return [];
     }
   );
 });
 
 async function sqlFor(viewer: { userId?: number; isModerator?: boolean }) {
-  sent.current = undefined;
+  sent.length = 0;
   await getImagesByEntity({ ids: [1, 2], type: 'BountyEntry', ...viewer });
-  return { sql: sent.current?.sql.replace(/\s+/g, ' ').trim(), values: sent.current?.values };
+  expect(sent).toHaveLength(1);
+  return { sql: sent[0].sql.replace(/\s+/g, ' ').trim(), values: sent[0].values };
 }
 
 describe('getImagesByEntity SQL', () => {
