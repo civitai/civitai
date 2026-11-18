@@ -128,10 +128,7 @@ export function streamIdBefore(a: string, b: string) {
 }
 
 /** The Hat Turf map's reads (turf-map.ts): the stream and hash `loadTurf` / `followTurf` follow. */
-export type EventPointsTurfRedis = Pick<
-  EventPointsRedis,
-  'hGetAll' | 'hmGet' | 'xRange' | 'xRevRange'
->;
+export type EventPointsTurfRedis = Pick<typeof redis, 'hGetAll' | 'hmGet' | 'xRange' | 'xRevRange'>;
 
 export type EventPointsDeps = {
   redis: EventPointsRedis;
@@ -259,7 +256,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   }
 
   // The turf map, loaded and followed exactly as the hat map is (see loadHats and followHats).
-  const turfRedis = deps.turfRedis ?? deps.redis;
+  const turfRedis = deps.turfRedis ?? (deps.redis as unknown as EventPointsTurfRedis);
   async function loadTurf(event: string): Promise<TurfState> {
     const keys = turfKeys(event);
     const [last] = (await turfRedis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
@@ -832,7 +829,7 @@ let engine: ReturnType<typeof createEventPointsEngine> | undefined;
 function getEngine() {
   engine ??= createEventPointsEngine({
     redis: sysRedis,
-    turfRedis: redis as unknown as EventPointsTurfRedis,
+    turfRedis: redis,
     insertLedger: async (rows) => {
       if (!clickhouse) return;
       await clickhouse.insert({

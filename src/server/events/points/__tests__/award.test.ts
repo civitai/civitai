@@ -4,6 +4,7 @@ import type {
   EventPointLedgerRow,
   EventPointsDeps,
   EventPointsRedis,
+  EventPointsTurfRedis,
 } from '~/server/events/points/award';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
@@ -1012,7 +1013,7 @@ describe('Hat Turf', () => {
     fake = fakeRedis();
     fake.setClock(() => now.getTime());
     build({
-      turfRedis: turfStore.redis,
+      turfRedis: turfStore.redis as unknown as EventPointsTurfRedis,
       loadScoredEvents: async () => [turfEvent('live')],
     });
     await engine.awardEventPoints([view(22)]);
