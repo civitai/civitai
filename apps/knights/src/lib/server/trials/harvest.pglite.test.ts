@@ -419,3 +419,64 @@ describe('harvestRulings with the spot-check on', () => {
     expect((await harvestRulings(db, { now: NOW, config: spot })).retired).toBe(1);
   });
 });
+
+describe('a moderator ruling on an image players agreed on', () => {
+  const agreementRow = (imageId: number, status: string, answer = '4') =>
+    pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status","answers","failures")
+       VALUES ($1,'hiddenCheck',$2,'agreement','knights.image.nsfwLevel',$3,7,2)`,
+      [imageId, answer, status]
+    );
+  const row = async (imageId: number) =>
+    (
+      await pg.query<Record<string, unknown>>(
+        `SELECT pool,status,answer,source,"modActivityId",answers,failures FROM "KnightsReferenceImage" WHERE "imageId"=$1`,
+        [imageId]
+      )
+    ).rows;
+
+  it('replaces the agreement reference, live or retired, with the ruling', async () => {
+    await image(1, { level: 8 });
+    await agreementRow(1, 'probation');
+    await image(2, { level: 8 });
+    await agreementRow(2, 'retired');
+    const first = await ruling(1);
+    const second = await ruling(2);
+
+    await harvestRulings(db, { now: NOW });
+
+    for (const [imageId, activity] of [
+      [1, first],
+      [2, second],
+    ]) {
+      expect(await row(imageId)).toEqual([
+        {
+          pool: 'trials',
+          status: 'active',
+          answer: '8',
+          source: 'harvested',
+          modActivityId: activity,
+          answers: 0,
+          failures: 0,
+        },
+      ]);
+    }
+  });
+
+  it('leaves a ruled reference alone, retired or not', async () => {
+    await image(1, { level: 8 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status") VALUES (1,'hiddenCheck','4','harvested','knights.image.nsfwLevel','retired')`
+    );
+    await ruling(1);
+    await harvestRulings(db, { now: NOW });
+    expect(await row(1)).toEqual([
+      expect.objectContaining({
+        status: 'retired',
+        answer: '4',
+        source: 'harvested',
+        modActivityId: null,
+      }),
+    ]);
+  });
+});

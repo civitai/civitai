@@ -21,7 +21,7 @@ ordinary vote in every way a player can see.
   the variable, as a saved share wins over `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`; see
   [game settings](knights-sources.md#game-settings)) pauses intake (the cursor holds) while references
   whose ruling no longer stands are still retired. Rulings that aged past the window during a pause are skipped, logged and
-  counted (`knights_harvest_skipped_rulings_total`). A retired reference keeps its image, so that image is never harvested again.
+  counted (`knights_harvest_skipped_rulings_total`). A retired reference keeps its image, so that image is never harvested again; an `agreement` reference is the exception, since a moderator ruling replaces it.
 - `pnpm run rebuild:hidden-checks` (`trials/hidden-rebuild.service.ts`) retires every live harvested check that fewer than
   `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
   It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run

@@ -152,7 +152,24 @@ export async function harvestRulings(
             };
           })
         )
-        .onConflict((oc) => oc.column('imageId').doNothing())
+        // A moderator ruling outranks players' agreement: it replaces an agreement reference, retired or not, and
+        // leaves every other existing reference alone.
+        .onConflict((oc) =>
+          oc
+            .column('imageId')
+            .doUpdateSet((eb) => ({
+              pool: eb.ref('excluded.pool'),
+              status: eb.ref('excluded.status'),
+              answer: eb.ref('excluded.answer'),
+              source: eb.ref('excluded.source'),
+              modActivityId: eb.ref('excluded.modActivityId'),
+              harvestedAt: eb.ref('excluded.harvestedAt'),
+              updatedAt: eb.ref('excluded.updatedAt'),
+              answers: 0,
+              failures: 0,
+            }))
+            .where('KnightsReferenceImage.source', '=', REFERENCE_SOURCE.agreement)
+        )
         .returning('id')
         .execute();
       added += inserted.length;

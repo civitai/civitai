@@ -94,10 +94,10 @@ const references = async () =>
 
 describe('takeAgreementIntake', () => {
   it('takes a unanimous Knight verdict of 3+ players in as a probation agreement check', async () => {
-    await verdict(1, { level: 8, answers: ['8', '8', '8'] });
+    await verdict(1, { level: 4, answers: ['4', '4', '4'] });
     expect(await takeAgreementIntake(db, { now: NOW })).toEqual({ added: 1 });
     expect(await references()).toEqual([
-      { imageId: 1, answer: '8', status: 'probation', source: 'agreement', pool: 'hiddenCheck' },
+      { imageId: 1, answer: '4', status: 'probation', source: 'agreement', pool: 'hiddenCheck' },
     ]);
   });
 
@@ -136,26 +136,25 @@ describe('takeAgreementIntake', () => {
     await verdict(2, { level: 4, resolvedHoursAgo: 1 });
     await verdict(3, { level: 4, resolvedHoursAgo: 2 });
     await verdict(4, { level: 1 });
-    await verdict(5, { level: 16, resolvedHoursAgo: 1 });
-    await verdict(6, { level: 16, resolvedHoursAgo: 2 });
+    await verdict(5, { level: 2, resolvedHoursAgo: 1 });
+    await verdict(6, { level: 2, resolvedHoursAgo: 2 });
     // The newest level-4 verdict's image already has a reference: it must not take a slot.
     await verdict(7, { level: 4, resolvedHoursAgo: 0.5 });
     await pg.query(
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey") VALUES (7,'trials','4','harvested',$1)`,
       [Q]
     );
-    // One live and one retired agreement check at XXX already: only the live one counts.
+    // One live and one retired agreement check at PG-13 already: only the live one counts.
     for (const [imageId, status] of [
       [90, 'active'],
       [91, 'retired'],
     ] as const) {
       await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,'2020-01-01')`, [imageId]);
+      await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,'k',2,$1)`, [
+        imageId,
+      ]);
       await pg.query(
-        `INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,'k',16,$1)`,
-        [imageId]
-      );
-      await pg.query(
-        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status") VALUES ($1,'hiddenCheck','16','agreement',$2,$3)`,
+        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status") VALUES ($1,'hiddenCheck','2','agreement',$2,$3)`,
         [imageId, Q, status]
       );
     }
@@ -188,6 +187,22 @@ const firstVoter = async (itemId: number) =>
       [itemId]
     )
   ).rows[0].playerId;
+
+describe('levels taken in', () => {
+  it('takes PG, PG-13 and R verdicts, never X or XXX', async () => {
+    for (const [imageId, level] of [
+      [1, 1],
+      [2, 2],
+      [3, 4],
+      [4, 8],
+      [5, 16],
+    ]) {
+      await verdict(imageId, { level });
+    }
+    await takeAgreementIntake(db, { now: NOW });
+    expect((await references()).map((r) => r.imageId)).toEqual([1, 2, 3]);
+  });
+});
 
 describe('what counts toward a unanimous verdict', () => {
   it('counts distinct players at the Knight stage, and only on a resolved item', async () => {

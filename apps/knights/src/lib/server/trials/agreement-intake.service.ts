@@ -23,6 +23,8 @@ export const AGREEMENT_INTAKE = {
 };
 
 const LIVE = [REFERENCE_STATUS.probation, REFERENCE_STATUS.active];
+/** PG, PG-13 and R. X and XXX wait for a moderator-ruled anchor: an under-rating of those is the costly mistake. */
+const INTAKE_LEVELS = BUCKET_LEVELS.slice(0, 3);
 
 /**
  * Takes unanimous Knight-stage verdicts in as probation hidden checks, newest first, filling each level bucket up to
@@ -49,7 +51,7 @@ export async function takeAgreementIntake(
   const since = new Date(now.getTime() - config.maxAgeDays * DAY_MS);
 
   let added = 0;
-  for (const level of BUCKET_LEVELS) {
+  for (const level of INTAKE_LEVELS) {
     const need = config.probationPerLevel - (live.get(String(level)) ?? 0);
     if (need <= 0) continue;
 
