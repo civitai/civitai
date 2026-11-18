@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accuracyLine,
   goldToday,
+  neverBelowToday,
   belowBarCue,
   headerDaily,
   landVote,
@@ -372,5 +373,21 @@ describe('a landed vote in a reactive store', () => {
     // The vote stays on the Watch until the refreshed daily, which holds it, replaces the one on screen.
     expect(pendingVotes(sent, shown)).toBe(1);
     expect(pendingVotes(sent, { votes: 5 })).toBe(0);
+  });
+});
+
+describe('neverBelowToday', () => {
+  it('keeps the highest count seen today, so a refresh served an older count does not move it back', () => {
+    let seen = neverBelowToday(null, 120, '2026-11-18');
+    expect(seen.value).toBe(120);
+    seen = neverBelowToday(seen, 95, '2026-11-18');
+    expect(seen.value).toBe(120);
+    seen = neverBelowToday(seen, 130, '2026-11-18');
+    expect(seen.value).toBe(130);
+  });
+
+  it('starts again on a new UTC day', () => {
+    const seen = neverBelowToday({ day: '2026-11-18', value: 900 }, 4, '2026-11-19');
+    expect(seen).toEqual({ day: '2026-11-19', value: 4 });
   });
 });

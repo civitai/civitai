@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
-  import { belowBarCue, goldToday, heartBackShort, watchStrip, withArticle } from '$lib/chrome';
+  import { belowBarCue, goldToday, heartBackShort, neverBelowToday, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
   import { bump, tween } from '$lib/motion';
@@ -33,7 +33,22 @@
   let shownGold = $state(untrack(() => daily.goldRecorded));
   $effect(() => {
     const to = daily.goldRecorded;
-    return tween(untrack(() => shownGold), to, 360, (value) => (shownGold = Math.round(value)));
+    const from = untrack(() => shownGold);
+    // Counts up; a fall (a refused vote taken back) lands at once rather than counting down.
+    if (to < from) {
+      shownGold = to;
+      return;
+    }
+    return tween(from, to, 360, (value) => (shownGold = Math.round(value)));
+  });
+  let activitySeen = $state<{ day: string; value: number } | null>(null);
+  const activity = $derived.by(() => {
+    if (rail.activity === null) return null;
+    const next = neverBelowToday(untrack(() => activitySeen), rail.activity, new Date().toISOString().slice(0, 10));
+    return next;
+  });
+  $effect(() => {
+    activitySeen = activity;
   });
   const gold = $derived(goldToday({ goldRecorded: shownGold, goldCap: daily.goldCap }));
   const belowBar = $derived(belowBarCue(status));
@@ -177,10 +192,10 @@
     {/if}
   </section>
 
-  {#if rail.activity !== null}
+  {#if activity !== null}
     <section aria-labelledby={id('rail-activity')}>
       <h2 id={id('rail-activity')}>Order activity</h2>
-      <p class="ticker"><span class="dot" aria-hidden="true"></span>{count(rail.activity)} {rail.activity === 1 ? 'judgment' : 'judgments'} today</p>
+      <p class="ticker"><span class="dot" aria-hidden="true"></span>{count(activity.value)} {activity.value === 1 ? 'judgment' : 'judgments'} today</p>
     </section>
   {/if}
 </aside>

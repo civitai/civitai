@@ -482,12 +482,15 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
-      // against the data on screen until the refreshed data, which holds it, replaces it.
+      // The page's own data (status, rewards, level notices) is read again once the last vote in flight has landed; each vote
+      // stays counted against the data on screen until the refreshed data, which holds it, replaces it.
       onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
         if (counted && alive) landVote(inFlight, data.daily);
         counted = false;
+        // Votes post one at a time, so a vote still unlanded settles after this one and reads the page then. Reading it now
+        // as well would only be discarded when that read starts, and while reads kept replacing each other the status froze.
+        if (inFlight.count > 0) return;
         await invalidate('app:play').catch(() => {});
       },
     });

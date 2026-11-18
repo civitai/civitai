@@ -212,3 +212,15 @@ const NUMBER_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five'];
 
 export const smiteHeading = (smites: number) =>
   `${NUMBER_WORDS[smites] ?? smites} ${smites === 1 ? 'smite weighs' : 'smites weigh'} on you.`;
+
+/**
+ * A count of today's activity that only moves forward within a UTC day: each server process caches it for a minute, so a
+ * refresh served by another process can read an older, lower count.
+ */
+export function neverBelowToday(
+  seen: { day: string; value: number } | null,
+  value: number,
+  day: string
+): { day: string; value: number } {
+  return seen && seen.day === day ? { day, value: Math.max(seen.value, value) } : { day, value };
+}
