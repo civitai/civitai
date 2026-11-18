@@ -5,10 +5,12 @@
   import { untrack } from 'svelte';
   import { bump } from './motion';
   import { sound } from './sound';
+  import { watchBell } from './watch-bell';
 
   let {
     value,
     max,
+    watch,
     done,
     streak,
     hearts,
@@ -18,6 +20,8 @@
   }: {
     value: number;
     max: number;
+    /** Names the Watch (`DailyStatus.watch`): the bell rings once per Watch. */
+    watch: string;
     done: boolean;
     streak: number;
     hearts: number;
@@ -27,14 +31,12 @@
     onmore?: () => void;
   } = $props();
 
-  // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings: once, for a Watch
-  // completed while the page is open, never for the first read.
-  let seen = untrack(() => value);
+  // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings.
+  const bell = watchBell(untrack(() => ({ value, max, watch })));
   $effect(() => {
-    const now = value;
+    const now = { value, max, watch };
     untrack(() => {
-      if (max > 0 && now >= max && seen < max) sound.play('bell');
-      seen = now;
+      if (bell(now)) sound.play('bell');
     });
   });
 </script>

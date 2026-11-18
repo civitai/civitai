@@ -1208,7 +1208,19 @@ configuration drives both and a trace continues browser → feed-go → Node on 
   `feed_go.shadow.result`; a fallback adds a `fallback` event (reason, safe detail), an error an
   `error` event (class, type) and the error status. Children: one per pgx query (`pgx SELECT`:
   operation and a hash of the SQL text, never a bind value or the text), one per Redis command or
-  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), and
+  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), one
+  per ClickHouse read of the metric-hash misses (`clickhouse query`, `internal/chread` through
+  `tracing.ClickHouseTracer`: the operation keyword and the rows returned, never the SQL, not even a
+  hash of it since the read inlines its ids, nor the request URL, which carries the query; a refused
+  slot, a timeout or a ClickHouse exception is the error status, its class, and `error.type`), the
+  waits on work the request did not start (`internal/hydrate`, `MissCompute.Tracer`): `miss lookup
+  join`, on a request that joins another request's in-flight miss lookup (the lookup's own spans sit
+  under the request that runs it), from reaching the flight to its answer, with `feed_go.miss.cache`
+  and `feed_go.miss.shared=true` (an answer kept in the few-second in-process memo is a map read and
+  gets none), and `metrics lock wait`, the metrics lookup's whole wait on a populate lock another
+  process holds (up to 15 Redis reads 200 ms apart), with `feed_go.metrics.wait.ids` (a count),
+  `.polls` and `.outcome` (`filled`, `exhausted`, `ctx_done`, `read_error`; all but `filled` are the
+  error status), never an id, a key or SQL; and
   the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the
   outbound `traceparent` so the Node request is its child. With tracing off the proxy passes the
   inbound `traceparent` through unchanged, as before.

@@ -59,6 +59,7 @@ describe('more like this', () => {
     expect(wantsNewTab(click)).toBe(false);
     expect(wantsNewTab({ ...click, ctrlKey: true })).toBe(true);
     expect(wantsNewTab({ ...click, metaKey: true })).toBe(true);
+    expect(wantsNewTab({ ...click, shiftKey: true })).toBe(true);
     expect(wantsNewTab({ ...click, button: 1 })).toBe(true);
   });
 });

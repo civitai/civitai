@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -494,17 +495,35 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 
 // awaitMetricHashes is fetch's waiter loop over ids another process is populating: up to 15 reads,
 // 200 ms apart, each taking the hashes that landed. A failed read fails the lookup, as Node's throws;
-// so does an id still unfilled after the last read (errMetricsWaitExhausted).
+// so does an id still unfilled after the last read (errMetricsWaitExhausted). Traced
+// (MissCompute.traced), the whole wait is one `metrics lock wait` span: how many ids, how many reads
+// and the outcome (waitOutcome), failed as the store spans are when it does not end filled.
 func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]jspack.Obj) error {
+	c := s.Compute
+	if len(ids) == 0 || !c.traced(ctx) {
+		_, err := s.pollMetricHashes(ctx, ids, out)
+		return err
+	}
+	ctx, span := c.Tracer.Start(ctx, "metrics lock wait", trace.WithAttributes(attrWaitIDs.Int(len(ids))))
+	polls, err := s.pollMetricHashes(ctx, ids, out)
+	span.SetAttributes(attrWaitPolls.Int(polls), attrWaitOutcome.String(waitOutcome(err)))
+	endWithError(span, err)
+	return err
+}
+
+// pollMetricHashes is awaitMetricHashes' loop; polls is how many Redis reads it made.
+func (s *Sources) pollMetricHashes(ctx context.Context, ids []int, out map[int]jspack.Obj) (int, error) {
+	polls := 0
 	pending := slices.Clone(ids)
 	for retry := 0; len(pending) > 0 && retry < metricLockMaxRetries; retry++ {
 		t := time.NewTimer(metricLockRetryDelay)
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return ctx.Err()
+			return polls, ctx.Err()
 		case <-t.C:
 		}
+		polls++
 		cmds := make([]*redis.MapStringStringCmd, len(pending))
 		_, _ = s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
 			for i, id := range pending {
@@ -516,7 +535,7 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 		for i, id := range pending {
 			hash, err := cmds[i].Result()
 			if err != nil {
-				return fmt.Errorf("metrics wait: %w", err)
+				return polls, fmt.Errorf("metrics wait: %w", err)
 			}
 			if len(hash) == 0 {
 				still = append(still, id)
@@ -533,9 +552,9 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 		pending = still
 	}
 	if len(pending) > 0 {
-		return errMetricsWaitExhausted
+		return polls, errMetricsWaitExhausted
 	}
-	return nil
+	return polls, nil
 }
 
 func metricNames(m Metrics) []string {
