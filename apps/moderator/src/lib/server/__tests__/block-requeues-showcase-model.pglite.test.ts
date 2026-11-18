@@ -1,6 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import {
+  MODELS_SEARCH_INDEX,
+  searchIndexQueueFallbackKey,
+} from '@civitai/shared/search-index-queue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -8,7 +12,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 const { dbHandle, syncSearchIndexBulk } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   syncSearchIndexBulk: vi.fn(
-    async (_batch: { entityType: string; entityIds: number[]; action?: string }) => undefined
+    async (
+      _batch: { entityType: string; entityIds: number[]; action?: string },
+      _options?: { strict?: boolean }
+    ) => undefined
   ),
 }));
 
@@ -49,6 +56,7 @@ CREATE TABLE "Post" (
   "modelVersionId" INTEGER, "model3dId" INTEGER
 );
 CREATE TABLE "ComicPanel" ("projectId" INTEGER, "imageId" INTEGER);
+CREATE TABLE "KeyValue" ("key" TEXT PRIMARY KEY, "value" JSONB NOT NULL);
 `;
 
 const OWNER = 42;
@@ -68,9 +76,11 @@ const queuedModels = () =>
     .flatMap(([batch]) => batch.entityIds);
 
 let db: PGlite;
+const parked = async () =>
+  (await db.query<{ key: string; value: number[] }>('SELECT "key", "value" FROM "KeyValue"')).rows;
 
 beforeEach(async () => {
-  syncSearchIndexBulk.mockClear();
+  syncSearchIndexBulk.mockReset().mockResolvedValue(undefined);
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(`
@@ -91,11 +101,21 @@ describe('a moderator block of a model image', () => {
   it("queues the model's search document when the image is on the owner's showcase post", async () => {
     await block(SHOWCASE_POST, OWNER);
 
-    expect(syncSearchIndexBulk).toHaveBeenCalledWith({
-      entityType: 'model',
-      entityIds: [MODEL_ID],
-      action: 'update',
-    });
+    expect(syncSearchIndexBulk).toHaveBeenCalledWith(
+      { entityType: 'model', entityIds: [MODEL_ID], action: 'update' },
+      { strict: true }
+    );
+    expect(await parked()).toEqual([]);
+  });
+
+  it("parks the model for the main app's replay when the main app cannot take it", async () => {
+    syncSearchIndexBulk.mockRejectedValue(new Error('main app down'));
+
+    await block(SHOWCASE_POST, OWNER);
+
+    expect(await parked()).toEqual([
+      { key: searchIndexQueueFallbackKey(MODELS_SEARCH_INDEX, 'Update'), value: [MODEL_ID] },
+    ]);
   });
 
   it("queues no model when the image is on someone else's post on the version", async () => {

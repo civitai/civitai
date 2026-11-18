@@ -7,6 +7,10 @@ import {
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { dbWrite } from '~/server/db/client';
+import {
+  SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS as FALLBACK_MAX_IDS_PER_KEY,
+  SEARCH_INDEX_QUEUE_FALLBACK_PREFIX as FALLBACK_KEY_PREFIX,
+} from '@civitai/shared/search-index-queue';
 import { logToAxiom } from '~/server/logging/client';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +48,7 @@ import { logToAxiom } from '~/server/logging/client';
 // "skip + retry next run" over "proceed on a false-empty read + destructive write".
 //
 // Recovery for a dropped enqueue: the ids are parked in Postgres and replayed by
-// `search-index-queue-drain` (see FALLBACK_KEY_PREFIX below). That is the only
+// `search-index-queue-drain` (see `@civitai/shared/search-index-queue`). That is the only
 // recovery a dropped DELETE has ever had — the delta `update` job's `updatedAt`
 // range-scan re-derives updates but cannot re-derive a delete, and the daily
 // `search-index-cleanup` reconciles neither images index (`CLEANUP_INDEXES` in
@@ -146,23 +150,7 @@ function getNewBucket(key: string) {
 
 const QUEUE_ADD_CHUNK_SIZE = 10000;
 
-/**
- * Postgres parking lot for enqueues sysRedis refused. `Delete` is why it exists: a
- * dropped `Update` is re-derived by the delta `updatedAt` range-scan, but nothing can
- * re-derive a delete from a row that is already gone, so the id is simply lost and the
- * document stays in the index forever. Postgres is the store that is, by construction,
- * not the one currently failing.
- */
-const FALLBACK_KEY_PREFIX = 'search-index-queue-fallback:';
-
-/**
- * Ceiling per queue key. A single fan-out can carry ~211K ids and this is a JSON column,
- * not a queue — past this the parking lot stops absorbing rather than growing without
- * bound through a long outage. Hitting it is itself the signal that the outage needs a
- * full reindex, not a replay.
- */
-const FALLBACK_MAX_IDS_PER_KEY = 100000;
-
+/** Parks enqueues sysRedis refused in Postgres, the store that is, by construction, not the one failing. */
 async function persistDroppedEnqueue(key: string, ids: number[]) {
   if (!ids.length) return;
   try {
