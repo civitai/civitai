@@ -137,11 +137,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
-        name="yue2Instrumental"
-        render={({ value, onChange }) => (
+        name="instrumental"
+        render={({ value, meta, onChange }) => (
           <Checkbox
-            label="Instrumental"
-            description="Compose without sung lyrics. Uses score planning."
+            label={meta?.label ?? 'Instrumental'}
+            description={meta?.description}
             checked={value}
             onChange={(e) => onChange(e.currentTarget.checked)}
           />

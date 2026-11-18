@@ -155,18 +155,17 @@ describe('YuE2', () => {
   });
 
   it('submits instrumental Custom requests without lyrics and keeps score planning enabled', async () => {
-    const [music] = await submit({ yue2Instrumental: true, lyrics: undefined, yue2Mode: 'off' });
+    const [music] = await submit({ instrumental: true, lyrics: undefined, yue2Mode: 'off' });
     expect(music.input).toMatchObject({ instrumental: true, lyrics: '', mode: 'full' });
   });
 
-  it('asks the Simple draft for an instrumental and carries that choice to generation', async () => {
-    const [draft, music] = await submit({
+  it('sends a Simple instrumental with empty lyrics, whatever the draft writes', async () => {
+    const [, music] = await submit({
       yue2MusicMode: 'simple',
-      yue2Instrumental: true,
+      instrumental: true,
       prompt: 'A quiet piano instrumental',
     });
-    expect(JSON.stringify(draft.input)).toContain('Return an empty lyrics string');
-    expect(music.input).toMatchObject({ instrumental: true, mode: 'full' });
+    expect(music.input).toMatchObject({ instrumental: true, lyrics: '', mode: 'full' });
   });
 
   it('sends required text and the live contract defaults without a resource override', async () => {

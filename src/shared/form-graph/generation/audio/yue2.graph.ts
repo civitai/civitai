@@ -12,7 +12,7 @@ import { familyScope, type FamilyExt } from '../shared';
 
 export const yue2VersionIds = { v2: 3337846 } as const;
 
-type YuE2Ext = FamilyExt & { yue2MusicMode?: 'simple' | 'custom'; yue2Instrumental?: boolean };
+type YuE2Ext = FamilyExt & { yue2MusicMode?: 'simple' | 'custom'; instrumental?: boolean };
 
 const simple = defineGraph<YuE2Ext>().field('prompt', {
   ...textDef('prompt'),
@@ -28,7 +28,7 @@ const custom = defineGraph<YuE2Ext>()
       output.refine((v) => v.trim().length > 0, { message: 'Music description is required' }),
   })
   .field('lyrics', ({ _ext }) =>
-    _ext.yue2Instrumental
+    _ext.instrumental
       ? null
       : {
           ...textDef('lyrics'),
@@ -39,7 +39,7 @@ const custom = defineGraph<YuE2Ext>()
   .field('steps', sliderDef(yue2Steps))
   .field('yue2Mode', ({ _ext }) =>
     enumDef({
-      options: _ext.yue2Instrumental
+      options: _ext.instrumental
         ? yue2ModeOptions.filter((o) => o.value !== 'off')
         : yue2ModeOptions,
       default: 'full',
@@ -59,7 +59,13 @@ export const yue2 = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('duration', sliderDef(yue2Duration))
   .field('seed', SEED)
-  .field('yue2Instrumental', boolDef(false))
+  .field('instrumental', {
+    ...boolDef(false),
+    meta: {
+      label: 'Instrumental',
+      description: 'Compose without sung lyrics. Uses score planning.',
+    },
+  })
   .field('yue2MusicMode', enumDef({ options: yue2MusicModeOptions, default: 'simple' }))
   .use(
     branch('yue2MusicMode', [
