@@ -18,6 +18,12 @@
   let request = 0;
   let message = $state<string | null>(null);
   let failed = $state(false);
+  // The dot goes with the click, not with the reload that clears `unseen`; once the server agrees it is reset, so the next day's recap shows its dot.
+  let seenLocally = $state(false);
+  $effect(() => {
+    if (!unseen) seenLocally = false;
+  });
+  let showDot = $derived(unseen && !seenLocally);
 
   // The recap is read when the button is clicked, not with every page, so it is always today's figures.
   async function show() {
@@ -51,6 +57,7 @@
       return;
     }
     closeDismiss(dismiss, 'recap');
+    seenLocally = true;
     const mine = ++request;
     fetch('/recap', { method: 'POST', body: formData })
       .then(async (response) => {
@@ -64,6 +71,7 @@
       .catch(() => {
         if (mine !== request) return;
         settleDismiss(dismiss, 'recap', false);
+        seenLocally = false;
         message = 'Could not save that. Try again.';
       });
   };
@@ -72,13 +80,13 @@
 <button
   type="button"
   class="recap-button"
-  aria-label={unseen ? 'Daily recap, not yet seen' : 'Daily recap'}
+  aria-label={showDot ? 'Daily recap, not yet seen' : 'Daily recap'}
   title="Daily recap"
   aria-busy={loading}
   onclick={show}
 >
   <Icon name="scroll-text" size={18} />
-  {#if unseen}<span class="dot" aria-hidden="true"></span>{/if}
+  {#if showDot}<span class="dot" aria-hidden="true"></span>{/if}
 </button>
 
 {#if loaded && dismissShowing('recap', dismiss)}
