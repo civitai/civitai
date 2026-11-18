@@ -494,8 +494,7 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged Blue first, then Yellow (never Green). The submit's own rating
-  // can find mature images the quote's missed; its refusal sets this, so the price is shown again.
+  // The submit's own rating can find mature images the quote missed; its refusal raises this.
   let refusedFurther = $state<{ run: string; count: number } | null>(null);
   const furtherMature = $derived(
     Math.max(

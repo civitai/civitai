@@ -706,8 +706,6 @@ describe('text encoder on a model that cannot train it', () => {
   });
 });
 
-// Every body is `manual` and never carries the unlock; a mature dataset is charged Blue first, then Yellow,
-// never Green.
 describe('mature charge: Blue first, never Green', () => {
   const nsfwHead = (level: string | null) => ({
     response: new Response(null, {
@@ -914,9 +912,8 @@ describe('mature charge: Blue first, never Green', () => {
       { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
     ];
 
-    // Who actually pays a non-member's run: the orchestrator's rule for a submitted body
-    // (civitai-orchestration WorkflowGrain ChargeableCurrencies, BuzzClientAccount): with
-    // allowMatureContent true, only Yellow may pay; otherwise the body's currencies, in order.
+    // Mirrors the orchestrator's payer rule and must change with it: with allowMatureContent true it
+    // won't charge a non-member's Blue (only Yellow); otherwise it charges the body's currencies, in order.
     const nonMemberPayers = (body: { allowMatureContent?: boolean; currencies?: string[] }) =>
       body.allowMatureContent === true
         ? (body.currencies ?? []).filter((c) => c === 'yellow')

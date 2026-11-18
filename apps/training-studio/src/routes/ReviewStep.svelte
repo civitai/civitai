@@ -168,8 +168,6 @@
     if (!needsAttestation) attestSfw = false;
   });
 
-  // A mature dataset is never charged in Green: anything beyond Blue is Yellow. Without a membership, its
-  // mature samples stay blurred unless the run is paid only in Yellow.
   const membership = hostConfig().isPaidMember;
   // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
   let refusedMature = $state(0);
