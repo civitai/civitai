@@ -471,7 +471,10 @@ async function buildTrainingReviewQueue(): Promise<TrainingReviewQueue> {
     const read = reads[i];
     if (read?.kind === 'gone') return;
     const reading = read?.kind === 'read' ? read.reading : null;
-    if (reading && !reading.underReview) closed.push({ ...row, reason: closedGateReason(reading) });
+    // Closed only on a run that names this version: the file's workflow id is the owner's to write, and
+    // Approve refuses a run that does not belong — that refusal must stay reachable.
+    if (reading && !reading.underReview && reading.claimedModelVersionId === row.id)
+      closed.push({ ...row, reason: closedGateReason(reading) });
     else
       classified.push({
         ...row,
@@ -626,11 +629,6 @@ export async function moderateTrainingData(input: {
   if (!loaded.ok)
     return { ok: false, error: `Could not load workflow ${workflowId}: ${loaded.error}` };
   const workflow = (loaded.workflow ?? {}) as RawWorkflow;
-  // Refused only when the orchestrator says the gate is closed. A run it answered unreadably goes on
-  // to the release, which refuses a closed gate itself.
-  const read = readTrainingWorkflow(workflowId, workflow);
-  if (read.ok && !read.reading.underReview)
-    return { ok: false, error: `${closedGateReason(read.reading)} Nothing was changed.` };
   // The manager API writes PascalCase; the webhook takes the consumer API's camelCase, and every
   // workflow status is one word.
   const status = str(workflow.status)?.toLowerCase();
@@ -657,6 +655,12 @@ export async function moderateTrainingData(input: {
       ok: false,
       error: `Workflow ${workflowId} does not belong to model version ${input.modelVersionId}, so the gate was not touched. Escalate this — it should not happen.`,
     };
+  // After the tag check, so a reading of some other version's run cannot pass for this gate.
+  // Refused only when the orchestrator says the gate is closed: a run it answered unreadably goes on
+  // to the release, which refuses a closed gate itself.
+  const read = readTrainingWorkflow(workflowId, workflow);
+  if (read.ok && !read.reading.underReview)
+    return { ok: false, error: `${closedGateReason(read.reading)} Nothing was changed.` };
 
   const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
@@ -1303,9 +1307,14 @@ export async function getTrainingGateState(versionId: number): Promise<TrainingG
         state: 'unknown',
         reason: `Workflow ${workflowId} could not be read as a training run, so the gate could not be confirmed open.`,
       };
-    return read.reading.underReview
-      ? { state: 'open' }
-      : { state: 'closed', reason: closedGateReason(read.reading) };
+    if (read.reading.underReview) return { state: 'open' };
+    // As in the queue: a run that does not name this version is left to Approve to refuse.
+    if (read.reading.claimedModelVersionId !== versionId)
+      return {
+        state: 'unknown',
+        reason: `Workflow ${workflowId} does not name this version, so its gate could not be confirmed.`,
+      };
+    return { state: 'closed', reason: closedGateReason(read.reading) };
   } catch (e) {
     console.error('[training-data] gate check failed', e);
     return { state: 'unknown', reason: 'The gate could not be checked.' };

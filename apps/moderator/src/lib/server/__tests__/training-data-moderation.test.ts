@@ -122,6 +122,22 @@ describe('moderateTrainingData', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
+  it('refuses a ruled run of another version as not belonging, not as already ruled', async () => {
+    serve(204);
+    managerRead = () =>
+      Response.json({ ...managerWorkflow('Approved', 'Succeeded'), tags: ['modelVersion:43'] });
+
+    const result = await moderateTrainingData({
+      modelVersionId: VERSION,
+      approve: true,
+      moderatorId: MODERATOR,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain(`does not belong to model version ${VERSION}`);
+    expect(gateCalls()).toHaveLength(0);
+  });
+
   // Fail-open: only a reading that says closed refuses. The release refuses a closed gate itself.
   it('releases the gate when the run answered in a shape it cannot read', async () => {
     serve(204);

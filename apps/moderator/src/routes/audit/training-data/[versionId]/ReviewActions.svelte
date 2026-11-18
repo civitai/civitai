@@ -74,6 +74,8 @@
     {@render rulings(true)}
   {:then checked}
     {@render rulings(checked.state === 'closed')}
+  {:catch}
+    {@render rulings(false)}
   {/await}
   {#if canReportCsam}
     <Button size="sm" variant="outline" onclick={() => (reporting = !reporting)}>Report CSAM</Button>
@@ -87,6 +89,8 @@
   {#if checked.state !== 'open'}
     <p class="mb-4 text-sm text-amber-200">{checked.reason}</p>
   {/if}
+{:catch}
+  <p class="mb-4 text-sm text-amber-200">The gate could not be checked.</p>
 {/await}
 
 {#if form.error}

@@ -652,7 +652,9 @@ describe('getTrainingReviewQueue', () => {
       const s = state[byId(url)];
       if (s === undefined) return new Response(null, { status: 599 });
       if (s === 404) return new Response(null, { status: 404 });
-      return json(workflow({ id: byId(url), moderationStatus: s }));
+      // `run(_, n)` is version n's run, and is tagged so.
+      const tags = ['training', `modelVersion:${/-v(\d+)$/.exec(byId(url))?.[1]}`];
+      return json(workflow({ id: byId(url), moderationStatus: s, tags }));
     };
   }
 
@@ -688,6 +690,14 @@ describe('getTrainingReviewQueue', () => {
         reason: 'The gate is not under review (run: processing, gate: approved).',
       }),
     ]);
+  });
+
+  it('leaves a ruled run that names another version actionable, for Approve to refuse', async () => {
+    db([version(5)], [file(15, 5, W2)]);
+    orchestratorFor({ [W2]: 'Approved' });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.closed).toEqual([]);
+    expect(queue.items.map((i) => i.id)).toEqual([5]);
   });
 
   it('checks the run awaiting the gate, not the version’s most complete run', async () => {
@@ -879,12 +889,22 @@ describe('getTrainingGateState', () => {
     expect(await getTrainingGateState(VERSION)).toEqual({ state: 'open' });
   });
 
+  const ruled = (tags: string[]) => ({
+    ...workflow({ moderationStatus: 'Approved', tags }),
+    status: 'Succeeded',
+  });
+
   it('is closed, with the reason, on a finished run whose gate was approved', async () => {
-    orchestrator([{ ...workflow({ moderationStatus: 'Approved' }), status: 'Succeeded' }]);
+    orchestrator([ruled([`modelVersion:${VERSION}`])]);
     expect(await getTrainingGateState(VERSION)).toEqual({
       state: 'closed',
       reason: 'The gate is not under review (run: succeeded, gate: approved).',
     });
+  });
+
+  it('is unknown on a ruled run that does not name this version', async () => {
+    orchestrator([ruled(['modelVersion:78'])]);
+    expect(await getTrainingGateState(VERSION)).toMatchObject({ state: 'unknown' });
   });
 
   it('is closed when the orchestrator no longer has the workflow', async () => {
