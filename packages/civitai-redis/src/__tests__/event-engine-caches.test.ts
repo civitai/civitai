@@ -36,4 +36,26 @@ describe('the event-engine profile-picture bust', () => {
     });
     expect(expire).toHaveBeenCalledWith('user:profilePicture:v3:8', 10);
   });
+
+  it('uses the debounce time the event engine gives this cache', () => {
+    expect(eventEngine('base.ts')).toContain('config.debounceTime ?? 10');
+    expect(eventEngine('imageData.cache.ts')).not.toMatch(/debounceTime:/);
+  });
+
+  it('busts a large batch at most ten users at a time', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const hSet = vi.fn(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return 1;
+    });
+    const ids = Array.from({ length: 25 }, (_, i) => i + 1);
+
+    await bustEventEngineProfilePictures({ hSet, expire: async () => true }, ids);
+
+    expect(hSet).toHaveBeenCalledTimes(25);
+    expect(peak).toBe(10);
+  });
 });

@@ -2414,6 +2414,9 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+  await bustEventEngineProfilePictures(redis, [userId]).catch((error) =>
+    logProfilePictureRefreshError(error, { userIds: String(userId), step: 'event-engine-cache' })
+  );
 }
 
 /** The users whose profile picture is one of `imageIds`, from the primary. */

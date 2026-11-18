@@ -133,6 +133,20 @@ beforeEach(() => {
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
 
+describe('an avatar change', () => {
+  it("busts the event engine's copy of the user's picture too", async () => {
+    const { deleteUserProfilePictureCache } = await import('../user.service');
+
+    await deleteUserProfilePictureCache(AVATAR_OWNER);
+
+    expect(refreshPicture).toHaveBeenCalledWith(AVATAR_OWNER);
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+  });
+});
+
 describe('a bulk picture refresh', () => {
   it("clears a User.image naming a held picture, then refreshes those users' basic-user cache and search documents", async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');

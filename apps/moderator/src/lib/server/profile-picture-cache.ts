@@ -28,8 +28,14 @@ export async function bustProfilePictures(
   try {
     const userIds =
       'userIds' in target ? target.userIds : await profilePictureUserIds(target.imageIds);
-    await bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds);
-    await bustEventEngineProfilePictures(getRedis(), userIds);
+    await Promise.all([
+      bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
+        logAxiomError(error, { event: 'profile-picture-cache-bust' })
+      ),
+      bustEventEngineProfilePictures(getRedis(), userIds).catch((error) =>
+        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'event-engine' })
+      ),
+    ]);
   } catch (error) {
     void logAxiomError(error, { event: 'profile-picture-cache-bust' });
   }
