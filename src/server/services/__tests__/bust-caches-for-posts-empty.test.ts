@@ -156,6 +156,7 @@ describe('bustCachesForPosts and the version showcase', () => {
 
     await bustCachesForPosts([1]);
 
+    expect(bustShowcases).toHaveBeenCalledTimes(1);
     expect(bustShowcases).toHaveBeenCalledWith([1]);
   });
 });

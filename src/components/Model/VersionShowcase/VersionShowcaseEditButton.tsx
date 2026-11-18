@@ -4,7 +4,6 @@ import { openVersionShowcaseEditor } from '~/components/Dialog/triggers/version-
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-/** "Edit showcase" for the model's creator and moderators. Renders nothing for anyone else. */
 export function VersionShowcaseEditButton({
   modelVersionId,
   modelUserId,

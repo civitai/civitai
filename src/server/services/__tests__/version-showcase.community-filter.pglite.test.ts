@@ -93,6 +93,7 @@ beforeAll(async () => {
       nsfw boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int,
       "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public'
@@ -157,6 +158,7 @@ beforeEach(async () => {
   saveModelCovers.mockClear();
   await db.exec(`
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
+    DELETE FROM "ImageResourceNew";
     DELETE FROM "UserEngagement"; DELETE FROM "CreatorGalleryHiddenUser";
     DELETE FROM "User" WHERE id <> ${CREATOR};
     UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL, nsfw = false;
@@ -268,6 +270,18 @@ describe('version showcase community filter', () => {
       level: PG,
     };
     expect(await served()).toEqual([clean]);
+  });
+
+  it('drops an image moved off the version, and keeps one still made with it', async () => {
+    const moved = await featured();
+    const madeWith = await featured();
+    await db.query(`UPDATE "Post" SET "modelVersionId" = NULL WHERE id IN ($1, $2)`, [
+      moved,
+      madeWith,
+    ]);
+    await db.query(`INSERT INTO "ImageResourceNew" VALUES ($1, $2)`, [madeWith, VERSION]);
+    cacheStore.clear();
+    expect(await served()).toEqual([madeWith]);
   });
 
   it("drops a row the image's author removed", async () => {

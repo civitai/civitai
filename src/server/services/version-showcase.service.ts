@@ -138,6 +138,7 @@ const buildVersionShowcaseCache = () =>
       WHERE s."modelVersionId" IN (${Prisma.join(withCommunity)})
         AND s.source = 'Community'
         AND NOT s."removed"
+        AND ${madeWithOrPostedTo()}
         AND ${Prisma.join([...showcaseImageConditions(), ...communityImageConditions()], ' AND ')}
     `;
       if (!community.length) return records;
@@ -747,16 +748,18 @@ async function getEligibleCommunityImages(
     CROSS JOIN (SELECT ${site}::text AS site) s
     WHERE i.id IN (${Prisma.join(imageIds)})
       AND i."userId" <> m."userId"
-      AND (
-        p."modelVersionId" = mv.id
-        OR EXISTS (
-          SELECT 1 FROM "ImageResourceNew" ir
-          WHERE ir."imageId" = i.id AND ir."modelVersionId" = mv.id
-        )
-      )
+      AND ${madeWithOrPostedTo()}
       AND ${Prisma.join([...showcaseImageConditions(), ...communityImageConditions()], ' AND ')}
   `;
 }
+
+/** A community image belongs to version `mv`: made with it, or posted to its gallery. */
+const madeWithOrPostedTo = () => Prisma.sql`(
+  p."modelVersionId" = mv.id
+  OR EXISTS (
+    SELECT 1 FROM "ImageResourceNew" ir WHERE ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+  )
+)`;
 
 /**
  * Replaces one version's showcase on one site: the order and hides of the creator's images, and
