@@ -1,7 +1,14 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { heartBackLine } from './chrome';
 
-  let { hearts, maxHearts }: { hearts: number; maxHearts: number } = $props();
+  let {
+    hearts,
+    maxHearts,
+    heartBack = null,
+  }: { hearts: number; maxHearts: number; heartBack?: { done: number; needed: number } | null } =
+    $props();
+  let back = $derived(heartBackLine(heartBack));
 
   // A smite drains the heart it takes and flashes the row. Ambient, and only for a change seen while the page is open.
   let drained = $state<number | null>(null);
@@ -27,7 +34,7 @@
   class:smitten={drained !== null}
   role="img"
   aria-label="{hearts} of {maxHearts} hearts left"
-  title="Each smite costs a heart. Lose all {maxHearts} and your career resets."
+  title="Each smite costs a heart. Lose all {maxHearts} and your career resets.{back ? ` ${back}.` : ''}"
 >
   {#each { length: maxHearts } as _, heart (heart)}
     <span aria-hidden="true" class:lost={heart >= hearts} class:draining={drained === heart}>{heart < hearts ? '♥' : '♡'}</span>

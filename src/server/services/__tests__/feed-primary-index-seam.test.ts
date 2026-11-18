@@ -282,7 +282,14 @@ describe("the feed service's page hydrate, for restricted minor images", () => {
   /** The hydrate statement for a served page of ids 1-5, as `user` sees it. */
   async function hydrateStatement(user: { id: number; isModerator: boolean }) {
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [1, 2, 3, 4, 5] });
-    await getAllImagesIndex({ ...request(), browsingLevel: 31, user }).catch(() => undefined);
+    // A session's views (credentialViews); the feed reads neither without them.
+    await getAllImagesIndex({
+      ...request(),
+      browsingLevel: 31,
+      user,
+      asModerator: true,
+      asOwner: true,
+    }).catch(() => undefined);
     const hydrate = pg.statements.find((s) => s.text.includes('"Image" i'));
     expect(hydrate, 'the page is no longer hydrated through the pg pool').toBeDefined();
     return hydrate as { text: string; values: unknown[] };
