@@ -2,18 +2,25 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { ComponentProps } from 'svelte';
+  import type { KnightsRuleGuide } from '@civitai/shared/new-order';
+  import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import { modal } from '$lib/modal';
   import '$lib/overlay.css';
 
   let {
     guide,
+    rules,
+    startAtRules = false,
     first,
     message,
     submitting,
     submit,
   }: {
     guide: ComponentProps<typeof RatingGuide>['guide'];
+    rules: KnightsRuleGuide | null;
+    /** Opened from a yes/no question: scroll to the question rules. */
+    startAtRules?: boolean;
     /** The first-visit guide says so; a reopened one does not. */
     first: boolean;
     message: string | null;
@@ -22,6 +29,11 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
+  let rulesSection = $state<HTMLElement>();
+
+  $effect(() => {
+    if (startAtRules) rulesSection?.scrollIntoView({ block: 'start' });
+  });
   // Escape is the same answer as the button: the guide is read.
   const close = () => {
     if (!submitting) form?.requestSubmit();
@@ -44,6 +56,10 @@
       <p class="intro">What each level means. Rate what the image shows, not what you would like to see.</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <RatingGuide {guide} />
+      {#if rules}
+        <div class="rule" aria-hidden="true"><span class="gem"></span></div>
+        <div bind:this={rulesSection}><QuestionRules {rules} /></div>
+      {/if}
     </div>
     <form class="footer" method="POST" action="?/dismissGuide" use:enhance={submit} bind:this={form}>
       {#if message}

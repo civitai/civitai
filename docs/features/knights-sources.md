@@ -56,6 +56,12 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
+The optional `ruleGuide` field holds the question rules players read in the rating guide: an `intro` and up to 6 `sets`, each a
+`title`, optional `notes` and up to 10 `levels` (`code`, `description`). Limits are `KNIGHTS_RULE_GUIDE_LIMITS`; the reader
+(`readRuleGuide`) trims the text and drops what is empty or over a limit, and Knights renders it as plain text. The Config page's
+"Question rules" card edits it and saves it on its own (`?/rules`, `saveRuleGuide`), refusing what the reader would drop and
+naming the set and level; the sources and game saves carry it over. The rule text lives only in the key, never in the repository.
+
 The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
 both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
 setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a

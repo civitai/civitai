@@ -156,3 +156,9 @@ question gets its own `rule` row, so the store computes the majority per questio
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
 any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
+
+The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide
+window on `/play`. Their text is not in the code: moderators enter it on the Config page (`ruleGuide`, see
+[game settings](knights-sources.md#game-settings)). With rules saved, a yes/no question shows the guide button (on desktop the
+row keeps its "Rating guide" label so Skip does not move) and opens the guide at the rules; with none saved the button stays
+hidden on yes/no, as before.

@@ -66,4 +66,24 @@ describe('createStoredSettingsSource', () => {
     await Promise.all([source.load(), source.load(), source.load()]);
     expect(read).toHaveBeenCalledTimes(1);
   });
+
+  it('carries the saved question rules, and keeps them when a later read fails', async () => {
+    let clock = 0;
+    let fail = false;
+    const ruleGuide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+    const source = createStoredSettingsSource({
+      read: async () => {
+        if (fail) throw new Error('down');
+        return JSON.stringify({ enabled: true, ruleGuide });
+      },
+      ttlMs: 1,
+      now: () => clock,
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await source.load()).toEqual({ ruleGuide });
+    fail = true;
+    clock = 10;
+    expect(await source.load()).toEqual({ ruleGuide });
+  });
 });

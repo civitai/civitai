@@ -608,7 +608,7 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
+    {#if !yesNo || data.ruleGuide}
       <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
         <Icon name="book-open" size={16} />Guide
       </button>
@@ -830,8 +830,8 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        <!-- Hidden, not removed, on yes/no: its slot keeps Skip from shifting. -->
-        <span class="rowtool" class:held={yesNo}>
+        <!-- Hidden, not removed, on yes/no without rules: its slot keeps Skip from shifting. The label never changes, for the same reason. -->
+        <span class="rowtool" class:held={yesNo && !data.ruleGuide}>
           <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
         </span>
         <span class="rowtool">{@render soundToggle()}</span>
@@ -868,6 +868,8 @@
 {#if guideOpen}
   <GuideDialog
     guide={data.ratingGuide}
+    rules={data.ruleGuide}
+    startAtRules={yesNo && !!data.ruleGuide}
     first={data.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}

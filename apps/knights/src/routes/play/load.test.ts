@@ -58,6 +58,8 @@ vi.mock('$lib/server/yesno/cadence', () => ({
 }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
+const storedRules = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => storedRules.value }));
 vi.mock('$lib/server/apprenticeship/runtime', () => ({
   apprenticeDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
@@ -639,6 +641,15 @@ describe('play load notices', () => {
     expect(page.showGuide).toBe(true);
     expect(page.progress).toBeNull();
     expect(page.ratingGuide.map((g: { level: number }) => g.level)).toEqual([1, 2, 4, 8, 16, 32]);
+  });
+
+  it('carries the saved question rules with the guide, and null when none are saved', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    expect((await run()).ruleGuide).toBeNull();
+    const ruleGuide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+    storedRules.value = { ruleGuide };
+    expect((await run()).ruleGuide).toEqual(ruleGuide);
+    storedRules.value = {};
   });
 });
 
