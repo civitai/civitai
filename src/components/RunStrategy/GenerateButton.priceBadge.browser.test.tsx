@@ -15,7 +15,6 @@ import { cleanup } from 'vitest-browser-react';
 
 afterEach(() => cleanup());
 
-// The corner chip is a Mantine Badge; its text is the abbreviated Buzz price.
 const chipText = () =>
   document.body.querySelector('.mantine-Badge-root')?.textContent?.trim() ?? null;
 
