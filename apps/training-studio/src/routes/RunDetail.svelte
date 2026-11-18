@@ -321,7 +321,9 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        // AI Toolkit keeps the trigger word out of the captions; Kohya runs already carry it in them.
+        typeof d.settings.training.triggerWord === 'string' ? d.settings.training.triggerWord : ''
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";

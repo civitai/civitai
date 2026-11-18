@@ -52,6 +52,7 @@
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
+  import { suggestTrigger } from './triggerSuggest';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -539,6 +540,7 @@
     importNotice = '';
     const unreadable: string[] = [];
     const empty: string[] = [];
+    let suggested: string | null = null;
     try {
       for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
         const { file, current } = next;
@@ -552,13 +554,14 @@
         }
         if (entries.length === 0) empty.push(file.name);
         // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
-        else if (current()) await addImported(entries);
+        else if (current()) suggested = (await addImported(entries)) ?? suggested;
       }
     } finally {
       importing = false;
       importNotice = [
         unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
         empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+        suggested && `Trigger word set to "${suggested}" from the imported tags.`,
       ]
         .filter(Boolean)
         .join(' ');
@@ -623,7 +626,8 @@
             caption: labelString(img, labelMode),
             load: () => imgBytes(img),
           };
-        })
+        }),
+        trigger
       );
       if (!blob) {
         exportNotice = "Couldn't fetch any of the files — nothing to download.";
@@ -644,8 +648,12 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
+  /** Returns the trigger word it filled in from the captions, if the field was empty and one leads them. */
   async function addImported(entries: { file: File; caption: string; path: string }[]) {
-    if (entries.length === 0) return;
+    if (entries.length === 0) return null;
+    const suggested =
+      labelMode === 'tag' && !trigger.trim() ? suggestTrigger(entries.map((e) => e.caption)) : null;
+    if (suggested) trigger = suggested;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -665,6 +673,7 @@
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     void maybeAutoLabel();
+    return suggested;
   }
   function onPickZip(e: Event) {
     void importZips(pickedFiles(e));
