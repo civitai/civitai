@@ -47,10 +47,15 @@ beforeAll(async () => {
   await pg.exec(SCHEMA);
   await pg.exec(`
     INSERT INTO "Image" VALUES (1, false, 'Scanned', ${PG}), (2, false, 'Scanned', ${R});
-    -- 1: PG. 2: the owner's, cover re-rated R. 3: the owner's, not yet scanned. 4: someone else's, R.
+    -- 1: PG. 2: the owner's, cover re-rated R. 3: the owner's, not yet scanned. 4: someone else's,
+    -- R. 5: the owner's, not yet visible. 6: the owner's, in the other domain's currency.
     INSERT INTO "Challenge" (id, "createdById", "coverImageId", "nsfwLevel", ingestion) VALUES
       (1, 50, 1, ${PG}, 'Scanned'), (2, ${OWNER}, 2, ${R}, 'Scanned'),
       (3, ${OWNER}, 1, ${PG}, 'Pending'), (4, 51, 2, ${R}, 'Scanned');
+    INSERT INTO "Challenge" (id, "createdById", "coverImageId", "nsfwLevel", "visibleAt") VALUES
+      (5, ${OWNER}, 1, ${PG}, now() + interval '1 day');
+    INSERT INTO "Challenge" (id, "createdById", "coverImageId", "nsfwLevel", "buzzType") VALUES
+      (6, ${OWNER}, 1, ${PG}, 'green');
   `);
 });
 afterAll(() => pg.close());
@@ -72,8 +77,8 @@ async function visible(viewerId: number | undefined, ownRowsExempt?: boolean) {
 }
 
 describe('challengeVisibilityConditions: the owner exemption', () => {
-  it('lets the creator see their own challenge past the level and scan gates by default', async () => {
-    expect(await visible(OWNER)).toEqual([1, 2, 3]);
+  it('lets the creator see their own challenge past every gate by default', async () => {
+    expect(await visible(OWNER)).toEqual([1, 2, 3, 5, 6]);
   });
 
   it('holds the creator to every gate when the exemption is off', async () => {

@@ -640,8 +640,7 @@ export async function challengeVisibilityConditions({
   // cover level is required to intersect too, so a challenge that under-declares its rating can't
   // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
   // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. The creator
-  // sees their own unless `ownRowsExempt` is off. A challenge with no cover is already excluded by the IS NOT NULL gate
-  // above.
+  // sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate above.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: viewerId != null,
