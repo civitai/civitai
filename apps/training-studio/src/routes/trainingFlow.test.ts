@@ -35,6 +35,8 @@ import {
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
+  kohyaSeedCard,
+  cardSupportsKohya,
   runExtraCapabilities,
   runEngine,
   runParamsKey,
@@ -879,6 +881,20 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
 });
 
 describe('Kohya engine selection and options', () => {
+  it('starts a Kohya run on the first available Kohya model, and none on media Kohya lacks', () => {
+    const none = new Set<string>();
+    const first = kohyaSeedCard('character', 'image', none)!;
+    expect(cardSupportsKohya(first)).toBe(true);
+    const blocked = parseServiceStatus({
+      blockedModels: first.versions.map((v) => v.key),
+      blockedModelReasons: {},
+    });
+    const next = kohyaSeedCard('character', 'image', none, blocked)!;
+    expect(next.type).not.toBe(first.type);
+    expect(cardSupportsKohya(next)).toBe(true);
+    expect(kohyaSeedCard('character', 'video', none)).toBeUndefined();
+  });
+
   it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
     const original = run('sdxl');
     const kohya = { ...original, engine: 'kohya' };
