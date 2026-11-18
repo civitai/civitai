@@ -466,7 +466,6 @@ export async function healStalledTrainingDataScans() {
       if (!key) return;
       if (outcome === 'unreadable') unreadableRuns++;
       try {
-        // One MULTI, so the count is never left without its TTL.
         await takeClusterWindowCount('countHealResubmit', key, HEAL_ATTEMPTS_TTL_SECONDS);
       } catch {
         // An uncounted resubmit only allows one more.

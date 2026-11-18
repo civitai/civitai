@@ -3124,8 +3124,6 @@ const REDIS_KEYS_UNPREFIXED = {
     // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
     // See `src/server/services/blocks/github-actions-oidc.service.ts`.
     ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
-    // Every command on each key below touches that one key, so none spans slots (no CROSSSLOT).
-    //
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
     // only (no appBlockId): it widens the BUZZ_CAP ceiling, which is per user. Deliberately NOT

@@ -424,7 +424,6 @@ export async function readAutoBuildBudget(
 /** New-submission alerts per submitter per UTC hour, before they are rolled up. */
 export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
-/** Every call throws on failure; callers turn that into their fail-safe answer. */
 const clusterCounters = () => import('~/server/utils/cluster-window-count');
 
 /** A UTC-day window's TTL: a day plus slack, so a key outlives the day it counts. */
@@ -737,11 +736,7 @@ async function reserveAgentAutostartBudget(
   }
 }
 
-/**
- * Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. The release
- * re-applies the day's TTL, so one landing after the key was evicted leaves a negative total that
- * still expires, never an immortal one.
- */
+/** Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. */
 async function releaseAgentAutostartBudget(
   cents: number,
   key: AgentAutostartReservedKey

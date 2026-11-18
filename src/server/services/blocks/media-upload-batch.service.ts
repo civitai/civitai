@@ -118,8 +118,6 @@ export async function reserveMediaUploadBatchQuota(
   const itemsKey = `${base}:items:${userId}:${day}` as const;
   const bytesKey = `${base}:bytes:${userId}:${day}` as const;
   const charged: Array<[typeof itemsKey | typeof bytesKey, number]> = [];
-  // A release re-applies the TTL, so one landing after the key was evicted leaves a negative count
-  // that still expires, never an immortal one.
   const release = async () => {
     for (const [key, amount] of charged) {
       try {

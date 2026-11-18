@@ -350,6 +350,7 @@ describe('requeuePendingTrainingDataScans', () => {
 
 describe('healStalledTrainingDataScans', () => {
   const stalled = { id: 3, url: 'https://bucket/3.zip', modelVersionId: 30 };
+  let healSetCalls: Array<[string, unknown]> = [];
 
   beforeEach(() => {
     dbMock.dbWrite.modelFile.findMany.mockReset().mockResolvedValue([stalled]);
@@ -357,12 +358,14 @@ describe('healStalledTrainingDataScans', () => {
     dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 3 }]);
     redisMock.redis.get.mockReset().mockResolvedValue(null);
     redisMock.redis.incrBy.mockReset().mockResolvedValue(1);
+    healSetCalls = [];
     // A resubmit is counted by SET NX EX + INCR in one MULTI; the INCR lands on the same
     // `redis.incrBy` counter the tests read, so every count stays in one place.
     redisMock.redis.multi.mockReset().mockImplementation(() => {
       const queued: Array<() => unknown> = [];
       const chain = {
-        set: vi.fn(() => {
+        set: vi.fn((key: string, _value: string, opts: unknown) => {
+          healSetCalls.push([key, opts]);
           queued.push(() => 'OK');
           return chain;
         }),
@@ -411,6 +414,8 @@ describe('healStalledTrainingDataScans', () => {
     const [key] = redisMock.redis.incrBy.mock.calls[0];
     expect(redisMock.redis.get).toHaveBeenCalledWith(key);
     expect(key).toMatch(/^system:training-data-scan:heal-attempts:3:[0-9a-f]{16}$/);
+    // The count is created with its 14-day TTL, never as a TTL-less key.
+    expect(healSetCalls).toEqual([[key, { NX: true, EX: 14 * 24 * 60 * 60 }]]);
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ picked: 1, submitted: 1, gaveUp: [] });
   });

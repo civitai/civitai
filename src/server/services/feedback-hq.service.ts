@@ -5,6 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackServerStamp } from '~/server/services/feedback.service';
 import type { FeedbackCaptureResult } from '~/server/services/feedback-capture.service';
@@ -256,9 +257,13 @@ export function buildHqBody(
 async function claimHqFilingSlot(userId: number): Promise<boolean> {
   const key = `${REDIS_KEYS.FEEDBACK.HQ_FILING}:${userId}` as const;
   try {
-    const count = await redis.incrBy(key, 1);
-    if (count === 1) await redis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
-    else if ((await redis.ttl(key)) < 0) await redis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
+    const count = await boundedClusterCall('claimHqFilingSlot', async () => {
+      const n = await redis.incrBy(key, 1);
+      if (n === 1) await redis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
+      else if ((await redis.ttl(key)) < 0)
+        await redis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
+      return n;
+    });
     return count <= HQ_FILING_USER_CAP.max;
   } catch {
     return false;
