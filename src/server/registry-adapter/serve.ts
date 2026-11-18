@@ -202,7 +202,10 @@ export type ServeOptions = {
    * region at all): the site's own rule (`request-origin.ts`) unless replaced.
    */
   regionRestricted?: (origin: RequestOrigin) => boolean;
-  /** Given one line per subscription once it starts: its region decision (`regionLine`). */
+  /**
+   * Called with one line per subscription once its token is accepted: its region decision
+   * (`regionLine`).
+   */
   onRegion?: (line: string) => void;
 };
 

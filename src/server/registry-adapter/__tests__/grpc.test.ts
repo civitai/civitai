@@ -304,7 +304,6 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
   });
 
   it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
-    // The site rule holds CA unrestricted; the override holds it, and the line says so.
     const { error, logged } = await lines(undefined, { regionRestricted: () => true });
     expect(error).toBeUndefined();
     expect(logged).toEqual([

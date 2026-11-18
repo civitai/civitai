@@ -223,7 +223,6 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
   });
 
   it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
-    // The site rule holds CA unrestricted; the override holds it, and the line says so.
     const { status, logged } = await lines(undefined, { opts: { regionRestricted: () => true } });
     expect(status).toBe(200);
     expect(logged).toEqual([

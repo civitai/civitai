@@ -437,7 +437,7 @@ export function createGrpcServer(
     limiter?: SubscriptionLimiter;
     /** As for HTTP: the site's region rule unless replaced. */
     regionRestricted?: (origin: RequestOrigin) => boolean;
-    /** As for HTTP: one line per subscription once it starts, its region decision. */
+    /** As for HTTP: called with one line per subscription once its token is accepted. */
     onRegion?: (line: string) => void;
   } = {}
 ): grpc.Server {

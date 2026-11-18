@@ -138,8 +138,7 @@ export function describeRegion(origin: RequestOrigin, at: Date = new Date()): Re
   const { headers, fromMeta } = regionHeaders(origin);
   const region = getRegion({ headers } as unknown as IncomingMessage);
   const raw = region.countryCode;
-  // Meta whenever it supplied the value judged, even one naming no country (`""`); a country
-  // `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
+  // A country `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
   let source: RegionDecision['source'] = 'none';
   if (fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry']) source = 'meta';
   else if (typeof raw === 'string' && raw !== '') source = 'header';
