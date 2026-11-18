@@ -18,10 +18,14 @@ const refreshPicture = vi.fn(async (_ids: number | number[]) => undefined);
 const refreshBasic = vi.fn(async (_ids: number | number[]) => undefined);
 const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
 const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+const restoreImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+const dropMarkers = vi.fn(async (_db: unknown, _ids: number[]) => undefined);
 
 vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
+  restoreClearedUserImages: (db: unknown, ids: number[]) => restoreImages(db, ids),
+  dropStaleHeldImageMarkers: (db: unknown, ids: number[]) => dropMarkers(db, ids),
 }));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({
@@ -175,6 +179,19 @@ describe('a bulk picture refresh', () => {
       refreshBasic.mock.invocationCallOrder[0]
     );
     expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
+  });
+
+  it('refreshes a user whose cleared User.image a lifted hold put back', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    restoreImages.mockResolvedValueOnce([9]);
+
+    await refreshProfilePicturesForUsers([9]);
+
+    expect(restoreImages).toHaveBeenCalledWith(expect.anything(), [9]);
+    expect(dropMarkers).toHaveBeenCalledWith(expect.anything(), [9]);
+    expect(refreshBasic).toHaveBeenCalledWith([9]);
+    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 9, action: 'Update' }]);
   });
 
   it('refreshes every session, never more than the cap at once', async () => {
