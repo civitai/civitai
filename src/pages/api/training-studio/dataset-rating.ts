@@ -1,9 +1,11 @@
 import { studioDatasetRatingSchema } from '~/server/schema/training-studio-dataset-rating.schema';
 import {
   rateStudioDatasetImages,
+  STUDIO_DATASET_RATING_GLOBAL_LIMIT,
   STUDIO_DATASET_RATING_RATE_LIMIT,
 } from '~/server/services/training-studio-dataset-rating.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
@@ -25,6 +27,12 @@ export default AuthedEndpoint(
         req,
       });
       await record();
+      const { key, max, windowSeconds } = STUDIO_DATASET_RATING_GLOBAL_LIMIT;
+      const global = await checkFixedWindow(key, max, windowSeconds, { failOpen: false });
+      if (!global.allowed) {
+        res.setHeader('Retry-After', String(global.retryAfterSeconds));
+        return res.status(429).json({ error: 'Dataset rating is unavailable until tomorrow.' });
+      }
       return res.json(await rateStudioDatasetImages({ ...input.data, userId: user.id }));
     } catch (e) {
       return handleEndpointError(res, e);

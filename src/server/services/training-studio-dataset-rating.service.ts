@@ -15,6 +15,13 @@ export const STUDIO_DATASET_RATING_RATE_LIMIT = {
   key: 'training:studioDatasetRating',
   rules: usageLimits('dataset-rating.submit', 'dataset-rating.daily'),
 };
+/** Across all users, per fixed 24h window: bounds the system-paid GPU spend, and with it the Studio's
+ *  live sent markers in the system Redis. */
+export const STUDIO_DATASET_RATING_GLOBAL_LIMIT = {
+  key: 'training-studio:dataset-rating:global',
+  max: 50_000,
+  windowSeconds: 24 * 60 * 60,
+};
 /** Under the Studio's 30s rating deadline; a step still running then answers no output. */
 const WAIT_SECONDS = 20;
 const IMAGE_PATH = /\.(png|jpe?g|webp|gif|bmp)$/i;

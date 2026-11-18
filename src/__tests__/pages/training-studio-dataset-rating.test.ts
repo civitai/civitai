@@ -9,13 +9,18 @@ import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 const service = vi.hoisted(() => ({
   rate: vi.fn<(input: unknown) => Promise<{ results: never[] }>>(async () => ({ results: [] })),
 }));
-vi.mock('~/server/services/training-studio-dataset-rating.service', async (importOriginal) => ({
-  STUDIO_DATASET_RATING_RATE_LIMIT: (await importOriginal<typeof RatingService>())
-    .STUDIO_DATASET_RATING_RATE_LIMIT,
-  rateStudioDatasetImages: service.rate,
-}));
+vi.mock('~/server/services/training-studio-dataset-rating.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof RatingService>();
+  return {
+    STUDIO_DATASET_RATING_RATE_LIMIT: actual.STUDIO_DATASET_RATING_RATE_LIMIT,
+    STUDIO_DATASET_RATING_GLOBAL_LIMIT: actual.STUDIO_DATASET_RATING_GLOBAL_LIMIT,
+    rateStudioDatasetImages: service.rate,
+  };
+});
 const limiter = vi.hoisted(() => ({ claim: vi.fn(), record: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/rate-limit-bucket', () => ({ claimRateLimitAttempt: limiter.claim }));
+const globalCap = vi.hoisted(() => ({ check: vi.fn() }));
+vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow: globalCap.check }));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -63,6 +68,7 @@ describe('POST /api/training-studio/dataset-rating', () => {
     gate.allow.mockReset().mockResolvedValue(true);
     limiter.record.mockClear();
     limiter.claim.mockReset().mockResolvedValue(limiter.record);
+    globalCap.check.mockReset().mockResolvedValue({ allowed: true });
   });
 
   it('rates for the session user, counting the image against its per-minute and daily limits', async () => {
@@ -83,6 +89,19 @@ describe('POST /api/training-studio/dataset-rating', () => {
     const res = await call({ items: [item(1)] });
     expect(res.statusCode).toBe(429);
     expect(service.rate).not.toHaveBeenCalled();
+  });
+
+  it('over the all-users daily cap: 429 with 0 submits, counted fail-closed', async () => {
+    globalCap.check.mockResolvedValue({ allowed: false, retryAfterSeconds: 3600 });
+    const res = await call({ items: [item(1)] });
+    expect(res.statusCode).toBe(429);
+    expect(service.rate).not.toHaveBeenCalled();
+    expect(globalCap.check).toHaveBeenCalledWith(
+      'training-studio:dataset-rating:global',
+      50_000,
+      86_400,
+      { failOpen: false }
+    );
   });
 
   it('a user the Studio gate refuses rates nothing', async () => {
