@@ -58,6 +58,7 @@ export async function searchSemanticImages({
   track,
   candidateSource = searchServiceCandidates,
   refuseNarrowing = false,
+  uploadAnchor,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -70,6 +71,11 @@ export async function searchSemanticImages({
   candidateSource?: CandidateSource;
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
+  /**
+   * Search by uploaded image: the upload's scanned level and the URL to embed, from an upload that
+   * passed the scan gate. Replaces `imageId` and `query`.
+   */
+  uploadAnchor?: { nsfwLevel: number; imageUrl: string };
 }) {
   // Every moderator exemption below reads `user.isModerator`, so the viewer carries the view.
   const user = sessionUser && {
@@ -185,6 +191,14 @@ export async function searchSemanticImages({
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
+  if (uploadAnchor) {
+    // An upload is never served, so no visibility check refuses it: refuse a level the viewer
+    // (already capped to the domain) may not see here.
+    if (!Flags.intersects(browsingLevel, uploadAnchor.nsfwLevel))
+      return audit.done(emptyPage(), browsingLevel);
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
+  }
   const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
     const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
     return work.finally(() => end());
@@ -200,11 +214,10 @@ export async function searchSemanticImages({
         withMeta: input.withMeta,
       })
     );
-  const cachedSource = withCandidateCache(
-    IMAGE_COLLECTION,
-    candidateSource,
-    user?.isModerator ? 'mod' : 'user'
-  );
+  // The candidate cache holds nothing per user, and an upload is one user's.
+  const cachedSource = uploadAnchor
+    ? candidateSource
+    : withCandidateCache(IMAGE_COLLECTION, candidateSource, user?.isModerator ? 'mod' : 'user');
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
@@ -234,7 +247,9 @@ export async function searchSemanticImages({
           refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
         )
       : audit.done(emptyPage(), browsingLevel);
-  const query: SearchQuery = input.imageId
+  const query: SearchQuery = uploadAnchor
+    ? { imageUrl: uploadAnchor.imageUrl }
+    : input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
 
