@@ -16,9 +16,8 @@ import {
 
 const store = new Map<string, number>();
 
-/** The listing-check spend is a day counter on the cache cluster (the `redis` client). */
 function installRedis() {
-  redisMock.redis.multi.mockImplementation((() => {
+  redisMock.sysRedis.multi.mockImplementation((() => {
     const ops: Array<() => unknown> = [];
     const chain = {
       set: (key: string, value: string, opts?: { NX?: boolean }) => {
@@ -41,7 +40,7 @@ function installRedis() {
     };
     return chain;
   }) as never);
-  redisMock.redis.get.mockImplementation((async (key: string) =>
+  redisMock.sysRedis.get.mockImplementation((async (key: string) =>
     store.has(key) ? String(store.get(key)) : null) as never);
 }
 
@@ -63,6 +62,21 @@ describe('listing-check spend: recorded by one function, read back by the budget
     expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.25, 10);
     await recordListingCheckSpendUsd(0.5);
     expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.75, 10);
+  });
+
+  it('🔴 keeps the spend in system Redis, never on the evictable cache cluster', async () => {
+    await recordListingCheckSpendUsd(0.25);
+    expect(await agentReviewSpendTodayUsd()).toBeCloseTo(0.25, 10);
+
+    expect([...store.keys()]).toEqual([
+      expect.stringMatching(/^system:blocks:listing-check-spend:\d{4}-\d{2}-\d{2}$/),
+    ]);
+    expect(redisMock.redis.multi).not.toHaveBeenCalled();
+    expect(
+      redisMock.redis.get.mock.calls.filter(([k]: unknown[]) =>
+        String(k).includes('listing-check-spend')
+      )
+    ).toEqual([]);
   });
 
   it('🔴 a sub-cent check is counted at the one-cent floor, never as nothing', async () => {

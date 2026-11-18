@@ -617,13 +617,19 @@ describe('agent review auto-start', () => {
     // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
     spend(37);
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
-    // The listing checks' spend is a day counter on the cache cluster.
-    redisMock.redis.get.mockImplementation((async (key: string) =>
+    // The listing checks' spend is a day counter in system Redis: it must survive eviction.
+    redisMock.sysRedis.get.mockImplementation((async (key: string) =>
       key.includes('listing-check-spend') ? '150' : null) as never);
+    redisMock.redis.get.mockClear();
     try {
       expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+      expect(
+        redisMock.redis.get.mock.calls.filter(([k]: unknown[]) =>
+          String(k).includes('listing-check-spend')
+        )
+      ).toEqual([]);
     } finally {
-      redisMock.redis.get.mockImplementation((async () => null) as never);
+      redisMock.sysRedis.get.mockImplementation((async () => null) as never);
     }
   });
 

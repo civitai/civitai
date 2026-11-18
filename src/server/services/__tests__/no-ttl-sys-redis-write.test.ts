@@ -67,7 +67,7 @@ const BASELINE: Counts = {
   'src/server/services/blocks/custom-comfy-settle.service.ts': 1,
   'src/server/services/blocks/dev-tunnel-access.service.ts': 2,
   'src/server/services/blocks/dev-tunnel.service.ts': 7,
-  'src/server/services/blocks/review-autodeploy.service.ts': 1,
+  'src/server/services/blocks/review-autodeploy.service.ts': 2,
   'src/server/services/blocks/submit-rate-limit.ts': 1,
   'src/server/services/collection.service.ts': 2,
   'src/server/services/crucible-entry-accepted.ts': 1,

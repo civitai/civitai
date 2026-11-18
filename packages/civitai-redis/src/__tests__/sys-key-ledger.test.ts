@@ -159,6 +159,7 @@ const SYS_KEY_LEDGER = [
   'system:blocks:goods-cap',
   'system:blocks:goods-idem',
   'system:blocks:hibernation-wake-ticket',
+  'system:blocks:listing-check-spend',
   'system:blocks:live-pointer-dirty',
   'system:blocks:live-pointer-lock',
   'system:blocks:live-pointer-takedown',

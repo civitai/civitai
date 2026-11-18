@@ -2410,6 +2410,10 @@ export const REDIS_SYS_KEYS = {
     // (`system:blocks:review-auto-builds:${userId}:${YYYY-MM-DD}`). Past the budget the submit
     // still succeeds and the preview waits for a moderator to start it.
     REVIEW_AUTO_BUILDS: 'system:blocks:review-auto-builds',
+    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per UTC
+    // day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): the only record of listing-check
+    // model spend; the daily agent-review budget reads it, so it must survive eviction.
+    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
     // Live app pointer on the shared static server, per app slug. TAKEDOWN
     // (`...:${slug}`, no TTL) is set to 'attempted' when this platform starts a live unpublish or
     // restore for the app (the evidence a relist restores on), upgraded to 'confirmed' when an
@@ -3159,10 +3163,6 @@ const REDIS_KEYS_UNPREFIXED = {
     // Git pushes recorded for review, per slug, and the web manifest editor's commits, per user
     // (`system:blocks:push-review-rate-limit:<slug:|user:><id>`).
     PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
-    // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
-    // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
-    // spend, so it counts against the same automatic-start budget.
-    LISTING_CHECK_SPEND: 'system:blocks:listing-check-spend',
     // Agent-review auto-start budget reserved by starts in flight, in US cents, per UTC day
     // (`system:blocks:agent-review-autostart-reserved:${YYYY-MM-DD}`): the per-review cap is
     // reserved before the start and released once its report row exists (or the start failed).

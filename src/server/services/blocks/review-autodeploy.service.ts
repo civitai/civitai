@@ -596,8 +596,8 @@ export async function agentReviewSpendTodayUsd(now: Date = new Date()): Promise<
 }
 
 async function listingCheckSpendKey(now: Date) {
-  const { REDIS_KEYS } = await import('~/server/redis/client');
-  return `${REDIS_KEYS.BLOCKS.LISTING_CHECK_SPEND}:${now.toISOString().slice(0, 10)}` as const;
+  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  return `${REDIS_SYS_KEYS.BLOCKS.LISTING_CHECK_SPEND}:${now.toISOString().slice(0, 10)}` as const;
 }
 
 /**
@@ -608,10 +608,8 @@ async function listingCheckSpendKey(now: Date) {
  */
 async function readListingCheckSpendUsd(now: Date): Promise<number> {
   try {
-    const { redis } = await import('~/server/redis/client');
-    const key = await listingCheckSpendKey(now);
-    const { boundedClusterCall } = await clusterCounters();
-    const raw = await boundedClusterCall('readListingCheckSpendUsd', () => redis.get(key));
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const raw = await withSysReadDeadline(sysRedis.get(await listingCheckSpendKey(now)));
     const cents = Number(raw);
     return Number.isFinite(cents) && cents > 0 ? cents / 100 : 0;
   } catch {
@@ -623,11 +621,15 @@ async function readListingCheckSpendUsd(now: Date): Promise<number> {
 export async function recordListingCheckSpendUsd(usd: number): Promise<void> {
   if (!Number.isFinite(usd) || usd <= 0) return;
   try {
+    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
     const key = await listingCheckSpendKey(new Date());
-    const { takeClusterWindowCount } = await clusterCounters();
-    await takeClusterWindowCount('recordListingCheckSpendUsd', key, AGENT_DAY_KEY_TTL_S, {
-      by: Math.max(1, Math.round(usd * 100)),
-    });
+    await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
+        .incrBy(key, Math.max(1, Math.round(usd * 100)))
+        .exec()
+    );
   } catch {
     // Lost spend only makes the day's total read low by a fraction of a cent.
   }
