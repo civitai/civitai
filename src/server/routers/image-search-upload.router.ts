@@ -1,5 +1,6 @@
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
+import { TRPCError } from '@trpc/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   imageSearchUploadSearchSchema,
@@ -7,7 +8,9 @@ import {
   prepareImageSearchUploadSchema,
 } from '~/server/schema/semantic-image-search.schema';
 import {
+  claimSearchUploadUserDay,
   getSearchUploadStatus,
+  withSearchUploadSearch,
   prepareSearchUpload,
   resolveSearchUploadAnchor,
 } from '~/server/services/image-search-upload.service';
@@ -19,7 +22,12 @@ import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 const imageSearchUploadProcedure = protectedProcedure
   .meta({ blockApiKeys: true })
   .use(isFlagProtected('imageSearchUpload'))
-  .use(isFlagProtected('moreLikeThis'));
+  .use(isFlagProtected('moreLikeThis'))
+  // Moderator-only until further gates, whatever the flag says.
+  .use(({ ctx, next }) => {
+    if (!credentialViews(ctx).asModerator) throw new TRPCError({ code: 'FORBIDDEN' });
+    return next();
+  });
 
 export const imageSearchUploadRouter = router({
   prepare: imageSearchUploadProcedure
@@ -31,7 +39,12 @@ export const imageSearchUploadRouter = router({
     )
     .input(prepareImageSearchUploadSchema)
     .mutation(({ input, ctx }) =>
-      prepareSearchUpload({ userId: ctx.user.id, url: input.url, req: ctx.req })
+      prepareSearchUpload({
+        userId: ctx.user.id,
+        url: input.uploadUrl,
+        source: input.source,
+        req: ctx.req,
+      })
     ),
 
   status: imageSearchUploadProcedure
@@ -50,22 +63,28 @@ export const imageSearchUploadRouter = router({
     .use(rateLimit({ limit: 60, period: 60 }))
     .input(imageSearchUploadSearchSchema)
     .query(async ({ input, ctx }) => {
-      const views = credentialViews(ctx);
-      const uploadAnchor = await resolveSearchUploadAnchor({
-        userId: ctx.user.id,
-        uploadId: input.uploadId,
-        isModerator: views.asModerator && !!ctx.user.isModerator,
+      // A GET puts the upload URL in the query string, where access logs keep it.
+      if (ctx.req.method === 'GET') throw new TRPCError({ code: 'METHOD_NOT_SUPPORTED' });
+      return withSearchUploadSearch(ctx.user.id, async () => {
+        await claimSearchUploadUserDay({ userId: ctx.user.id, action: 'search', req: ctx.req });
+        const views = credentialViews(ctx);
+        const uploadAnchor = await resolveSearchUploadAnchor({
+          userId: ctx.user.id,
+          uploadId: input.uploadId,
+          url: input.uploadUrl,
+          isModerator: views.asModerator && !!ctx.user.isModerator,
+        });
+        const started = Date.now();
+        const result = await searchSemanticImages({
+          input: { browsingLevel: input.browsingLevel, limit: input.limit, cursor: input.cursor },
+          user: ctx.user,
+          ...views,
+          domain: getRequestBoardDomainColor(ctx.req),
+          track: ctx.track,
+          uploadAnchor,
+        });
+        if (!input.cursor) countSearchUpload('embedded');
+        return { ...result, latencyMs: Date.now() - started };
       });
-      const started = Date.now();
-      const result = await searchSemanticImages({
-        input: { browsingLevel: input.browsingLevel, limit: input.limit, cursor: input.cursor },
-        user: ctx.user,
-        ...views,
-        domain: getRequestBoardDomainColor(ctx.req),
-        track: ctx.track,
-        uploadAnchor,
-      });
-      if (!input.cursor) countSearchUpload('embedded');
-      return { ...result, latencyMs: Date.now() - started };
     }),
 });

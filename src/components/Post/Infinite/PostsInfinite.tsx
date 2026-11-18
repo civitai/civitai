@@ -27,6 +27,8 @@ export type PostsInfiniteState = {
   scheduled?: boolean;
   followed?: boolean;
   pending?: boolean;
+  // Text to match in post titles.
+  query?: string;
   jumpTo?: string;
 };
 

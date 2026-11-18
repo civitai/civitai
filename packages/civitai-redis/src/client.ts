@@ -3354,6 +3354,16 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
     // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).
     BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
+    // `<prefix>:<uploadId>` — a search-by-image upload: owner, blob id and scan workflow id, for an
+    // hour. See image-search-upload.service.ts.
+    SEARCH_UPLOAD: 'packed:caches:search-upload',
+    // `<prefix>:<userId>:<blobId>` — the viewer's upload of that blob, so a repeat reuses its scan.
+    SEARCH_UPLOAD_REF: 'packed:caches:search-upload-ref',
+    // `<prefix>:<userId>` — set while the viewer's last upload is still being scanned.
+    SEARCH_UPLOAD_PENDING: 'packed:caches:search-upload-pending',
+    // `<prefix>:<userId>` — held while one of the viewer's upload searches runs, so the daily count is
+    // never read and written by two at once.
+    SEARCH_UPLOAD_SEARCHING: 'packed:caches:search-upload-searching',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',

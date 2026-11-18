@@ -266,7 +266,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
-  SEARCH_UPLOAD_APP_ID_META_KEY,
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
@@ -1910,13 +1909,11 @@ export const ingestImage = async ({
   lowPriority,
   tx,
   userId,
-  forceImageScanning,
 }: {
   image: IngestImageInput;
   lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
   userId?: number;
-  forceImageScanning?: boolean;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
@@ -1972,7 +1969,6 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
-    forceImageScanning,
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -5388,7 +5384,6 @@ export async function createImage({
         prompt: image?.meta?.prompt,
       },
       userId: image.userId,
-      forceImageScanning: blockProvenance?.key === SEARCH_UPLOAD_APP_ID_META_KEY,
     });
   }
 
