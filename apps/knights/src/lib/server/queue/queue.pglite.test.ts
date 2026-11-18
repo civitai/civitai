@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { lockImage } from '../../../test/seed';
@@ -1034,6 +1035,12 @@ describe('what the feed serves', () => {
       'an acceptable-minor image',
       () => pg.query(`UPDATE "Image" SET "acceptableMinor"=true WHERE id=10`),
     ],
+    // These go to the moderators' own queues.
+    [
+      'an image flagged as a real person',
+      () => pg.query(`UPDATE "Image" SET "poi"=true WHERE id=10`),
+    ],
+    ['an image flagged as a minor', () => pg.query(`UPDATE "Image" SET "minor"=true WHERE id=10`)],
   ])('hides %s and refuses a vote on it', async (_label, hide) => {
     await player(1, 'Knight');
     await image(10);
@@ -1709,5 +1716,21 @@ describe('held players', () => {
     await vote(1, other, '4');
     await escalateExpired(db, { now: NOW });
     expect(await itemRow(other)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+});
+
+describe('countOpenServableKnightItems', () => {
+  it('counts open Knight-stage rating items players can be served, up to the limit', async () => {
+    for (const id of [21, 22, 23, 24, 25, 26]) {
+      await image(id);
+      await item(id);
+    }
+    await pg.query(`UPDATE "Post" SET "publishedAt"=NULL WHERE id=22`);
+    await pg.query(`UPDATE "Image" SET "poi"=true WHERE id=23`);
+    await pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=24`);
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"='Templar' WHERE "imageId"=25`);
+
+    expect(await countOpenServableKnightItems(db, 100)).toBe(2);
+    expect(await countOpenServableKnightItems(db, 1)).toBe(1);
   });
 });
