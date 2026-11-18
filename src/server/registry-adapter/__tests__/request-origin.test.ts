@@ -110,6 +110,79 @@ describe('🔴 a region the site blocks is held to SFW as well', () => {
   });
 });
 
+describe('🔴 a region value in the request’s meta is judged as its header is', () => {
+  it.each([
+    // The site's default block list: GB.
+    ['meta GB, no headers: held', true, { country: 'GB' }, {}],
+    ['meta isuk, no headers: held as GB', true, { isuk: 'true' }, {}],
+    ['meta isuk, header DE: held as GB', true, { isuk: '1' }, { 'cf-ipcountry': 'DE' }],
+    // No headers is held, so only a read meta country can release it.
+    ['positive control: meta DE, no headers: not held', false, { country: 'DE' }, {}],
+    [
+      'meta XX, header DE: meta wins and names no country',
+      true,
+      { country: 'XX' },
+      { 'cf-ipcountry': 'DE' },
+    ],
+    ['meta DE wins over the header GB', false, { country: 'DE' }, { 'cf-ipcountry': 'GB' }],
+    ['meta GB wins over the header DE', true, { country: 'GB' }, { 'cf-ipcountry': 'DE' }],
+    ['no meta: the header GB decides', true, undefined, { 'cf-ipcountry': 'GB' }],
+    ['no meta: the header DE decides', false, undefined, { 'cf-ipcountry': 'DE' }],
+    [
+      'meta without the key: the header GB decides',
+      true,
+      { locale: 'en' },
+      { 'cf-ipcountry': 'GB' },
+    ],
+    ['a country that is not a string, no headers: held', true, { country: 5 }, {}],
+    [
+      'a country that is not a string: the header DE decides',
+      false,
+      { country: ['GB'] },
+      { 'cf-ipcountry': 'DE' },
+    ],
+  ])('%s', async (_name, held, meta, headers) => {
+    const { regionRestricted } = await load(undefined);
+    expect(regionRestricted({ headers, meta }, NOW)).toBe(held);
+  });
+
+  it.each([
+    ['a configured US state', true, 'NY'],
+    ['another US state', false, 'CA'],
+  ])('meta region, %s: held = %s', async (_name, held, region) => {
+    const { regionRestricted } = await load('US:NY:2026-01-01');
+    expect(regionRestricted({ headers: {}, meta: { country: 'US', region } }, NOW)).toBe(held);
+  });
+
+  it.each([
+    ['not JSON', '{"country":"DE"'],
+    ['an array', '["DE"]'],
+    ['a number', '7'],
+    ['null', 'null'],
+  ])('meta that is %s is none: held with no headers', async (_name, raw) => {
+    const { regionRestricted } = await load(undefined);
+    const { subscribeRequest } = await import('~/server/registry-adapter/protocol');
+    const { meta } = subscribeRequest({ schema: 's', cursor: '', urns: [], filter: '', meta: raw });
+    expect(meta).toBeUndefined();
+    expect(regionRestricted({ headers: {}, meta }, NOW)).toBe(true);
+  });
+
+  it('positive control: the same request with object meta DE, as text or bytes, is not held', async () => {
+    const { regionRestricted } = await load(undefined);
+    const { subscribeRequest } = await import('~/server/registry-adapter/protocol');
+    for (const raw of ['{"country":"DE"}', Buffer.from('{"country":"DE"}', 'utf8')]) {
+      const { meta } = subscribeRequest({
+        schema: 's',
+        cursor: '',
+        urns: [],
+        filter: '',
+        meta: raw,
+      });
+      expect(regionRestricted({ headers: {}, meta }, NOW)).toBe(false);
+    }
+  });
+});
+
 describe('describeRegionConfig: the startup lines', () => {
   it('names both lists, with no warning when a region is restricted', async () => {
     const { describeRegionConfig } = await load('ZZ:2026-01-01,US:NY:2026-02-01');

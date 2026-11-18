@@ -1,7 +1,7 @@
 /**
  * The HTTP binding of the registry protocol (the registry spec, "Bindings" → "HTTP"):
- * `GET /subscribe?schema=&cursor=&urn=&filter=` streaming `text/event-stream`, plus `/healthz`
- * for a process supervisor. Everything between request and events is the shared core
+ * `GET /subscribe?schema=&cursor=&urn=&filter=&meta=` streaming `text/event-stream`, plus
+ * `/healthz` for a process supervisor. Everything between request and events is the shared core
  * (`subscription.ts`); this file only maps the request in and the events and errors out.
  *
  *   - Each event is an SSE event of its type; one with a cursor field also carries it as the SSE
@@ -224,9 +224,11 @@ export function handleRequest(
         cursor: resumeCursor(req, url.searchParams),
         urns: url.searchParams.getAll('urn'),
         filter: url.searchParams.get('filter'),
+        meta: url.searchParams.get('meta'),
       });
       const origin: RequestOrigin = {
         headers: req.headers,
+        meta: request.meta,
         // Optional: a request handed to `handleRequest` directly need not carry a socket.
         remoteAddress: req.socket?.remoteAddress,
       };

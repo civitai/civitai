@@ -18,7 +18,11 @@
  *     for rate-limit keys (`limits.ts`).
  *
  * An HTTP request's origin is its headers and socket address; a gRPC call's is its metadata and
- * peer address, the same header names a proxy sets on either.
+ * peer address, the same header names a proxy sets on either. On both, a region value may also
+ * come from the request's `meta` (the registry spec's rule 10) under the key
+ * {@link REGION_META_KEYS} names for its header: a string there wins over the header, and a key
+ * that is missing or not a string leaves the header to decide. Either way it is judged by the one
+ * rule below.
  *
  * 🔴 Trust. Every value here is taken from the request as it arrives:
  *   - the region headers (`cf-ipcountry`, `cf-region-code`, `x-isuk`) and the forwarded client
@@ -30,10 +34,14 @@
  *     relay that does not forward the edge's region headers sends none, so every user behind it
  *     is held to SFW, whatever their region; one that does forward them is served as the region
  *     they name, so it must forward the edge's values and never a client's;
- *   - the per-address cap counts a relay as one address, however many users it serves.
+ *   - the per-address cap counts a relay as one address, however many users it serves;
+ *   - the `meta` keys are taken as the registry gateway set them: it sets each from the edge's
+ *     header, replacing what the caller sent, and it is the only caller that reaches the
+ *     subscription path. A caller that reached this process another way could name its own.
  */
 import type { IncomingMessage } from 'node:http';
 import type { NextApiRequest } from 'next';
+import type { RequestMeta } from '~/server/registry-adapter/protocol';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import type { RegionBlockConfig, RegionInfo } from '~/server/utils/region-blocking';
 import {
@@ -47,9 +55,31 @@ import {
 export type RequestOrigin = {
   /** Lowercase header names, as Node and gRPC metadata both give them. */
   headers: Record<string, string | string[] | undefined>;
+  /** The request's `meta` (`protocol.ts`), when it had one. */
+  meta?: RequestMeta;
   /** The transport peer's address, without its port. */
   remoteAddress?: string;
 };
+
+/**
+ * The `meta` key each region header is read from. The names are the gateway's and not settled
+ * yet: a rename is a change here alone.
+ */
+export const REGION_META_KEYS = {
+  'cf-ipcountry': 'country',
+  'cf-region-code': 'region',
+  'x-isuk': 'isuk',
+} as const;
+
+/** `origin`'s headers with each region header replaced by its `meta` key, when that is a string. */
+function regionHeaders(origin: RequestOrigin): RequestOrigin['headers'] {
+  const headers = { ...origin.headers };
+  for (const [header, key] of Object.entries(REGION_META_KEYS)) {
+    const value = origin.meta?.[key];
+    if (typeof value === 'string') headers[header] = value;
+  }
+  return headers;
+}
 
 /** The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. */
 const NO_COUNTRY = new Set(['XX', 'T1']);
@@ -70,7 +100,7 @@ export function countryKnown(region: Pick<RegionInfo, 'countryCode'>): boolean {
  * (`countryKnown`), a region the site restricts to SFW, or one it blocks (see the file comment).
  */
 export function regionRestricted(origin: RequestOrigin, at: Date = new Date()): boolean {
-  const region = getRegion({ headers: origin.headers } as unknown as IncomingMessage);
+  const region = getRegion({ headers: regionHeaders(origin) } as unknown as IncomingMessage);
   if (!countryKnown(region)) return true;
   return isRegionRestricted(region, at) || isRegionBlocked(region, at);
 }
