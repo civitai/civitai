@@ -11,13 +11,24 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { Flags } from '~/shared/utils/flags';
+import { getCrucibleRatingLabel } from '~/utils/crucible-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
-  ComboboxItem & { hit: SearchIndexDataMap['images'][number] }
->(({ value, hit, ...props }, ref) => {
+  ComboboxItem & {
+    hit: SearchIndexDataMap['images'][number];
+    /**
+     * The showcase picker's row: a mature image shows its picture when `viewerLevel` includes its
+     * rating and a blur when it does not, and carries its rating either way. Without it the row
+     * blurs every image above PG-13, as the site search dropdown does.
+     */
+    pickerRow?: boolean;
+    viewerLevel?: number;
+  }
+>(({ value, hit, pickerRow, viewerLevel, ...props }, ref) => {
   const colorScheme = useComputedColorScheme('dark');
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
@@ -40,7 +51,9 @@ export const ImagesSearchItem = forwardRef<
     variant: colorScheme === 'dark' ? 'filled' : 'light',
   };
 
-  const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);
+  const mature = !getIsSafeBrowsingLevel(hit.nsfwLevel);
+  const nsfw = pickerRow ? mature && !Flags.intersects(viewerLevel ?? 0, hit.nsfwLevel) : mature;
+  const ratingBadge = pickerRow && mature;
 
   return (
     <Group ref={ref} {...props} key={hit.id} gap="md" align="flex-start" wrap="nowrap">
@@ -73,6 +86,16 @@ export const ImagesSearchItem = forwardRef<
               left: 0,
             }}
           />
+        )}
+        {ratingBadge && (
+          <Badge
+            size="xs"
+            variant="filled"
+            color="dark"
+            style={{ position: 'absolute', bottom: 2, left: 2 }}
+          >
+            {getCrucibleRatingLabel(hit.nsfwLevel)}
+          </Badge>
         )}
       </Center>
       <Stack gap={8} style={{ flex: '1 !important' }}>

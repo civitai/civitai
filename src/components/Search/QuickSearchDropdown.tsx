@@ -369,6 +369,7 @@ const QuickSearchDropdownInner = ({
         <QuickSearchDropdownContent
           {...props}
           indexName={targetIndex}
+          ownerPicker={ownerScopedImages}
           dropdownItemLimit={dropdownItemLimit}
           carriedSearchText={carriedSearchText}
         />
@@ -388,12 +389,16 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   placeholder,
   onHits,
   carriedSearchText,
+  ownerPicker,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
+  /** The showcase picker's Images: its rows show the viewer's mature images and rate the rest. */
+  ownerPicker?: boolean;
   carriedSearchText: React.MutableRefObject<string>;
 }) {
   // const currentUser = useCurrentUser();
+  const { browsingLevel: viewerLevel } = useBrowsingSettingsAddons();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
@@ -467,9 +472,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       if (!item) return null;
 
       const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
-      return <RenderItem {...item} />;
+      const pickerRow = ownerPicker && indexName === 'images';
+      return <RenderItem {...item} {...(pickerRow && { pickerRow, viewerLevel })} />;
     },
-    [getItemFromValue, indexName]
+    [getItemFromValue, indexName, ownerPicker, viewerLevel]
   );
 
   useEffect(() => {
