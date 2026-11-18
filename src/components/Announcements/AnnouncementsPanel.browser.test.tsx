@@ -202,11 +202,10 @@ describe('AnnouncementsPanel', () => {
     const onNavigate = vi.fn();
     await renderPanel(['civitai', 'creators'], onNavigate);
 
-    for (const name of ['Read it', 'See it']) {
+    for (const [i, name] of ['Read it', 'See it'].entries()) {
       await withClickSwallowed(() => page.getByRole('link', { name }).click());
+      expect(onNavigate).toHaveBeenCalledTimes(i + 1);
     }
-
-    expect(onNavigate).toHaveBeenCalledTimes(2);
   });
 
   test('creators chip off removes creator announcements from the panel', async () => {
