@@ -4,7 +4,7 @@ import { servableProfilePicture } from '~/server/services/profile-picture.servab
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
  * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned, rated, not
- * flagged `csam` and not restricted by its base model. Stricter than `servableProfilePictureSql`,
+ * under an owner-hidden review hold and not restricted by its base model. Stricter than `servableProfilePictureSql`,
  * which also admits moderator-locked ratings.
  * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
  * hand-built copy of the select is caught too.

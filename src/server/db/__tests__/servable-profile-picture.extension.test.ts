@@ -79,7 +79,7 @@ describe('the servable profile picture gate', () => {
     expect(select.profilePicture.select).toEqual({ id: true, url: true });
   });
 
-  it('nulls a Scanned picture flagged csam, reading needsReview even when the select omits it', async () => {
+  it('nulls a Scanned picture held csam or minor, reading needsReview even when the select omits it', async () => {
     const query = vi.fn(async (args: unknown) => {
       const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
         .select.profilePicture.select;
@@ -87,6 +87,8 @@ describe('the servable profile picture gate', () => {
       return [
         { profilePicture: { ...picture('Scanned'), needsReview: 'csam' } },
         { profilePicture: { ...picture('Scanned'), needsReview: null } },
+        { profilePicture: { ...picture('Scanned'), needsReview: 'minor' } },
+        { profilePicture: { ...picture('Scanned'), needsReview: 'poi' } },
       ];
     });
 
@@ -94,6 +96,8 @@ describe('the servable profile picture gate', () => {
 
     expect(result[0].profilePicture).toBeNull();
     expect(result[1].profilePicture).toEqual(picture('Scanned'));
+    expect(result[2].profilePicture).toBeNull();
+    expect(result[3].profilePicture).toEqual(picture('Scanned'));
   });
 
   it('nulls a mature picture made with a restricted base model, keeping a SFW one', async () => {

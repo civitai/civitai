@@ -135,7 +135,7 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	return out, nil
 }
 
-// profilePictureColumns is the profile-pictures:v3 lookup's select list, in order.
+// profilePictureColumns is the profile-pictures:v4 lookup's select list, in order.
 var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "userId", "ingestion", "type", "width", "height", "metadata"}
 
 // profilePicturesFrom is getProfilePicturesForUsers over the cache's answer got for (unique) ids. The
@@ -156,7 +156,7 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 			WHERE u.id = ANY($1::int[])
 			  AND i.ingestion <> 'Blocked'
 			  AND i."nsfwLevel" != 0
-			  AND i."needsReview" IS DISTINCT FROM 'csam'
+			  AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
 			  AND `+ImageReviewedSQL("i"), miss)
 		if err != nil {
 			return nil, err
