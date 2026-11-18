@@ -44,14 +44,12 @@ beforeEach(() => {
     };
     return chain;
   });
-  // `SET key value KEEPTTL`: overwrites the value and leaves the TTL as it was.
-  redisMock.redis.set.mockImplementation(
-    async (key: string, value: string, opts?: { KEEPTTL?: boolean }) => {
-      store.set(key, Number(value));
-      if (!opts?.KEEPTTL) ttls.delete(key);
-      return 'OK';
-    }
-  );
+  // `INCRBY` outside a MULTI: adds to the value and leaves the TTL as it was.
+  redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => {
+    const next = (store.get(key) ?? 0) + by;
+    store.set(key, next);
+    return next;
+  });
 });
 
 describe('takeClusterWindowCount', () => {
@@ -68,7 +66,19 @@ describe('takeClusterWindowCount', () => {
     expect(await takeClusterWindowCount('release', KEY, 3600, { by: -5 })).toBe(3);
     expect(store.get(KEY)).toBe(3);
     expect(ttls.get(KEY)).toBe(3600);
-    expect(redisMock.redis.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('a take that lands between an evicted-key release and its clamp is kept', async () => {
+    const clamp = redisMock.redis.incrBy.getMockImplementation()!;
+    redisMock.redis.incrBy.mockImplementationOnce(async (key: string, by: number) => {
+      store.set(key, (store.get(key) ?? 0) + 4); // a concurrent reserve of 4
+      return clamp(key, by);
+    });
+
+    expect(await takeClusterWindowCount('release', KEY, 3600, { by: -5 })).toBe(4);
+    expect(store.get(KEY)).toBe(4);
+    expect(ttls.get(KEY)).toBe(3600);
   });
 
   it('a count with no increment creates the key with its TTL and answers 1, then 2', async () => {

@@ -5,7 +5,8 @@ import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
- * Redis storage for download links (sysRedis: single node or Sentinel, so MULTI spans keys).
+ * Redis storage for download links. Link records are on sysRedis (single node or Sentinel, so
+ * MULTI spans keys); the mint-rate counters are on the cache cluster.
  *
  * A link's URL carries an `id`; Redis holds only `sha256(id)`. The id is derived from the link's
  * public `linkId` with `DOWNLOAD_LINK_SECRET`, which is what lets a repeat mint return the same URL
@@ -339,7 +340,7 @@ export async function takeMintBudget(
   const windowStart = Math.floor(now / 60_000) * 60_000;
   const key = `${REDIS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
   // One atomic INCRBY per take, so concurrent takes never grant past the limit between them. A
-  // failure or timeout throws, refusing the mint, as the call always has.
+  // failure or timeout throws, refusing the mint.
   const used = await takeClusterWindowCount('takeMintBudget', key, 120, { by: count });
   const before = used - count;
   return {

@@ -21,11 +21,10 @@ export function boundedClusterCall<T>(
  * Adds one (`INCR`), or `by` when given (`INCRBY`; negative releases), to a fixed window on the
  * cache cluster and answers the total after it.
  *
- * `SET NX EX` + `INCR`/`INCRBY` in one single-key MULTI, so the key always carries its TTL: a
- * crash between the two cannot strand a TTL-less counter, and a release that lands after the key
- * was evicted or expired re-creates it with the TTL, clamped at zero. Bounded
- * by {@link boundedClusterCall}. A reply that is not a number answers `NaN`. Each caller decides
- * what a throw or `NaN` means (fail open or closed).
+ * `SET NX EX` + `INCR`/`INCRBY` in one single-key MULTI, so the key always carries its TTL. A
+ * negative total after a release is brought back to zero. Bounded by {@link boundedClusterCall}. A
+ * reply that is not a number answers `NaN`; each caller decides whether a throw or `NaN` fails open
+ * or closed.
  *
  * Not claimRateLimitAttempt: counts any subject, not a request's caller.
  */
@@ -47,10 +46,10 @@ export async function takeClusterWindowCount(
   );
   const total = Number((reply as unknown[] | null)?.[1]);
   // A release that lands after the key was evicted would leave a negative total, which admits
-  // that much over the limit for the rest of the window: clamp it to zero, keeping the TTL.
+  // that much over the limit for the rest of the window. Add the deficit back (INCRBY keeps the
+  // TTL) rather than SET 0, so a take that lands in between is not erased.
   if (by !== undefined && by < 0 && total < 0) {
-    await boundedClusterCall(fn, () => redis.set(key, '0', { KEEPTTL: true }), callOpts);
-    return 0;
+    return Number(await boundedClusterCall(fn, () => redis.incrBy(key, -total), callOpts));
   }
   return total;
 }
