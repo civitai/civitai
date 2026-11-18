@@ -365,8 +365,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
     const bountyId = result.success ? result.data.bountyId : undefined;
     if (isDirty || bountyId) {
-      // A template seeds the model's first save only: the server reads id + templateId as "create
-      // another model", so forwarding it after that (the wizard keeps it in the URL) made a duplicate.
+      // A template seeds the first save only: the server reads id + templateId as "create another model".
       const templateId = rest.id ? undefined : result.success ? result.data.templateId : undefined;
       const selectedCategory = data?.items.find((cat) => cat.id === category);
       const tags =

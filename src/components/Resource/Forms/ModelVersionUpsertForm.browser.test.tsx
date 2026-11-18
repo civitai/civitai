@@ -1196,10 +1196,7 @@ describe('ModelVersionUpsertForm — remembered paid access', () => {
   });
 });
 
-// The model wizard keeps ?templateId= in the URL on every step. Forwarded on a save of a version that
-// already exists, the server creates another version from the template: a duplicate draft, checked for a
-// rights affirmation it can't have, while this form (reading the saved, affirmed version) shows no
-// checkbox to give one. hq:model_upload_cant_1rw0.
+// The wizard keeps ?templateId= in the URL; a save of an existing version must not forward it.
 describe('ModelVersionUpsertForm — back in the wizard from a template', () => {
   const router = useRouter();
   beforeEach(() => {

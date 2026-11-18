@@ -213,9 +213,7 @@ export function decideModelVersionSubmit(
     };
   }
 
-  // A template seeds the FIRST save only. Once the version exists, the server reads id + templateId as
-  // "create another version", so each later save made a duplicate draft and checked the rights
-  // affirmation against that new row while the form, reading the saved one, showed no checkbox.
+  // A template seeds the first save only: the server reads id + templateId as "create another version".
   const templateId = ctx.versionId ? undefined : ctx.templateId;
   const shouldSubmit =
     ctx.isDirty ||

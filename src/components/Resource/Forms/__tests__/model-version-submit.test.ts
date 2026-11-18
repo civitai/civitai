@@ -307,8 +307,6 @@ describe('decideModelVersionSubmit: refusals and skip', () => {
     expect(d.payload.templateId).toBe(77);
   });
 
-  // The wizard keeps ?templateId= on every step, and the server creates a NEW version for id +
-  // templateId: a duplicate draft per save, and a rights check against a row with no affirmation.
   it('a saved version is edited in place, not re-created from its template', () => {
     const d = submitOf(decide({ paidAccessConfig: timedGate() }, { templateId: 77 }));
     expect(d.payload.id).toBe(10);

@@ -267,8 +267,7 @@ describe('ModelUpsertForm moderator locks', () => {
   });
 });
 
-// The model wizard keeps ?templateId= in the URL on every step, and the server creates a NEW model for
-// id + templateId: going back to Edit Model and saving made a duplicate draft model.
+// The wizard keeps ?templateId= in the URL; a save of an existing model must not forward it.
 describe('ModelUpsertForm from a template', () => {
   const router = useRouter();
   beforeEach(() => {
