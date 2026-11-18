@@ -26,7 +26,12 @@ import {
 // are aligned so viewers whose hydration drops different images still share them past page 1.
 export const CANDIDATE_BLOCK = MAX_CANDIDATE_LIMIT;
 
-type Block = { ids: number[]; correctedQuery?: string; guard?: GuardRead };
+type Block = {
+  ids: number[];
+  scores?: Record<number, number>;
+  correctedQuery?: string;
+  guard?: GuardRead;
+};
 type Read = { block: Block; hit: boolean };
 
 // Identical misses in flight on this pod share one service call.
@@ -85,13 +90,24 @@ export function withCandidateCache(
       ).then(
         (fresh): Block => ({
           ids: fresh.ids,
+          scores: fresh.scores,
           correctedQuery: fresh.correctedQuery,
           guard: fresh.guard,
         })
       );
     const keyOf = (start: number) =>
       `${REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${collection}:${createHash('sha256')
-        .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass, guard }))
+        .update(
+          JSON.stringify({
+            query,
+            qdrantFilter,
+            sort,
+            start,
+            viewerClass,
+            guard,
+            scoresVersion: 1,
+          })
+        )
         .digest('hex')}` as const;
     const write = (key: CandidateKey, block: Block) =>
       uncached || !judgedUnder(block.guard, guard)
@@ -148,6 +164,7 @@ export function withCandidateCache(
     }
     return {
       ids: ids.slice(offset - first, offset - first + limit),
+      scores: Object.assign({}, ...reads.map((r) => r.block.scores)),
       // Every block keeps the correction, so the viewer's audit of it runs on any page.
       correctedQuery: reads[0].block.correctedQuery,
       guard: reads[0].block.guard,

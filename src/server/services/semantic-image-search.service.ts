@@ -47,7 +47,12 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
   notFoundMessage: 'Image not found',
 });
 
-const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
+const emptyPage = () => ({
+  items: [],
+  nextCursor: undefined,
+  correctedQuery: undefined,
+  similarityScores: undefined as Record<number, number> | undefined,
+});
 
 export async function searchSemanticImages({
   input,
@@ -255,7 +260,10 @@ export async function searchSemanticImages({
   const query: SearchQuery = uploadAnchor
     ? { imageUrl: uploadAnchor.imageUrl }
     : input.imageId
-    ? { similarTo: input.imageId }
+    ? {
+        similarTo: input.imageId,
+        ...(input.minSimilarity !== undefined ? { minScore: input.minSimilarity } : {}),
+      }
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
@@ -264,6 +272,7 @@ export async function searchSemanticImages({
   const corrections = new Map<string, ReturnType<typeof refusalOf>>();
   let correctedRefusal: QueryRefusal | undefined;
   let first: RefusedCandidates | undefined;
+  const scores = new Map<number, number>();
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await timed(
@@ -281,7 +290,13 @@ export async function searchSemanticImages({
       }
       if (correctedRefusal) return [];
       correctedQuery ??= result.correctedQuery;
-      return result.ids;
+      for (const id of result.ids) {
+        const score = result.scores?.[id];
+        if (typeof score === 'number' && Number.isFinite(score)) scores.set(id, score);
+      }
+      return input.minSimilarity === undefined
+        ? result.ids
+        : result.ids.filter((id) => (scores.get(id) ?? -Infinity) >= input.minSimilarity!);
     },
     hydrate,
     offset: input.cursor ?? 0,
@@ -289,5 +304,10 @@ export async function searchSemanticImages({
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
   if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
-  return audit.done({ ...page, correctedQuery }, level);
+  const similarityScores = input.imageId
+    ? Object.fromEntries(
+        page.items.flatMap(({ id }) => (scores.has(id) ? [[id, scores.get(id)!]] : []))
+      )
+    : undefined;
+  return audit.done({ ...page, correctedQuery, similarityScores }, level);
 }

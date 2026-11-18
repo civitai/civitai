@@ -52,7 +52,10 @@ const GATE_KIND = {
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
+export type SearchQuery =
+  | { text: string }
+  | { similarTo: number; minScore?: number }
+  | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -188,7 +191,13 @@ export type CandidateSource = (args: {
   viewer: SearchViewer;
   // newest: the service orders its best matches by date and pages within them. Text queries only.
   sort?: 'relevance' | 'newest';
-}) => Promise<{ ids: number[]; correctedQuery?: string; guard?: GuardRead; cacheHit?: boolean }>;
+}) => Promise<{
+  ids: number[];
+  scores?: Record<number, number>;
+  correctedQuery?: string;
+  guard?: GuardRead;
+  cacheHit?: boolean;
+}>;
 
 export function searchServiceUrl(path: string) {
   if (!env.SEARCH_SERVICE_URL)
@@ -245,11 +254,12 @@ export function searchServiceSource(
       // The source is always its own best match.
       qdrantFilter.must_not.push({ has_id: [query.similarTo] });
       const { result } = await searchServiceRequest<{
-        result: { points: { id: number | string }[] };
+        result: { points: { id: number | string; score?: number }[] };
       }>(
         `/qdrant/collections/${collection}/points/query`,
         {
           query: query.similarTo,
+          ...(query.minScore !== undefined ? { score_threshold: query.minScore } : {}),
           filter: qdrantFilter,
           offset,
           limit,
@@ -259,7 +269,15 @@ export function searchServiceSource(
         notFoundMessage,
         headers
       );
-      return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
+      return {
+        ids: result.points.map((p) => Number(p.id)),
+        scores: Object.fromEntries(
+          result.points.flatMap((p) =>
+            typeof p.score === 'number' && Number.isFinite(p.score) ? [[Number(p.id), p.score]] : []
+          )
+        ),
+        guard: GUARD_NONE,
+      };
     }
     if ('imageUrl' in query) {
       // The caller has scanned and rated the image (the search upload gate) before sending it.

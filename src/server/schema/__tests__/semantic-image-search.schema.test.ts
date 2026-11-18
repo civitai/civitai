@@ -4,6 +4,18 @@ import { baseModels } from '~/shared/constants/basemodel.constants';
 
 // The images feed's filters carry into the search unchanged: whatever the feed can select must parse.
 describe('semanticImageSearchSchema', () => {
+  it('accepts a bounded image similarity cutoff and refuses it on text-only searches', () => {
+    const parseImage = (minSimilarity: number) =>
+      semanticImageSearchSchema.safeParse({ imageId: 1, minSimilarity }).success;
+    expect(parseImage(0)).toBe(true);
+    expect(parseImage(1)).toBe(true);
+    expect(parseImage(0.85)).toBe(true);
+    expect(parseImage(-0.1)).toBe(false);
+    expect(parseImage(1.1)).toBe(false);
+    expect(semanticImageSearchSchema.safeParse({ query: 'fox', minSimilarity: 0.85 }).success).toBe(
+      false
+    );
+  });
   const parse = (over: Record<string, unknown>) =>
     semanticImageSearchSchema.safeParse({ query: 'a red fox', ...over }).success;
 
