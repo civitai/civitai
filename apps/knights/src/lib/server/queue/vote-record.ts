@@ -103,7 +103,7 @@ export async function insertVote(
     : null;
   if (reasonProblem) return rejected('bad-block-reason');
 
-  // The one path every vote takes to the ledger, so the refusal holds whatever the client sends.
+  // Ratings, hidden checks and yes/no all reach the ledger here; `creditLateJudgment` carries its own check.
   const owned = await trx
     .selectFrom('Image')
     .select('id')
@@ -246,7 +246,9 @@ export async function creditLateJudgment(
     const item = await trx
       .selectFrom('KnightsQueueItem as i')
       .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .innerJoin('Image as img', 'img.id', 'i.imageId')
       .select([
+        'img.userId as ownerId',
         'i.id',
         'i.status',
         'i.questionKey',
@@ -259,7 +261,7 @@ export async function creditLateJudgment(
       .where('i.id', '=', itemId)
       .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
       .executeTakeFirst();
-    if (!item || item.status === 'Open') return false;
+    if (!item || item.status === 'Open' || item.ownerId === userId) return false;
     // A settled rating still waiting on its write-back can be rerouted, and a reroute regrades every vote on the item
     // (`regradeVotes`), this row included.
     if (item.status === 'Resolved' && item.appliedAt === null) return false;
