@@ -1,24 +1,18 @@
 import type { SubmitFunction } from '@sveltejs/kit';
 import { DISMISS_FAILED } from './notice-copy';
 
-/** The one-off notice the player closed, the one whose dismissal the server has not answered yet, and the one whose
- * dismissal was refused. Keyed, so closing one notice never hides a later one. */
-export type DismissState = {
-  closed: string | null;
-  failed: string | null;
-  sending?: string | null;
-};
+/** The one-off notice the player closed, while the server records it, and the one whose dismissal was refused. Keyed, so
+ * closing one notice never hides a later one. */
+export type DismissState = { closed: string | null; failed: string | null };
 
 /** Gone at once; the dismissal is recorded in the background. */
 export function closeDismiss(state: DismissState, key: string) {
   state.closed = key;
-  state.sending = key;
 }
 
 /** The dismissal's answer. A refused or lost one brings the notice back, with its error, for the player to press again. */
 export function settleDismiss(state: DismissState, key: string, stored: boolean) {
   state.failed = stored ? null : key;
-  if (state.sending === key) state.sending = null;
   if (!stored && state.closed === key) state.closed = null;
 }
 
@@ -26,17 +20,11 @@ export function settleDismiss(state: DismissState, key: string, stored: boolean)
 export function syncDismiss(state: DismissState, key: string | null) {
   if (state.closed !== key) state.closed = null;
   if (state.failed !== key) state.failed = null;
-  if (state.sending !== key) state.sending = null;
 }
 
 /** The one answer to "is this notice up". */
 export const dismissShowing = (key: string | null, state: DismissState) =>
   key !== null && state.closed !== key;
-
-/** Up, or hidden while its dismissal is still unanswered: what it holds (the ruling's answers) stays held until the server
- * has it, since the action marks every result it has not shown as seen. */
-export const dismissHolding = (key: string | null, state: DismissState) =>
-  dismissShowing(key, state) || (key !== null && state.sending === key);
 
 /** The refused dismissal's error belongs to its own notice; the action's `form` outlives it, as votes post outside it. */
 export const dismissFailedOn = (state: DismissState, key: string | null) =>

@@ -10,45 +10,30 @@
     notices,
     message,
     submit,
-    nudge = 0,
     anchored,
   }: {
     notices: PageData['notices'];
     /** Why the last dismissal failed, if it did. */
     message: string | null;
     submit: SubmitFunction;
-    /** Bumped when the player tries to answer while the ruling holds the answers. */
-    nudge?: number;
     /** Over the bottom of the image stage; otherwise in the page flow, where no stage is drawn. */
     anchored: boolean;
   } = $props();
 
   let tone = $derived(noticeTone(notices));
   let form = $state<HTMLFormElement>();
-  let section = $state<HTMLElement>();
-
-  // Restarts the pulse on every nudge (the class comes off, a reflow, then on again) and puts Enter back on Understood.
-  $effect(() => {
-    if (nudge === 0 || !section) return;
-    section.querySelector<HTMLElement>('button[type="submit"]')?.focus({ preventScroll: true });
-    section.classList.remove('nudged');
-    void section.offsetWidth;
-    section.classList.add('nudged');
-  });
 </script>
 
-<!-- Understood is focused so Enter dismisses; left alone, it goes by the same form after RULING_AUTO_HIDE_MS. -->
+<!-- Left alone, it goes by the same form after RULING_AUTO_HIDE_MS. -->
 <section
   class="toast"
   class:anchored
   class:calm={tone === 'calm'}
   role="status"
   aria-label="The Order's ruling"
-  bind:this={section}
   use:autoHide={{
     ms: RULING_AUTO_HIDE_MS,
     onhide: () => form?.requestSubmit(),
-    focus: 'button[type="submit"]',
     held: !!message,
   }}
 >
@@ -74,6 +59,10 @@
     {/if}
   </div>
   <form method="POST" action="?/dismissNotices" use:enhance={submit} bind:this={form}>
+    <!-- Only these are marked seen: a check graded after this toast was drawn waits for the next one. -->
+    {#each notices as notice (notice.key)}
+      <input type="hidden" name="notice" value={notice.key} />
+    {/each}
     <button type="submit" class="ov-ack">Understood</button>
   </form>
   <span class="countdown" aria-hidden="true"></span>
@@ -134,10 +123,6 @@
   }
   .toast.calm .countdown::before {
     background: var(--io-gold);
-  }
-  /* A blocked answer: a short flash, within the play loop's 200ms (mo-smite-flash has its reduced-motion counterpart). */
-  .toast:global(.nudged) {
-    animation: mo-smite-flash 180ms var(--ease-out-quart);
   }
   .toast-body {
     flex: 1;

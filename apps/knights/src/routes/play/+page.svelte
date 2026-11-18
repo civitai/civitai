@@ -18,10 +18,10 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, holdsAnswers, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, blockedByRuling, optionsOnScreen, spaceSkips } from './keys';
+  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
@@ -74,13 +74,11 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
-  // The ruling toast floats over the image stage; with a warning or smite in it, nothing answers or skips until it is
-  // dismissed and the server has the dismissal. Close calls alone hold nothing.
+  // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
   const rulingNotice = dismissible(
     () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
     { noticeFailed: true }
   );
-  let rulingPending = $derived(rulingNotice.holding && holdsAnswers(data.notices));
   const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
@@ -119,19 +117,12 @@
     const screen = {
       question: view?.question,
       apprentice: data.mode === 'apprentice' ? data.apprentice : null,
-      rulingPending,
     };
     const options = optionsOnScreen(screen);
-    const target = event.target as HTMLElement | null;
-    const typing = !!target?.closest('input, textarea, select, [contenteditable], header');
-    const modified = event.ctrlKey || event.metaKey || event.altKey;
-    if (!dialogOpen && !typing && blockedByRuling(screen, event.key, yesNo)) {
-      event.preventDefault();
-      if (!modified && !event.repeat) nudgeRuling();
-      return;
-    }
     if (event.repeat || dialogOpen || !options || submitting) return;
-    if (modified || typing) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable], header')) return;
     if (event.key === ' ') {
       if (!spaceSkips(screen)) return;
       event.preventDefault();
@@ -143,33 +134,7 @@
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
-  // An answer tried while the ruling holds them: focus Understood and pulse the toast, so the dimmed row is explained.
-  let rulingNudge = $state(0);
-  function nudgeRuling() {
-    if (rulingNotice.showing) rulingNudge += 1;
-  }
-  // Inert controls take no pointer events, so a press on the dimmed answers or Skip lands on the row itself. An action, not
-  // an `onpointerdown` attribute: the row is not a control of its own, and the press only explains the hold.
-  // The mousedown's default (also sent after a tap) would move focus off Understood right after the nudge focused it.
-  function nudgeFromRow(row: HTMLElement) {
-    const press = (event: PointerEvent) => {
-      if (rulingPending && event.target === row) nudgeRuling();
-    };
-    const keepFocus = (event: MouseEvent) => {
-      if (rulingPending && event.target === row) event.preventDefault();
-    };
-    row.addEventListener('pointerdown', press);
-    row.addEventListener('mousedown', keepFocus);
-    return {
-      destroy: () => {
-        row.removeEventListener('pointerdown', press);
-        row.removeEventListener('mousedown', keepFocus);
-      },
-    };
-  }
-
   function pickReason(reason: BlockReason) {
-    if (rulingPending) return;
     blockReason = reason;
     reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
@@ -652,7 +617,6 @@
       notices={data.notices}
       message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
       submit={rulingNotice.submit}
-      nudge={rulingNudge}
       {anchored}
     />
   {/if}
@@ -744,8 +708,8 @@
         {@render levelToast(true)}
         {@render ruling(true)}
       </div>
-      <div class="controls" class:yesno={yesNo} use:nudgeFromRow>
-        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers} inert={rulingPending}>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
           <input type="hidden" name="kind" value={apprentice.item.kind} />
           <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
           <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
@@ -846,14 +810,14 @@
           <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
-      <div class="controls" class:yesno={yesNo} class:failed={imageFailed} use:nudgeFromRow>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers} inert={rulingPending}>
+      <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
+        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
             {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm} inert={rulingPending}>
+        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
@@ -1100,11 +1064,6 @@
     flex: 1 1 auto;
     gap: 8px;
     min-width: 0;
-  }
-  /* Held by the ruling toast: inert takes the clicks and keys, this shows it. */
-  .answers[inert],
-  .skip[inert] {
-    opacity: 0.45;
   }
   .controls.yesno .answers {
     gap: 12px;

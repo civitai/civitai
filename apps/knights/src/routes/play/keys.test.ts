@@ -1,14 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RULING_AUTO_HIDE_MS, createAutoHide } from '$lib/auto-hide';
-import { closeDismiss, dismissShowing, type DismissState } from '$lib/optimistic-dismiss';
-import {
-  answerForKey,
-  blockedByRuling,
-  answerForKeyPress,
-  keyHints,
-  optionsOnScreen,
-  spaceSkips,
-} from './keys';
+import { describe, expect, it } from 'vitest';
+import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen, spaceSkips } from './keys';
 
 const options = [
   { value: '1', label: 'PG' },
@@ -117,67 +108,11 @@ describe('spaceSkips', () => {
   });
 });
 
-describe('a pending skill-check ruling', () => {
-  const queue = { question: { options } };
-  const apprentice = { apprentice: { kind: 'question', options } };
-
-  it('holds every answer key and Space until it is dismissed', () => {
-    expect(optionsOnScreen({ ...queue, rulingPending: true })).toBeNull();
-    expect(optionsOnScreen({ ...apprentice, rulingPending: true })).toBeNull();
-    expect(spaceSkips({ ...queue, rulingPending: true })).toBe(false);
-  });
-
-  it('leaves the keys working once there is none', () => {
-    expect(optionsOnScreen({ ...queue, rulingPending: false })).toBe(options);
-    expect(optionsOnScreen(apprentice)).toBe(options);
-    expect(spaceSkips({ ...queue, rulingPending: false })).toBe(true);
-  });
-});
-
-describe('a ruling left alone', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('hides itself after 8 seconds, which frees the answer keys', () => {
-    vi.useFakeTimers();
-    const ruling: DismissState = { closed: null, failed: null };
-    createAutoHide(RULING_AUTO_HIDE_MS, () => closeDismiss(ruling, 'ruling'));
-    const keys = () =>
-      optionsOnScreen({ question: { options }, rulingPending: dismissShowing('ruling', ruling) });
-
-    vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 1);
-    expect(keys()).toBeNull();
-    vi.advanceTimersByTime(1);
-    expect(keys()).toBe(options);
-  });
-});
-
-describe('a key pressed while a ruling holds the answers', () => {
-  const held = { question: { options }, rulingPending: true };
-
-  it('is reported blocked when it would answer or skip, so the page can point at Understood', () => {
-    expect(blockedByRuling(held, '1', false)).toBe(true);
-    expect(blockedByRuling(held, ' ', false)).toBe(true);
-    const yesNo = [
-      { value: 'yes', label: 'Yes' },
-      { value: 'no', label: 'No' },
-    ];
-    expect(blockedByRuling({ question: { options: yesNo }, rulingPending: true }, 'y', true)).toBe(
-      true
-    );
-  });
-
-  it('leaves Enter to dismiss it, and ignores keys that answer nothing', () => {
-    expect(blockedByRuling(held, 'Enter', false)).toBe(false);
-    expect(blockedByRuling(held, '9', false)).toBe(false);
-    expect(blockedByRuling(held, 'Escape', false)).toBe(false);
-  });
-
-  it('reports nothing once no ruling holds the answers', () => {
-    expect(blockedByRuling({ question: { options }, rulingPending: false }, '1', false)).toBe(
-      false
-    );
-    expect(blockedByRuling({ question: { options }, rulingPending: false }, ' ', false)).toBe(
-      false
-    );
+describe('a ruling on screen', () => {
+  // The page builds the screen from the question alone: a smite, warning or close call in the toast holds nothing back.
+  it('leaves the answer keys and Space working, as with no ruling', () => {
+    const screen = { question: { options } };
+    expect(answerForKeyPress(optionsOnScreen(screen) ?? [], '3', false)).toBe('4');
+    expect(spaceSkips(screen)).toBe(true);
   });
 });

@@ -3,7 +3,6 @@ import {
   accuracyLine,
   belowBarCue,
   headerDaily,
-  holdsAnswers,
   landVote,
   pendingVotes,
   withVotesSent,
@@ -325,17 +324,5 @@ describe('headerDaily', () => {
     expect(headerDaily(pageDaily, layoutDaily, 0)).toBe(pageDaily);
     expect(headerDaily(null, layoutDaily, 2)).toBe(layoutDaily);
     expect(headerDaily(undefined, undefined, 0)).toBeUndefined();
-  });
-});
-
-describe('holdsAnswers', () => {
-  it('lets the player keep voting under close calls alone', () => {
-    expect(holdsAnswers([{ consequence: 'close' }])).toBe(false);
-    expect(holdsAnswers([{ consequence: 'close' }, { consequence: 'close' }])).toBe(false);
-  });
-
-  it('holds the answers for a warning or smite, even beside a close call', () => {
-    expect(holdsAnswers([{ consequence: 'smite' }])).toBe(true);
-    expect(holdsAnswers([{ consequence: 'close' }, { consequence: 'warning' }])).toBe(true);
   });
 });

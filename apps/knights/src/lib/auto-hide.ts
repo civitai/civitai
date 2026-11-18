@@ -61,8 +61,6 @@ export const countdownStyle = (ms: number, paused: boolean) => ({
 type AutoHideOptions = {
   ms: number;
   onhide: () => void;
-  /** The element to focus on mount, unless focus is in a dialog; given before listening, so it holds nothing by itself. */
-  focus?: string;
   /** A failed dismissal's error is showing: wait for the player rather than retrying. */
   held?: boolean;
 };
@@ -75,9 +73,6 @@ const MODAL = '[role="dialog"][aria-modal="true"]';
  * on the node for a `.countdown` bar inside it.
  */
 export function autoHide(node: HTMLElement, opts: AutoHideOptions) {
-  if (opts.focus && !document.activeElement?.closest('[role="dialog"]')) {
-    node.querySelector<HTMLElement>(opts.focus)?.focus({ preventScroll: true });
-  }
   const dialogUp = () => !!document.querySelector(MODAL);
   const initial = [
     ...(opts.held ? ['message'] : []),
