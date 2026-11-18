@@ -70,6 +70,13 @@ describe('imageSearchUpload', () => {
     expect(h.prepare).not.toHaveBeenCalled();
   });
 
+  it("refuses a moderator's scoped app credential, which carries no moderator view", async () => {
+    await expect(status(MOD, { subject: 'app-1', tokenScope: BigInt(1) })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(h.status).not.toHaveBeenCalled();
+  });
+
   it("passes the moderator's session and view", async () => {
     await status(MOD);
     expect(h.status).toHaveBeenCalledWith({ userId: 8, uploadId: UPLOAD, isModerator: true });

@@ -23,7 +23,7 @@ const imageSearchUploadProcedure = protectedProcedure
   .use(isFlagProtected('moreLikeThis'))
   // Moderator-only until further gates, whatever the flag says.
   .use(({ ctx, next }) => {
-    if (!ctx.user.isModerator) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!credentialViews(ctx).asModerator) throw new TRPCError({ code: 'FORBIDDEN' });
     return next();
   });
 

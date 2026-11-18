@@ -134,6 +134,8 @@ export async function prepareSearchUpload({
   if (existing && (await redis.packed.get<SearchUploadRecord>(recordKey(existing))))
     return { uploadId: existing };
   const uploadId = randomUUID();
+  // The scan timeout runs from before the submit, so a slow submit cannot stretch it.
+  const createdAt = Date.now();
   // Taken atomically before the slot and the scan, so two uploads at once cannot both pass.
   const busy = await redis.set(pendingKey(userId), uploadId, {
     NX: true,
@@ -156,7 +158,7 @@ export async function prepareSearchUpload({
     userId,
     blobId,
     workflowId,
-    createdAt: Date.now(),
+    createdAt,
     source: { kind: source.kind, id: source.id } as SearchUploadSource,
     urlHash: hashUrl(url),
   };
