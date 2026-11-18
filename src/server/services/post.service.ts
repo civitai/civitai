@@ -1930,7 +1930,7 @@ export async function bustCachesForPosts(postIds: number | number[]) {
 
 /**
  * After every image of an account is blocked: the showcases and search documents of the models it
- * owns. Bounded by that account's own models and versions, in chunks of `SHOWCASE_CHUNK`.
+ * owns.
  */
 export async function refreshShowcasesForUserModels(userId: number) {
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`

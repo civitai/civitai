@@ -17,6 +17,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -29,6 +32,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
@@ -120,6 +124,17 @@ type Server struct {
 	// and probes are bounded by their own queues and never take a serve slot.
 	MaxInFlight int
 
+	// Tracer starts the request spans (DESIGN.md §10.3); nil = tracing off: no span, no header read or
+	// written, no exemplar.
+	Tracer trace.Tracer
+	// Propagator extracts an inbound traceparent (public and internal routes); used only with Tracer.
+	Propagator propagation.TextMapPropagator
+	// Events writes the fallback and error lines (events.go); nil = an EventLog over Log with fallback
+	// lines off and errors at the default rate.
+	Events     *EventLog
+	eventsOnce sync.Once
+	ev         *EventLog
+
 	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
 	inFlight atomic.Int64
 
@@ -163,9 +178,10 @@ func (s *Server) startPhase() phaseClock {
 // endPhase records a phase's wall time always, and the process CPU delta over it only when the phase
 // was solo throughout: no other sample in flight at its start, none admitted before its end. Process
 // CPU is then this sample's own (plus background runtime/GC work and any scrape, DESIGN.md §10).
-func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
+// ctx carries the sample's span: a sampled one is the wall histogram's exemplar.
+func (s *Server) endPhase(ctx context.Context, p phaseClock, endpoint, phase, outcome string) {
 	wall := time.Since(p.wall).Seconds()
-	s.Metrics.ShadowPhase.WithLabelValues(endpoint, phase, outcome).Observe(wall)
+	tracing.Observe(ctx, s.Metrics.ShadowPhase.WithLabelValues(endpoint, phase, outcome), wall)
 	if !p.solo || !p.cpuOK {
 		return
 	}
@@ -231,7 +247,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.Request{}, false, fallback.Newf("input-envelope", "%v", err)
+		return feed.Request{}, false, fallback.Wrap("input-envelope", err)
 	}
 	in, err := feed.Parse(raw)
 	if err != nil {
@@ -294,7 +310,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, fallback.Newf("input-envelope", "%v", err)
+		return feed.InfiniteRequest{}, false, fallback.Wrap("input-envelope", err)
 	}
 	in, err := feed.ParseInfinite(raw)
 	if err != nil {
@@ -355,7 +371,7 @@ func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (model
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return modelfeed.Request{}, false, fallback.Newf("input-envelope", "%v", err)
+		return modelfeed.Request{}, false, fallback.Wrap("input-envelope", err)
 	}
 	in, err := modelfeed.Parse(raw)
 	if err != nil {
@@ -619,7 +635,7 @@ func (s *Server) within(parent context.Context, where string, fn func(context.Co
 		return fallback.New("canceled")
 	}
 	if ctx.Err() != nil {
-		return fallback.Newf("deadline", "budget %v", budget)
+		return fallback.Safef("deadline", "budget %v", budget)
 	}
 	return err
 }
@@ -657,6 +673,13 @@ func (s *Server) ServeModelGetAllHTTP(w http.ResponseWriter, r *http.Request) {
 // fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
 	start := time.Now()
+	// The request's span (tracing on only): the compute, its store spans and the proxy hop are its
+	// children, and the duration exemplar is its trace id.
+	ctx, span := s.startSpan(r.Context(), r.Header, "serve", endpoint)
+	defer span.End()
+	if s.Tracer != nil {
+		r = r.WithContext(ctx)
+	}
 	var (
 		c   *computed
 		err error
@@ -683,19 +706,23 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		}
 		trpc.WriteResult(w, c.payload, c.ttl)
 		c.release() // WriteResult has sent payload and keeps no reference
+		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
-		s.Metrics.Duration.WithLabelValues(endpoint, "serve", served).Observe(time.Since(start).Seconds())
+		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
 		return
 	}
 	outcome := "fallback"
 	reason := fallback.Reason(err)
 	if reason == "" {
 		outcome, reason = "error", "error"
-		s.Log.Error("feed compute failed; falling back", "endpoint", endpoint, "err", err)
+		s.noteError(ctx, slog.LevelError, "feed compute failed; falling back", "serve", endpoint, err)
+	} else {
+		s.noteFallback(ctx, "serve", endpoint, err)
 	}
+	setOutcome(span, outcome)
 	s.Metrics.Requests.WithLabelValues(endpoint, "serve", outcome).Inc()
 	s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
-	s.Metrics.Duration.WithLabelValues(endpoint, "serve", outcome).Observe(time.Since(start).Seconds())
+	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", outcome), time.Since(start).Seconds())
 	if reason == "canceled" {
 		// The client has gone: nobody would read a proxied answer, and proxying would only make the
 		// Node app compute one.
@@ -706,7 +733,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		return
 	}
 	// The original request (and its context): the budget bounded only this service's own compute.
-	s.Fallback.ServeHTTP(w, r)
+	s.proxy(w, r, endpoint)
 }
 
 // ShadowRequest is what the Node app posts after it has answered a sampled request.
@@ -756,11 +783,21 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	// The sample's span: an independent root (the Node samplers send no traceparent; an inbound one is honoured). It ends
+	// with the comparison (in the goroutine below), or here when the sample is not taken.
+	spanCtx, span := s.startSpan(r.Context(), r.Header, "shadow", endpoint)
+	spanHandedOff := false
+	defer func() {
+		if !spanHandedOff {
+			span.End()
+		}
+	}()
 	// Register with the shutdown wait first: once Close has begun, a sample is dropped, and every
 	// sample Close does not see starting here cannot start at all.
 	s.shadowMu.Lock()
 	if s.closing {
 		s.shadowMu.Unlock()
+		setOutcome(span, "dropped")
 		s.Metrics.ShadowDropped.WithLabelValues(endpoint).Inc()
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -778,6 +815,7 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 	select {
 	case s.ShadowQueue <- struct{}{}:
 	default:
+		setOutcome(span, "dropped")
 		s.Metrics.ShadowDropped.WithLabelValues(endpoint).Inc()
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -786,25 +824,29 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 	decode := s.startPhase()
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxShadowBody))
 	if err != nil {
-		s.endPhase(decode, endpoint, "decode", "bad_request")
+		s.endPhase(spanCtx, decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
+		setOutcome(span, "bad_request")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var req ShadowRequest
 	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
-		s.endPhase(decode, endpoint, "decode", "bad_request")
+		s.endPhase(spanCtx, decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
+		setOutcome(span, "bad_request")
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.endPhase(decode, endpoint, "decode", "ok")
+	s.endPhase(spanCtx, decode, endpoint, "decode", "ok")
 	w.WriteHeader(http.StatusAccepted)
 	started = true
-	go func() {
+	spanHandedOff = true
+	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		// Deferred in this order so they run in reverse: recover first (a panic in compare or
-		// classify is counted, never fatal), then the queue slot is released, then shutdown is told.
+		// classify is counted, never fatal), then the queue slot is released, then shutdown is told,
+		// and the span ends before all of them.
 		defer s.shadows.Done()
 		defer func() { <-s.ShadowQueue }()
 		defer func() {
@@ -812,9 +854,13 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 				s.panicked("shadow", p, debug.Stack())
 			}
 		}()
+		defer span.End()
 		// Marked as shadow: its feed-service calls carry the shadow headers (feedsvc.WithShadow).
 		ctx, cancel := context.WithTimeout(feedsvc.WithShadow(s.background()), shadowSampleTimeout)
 		defer cancel()
+		if s.Tracer != nil {
+			ctx = trace.ContextWithSpan(ctx, span)
+		}
 		s.compare(ctx, endpoint, req)
 	}()
 }
@@ -902,8 +948,10 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
 		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
 	}
+	span := trace.SpanFromContext(ctx)
 	r, err := build(ctx, req)
 	if err != nil {
+		setOutcome(span, "bad_request")
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
 		return
 	}
@@ -912,7 +960,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	c, err := s.computeWithin(ctx, r, "shadow", computeFn)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
-			s.endPhase(phase, endpoint, "compute", "fallback")
+			s.endPhase(ctx, phase, endpoint, "compute", "fallback")
 			s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "fallback").Inc()
 			s.Metrics.Fallbacks.WithLabelValues(endpoint, "shadow", reason).Inc()
 			// A compute cut by the budget is its own result, not `unsupported`: the match-rate
@@ -921,14 +969,20 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			if reason == "deadline" {
 				result = "deadline"
 			}
+			s.noteFallback(ctx, "shadow", endpoint, err)
+			setOutcome(span, "fallback")
+			if span.IsRecording() {
+				span.SetAttributes(attrShadowResult.String(result))
+			}
 			s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
-			s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback").Observe(time.Since(start).Seconds())
+			tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback"), time.Since(start).Seconds())
 			return
 		}
-		s.endPhase(phase, endpoint, "compute", "error")
+		s.endPhase(ctx, phase, endpoint, "compute", "error")
+		setOutcome(span, "error")
 		s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "error").Inc()
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "go_error").Inc()
-		s.Log.Warn("shadow compute failed", "endpoint", endpoint, "err", err)
+		s.noteError(ctx, slog.LevelWarn, "shadow compute failed", "shadow", endpoint, err)
 		return
 	}
 	// Released once the comparison and its classification (the last readers of payload) are done.
@@ -940,13 +994,14 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	case c.cached:
 		served = "served_cached"
 	}
-	s.endPhase(phase, endpoint, "compute", served)
+	s.endPhase(ctx, phase, endpoint, "compute", served)
+	setOutcome(span, served)
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
-	s.Metrics.Duration.WithLabelValues(endpoint, "shadow", served).Observe(time.Since(start).Seconds())
+	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", served), time.Since(start).Seconds())
 	phase = s.startPhase()
 	report, err := compareFn(c.payload, req.Node)
 	if err != nil {
-		s.endPhase(phase, endpoint, "compare", "bad_request")
+		s.endPhase(ctx, phase, endpoint, "compare", "bad_request")
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
 		return
 	}
@@ -974,7 +1029,10 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
 		}
 	}
-	s.endPhase(phase, endpoint, "compare", "ok")
+	s.endPhase(ctx, phase, endpoint, "compare", "ok")
+	if span.IsRecording() {
+		span.SetAttributes(attrShadowResult.String(result))
+	}
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
@@ -1000,8 +1058,8 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		if bodyDiffers(result) || unexpected > 0 {
 			level = slog.LevelInfo
 		}
-		s.Log.Log(ctx, level, "shadow diff", "endpoint", endpoint, "result", result, "paths", paths,
-			"truncated", report.Truncated)
+		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "result", result, "paths", paths,
+			"truncated", report.Truncated})...)
 	}
 }
 

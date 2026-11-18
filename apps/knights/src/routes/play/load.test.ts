@@ -40,7 +40,9 @@ vi.mock('$lib/server/smites/smites.service', () => ({
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
 vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
-vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
+vi.mock('$lib/server/hidden/runtime', () => ({
+  hiddenSettings: () => ({ rate: 0.5, probationShare: 0.25 }),
+}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   hiddenItemId: (id: number) => -id,
   pickHiddenCheck,
@@ -482,7 +484,7 @@ describe('play load feed', () => {
     await run();
     expect(pickHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ questionKey: 'q', rate: 0.5 })
+      expect.objectContaining({ questionKey: 'q', rate: 0.5, probationShare: 0.25 })
     );
   });
 });

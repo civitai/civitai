@@ -6,6 +6,7 @@ import type { DB as ModeratorDB } from '../moderator-db/types';
 import { LabHarnessError, type LabOverrides, type LabRun } from '../text-scan-lab/harness-client';
 import { chunkTexts } from '../../text-scan-lab/limits';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '../../text-scan-lab/types';
+import { INTENT_LABELS, isIntentEvalSet } from '../../text-scan-tests/intent-set';
 import { verdictOf, type ResultStatus } from '../../text-scan-tests/score';
 import {
   ACTIVE_RUN_STATUSES,
@@ -248,6 +249,7 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
   const recorded = run.prompt_ids as Record<string, number>;
   const overrides: LabOverrides = {
     prompts: (run.prompt_overrides as Record<string, string> | null) ?? undefined,
+    ...(isIntentEvalSet(Number(run.set_id)) ? { labels: INTENT_LABELS } : {}),
   };
   let launchFirstRequest = launch && firstStart(run);
 
