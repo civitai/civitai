@@ -134,7 +134,7 @@ describe('feed_transport measurement: transport tag follows the link the request
         { type: 'feed_transport', values: { feed_transport_ms: 250 } },
         {
           skipDedupe: true,
-          context: { procedure: 'model.getAll', transport: 'go', outcome: 'ok', authed: 'true' },
+          context: { procedure: 'model.getAll', transport: 'go', outcome: 'ok' },
         },
       ],
     ]);
@@ -152,7 +152,7 @@ describe('feed_transport measurement: transport tag follows the link the request
         { type: 'feed_transport', values: { feed_transport_ms: 410 } },
         {
           skipDedupe: true,
-          context: { procedure: 'model.getAll', transport: 'node', outcome: 'ok', authed: 'true' },
+          context: { procedure: 'model.getAll', transport: 'node', outcome: 'ok' },
         },
       ],
     ]);
@@ -174,7 +174,6 @@ describe('feed_transport measurement: transport tag follows the link the request
             procedure: 'image.getImagesAsPostsInfinite',
             transport: 'go',
             outcome: 'ok',
-            authed: 'true',
           },
         },
       ],
@@ -191,17 +190,17 @@ describe('feed_transport measurement: transport tag follows the link the request
     expect(pushes()[0][1]).toMatchObject({ context: { transport: 'node' } });
   });
 
-  it('signed out with the flag on: stays on /api/trpc, transport=node, authed=false', async () => {
+  it('signed out: nothing is pushed (it can never take the Go path), even with the flag on', async () => {
     browser(false);
     setFeedGoTransportModelGetAllEnabled(true);
     await callQuery(MODELS, MODELS_INPUT);
 
     expect(sent[0].url).toContain('/api/trpc/model.getAll?');
+    expect(pushes()).toHaveLength(0);
+    // Positive control: the same request signed in IS measured (the node arm case above, and here).
+    browser(true);
+    await callQuery(MODELS, MODELS_INPUT);
     expect(pushes()).toHaveLength(1);
-    expect(pushes()[0][1]).toEqual({
-      skipDedupe: true,
-      context: { procedure: 'model.getAll', transport: 'node', outcome: 'ok', authed: 'false' },
-    });
   });
 
   it('an input too large for a GET goes as POST on /api/trpc: transport=node', async () => {
@@ -245,7 +244,6 @@ describe('feed_transport measurement: outcome', () => {
             procedure: 'model.getAll',
             transport: 'go',
             outcome: 'http_error',
-            authed: 'true',
             status: '500',
           },
         },
@@ -266,7 +264,6 @@ describe('feed_transport measurement: outcome', () => {
         procedure: 'image.getImagesAsPostsInfinite',
         transport: 'go',
         outcome: 'http_error',
-        authed: 'true',
       },
     });
   });
@@ -285,7 +282,6 @@ describe('feed_transport measurement: outcome', () => {
             procedure: 'model.getAll',
             transport: 'node',
             outcome: 'network_error',
-            authed: 'true',
           },
         },
       ],
@@ -324,7 +320,6 @@ describe('feed_transport measurement: carries no user data', () => {
     expect(beacon).not.toContain('http');
     // Exactly these context keys: a new one is a cardinality / privacy decision, not a drive-by.
     expect(Object.keys((pushes()[0][1] as { context: object }).context).sort()).toEqual([
-      'authed',
       'outcome',
       'procedure',
       'transport',
