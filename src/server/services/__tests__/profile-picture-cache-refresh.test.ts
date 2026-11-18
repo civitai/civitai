@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
@@ -145,6 +146,13 @@ describe('a bulk picture refresh', () => {
     await refreshProfilePicturesForUsers([3, 4]);
     expect(refreshBasic).not.toHaveBeenCalled();
     expect(queueUserUpdate).not.toHaveBeenCalled();
+
+    // The event engine's copy of each picture is busted whether or not it is held.
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith('user:profilePicture:v3:3', {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+    expect(redisMock.redis.expire).toHaveBeenCalledWith('user:profilePicture:v3:4', 10);
 
     clearImages.mockResolvedValueOnce([4]);
     await refreshProfilePicturesForUsers([3, 4]);
