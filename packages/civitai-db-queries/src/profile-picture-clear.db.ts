@@ -15,9 +15,9 @@ const run = async (db: Kysely<DB>, statement: Statement) => {
   return rows.map((row) => row.id);
 };
 
-/** Whether `User.image` (aliased `u`) names the key of the image aliased `alias`, in any url form. */
-export const userImageNamesPicture = (alias: string) =>
-  `(length(${alias}.url) > 0 AND strpos(replace(lower(u.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
+/** Whether `User.image` (`User` aliased `user`) names the key of the image aliased `alias`, in any url form. */
+export const userImageNamesPicture = (alias: string, user = 'u') =>
+  `(length(${alias}.url) > 0 AND strpos(replace(lower(${user}.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
 
 const heldImageMarker = `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`;
 

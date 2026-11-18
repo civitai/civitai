@@ -51,7 +51,10 @@ const PRELUDE = `
     "settings" JSONB NOT NULL DEFAULT '{}', "meta" JSONB NOT NULL DEFAULT '{}',
     "profilePictureId" INTEGER
   );
-  CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT);
+  CREATE TABLE "Image" (
+    "id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "blockedFor" TEXT
+  );
   CREATE TABLE "UserReferral" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
   CREATE TABLE "Product" ("id" TEXT PRIMARY KEY, "metadata" JSONB);
   CREATE TABLE "CustomerSubscription" (
@@ -200,4 +203,32 @@ describe('produceSessionUser — the profile picture', () => {
       expect((await produceSessionUser(BUILDER))?.image).toBe(image);
     }
   );
+});
+
+describe('produceSessionUser — a blocked profile picture', () => {
+  const blocks = [
+    ['Blocked ingestion', `"ingestion" = 'Blocked'`],
+    ['the Blocked level', `"nsfwLevel" = 32`],
+    ['a block reason', `"blockedFor" = 'tos'`],
+  ];
+
+  it.each(blocks)('carrying %s is not the session image', async (_marker, set) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'pic.jpg')`);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'legacy.jpg' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBe('legacy.jpg');
+  });
+
+  it.each(blocks)('carrying %s leaves out a User.image naming it', async (_marker, set) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url") VALUES (1, 'pic.jpg')`);
+    await pg.query(`UPDATE "Image" SET ${set} WHERE "id" = 1`);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'https://cdn.example/PIC.JPG/width=96' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBeUndefined();
+  });
 });

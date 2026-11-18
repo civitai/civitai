@@ -1,5 +1,7 @@
 import { isRefusedModerationAccount } from './moderation-account';
 import { sql } from 'kysely';
+import { blockMarkerText, userImageNamesPicture } from '@civitai/db-queries/profile-picture-clear';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -14,6 +16,11 @@ import { SYSTEM_WORKLOAD_ROLE } from '../oauth/constants';
 // SessionUser (the pure derivation lives in session-shape.ts), and write it to the SHARED cache
 // (session:data2:{userId}) that every consumer reads. Consumers — including the main app — now only READ
 // this cache (createSessionClient); the former main-app compute (src/server/auth/session-user.ts) is gone.
+
+// The picture aliased `held` is under an owner-hidden review hold or carries a block marker.
+const heldPictureWithheld = sql<boolean>`(
+  held."needsReview" IN (${sql.join(OWNER_HIDDEN_REVIEWS)}) OR ${sql.raw(blockMarkerText('held'))}
+)`;
 
 const SESSION_TTL = 4 * 60 * 60; // 4h — matches @civitai/auth's resolver TTL
 
@@ -30,12 +37,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      // The legacy `User.image` follows the same holds when it names the profile picture.
+      // The legacy `User.image` is left out when it names the profile picture and that picture is
+      // held or blocked, as the main app's `fallbackUserImageColumn` does.
       sql<string | null>`CASE WHEN EXISTS (
         SELECT 1 FROM "Image" held
         WHERE held.id = "User"."profilePictureId"
-          AND held."needsReview" IN ('csam', 'minor')
-          AND strpos(replace(lower("User".image), '%2d', '-'), lower(held.url)) > 0
+          AND ${heldPictureWithheld}
+          AND ${sql.raw(userImageNamesPicture('held', '"User"'))}
       ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',
@@ -59,13 +67,15 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           .selectFrom('Image')
           .select(['Image.url'])
           .whereRef('Image.id', '=', 'User.profilePictureId')
-          // The main app's owner-hidden review holds: not shown even to the picture's owner.
+          // Neither a picture under an owner-hidden review hold nor a blocked one is shown, even to
+          // its owner.
           .where((w) =>
             w.or([
               w('Image.needsReview', 'is', null),
-              w('Image.needsReview', 'not in', ['csam', 'minor']),
+              w('Image.needsReview', 'not in', OWNER_HIDDEN_REVIEWS),
             ])
           )
+          .where(sql<boolean>`NOT ${sql.raw(blockMarkerText('"Image"'))}`)
       ).as('profilePicture'),
       jsonObjectFrom(
         eb
