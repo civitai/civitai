@@ -241,8 +241,9 @@ jobs:
       # missing report is already failed, by name, by this suite's own ledger step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
-        # Telemetry only: a failed upload must never turn a green suite red.
-        continue-on-error: true
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-apps-a${{ github.run_attempt }}
