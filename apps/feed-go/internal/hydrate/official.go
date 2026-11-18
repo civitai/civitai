@@ -39,26 +39,10 @@ type OfficialModel struct {
 	Type string
 }
 
-// OfficialModels is getOfficialModelIds (src/server/services/resource-select.service.ts):
-// fetchThroughCache(OFFICIAL_MODELS, fetchFn, { ttl: 300, retryCount: 0 }) with its catch answering [].
-// A fresh entry (cachedAt within the ttl) is its data. Otherwise, as fetchThroughCache:
-//
-//   - the cache read failed: Node fetches from the replica and writes nothing (its fail-open path);
-//     so does this, with s.Compute (else `official-models-miss`);
-//   - write-back on: the refresh lock (`cache-lock:<key>`, SET NX EX 10) is taken as Node takes it.
-//     Held elsewhere, the expired entry is served, and with none the answer is [] (Node's retryCount 0
-//     throws, and the catch answers []); a lock write that failed serves the expired entry or fetches
-//     without writing. Taken, the replica is read and `{data, cachedAt}` written (SET EX 600, a plain
-//     SET as Node's under its lock), and the lock released;
-//   - write-back off, or under a Go-first probe: nothing is written and no lock taken. The lock is
-//     read (EXISTS): held elsewhere is answered as above; free, the replica is read (as Node, which
-//     would take it, reads it), kept in process for a few seconds (lookupShared). A failed lock read
-//     is answered as Node answers a failed lock write.
-//
-// A replica read that fails is `official-models-miss-failed` (Node's catch would answer [], a
-// different page: the request is left to Node). Without s.Compute an entry that would be fetched is
-// `official-models-miss`. Under a probe a computed read is recorded (MissOfficialModels) and done on
-// the replica, as its answer decides the page's rows.
+// OfficialModels mirrors getOfficialModelIds (src/server/services/resource-select.service.ts):
+// fetchThroughCache(OFFICIAL_MODELS, ttl 300, retryCount 0), whose catch answers []. With write-back off
+// or under a probe nothing is written and no lock is taken. A failed replica read is
+// official-models-miss-failed, not [], because Node would answer a different page.
 func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 	if s.Packed == nil || s.Packed.Redis == nil {
 		return s.officialFetch(ctx)

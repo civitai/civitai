@@ -74,9 +74,7 @@ var modelDataVersionColumns = []string{"id", "index", "name", "earlyAccessTimeFr
 	"createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel", "description",
 	"trainedWords", "vaeId", "covered", "coveredNext"}
 
-// fillModelData computes the model-data misses of got (dataForModelsCache.fetch's lookup); a no-op
-// without s.Compute (the miss then falls back in modelDataFrom). No marker is written: the cache's
-// cacheNotFound is off.
+// fillModelData is dataForModelsCache.fetch's miss path; no marker is written (cacheNotFound is off).
 func (s *Sources) fillModelData(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
 	if s.Compute == nil {
 		return nil
@@ -84,8 +82,7 @@ func (s *Sources) fillModelData(ctx context.Context, models []int, got map[int]E
 	return s.fill(ctx, modelDataSpec, models, got, writable, false, nil, s.lookupModelData)
 }
 
-// fillModelTags computes the model-tags misses of got (modelTagCache.fetch's lookup) for the models the
-// data cache answered (the appendFn asks for those only); a no-op without s.Compute.
+// fillModelTags is modelTagCache.fetch's miss path, asked only for the models the data cache answered.
 func (s *Sources) fillModelTags(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
 	if s.Compute == nil {
 		return nil
@@ -93,10 +90,8 @@ func (s *Sources) fillModelTags(ctx context.Context, models []int, got map[int]E
 	return s.fill(ctx, modelTagsSpec, models, got, writable, true, nil, s.lookupModelTags)
 }
 
-// lookupModelData is dataForModelsCache's lookupFn: per model with at least one version,
-// `{modelId, hashes, tags: [], versions}` (the appendFn's tags are applied on every read, not here),
-// the versions in (modelId, index) order with their members in column order, the hashes in row order.
-// A plain fetch's miss reads getDbWithoutLagBatch('model', ids) (lagAwareDB); both queries read it.
+// lookupModelData is dataForModelsCache's lookupFn. Keep the versions in (modelId, index) order and the
+// hashes in row order: the cache value's order is what Node serves.
 func (s *Sources) lookupModelData(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 	db, err := s.lagAwareDB(ctx, "model", ids)
 	if err != nil {
