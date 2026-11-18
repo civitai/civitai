@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { anyImageHeldForReview, clearHeldUserImages } from '~/server/services/held-image-keys';
+import { anyImageHeldOrBlocked, clearHeldUserImages } from '~/server/services/held-image-keys';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture.sql';
 
 let pg: PGlite;
@@ -92,12 +92,41 @@ describe('clearHeldUserImages', () => {
   });
 });
 
-describe('anyImageHeldForReview', () => {
+describe('anyImageHeldOrBlocked', () => {
   it('is true only for a key stored on an image held csam or minor', async () => {
-    expect(await anyImageHeldForReview(db, ['key-csam'])).toBe(true);
-    expect(await anyImageHeldForReview(db, ['nope', 'key-minor'])).toBe(true);
-    expect(await anyImageHeldForReview(db, ['key-upper'])).toBe(true);
-    expect(await anyImageHeldForReview(db, ['key-poi', 'key-ok', 'nope'])).toBe(false);
-    expect(await anyImageHeldForReview(db, [])).toBe(false);
+    expect(await anyImageHeldOrBlocked(db, ['key-csam'])).toBe(true);
+    expect(await anyImageHeldOrBlocked(db, ['nope', 'key-minor'])).toBe(true);
+    expect(await anyImageHeldOrBlocked(db, ['key-upper'])).toBe(true);
+    expect(await anyImageHeldOrBlocked(db, ['key-poi', 'key-ok', 'nope'])).toBe(false);
+    expect(await anyImageHeldOrBlocked(db, [])).toBe(false);
+  });
+});
+
+describe('a blocked picture', () => {
+  it('is refused as an avatar url, while a clean image of the same owner is not', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, "userId", url, ingestion, "nsfwLevel", "blockedFor") VALUES
+        (20, 20, 'key-blocked', 'Blocked', 1, NULL),
+        (21, 20, 'key-level', 'Scanned', 32, NULL),
+        (22, 20, 'key-reason', 'Rescan', 1, 'tos'),
+        (23, 20, 'key-clean', 'Scanned', 1, NULL);
+    `);
+    for (const key of ['key-blocked', 'key-level', 'key-reason'])
+      expect(await anyImageHeldOrBlocked(db, [key])).toBe(true);
+    expect(await anyImageHeldOrBlocked(db, ['key-clean'])).toBe(false);
+  });
+
+  it('drops out of the User.image fallback when User.image names it', async () => {
+    await pg.exec(`
+      INSERT INTO "User" (id, "profilePictureId", image, meta) VALUES
+        (20, 20, 'https://cdn.example/key-blocked/width=96', '{}'),
+        (21, 22, 'key-reason', '{}'),
+        (22, 20, 'another-value', '{}'),
+        (23, 23, 'key-clean', '{}');
+    `);
+    const { rows } = await pg.query<{ image: string | null }>(
+      `SELECT ${fallbackUserImageColumn} AS image FROM "User" u WHERE u.id >= 20 ORDER BY u.id`
+    );
+    expect(rows.map((row) => row.image)).toEqual([null, null, 'another-value', 'key-clean']);
   });
 });
