@@ -246,7 +246,7 @@ describe('withArticle', () => {
 describe('pendingVotes / landVote', () => {
   it('never counts a vote twice while the refreshed daily that holds it replaces the old one', () => {
     const before = { ...daily, votes: 9 };
-    const sent = { count: 1, landed: 0, landedOn: null as object | null };
+    const sent = { count: 1, landed: 0, landedOn: null as number | null };
     expect(withVotesSent(before, pendingVotes(sent, before)).votes).toBe(10);
     landVote(sent, before);
     expect(withVotesSent(before, pendingVotes(sent, before)).votes).toBe(10);
@@ -256,7 +256,7 @@ describe('pendingVotes / landVote', () => {
 
   it('keeps several landed votes counted until the daily changes', () => {
     const before = { ...daily, votes: 3 };
-    const sent = { count: 2, landed: 0, landedOn: null as object | null };
+    const sent = { count: 2, landed: 0, landedOn: null as number | null };
     landVote(sent, before);
     landVote(sent, before);
     expect(sent.count).toBe(0);
@@ -266,6 +266,15 @@ describe('pendingVotes / landVote', () => {
 });
 
 describe('withVotesSent', () => {
+  it('adds the gold each vote still on its way records, up to the daily cap', () => {
+    const paid = { ...daily, goldRecorded: 79_800, goldCap: 80_000, goldPerVote: 100 };
+    expect(withVotesSent(paid, 1)).toMatchObject({ goldRecorded: 79_900, capReached: false });
+    expect(withVotesSent(paid, 3)).toMatchObject({ goldRecorded: 80_000, capReached: true });
+    // A rank that earns no gold, or a daily without the per-vote amount, keeps the gold it had.
+    expect(withVotesSent({ ...paid, goldCap: 0 }, 2)).toMatchObject({ goldRecorded: 79_800 });
+    expect(withVotesSent(daily, 2)).not.toHaveProperty('goldRecorded');
+  });
+
   it('counts votes still on their way, and completes the Watch when they reach it', () => {
     expect(withVotesSent(daily, 2)).toMatchObject({ votes: 7, watchDone: false });
     expect(withVotesSent(daily, 5)).toMatchObject({ votes: 10, watchDone: true });
@@ -343,5 +352,25 @@ describe('goldToday', () => {
 
   it('is absent for a rank that earns no gold', () => {
     expect(goldToday({ goldRecorded: 0, goldCap: 0 })).toBeNull();
+  });
+});
+
+describe('a landed vote in a reactive store', () => {
+  it('stays counted when the store wraps the daily it is given, as a Svelte $state proxies a plain object', () => {
+    const wrapping = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        set(t, key, value) {
+          Reflect.set(t, key, value && typeof value === 'object' ? new Proxy(value, {}) : value);
+          return true;
+        },
+      });
+    const sent = wrapping({ count: 1, landed: 0, landedOn: null as number | null });
+    const shown = { votes: 4 };
+
+    landVote(sent, shown);
+
+    // The vote stays on the Watch until the refreshed daily, which holds it, replaces the one on screen.
+    expect(pendingVotes(sent, shown)).toBe(1);
+    expect(pendingVotes(sent, { votes: 5 })).toBe(0);
   });
 });

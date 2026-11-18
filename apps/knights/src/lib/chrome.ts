@@ -25,6 +25,11 @@ export type Watch = {
   bonusGold: number;
   capReached: boolean;
   streak?: number;
+  /** Today's gold against the cap; with `goldPerVote`, a vote on its way moves it at once. */
+  goldRecorded?: number;
+  goldCap?: number;
+  /** The gold one vote records now (rank, halved below the accuracy bar). */
+  goldPerVote?: number;
 };
 
 const capNote = 'Gold cap reached · XP still counts';
@@ -52,7 +57,7 @@ export function watchStrip(daily: Watch) {
 }
 
 /**
- * The Watch as it will read once `sent` votes still on their way to the server land, so the strip and rail move the
+ * The Watch (and today's gold) as it will read once `sent` votes still on their way to the server land, so the strip and rail move the
  * moment a vote is cast rather than when the page's data is next read. The vote that completes the Watch moves the streak
  * by one, which is what the server stores in every case (a first Watch, yesterday's kept, a shielded gap, a lapse).
  */
@@ -61,7 +66,16 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   const votes = daily.votes + sent;
   const completes = !daily.watchDone && votes >= daily.watchSize;
   const streak = completes && daily.streak !== undefined ? { streak: daily.streak + 1 } : {};
-  return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak };
+  // Each vote records its gold at vote time, clamped to the cap, as `creditVote` does on the server.
+  const { goldRecorded, goldCap, goldPerVote } = daily;
+  const gold =
+    goldRecorded !== undefined && goldCap && goldPerVote
+      ? (() => {
+          const next = Math.min(goldCap, goldRecorded + sent * goldPerVote);
+          return { goldRecorded: next, capReached: next >= goldCap };
+        })()
+      : {};
+  return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak, ...gold };
 }
 
 /** Today's gold against the daily cap, for the rail; null for a rank that earns no gold (cap 0). */
@@ -79,15 +93,27 @@ export function goldToday({ goldRecorded, goldCap }: { goldRecorded: number; gol
  * screen. The refreshed daily holds a landed vote, so keying it to the object means it is never counted twice in the frame
  * where the new data replaces the old (which rang the Watch bell a vote early).
  */
-export type PendingVotes = { count: number; landed: number; landedOn: object | null };
+export type PendingVotes = { count: number; landed: number; landedOn: number | null };
+
+// The daily is named by a number, not held: a Svelte `$state` wraps a plain object assigned into it in a proxy, which is
+// never `===` the page's own daily, so a landed vote dropped off the Watch until the refreshed data arrived.
+const dailyIds = new WeakMap<object, number>();
+let lastDailyId = 0;
+const dailyId = (daily: object | null | undefined): number | null => {
+  if (daily == null) return null;
+  let id = dailyIds.get(daily);
+  if (id === undefined) dailyIds.set(daily, (id = ++lastDailyId));
+  return id;
+};
 
 export const pendingVotes = (sent: PendingVotes, daily: object | null | undefined): number =>
-  sent.count + (daily != null && sent.landedOn === daily ? sent.landed : 0);
+  sent.count + (daily != null && sent.landedOn === dailyId(daily) ? sent.landed : 0);
 
 /** Moves one vote from in flight to landed on `daily`, in one step, so the total does not dip. */
 export function landVote(sent: PendingVotes, daily: object | null | undefined): void {
-  sent.landed = daily != null && sent.landedOn === daily ? sent.landed + 1 : 1;
-  sent.landedOn = daily ?? null;
+  const id = dailyId(daily);
+  sent.landed = id !== null && sent.landedOn === id ? sent.landed + 1 : 1;
+  sent.landedOn = id;
   sent.count = Math.max(0, sent.count - 1);
 }
 

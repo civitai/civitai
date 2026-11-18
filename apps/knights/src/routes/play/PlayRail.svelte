@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
   import { belowBarCue, goldToday, heartBackShort, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
-  import { bump } from '$lib/motion';
+  import { bump, tween } from '$lib/motion';
   import type { DailyStatus } from '$lib/server/daily/daily.service';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { Rail } from '$lib/server/rail';
@@ -28,7 +29,13 @@
   const id = (name: string) => (sheet ? `sheet-${name}` : name);
 
   const strip = $derived(watchStrip(daily));
-  const gold = $derived(goldToday(daily));
+  // Gold today ticks to its new value when a landed vote refreshes the page's data, as the header's gold counter does.
+  let shownGold = $state(untrack(() => daily.goldRecorded));
+  $effect(() => {
+    const to = daily.goldRecorded;
+    return tween(untrack(() => shownGold), to, 360, (value) => (shownGold = Math.round(value)));
+  });
+  const gold = $derived(goldToday({ goldRecorded: shownGold, goldCap: daily.goldCap }));
   const belowBar = $derived(belowBarCue(status));
   const hearts = $derived(Math.max(0, status.maxSmites - status.smites));
   const standing = $derived(rail.standing);
@@ -93,7 +100,7 @@
     {#if gold}
       <div class="gold-today">
         <h3>Gold today</h3>
-        <p class="line"><b>{gold.label}</b></p>
+        <p class="line"><b use:bump={daily.goldRecorded}>{gold.label}</b></p>
         <div
           class="bar"
           role="meter"
@@ -101,6 +108,7 @@
           aria-valuemin={0}
           aria-valuemax={daily.goldCap}
           aria-valuenow={Math.min(daily.goldRecorded, daily.goldCap)}
+          aria-valuetext="{count(daily.goldRecorded)} of {count(daily.goldCap)}"
         >
           <div style:width="{gold.ratio * 100}%"></div>
         </div>
@@ -435,6 +443,10 @@
     }
   }
   @media (prefers-reduced-motion: no-preference) {
+    .gold-today b:global([data-bump]) {
+      display: inline-block;
+      animation: mo-bump-pop 400ms var(--ease-out-quart);
+    }
     .ring:global([data-bump]) .fill {
       animation: mo-bump-glow 400ms var(--ease-out-quart);
     }

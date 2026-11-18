@@ -14,6 +14,7 @@ import {
 import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
+import { goldForRank } from '$lib/server/progression/config';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
@@ -176,7 +177,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     banner: picked?.banner ?? null,
     category: picked?.category ?? null,
     ...common,
-    daily,
+    // `goldPerVote` lets the rail move today's gold the moment a vote is cast (`withVotesSent`).
+    daily: {
+      ...daily,
+      goldPerVote: isRank(status.rank) ? goldForRank(status.rank, status.rating.belowBar) : 0,
+    },
     rail,
     resetPending,
     apprenticeMeter,
