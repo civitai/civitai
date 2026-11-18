@@ -312,6 +312,9 @@ const unitTestConfig = {
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
     'src/__tests__/network-guard.ts',
     'src/__tests__/setup.ts',
+    // Closes every PGlite a test opens when that test (or, for one opened outside a test, its
+    // file) finishes. See src/__tests__/pglite-tracker.ts.
+    'src/__tests__/pglite-close-on-finish.ts',
   ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
   // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
