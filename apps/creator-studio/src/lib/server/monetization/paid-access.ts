@@ -474,7 +474,7 @@ export async function bulkSetUsageControl(
     .returning('id')
     .execute();
   const updatedIds = new Set(updatedRows.map((r) => r.id));
-  // Only versions whose usage control actually changed get their price moved.
+  // Only versions this write matched get their price moved; moderator-managed ones keep their gate.
   const migrations = planUsageControlMigrations(
     gates.filter((g) => updatedIds.has(g.entityId)),
     usageControl

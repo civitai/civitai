@@ -401,7 +401,7 @@
               {#if applied.usageSkipped > 0}
                 <p>
                   {applied.usageSkipped} kept {applied.usageSkipped === 1 ? 'its' : 'their'} usage control:
-                  it's set by moderators.
+                  set by moderators, or no longer available.
                 </p>
               {/if}
               {#if applied.failed > 0}
