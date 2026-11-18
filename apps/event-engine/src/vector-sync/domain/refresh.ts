@@ -53,11 +53,12 @@ export function startRefreshers(
     const lane = queue.lanes.get(domain.name);
     if (!refresh || !lane) return [];
     const store = domain.store?.();
-    // Ranges braked on the last pass, with their orphans: the same orphans a pass later are no lag.
-    const braked = new Map<number, string>();
+    // Orphans held on the last full pass: still orphans a pass later, they are rows really deleted.
+    let heldLastPass = new Set<number>();
     let cursor = 0;
     let running = false;
     const pass = async () => {
+      const held = new Set<number>();
       do {
         if (queue.isFull) await queue.flush();
         const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
@@ -74,23 +75,22 @@ export function startRefreshers(
           : [];
         const rows = new Set(ids);
         let orphans = points.filter((id) => !rows.has(id));
-        const key = orphans.join(',');
-        // A range with no rows at all is never let through: that is a bad read, or a cleanup to
-        // run by hand. Otherwise the same orphans on two passes in a row are rows really deleted.
-        const repeat = ids.length > 0 && braked.get(from) === key;
-        braked.delete(from);
-        if (orphanBrake(orphans.length, points.length) && !repeat) {
-          braked.set(from, key);
+        // A table read that came back empty is a bad read, or a cleanup to run by hand: never trusted.
+        const emptyTable = cursor === 0 && ids.length === 0;
+        const fresh = emptyTable ? orphans : orphans.filter((id) => !heldLastPass.has(id));
+        if (orphanBrake(fresh.length, points.length)) {
+          for (const id of fresh) held.add(id);
           logger.error(
-            { orphans: orphans.length, points: points.length, from, sample: orphans.slice(0, 10) },
-            `${domain.name}-sync: refresh found too many points with no row in one batch; deleting none`
+            { orphans: fresh.length, points: points.length, from, sample: fresh.slice(0, 10) },
+            `${domain.name}-sync: refresh found too many points with no row in one batch; holding them a pass`
           );
           vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });
-          orphans = [];
+          orphans = emptyTable ? [] : orphans.filter((id) => heldLastPass.has(id));
         }
         for (const id of [...ids, ...orphans]) lane.add({ id });
         cursor = next;
       } while (cursor !== 0);
+      heldLastPass = held;
     };
     const tick = () => {
       if (running) return;

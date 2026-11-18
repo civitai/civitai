@@ -23,6 +23,41 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('held orphans are let through the next pass even when the batch ranges shifted', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      let rows = [1, 40];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: rows
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 40 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added.filter((id) => id > 1 && id < 40)).toEqual([]);
+      rows = [40]; // row 1 deleted too: the one batch now starts and ends elsewhere
+      added.length = 0;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect([...added].sort((a, b) => a - b)).toEqual(points);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a burst of orphans is held one pass, then deleted when the same orphans are still there', async () => {
     vi.useFakeTimers();
     try {
