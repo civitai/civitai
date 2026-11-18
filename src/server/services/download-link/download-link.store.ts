@@ -340,11 +340,7 @@ export async function takeMintBudget(
   const key = `${REDIS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
   // One atomic INCRBY per take, so concurrent takes never grant past the limit between them. A
   // failure or timeout throws, refusing the mint, as the call always has.
-  const { redis } = await import('~/server/redis/client');
-  const [usedRaw] = (await redis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
-    number
-  ];
-  const used = Number(usedRaw) + (takeClusterWindowCount === undefined ? 0 : 0);
+  const used = await takeClusterWindowCount('takeMintBudget', key, 120, { by: count });
   const before = used - count;
   return {
     allowed: used <= limit,
