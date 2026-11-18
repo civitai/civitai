@@ -103,7 +103,7 @@ export async function insertVote(
     : null;
   if (reasonProblem) return rejected('bad-block-reason');
 
-  // Every vote kind reaches the ledger here, so this one check covers ratings, hidden checks and yes/no.
+  // The one path every vote takes to the ledger, so the refusal holds whatever the client sends.
   const owned = await trx
     .selectFrom('Image')
     .select('id')
