@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
@@ -36,8 +37,10 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 // Hydration queries here. It returns no rows unless a test makes it fail.
 const { pg, emptyPool } = vi.hoisted(() => {
-  const pg = { fail: false };
-  const query = async () => {
+  const pg = { fail: false, statements: [] as { text: string; values: unknown[] }[] };
+  const query = async (text: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
+    if (typeof text === 'string') pg.statements.push({ text, values: values ?? [] });
+    else pg.statements.push({ text: text.text, values: text.values ?? [] });
     if (pg.fail) throw new Error('hydrate query failed');
     return { rows: [] };
   };
@@ -108,6 +111,7 @@ describe('getAllImagesIndex on the feed service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     pg.fail = false;
+    pg.statements = [];
   });
 
   it('answers a feed timeout with a retryable SERVICE_UNAVAILABLE', async () => {
@@ -260,5 +264,62 @@ describe('getAllImagesIndex on the feed service', () => {
       expect(r).toMatchObject({ items: [], source: 'feed' });
       expect(fetchFeedPrimary).not.toHaveBeenCalled();
     });
+  });
+});
+
+// `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
+// minor-mature-image-visibility.behavior.test.ts.
+const RESTRICTED_MINOR =
+  /\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= \$\d+\)\)(?: OR i\."userId" = \$(\d+))?\)/g;
+
+describe("the feed service's page hydrate, for restricted minor images", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pg.fail = false;
+    pg.statements = [];
+  });
+
+  /** The hydrate statement for a served page of ids 1-5, as `user` sees it. */
+  async function hydrateStatement(user: { id: number; isModerator: boolean }) {
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [1, 2, 3, 4, 5] });
+    // A session's views (credentialViews); the feed reads neither without them.
+    await getAllImagesIndex({
+      ...request(),
+      browsingLevel: 31,
+      user,
+      asModerator: true,
+      asOwner: true,
+    }).catch(() => undefined);
+    const hydrate = pg.statements.find((s) => s.text.includes('"Image" i'));
+    expect(hydrate, 'the page is no longer hydrated through the pg pool').toBeDefined();
+    return hydrate as { text: string; values: unknown[] };
+  }
+
+  it('drops a restricted minor image for a stranger and keeps an unflagged R image (control)', async () => {
+    const stmt = await hydrateStatement({ id: 42, isModerator: false });
+    const clauses = [...stmt.text.matchAll(RESTRICTED_MINOR)];
+    expect(clauses).toHaveLength(1);
+    const inlined = clauses[0][0].replace(/\$(\d+)/g, (_, n) => String(stmt.values[Number(n) - 1]));
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, minor boolean, "nsfwLevel" int);
+      INSERT INTO "Image" VALUES
+        (1, 7, true, 4), (2, 7, false, 4), (3, 7, NULL, 8), (4, 7, true, 2), (5, 42, true, 4);
+    `);
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM "Image" i WHERE ${inlined} ORDER BY id`
+    );
+    // 1: another user's restricted minor image, hidden; 5: the viewer's own, kept.
+    expect(rows.map((r) => r.id)).toEqual([2, 3, 4, 5]);
+    await db.close();
+  });
+
+  it('applies no such clause for a moderator', async () => {
+    // The same hydrate for a stranger carries it, so the pattern still finds the clause.
+    const stranger = await hydrateStatement({ id: 42, isModerator: false });
+    expect([...stranger.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(1);
+    pg.statements = [];
+    const stmt = await hydrateStatement({ id: 42, isModerator: true });
+    expect([...stmt.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(0);
   });
 });

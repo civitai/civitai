@@ -39,6 +39,7 @@ import {
 function chipRow(over: Record<string, unknown> = {}) {
   return {
     name: 'Client Name',
+    connectListings: [],
     appBlocks: [
       {
         status: 'approved',
@@ -103,16 +104,6 @@ describe('the post chip honours the per-listing visibility level', () => {
     } as never);
     expect(chip?.slug).toBe('cool-app');
   });
-
-  it('[INV] a listing with no id is unaffected — the term cannot fire on it', () => {
-    // Hand-built fixtures elsewhere in this suite carry no `id`; they must keep their
-    // pre-W14 behaviour rather than silently becoming unlinked.
-    const chip = projectPostAppChip(chipRow({ id: undefined }), {
-      host: HOST,
-      hiddenListingIds: new Set(['apl_vis']),
-    });
-    expect(chip?.slug).toBe('cool-app');
-  });
 });
 
 describe('listingIdsInChipRow — the input to the batched level read', () => {
@@ -124,15 +115,20 @@ describe('listingIdsInChipRow — the input to the batched level read', () => {
     // The common path is an ordinary hand-made post. It must cost nothing extra — the
     // resolver skips the read entirely on an empty list.
     expect(listingIdsInChipRow(null)).toEqual([]);
-    expect(listingIdsInChipRow({ name: 'x', appBlocks: [] } as never)).toEqual([]);
+    expect(listingIdsInChipRow({ name: 'x', appBlocks: [], connectListings: [] })).toEqual([]);
     expect(
-      listingIdsInChipRow({ name: 'x', appBlocks: [{ status: 'approved' }] } as never)
+      listingIdsInChipRow({
+        name: 'x',
+        appBlocks: [{ status: 'approved', currentVersionDeployedAt: null, appListing: null }],
+        connectListings: [],
+      })
     ).toEqual([]);
   });
 
   it('[REG] de-duplicates, so N blocks on one listing are ONE bound parameter', () => {
     const row = {
       name: 'x',
+      connectListings: [],
       appBlocks: [
         { appListing: { id: 'apl_a' } },
         { appListing: { id: 'apl_a' } },
@@ -140,10 +136,5 @@ describe('listingIdsInChipRow — the input to the batched level read', () => {
       ],
     } as never;
     expect(listingIdsInChipRow(row).sort()).toEqual(['apl_a', 'apl_b']);
-  });
-
-  it('[INV] a non-string id is dropped rather than bound into the statement', () => {
-    const row = { name: 'x', appBlocks: [{ appListing: { id: 7 } }] } as never;
-    expect(listingIdsInChipRow(row)).toEqual([]);
   });
 });

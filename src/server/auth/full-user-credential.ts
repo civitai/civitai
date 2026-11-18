@@ -4,7 +4,7 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 export type BearerCredential = {
   apiKeyType?: ApiKeyType | null;
   subject?: { type: 'apiKey' | 'oauth'; id: number | string } | null;
-  tokenScope?: number | null;
+  tokenScope?: bigint | null;
 };
 
 /**
@@ -20,4 +20,24 @@ export function isFullScopeUserKey(credential: BearerCredential | null | undefin
     credential.subject?.type === 'apiKey' &&
     credential.tokenScope === TokenScope.Full
   );
+}
+
+/** Whether the request came from a session or carries a bearer credential `isFullScopeUserKey` accepts. */
+export function isSessionOrFullUserKey(ctx: BearerCredential & { apiKeyId?: number | null }) {
+  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
+  // so it is not a bearer marker.
+  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
+  return !presentedBearer || isFullScopeUserKey(ctx);
+}
+
+/**
+ * The views a request may read content with: a moderator's only for a moderator, and the owner's
+ * only on a session or a full-access key. A scoped key or an app token gets neither. The image,
+ * post and collection feeds default to neither, so a caller passes these to get either.
+ */
+export function credentialViews(
+  ctx: BearerCredential & { apiKeyId?: number | null; user?: { isModerator?: boolean } | null }
+) {
+  const full = isSessionOrFullUserKey(ctx);
+  return { asModerator: !!ctx.user?.isModerator && full, asOwner: full };
 }

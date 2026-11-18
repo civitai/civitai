@@ -1,9 +1,15 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
-  import { heartsLeft, smiteHeading } from './chrome';
+  import { heartBackLine, heartsLeft, smiteHeading } from './chrome';
 
-  let { smites, maxSmites }: { smites: number; maxSmites: number } = $props();
+  let {
+    smites,
+    maxSmites,
+    heartBack = null,
+  }: { smites: number; maxSmites: number; heartBack?: { done: number; needed: number } | null } =
+    $props();
   const hearts = $derived(heartsLeft({ smites, maxSmites }));
+  const back = $derived(heartBackLine(heartBack));
 </script>
 
 <section class="smitten" aria-labelledby="smitten-title">
@@ -18,10 +24,11 @@
       <span class:lost={heart >= hearts}><Icon name="heart" size={32} /></span>
     {/each}
   </div>
-  <p class="count">{hearts} of {maxSmites} hearts left</p>
+  <p class="count">{hearts} of {maxSmites} hearts left{#if back}{' · '}{back}{/if}</p>
   <p class="explain">
-    Judging in bad faith earns smites. Each smite costs a heart, and right judgments win hearts
-    back. Lose all {maxSmites} hearts and your career resets.
+    Now and then you'll judge an image that already has a known rating, so we can check your calls
+    still match the community's standards. Missing those earns smites. Each smite costs a heart, and
+    right judgments win hearts back. Lose all {maxSmites} hearts and your career resets.
   </p>
 </section>
 

@@ -9,6 +9,14 @@ const h = vi.hoisted(() => ({ inserts: [] as any[] }));
 
 vi.mock('$lib/server/db/db', () => ({
   db: {
+    // The account check an AI Services scope triggers: an unrestricted user.
+    selectFrom() {
+      const qb: any = {};
+      qb.select = () => qb;
+      qb.where = () => qb;
+      qb.executeTakeFirst = () => Promise.resolve({ muted: false, bannedAt: null });
+      return qb;
+    },
     insertInto() {
       const qb: any = {};
       qb.values = (v: any) => {
@@ -29,8 +37,7 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 
 import { createOAuthTokenPair } from '../token-helpers';
 
-const UserRead = 1;
-const VaultWrite = 1 << 24;
+const VaultWrite = 1n << 24n;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,9 +57,11 @@ describe('createOAuthTokenPair (parity)', () => {
     expect(access.userId).toBe(42);
     expect(access.clientId).toBe('client-x');
 
-    // UserRead forced on regardless of request
-    expect(access.tokenScope).toBe(VaultWrite | UserRead);
-    expect(refresh.tokenScope).toBe(VaultWrite | UserRead);
+    // UserRead forced on regardless of request: VaultWrite (16777216) | UserRead (1).
+    expect(access.tokenScope).toBe(16777217);
+    expect(access.tokenScopeWide).toBe('16777217');
+    expect(refresh.tokenScope).toBe(16777217);
+    expect(refresh.tokenScopeWide).toBe('16777217');
 
     // tokens are civitai_-prefixed and the stored key is the salted hash
     expect(pair.accessToken.startsWith('civitai_')).toBe(true);
@@ -62,12 +71,49 @@ describe('createOAuthTokenPair (parity)', () => {
   });
 
   it('forces UserRead even when scope is 0', async () => {
-    await createOAuthTokenPair(1, 'c', 0);
-    expect(h.inserts[0].tokenScope).toBe(UserRead);
+    await createOAuthTokenPair(1, 'c', 0n);
+    expect(h.inserts[0].tokenScope).toBe(1);
+    expect(h.inserts[0].tokenScopeWide).toBe('1');
+  });
+
+  it('writes bits 31 and 32 to tokenScopeWide only, and the low 31 bits to tokenScope', async () => {
+    // AppsRead (2^31) | AppDataRead (2^32) | VaultWrite (2^24); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 2147483648n | 4294967296n | VaultWrite);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('6459228161');
+      // The 32-bit column a pod on the previous build reads: the same mask without bits 31 and 32.
+      expect(row.tokenScope).toBe(16777217);
+    }
+  });
+
+  it('keeps bits 25..30 in tokenScope: the low column is every bit up to 30, not Full', async () => {
+    // Every defined bit (2^33 - 1).
+    await createOAuthTokenPair(1, 'c', 8589934591n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('8589934591');
+      expect(row.tokenScope).toBe(2147483647);
+    }
+    h.inserts.length = 0;
+    // LinkConnect (2^27) | AppsRead (2^31); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 2281701376n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('2281701377');
+      expect(row.tokenScope).toBe(134217729);
+    }
+    h.inserts.length = 0;
+    // DownloadLink (2^30) | AppsRead (2^31); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 3221225472n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('3221225473');
+      expect(row.tokenScope).toBe(1073741825);
+    }
   });
 
   it('sets ~1h access expiry and ~30d refresh expiry', async () => {
-    const pair = await createOAuthTokenPair(1, 'c', 0);
+    const pair = await createOAuthTokenPair(1, 'c', 0n);
     const accessMs = pair.accessTokenExpiresAt.getTime() - Date.now();
     const refreshMs = pair.refreshTokenExpiresAt.getTime() - Date.now();
     expect(Math.abs(accessMs - 60 * 60 * 1000)).toBeLessThan(5000);

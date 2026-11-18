@@ -24,7 +24,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
   `);

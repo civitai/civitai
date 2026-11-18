@@ -18,7 +18,11 @@ export const BLOCK_MEDIA_REF_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MAX_CLOCK_SKEW_SECONDS = 30;
 
 const DOMAIN = 'block-media:v1';
-const PREFIX = 'bm1';
+/** The sealed-token wire prefix: `<prefix>.<iv>.<ciphertext>.<tag>`. */
+export const BLOCK_MEDIA_TOKEN_PREFIX = 'bm1';
+const PREFIX = BLOCK_MEDIA_TOKEN_PREFIX;
+/** Where the media route serves a ticket. */
+export const BLOCK_MEDIA_PATH = '/api/v1/blocks/media';
 
 export type BlockMediaClaims = {
   blobId: string;
@@ -139,5 +143,5 @@ export function openBlockMediaTicket(token: unknown): BlockMediaTicket | null {
 }
 
 export function blockMediaUrl(ticket: string) {
-  return `/api/v1/blocks/media/${ticket}`;
+  return `${BLOCK_MEDIA_PATH}/${ticket}`;
 }
