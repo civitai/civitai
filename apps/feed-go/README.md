@@ -14,22 +14,58 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 
 ## Endpoints
 
-| Listener | Path | Purpose |
-|---|---|---|
-| `FEED_GO_ADDR` (`:8080`) | `GET /api/trpc/image.getImagesAsPostsInfinite` | the procedure; only listens when `FEED_GO_FALLBACK_URL` is set |
-| | `GET /api/trpc/model.getAll` | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
-| `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz` | liveness / readiness |
-| | `GET /metrics` | Prometheus (`feed_go_*`, Go runtime, process CPU) |
-| | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7) |
-| | `POST /internal/shadow/api/v1/images` | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly |
-| | `POST /internal/shadow/image.getInfinite` | shadow comparison of `image.getInfinite` (DESIGN.md §14); never served publicly |
-| | `POST /internal/shadow/model.getAll` | shadow comparison of `model.getAll` (DESIGN.md §15) |
-| | `GET /debug/pprof/…` | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2) |
+| Listener                          | Path                                                   | Purpose                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FEED_GO_ADDR` (`:8080`)          | `GET /api/trpc/image.getImagesAsPostsInfinite`         | the procedure; only listens when `FEED_GO_FALLBACK_URL` is set                                                                                  |
+|                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
+| `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness / readiness                                                                                                                            |
+|                                   | `GET /metrics`                                         | Prometheus (`feed_go_*`, Go runtime, process CPU)                                                                                               |
+|                                   | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7)                                                                                                                |
+|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly                                                                   |
+|                                   | `POST /internal/shadow/image.getInfinite`              | shadow comparison of `image.getInfinite` (DESIGN.md §14); never served publicly                                                                 |
+|                                   | `POST /internal/shadow/model.getAll`                   | shadow comparison of `model.getAll` (DESIGN.md §15)                                                                                             |
+|                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
 
 ## Run locally
 
-Needs Go (the version in `go.mod`), a Postgres with the app schema, a Redis for the cache and one for
-the system keys, and the auth hub's JWKS. Copy `.env.example`, fill it in, then:
+**It just works with `pnpm dev`.** The root `dev` script (`scripts/dev-feed-go/launcher.mjs`) starts
+`next dev` and, next to it, feed-go at the version pinned in `package.json`: the release binary for
+your platform (linux/darwin, amd64/arm64), downloaded once from the `feed-go-v<x.y.z>` GitHub Release
+into `node_modules/.cache/feed-go/` and checked against that release's `SHA256SUMS` (a mismatch is
+refused, never run), or, when no binary can be had and Go is installed, a `go build` of this directory.
+feed-go gets only the variables it reads from the app's own `.env` chain (database replica, both
+Redis URLs, the auth hub's issuer and JWKS, the domain and region settings and any `FEED_GO_*` you
+set), loopback listeners on free ports, and the local Next as its fallback. Next's
+`/api/trpc-go/<procedure>` rewrite then points at a loopback proxy that hands each request to feed-go
+while its `/healthz` answers, and to Next's own `/api/trpc/<procedure>` otherwise, so with feed-go
+missing, broken or exited the app behaves exactly as it did without it. In dev the launcher also
+switches the client's Go-transport flags on (`FLIPT_LOCAL_OVERRIDES` gets
+`feed-go-transport=on,feed-go-transport-model-getall=on` unless you name either key yourself), so a
+signed-in gallery feed actually reaches feed-go. feed-go is read-only here (write-back off) and answers
+nothing it has not ported, so what you see is still Node's answer for everything else.
+
+`FEED_GO_LOCAL` (real env or `.env`) picks the mode: unset or `auto` (binary, else `go build`),
+`binary`, `source` (always build this directory: use it when changing the Go code), or `off`
+(`next dev` alone, today's behaviour; a `FEED_GO_LOCAL_URL` you set yourself, e.g. to a feed-go in
+Docker, is then left in place).
+
+Troubleshooting: every launcher line starts with `[feed-go]`.
+
+| Line                                            | Meaning                                                                                                                                       |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `… ready; /api/trpc-go → feed-go`               | serving                                                                                                                                       |
+| `download of feed-go-v<x.y.z> failed: HTTP 404` | no release binaries for that tag yet (a maintainer runs the `feed-go release binaries` workflow on it); install Go or set `FEED_GO_LOCAL=off` |
+| `checksum mismatch …; refusing to run it`       | the download does not match `SHA256SUMS`; nothing was written. Retry; if it persists, report it                                               |
+| `not started: the app env has no …`             | the named variables are missing from your `.env` (values are never printed)                                                                   |
+| `exited (…)` / `unhealthy (…)`                  | feed-go stopped answering; `/api/trpc-go` is served by Next until `pnpm dev` restarts                                                         |
+
+You are editing Node's `image.getImagesAsPostsInfinite` and see no change while signed in? That
+request is answered by feed-go: run with `FEED_GO_LOCAL=off`, or set
+`FLIPT_LOCAL_OVERRIDES=feed-go-transport=off`.
+
+To run it by hand instead (needs Go, the version in `go.mod`, a Postgres with the app schema, a Redis
+for the cache and one for the system keys, and the auth hub's JWKS), copy `.env.example`, fill it in,
+then:
 
 ```bash
 cd apps/feed-go
