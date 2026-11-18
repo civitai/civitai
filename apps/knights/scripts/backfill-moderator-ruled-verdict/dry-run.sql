@@ -1,8 +1,9 @@
 -- Read-only. Classifies the moderator-ruled items by the level their votes were graded against:
 -- tier1: the answer of the votes graded correct (exactly one such answer).
--- tier2: every vote graded failed, and the image is still under a lock other than Knights' own at a level (not 0 or
---   Blocked, no block marker) that no vote answered; a vote with that answer would have been graded correct, so a
---   match means the level moved since the ruling.
+-- tier2: every vote graded failed, the image is still under a lock other than Knights' own at a level (not 0 or
+--   Blocked, no block marker) that no vote answered (a vote with that answer would have been graded correct, so a
+--   match means the level moved since the ruling), and resolvedValue is an answer graded failed. A resolvedValue that
+--   is neither a failed answer nor the image's level is an earlier moderator level: `left_already_moderator_level`.
 -- `tierN_to_fix` is what apply.sql updates; `consistent` already holds its level; every `left_*` row is left as it is
 -- (`left_contradicted`: of those, the ones whose resolvedValue is an answer graded failed). `sample`: up to 20 rows to fix.
 WITH ruled AS (
@@ -42,7 +43,8 @@ classified AS (
         false
       ) THEN 'image_not_ruled'
       WHEN img."nsfwLevel"::text = ANY (v.answers) THEN 'level_matches_a_vote'
-      ELSE 'tier2'
+      WHEN r."resolvedValue" = img."nsfwLevel"::text OR r."resolvedValue" = ANY (v.failed_answers) THEN 'tier2'
+      ELSE 'already_moderator_level'
     END AS tier
   FROM ruled r
   JOIN votes v ON v."itemId" = r.id
@@ -62,6 +64,7 @@ SELECT
   count(*) FILTER (WHERE tier = 'ungraded_votes') AS left_ungraded_votes,
   count(*) FILTER (WHERE tier = 'image_not_ruled') AS left_image_not_ruled,
   count(*) FILTER (WHERE tier = 'level_matches_a_vote') AS left_level_matches_a_vote,
+  count(*) FILTER (WHERE tier = 'already_moderator_level') AS left_already_moderator_level,
   count(*) FILTER (WHERE truth IS NULL AND "resolvedValue" = ANY (failed_answers)) AS left_contradicted,
   (
     SELECT COALESCE(json_agg(s ORDER BY s.id), '[]')

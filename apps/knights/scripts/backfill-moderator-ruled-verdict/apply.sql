@@ -1,7 +1,9 @@
 -- Sets resolvedValue on moderator-ruled items to the level their votes were graded against, by the tiers dry-run.sql
 -- describes (keep the two CTEs identical). Every other row is left alone. Safe to run again: a second run updates 0 rows.
--- Run dry-run.sql first; this leaves the transaction open: COMMIT when the UPDATE's row count equals the dry run's
--- `tier1_to_fix` + `tier2_to_fix`, otherwise ROLLBACK.
+-- Apply after the S1 fix (moderator-ruled closes record the moderator level) is deployed, so no new contradicted rows appear.
+-- Run dry-run.sql first, then this from an interactive psql session (`\i apply.sql`); `psql -f` rolls back at exit. It leaves
+-- the transaction open: COMMIT when the UPDATE's row count equals the dry run's `tier1_to_fix` + `tier2_to_fix`, otherwise
+-- ROLLBACK. Then re-run dry-run.sql: expect 0 to fix.
 BEGIN;
 
 WITH ruled AS (
@@ -13,6 +15,7 @@ votes AS (
   SELECT
     v."itemId",
     array_agg(DISTINCT v.answer) FILTER (WHERE v.verdict = 'correct') AS correct_answers,
+    array_agg(DISTINCT v.answer) FILTER (WHERE v.verdict = 'failed') AS failed_answers,
     array_agg(DISTINCT v.answer) AS answers,
     bool_and(v.verdict = 'failed') AS all_failed
   FROM "KnightsVote" v
@@ -38,7 +41,8 @@ classified AS (
         false
       ) THEN 'image_not_ruled'
       WHEN img."nsfwLevel"::text = ANY (v.answers) THEN 'level_matches_a_vote'
-      ELSE 'tier2'
+      WHEN r."resolvedValue" = img."nsfwLevel"::text OR r."resolvedValue" = ANY (v.failed_answers) THEN 'tier2'
+      ELSE 'already_moderator_level'
     END AS tier
   FROM ruled r
   JOIN votes v ON v."itemId" = r.id

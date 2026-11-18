@@ -118,6 +118,15 @@ describe('backfill-moderator-ruled-verdict', () => {
       ],
       lock: { reason: 'Moderator rating review', level: 4 },
     });
+    const earlierModeratorLevel = await closedItem(17, {
+      reason: 'moderator-ruled',
+      resolvedValue: '8',
+      votes: [
+        ['2', 'failed'],
+        ['4', 'failed'],
+      ],
+      lock: { reason: 'Moderator rating review', level: 1 },
+    });
     const knightsLocked = await closedItem(14, {
       reason: 'moderator-ruled',
       resolvedValue: '2',
@@ -141,6 +150,7 @@ describe('backfill-moderator-ruled-verdict', () => {
       consistent,
       tier2,
       levelMatchesAVote,
+      earlierModeratorLevel,
       knightsLocked,
       ungraded,
       expired,
@@ -150,6 +160,7 @@ describe('backfill-moderator-ruled-verdict', () => {
       left_ungraded_votes: 1,
       left_image_not_ruled: 1,
       left_level_matches_a_vote: 1,
+      left_already_moderator_level: 1,
       left_contradicted: 2,
     };
 
