@@ -154,7 +154,9 @@ export async function harvestRulings(
         )
         // A moderator ruling outranks players' agreement: it replaces an agreement reference, retired or not, that
         // never graded anyone. Its id is reused, and graded votes under it would then read the ruling as their answer,
-        // so a promoted one that graded players is left to retireStale. Every other existing reference is left alone.
+        // so a promoted one that graded players is left to retireStale. `answers` counts every graded answer (close
+        // ones too) and is bumped in the grading transaction, so the conflict check, which re-reads the locked row,
+        // cannot miss a grade committed meanwhile. Every other existing reference is left alone.
         .onConflict((oc) =>
           oc
             .column('imageId')
@@ -166,13 +168,9 @@ export async function harvestRulings(
               modActivityId: eb.ref('excluded.modActivityId'),
               harvestedAt: eb.ref('excluded.harvestedAt'),
               updatedAt: eb.ref('excluded.updatedAt'),
-              answers: 0,
-              failures: 0,
             }))
             .where('KnightsReferenceImage.source', '=', REFERENCE_SOURCE.agreement)
-            .where(
-              sql<boolean>`NOT EXISTS (SELECT 1 FROM "KnightsVote" v WHERE v."itemId" = -"KnightsReferenceImage"."id" AND v."verdict" IN ('correct', 'failed'))`
-            )
+            .where('KnightsReferenceImage.answers', '=', 0)
         )
         .returning('id')
         .execute();

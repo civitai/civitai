@@ -423,11 +423,11 @@ describe('harvestRulings with the spot-check on', () => {
 });
 
 describe('a moderator ruling on an image players agreed on', () => {
-  const agreementRow = (imageId: number, status: string, answer = '4') =>
+  const agreementRow = (imageId: number, status: string, answers = 0, answer = '4') =>
     pg.query(
-      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status","answers","failures")
-       VALUES ($1,'hiddenCheck',$2,'agreement','knights.image.nsfwLevel',$3,7,2)`,
-      [imageId, answer, status]
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status","answers")
+       VALUES ($1,'hiddenCheck',$2,'agreement','knights.image.nsfwLevel',$3,$4)`,
+      [imageId, answer, status, answers]
     );
   const row = async (imageId: number) =>
     (
@@ -479,23 +479,29 @@ describe('a moderator ruling on an image players agreed on', () => {
     }
   });
 
-  it('leaves a promoted agreement reference that graded players to retire when its image moves', async () => {
+  it('leaves a promoted agreement reference that graded players, even only as close, to retire when its image moves', async () => {
     await image(1, { level: 8 });
-    await agreementRow(1, 'active');
+    await agreementRow(1, 'active', 1);
     await vote(1, 100, 'failed');
+    await image(2, { level: 8 });
+    await agreementRow(2, 'active', 1);
+    await vote(2, 101, 'inconclusive');
     await ruling(1);
+    await ruling(2);
 
     const result = await harvestRulings(db, { now: NOW });
 
-    expect(result.retired).toBe(1);
-    expect(await row(1)).toEqual([
-      expect.objectContaining({
-        status: 'retired',
-        answer: '4',
-        source: 'agreement',
-        modActivityId: null,
-      }),
-    ]);
+    expect(result.retired).toBe(2);
+    for (const imageId of [1, 2]) {
+      expect(await row(imageId)).toEqual([
+        expect.objectContaining({
+          status: 'retired',
+          answer: '4',
+          source: 'agreement',
+          modActivityId: null,
+        }),
+      ]);
+    }
   });
 
   it('leaves a ruled reference alone, retired or not', async () => {
