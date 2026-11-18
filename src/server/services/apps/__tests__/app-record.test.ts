@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
-import { OWNER_HANDLE_RE, parseOwnedDocumentUrn } from '~/server/registry-adapter/urn';
+import { OWNER_HANDLE_RE, parseOwnedDocumentUrn, registryUrn } from '~/server/registry-adapter/urn';
 import type {
   AppRecordConfig,
   RecordOwnerPolicy,
@@ -346,30 +346,50 @@ describe('toAppRecord', () => {
     expect(rec.rev).toBe(docRev(r, [S1, S2]));
   });
 
-  it('builds a shared own record under the author’s handle', () => {
-    const rec = toAppRecord(config(), {
-      slug: 'pixel-garden',
-      collection: 'seed_packs',
-      policy: { kind: 'docs', visibility: 'shared', write: 'own' },
-      row: row(),
-      writer,
-      claim: claimBoth,
-    });
-    expect(rec.urn).toBe(`urn:apps.civitai.com:pixel-garden/seed_packs/${AUTHOR_HANDLE}/pk-31`);
-    expect(rec.owner).toEqual({ kind: 'user', userId: AUTHOR_UID });
-  });
+  // A shared collection is one key space per app, and the registry feed already publishes its
+  // documents as `<slug>/<coll>/<key>` (doc-feed.ts builds it with `registryUrn` kind
+  // `document`). A record of the same document must carry that same URN, whoever owns it.
+  const FEED_URN = 'urn:apps.civitai.com:pixel-garden/seed_packs/pk-31';
 
-  it('builds a shared anyone record, edited by another user, under the creator’s handle', () => {
+  it.each([
+    ['own', {}],
+    ['anyone', { lastWriterUid: EDITOR_UID }],
+  ] as const)(
+    'a shared %s record, owned by its creator, keeps the URN the feed publishes',
+    (write, over) => {
+      const rec = toAppRecord(config(), {
+        slug: 'pixel-garden',
+        collection: 'seed_packs',
+        policy: { kind: 'docs', visibility: 'shared', write },
+        row: row(over),
+        writer,
+        claim: claimBoth,
+      });
+      expect(rec.urn).toBe(FEED_URN);
+      expect(rec.urn).toBe(
+        registryUrn({
+          kind: 'document',
+          slug: 'pixel-garden',
+          collection: 'seed_packs',
+          key: 'pk-31',
+        })
+      );
+      expect(parseOwnedDocumentUrn(rec.urn)).toBeNull();
+      expect(rec.urn).not.toContain(AUTHOR_HANDLE);
+      expect(rec.owner).toEqual({ kind: 'user', userId: AUTHOR_UID });
+    }
+  );
+
+  it('builds a private log record under the scope user’s handle too', () => {
     const rec = toAppRecord(config(), {
       slug: 'pixel-garden',
       collection: 'seed_packs',
-      policy: { kind: 'docs', visibility: 'shared', write: 'anyone' },
-      row: row({ lastWriterUid: EDITOR_UID }),
+      policy: { kind: 'log', visibility: 'private' },
+      row: row({ scopeUid: SCOPE_UID }),
       writer,
       claim: claimBoth,
     });
-    expect(rec.urn).toBe(`urn:apps.civitai.com:pixel-garden/seed_packs/${AUTHOR_HANDLE}/pk-31`);
-    expect(rec.owner).toEqual({ kind: 'user', userId: AUTHOR_UID });
+    expect(rec.urn).toBe(`urn:apps.civitai.com:pixel-garden/seed_packs/${SCOPE_HANDLE}/pk-31`);
   });
 
   it('gives one user the same handle in two apps, so their records join', () => {
@@ -389,7 +409,7 @@ describe('toAppRecord', () => {
   it.each([
     ['owner', { kind: 'app' }],
     ['none', { kind: 'nobody' }],
-  ] as const)('a shared %s record has the plain document URN', (write, owner) => {
+  ] as const)('a shared %s record keeps the URN the feed publishes', (write, owner) => {
     const rec = toAppRecord(config(), {
       slug: 'pixel-garden',
       collection: 'seed_packs',
@@ -398,7 +418,7 @@ describe('toAppRecord', () => {
       writer,
       claim: claimBoth,
     });
-    expect(rec.urn).toBe('urn:apps.civitai.com:pixel-garden/seed_packs/pk-31');
+    expect(rec.urn).toBe(FEED_URN);
     expect(rec.owner).toEqual(owner);
   });
 

@@ -7,7 +7,7 @@
  * issue #6 (URNs or https URLs as identifiers) may still change the identifier FORM; that would
  * be a mechanical change of these builders, with the namespace staying `apps.civitai.com`.
  *
- * Length: the longest URN built here is a user-owned document's, `urn:apps.civitai.com:` plus a
+ * Length: the longest URN built here is a private document's, `urn:apps.civitai.com:` plus a
  * 64-char slug, a 32-char collection, a 22-char owner handle and a 128-char key with their three
  * `/`: 270 characters. A document with no owner segment is at most 247.
  */
@@ -40,8 +40,9 @@ export type UrnRef =
   | { kind: 'collection-schema'; slug: string; collection: string; major: number }
   | { kind: 'document'; slug: string; collection: string; key: string }
   /**
-   * A document owned by a user: the owner's handle (`OWNER_HANDLE_RE`, an opaque pseudonym that
-   * is the same in every app, never the user id) sits between the collection and the key. Four
+   * A document in a PRIVATE collection (one key space per user, so the key alone is not unique):
+   * the user's handle (`OWNER_HANDLE_RE`, an opaque pseudonym that is the same in every app, never
+   * the user id) sits between the collection and the key. A shared document keeps `document`. Four
    * segments after the namespace, where a document without an owner has three, and no segment
    * may hold `/`, so the two forms never read as each other.
    */
@@ -123,7 +124,7 @@ export function parseCollectionSchemaUrn(
 }
 
 /**
- * The parts of a user-owned document URN this adapter would issue (`owned-document`), or null
+ * The parts of a private (owned-document) URN this adapter would issue, or null
  * for any other string: another namespace, a document URN without an owner segment, a segment
  * the builder would refuse, or anything trailing. `registryUrn` of the result is `urn` again.
  */

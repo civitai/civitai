@@ -15,9 +15,12 @@
  *   - `body`:   small structured data, at most {@link APP_RECORD_BODY_MAX_BYTES}. Large content is
  *               a URL reference inside the body, never inline.
  *
- * A user-owned record's URN carries the owner's HANDLE (`owned-document` in `urn.ts`): a keyed
- * pseudonym of the user id, the same in every app, so records about one user join on URN without
- * the URN telling anyone the user id.
+ * A PRIVATE record's URN carries the owner's HANDLE (`owned-document` in `urn.ts`): a private
+ * collection is one key space per user, so the key alone is not unique. The handle is a keyed
+ * pseudonym of the user id, the same in every app, so one user's records join on URN without the
+ * URN telling anyone the user id. A SHARED record (one key space per app) keeps exactly the
+ * document URN the registry feed already publishes, whoever owns it: a published URN is never
+ * rewritten.
  *
  * 🔴 SWITCHED OFF, AND NOTHING CALLS IT. Everything that needs the handle key takes an
  * {@link AppRecordConfig}, and the only way to get one is {@link appRecordConfig}, which returns
@@ -186,8 +189,9 @@ export type RecordSchemaClaim = (data: unknown) => string[];
 
 /**
  * The record of one stored document. `claim` is the collection family's claimer from the feed
- * (`createClaimer()(family, familyDigest(family))`). A user-owned record's URN carries the
- * owner's handle; any other record's is the document URN the feed already issues.
+ * (`createClaimer()(family, familyDigest(family))`). A private record's URN carries the
+ * scope user's handle; a shared record's is the document URN the feed already publishes, whatever
+ * its owner.
  */
 export function toAppRecord(
   config: AppRecordConfig,
@@ -203,13 +207,17 @@ export function toAppRecord(
   const { slug, collection, policy, row, writer, claim } = input;
   assertRecordBodySize(row.data);
   const owner = recordOwner(policy, row);
+  // The URN shape depends on visibility only, never on the owner: a private collection is one
+  // key space per user, so its URN needs the owner's handle to be unique; a shared collection is
+  // one key space per app, and its documents keep the URN the registry feed already publishes
+  // (`doc-feed.ts`, the same builder), since a published URN is never rewritten.
   const urn =
-    owner.kind === 'user'
+    policy.visibility === 'private'
       ? registryUrn({
           kind: 'owned-document',
           slug,
           collection,
-          handle: ownerHandle(config, owner.userId),
+          handle: ownerHandle(config, row.scopeUid),
           key: row.key,
         })
       : registryUrn({ kind: 'document', slug, collection, key: row.key });
