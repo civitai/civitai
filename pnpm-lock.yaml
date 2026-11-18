@@ -956,6 +956,9 @@ importers:
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
@@ -965,6 +968,9 @@ importers:
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
       '@node-oauth/oauth2-server':
         specifier: ^5.3.0
         version: 5.3.0
