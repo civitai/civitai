@@ -701,7 +701,7 @@
     <WatchMeta
       value={strip.value}
       max={strip.max}
-      watch={data.watchDay}
+      watch={data.watchKey}
       done={strip.done}
       streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}

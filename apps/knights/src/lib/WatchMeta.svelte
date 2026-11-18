@@ -20,7 +20,7 @@
   }: {
     value: number;
     max: number;
-    /** The Watch's UTC day: the bell rings once per Watch. */
+    /** Names the Watch (its UTC day and career): the bell rings once per Watch. */
     watch: string;
     done: boolean;
     streak: number;

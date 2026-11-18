@@ -178,7 +178,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     category: picked?.category ?? null,
     ...common,
     daily,
-    watchDay: utcDay(now),
+    watchKey: `${utcDay(now)}:${daily.startAt.toISOString()}`,
     rail,
     resetPending,
     apprenticeMeter,

@@ -109,7 +109,7 @@ beforeEach(() => {
   });
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
-  getDailyStatus.mockResolvedValue({ votes: 3 });
+  getDailyStatus.mockResolvedValue({ votes: 3, startAt: new Date(0) });
   railFor.mockReset();
   railFor.mockResolvedValue({ standing: null, activity: null });
   pickHiddenCheck.mockReset();
@@ -301,7 +301,7 @@ describe('play load', () => {
 
     const page = await run();
 
-    expect(page.daily).toEqual({ votes: 3 });
+    expect(page.daily).toEqual({ votes: 3, startAt: new Date(0) });
     expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
@@ -309,6 +309,14 @@ describe('play load', () => {
       level: 2,
       now: NOW,
     });
+  });
+
+  it('names the Watch by its day and career, so a career reset starts a new one', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
+    const before = (await run()).watchKey;
+    getDailyStatus.mockResolvedValue({ votes: 0, startAt: new Date('2026-12-15T10:00:00Z') });
+
+    expect((await run()).watchKey).not.toBe(before);
   });
 
   it("gives a Knight the rail: board position, gap and the Order's activity, read at the injected clock", async () => {

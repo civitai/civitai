@@ -1,4 +1,4 @@
-/** `watch` names the Watch (its UTC day): the bell re-arms only for a new one. */
+/** `watch` names the Watch (its UTC day and career): the bell re-arms only for a new one. */
 export type WatchReading = { value: number; max: number; watch: string };
 
 const complete = ({ value, max }: WatchReading) => max > 0 && value >= max;
