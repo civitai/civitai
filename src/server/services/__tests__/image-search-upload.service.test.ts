@@ -6,6 +6,7 @@ import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
 import type * as SearchUploadRows from '~/server/services/search-upload-rows';
 import type { SearchUploadRecord } from '~/server/services/search-upload-rows';
+import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
 
 const rows = vi.hoisted(() => ({
   findOwnedSearchUpload: vi.fn(),
@@ -13,7 +14,10 @@ const rows = vi.hoisted(() => ({
   hasUnscannedSearchUpload: vi.fn(),
 }));
 const blob = vi.hoisted(() => ({ readBlobState: vi.fn() }));
-const upload = vi.hoisted(() => ({ stageGenerationOutputImage: vi.fn() }));
+const upload = vi.hoisted(() => ({
+  stageGenerationOutputImage: vi.fn(),
+  fitGenerationSourceBounds: vi.fn(),
+}));
 vi.mock('~/server/services/search-upload-rows', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchUploadRows>()),
   ...rows,
@@ -27,12 +31,22 @@ vi.mock('~/server/services/blocks/block-image-upload.service', async (importOrig
   ...upload,
 }));
 
+// The real createImage writes the row, so the success path is asserted on what reaches the db.
+vi.mock('~/server/utils/created-image-media-probe', () => ({
+  probeCreatedImageMedia: vi.fn(async () => 'present'),
+}));
+vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorService>()),
+  createImageIngestionRequest: vi.fn(async () => ({ data: { id: 'wf' } })),
+}));
+
 const h = vi.hoisted(() => ({ claim: vi.fn() }));
 vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitBucket>()),
   claimRateLimitAttempt: h.claim,
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   claimSearchUploadSlot,
   getSearchUploadStatus,
@@ -217,5 +231,50 @@ describe('preparing a search upload', () => {
     h.claim.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
     await expect(prepare()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(upload.stageGenerationOutputImage).not.toHaveBeenCalled();
+  });
+  describe('once the slot is taken and the bytes are staged', () => {
+    const staged = {
+      url: 'staged-key',
+      mimeType: 'image/png',
+      hash: 'bh',
+      metadata: { width: 640, height: 480 },
+    };
+    const createdData = () => dbMock.dbWrite.image.create.mock.calls[0][0].data;
+
+    beforeEach(() => {
+      dbMock.dbWrite.image.create.mockReset().mockResolvedValue({ id: 4242 } as never);
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+      dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null } as never);
+      upload.fitGenerationSourceBounds
+        .mockReset()
+        .mockResolvedValue({ bytes: Buffer.from('fitted'), size: { width: 640, height: 480 } });
+      upload.stageGenerationOutputImage
+        .mockReset()
+        .mockImplementation(async (opts: { transform: (b: Buffer) => Promise<Buffer> }) => {
+          await opts.transform(Buffer.from('raw'));
+          return staged;
+        });
+    });
+
+    it('stores the row for the viewer, tagged as a search upload of that blob', async () => {
+      await expect(prepare()).resolves.toEqual({ uploadId: 4242 });
+      expect(dbMock.dbWrite.image.create).toHaveBeenCalledTimes(1);
+      expect(createdData()).toMatchObject({
+        userId: 5,
+        url: 'staged-key',
+        width: 640,
+        height: 480,
+        metadata: { searchUploadRef: 'upload:blob-1', searchUploadAppId: 'search-upload' },
+      });
+    });
+
+    it('refuses, storing nothing, when the bytes were never measured', async () => {
+      upload.stageGenerationOutputImage.mockReset().mockResolvedValue(staged);
+      await expect(prepare()).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: SEARCH_UPLOAD_REFUSED_MESSAGE,
+      });
+      expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+    });
   });
 });
