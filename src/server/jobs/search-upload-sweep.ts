@@ -28,10 +28,10 @@ const SWEEPABLE = Prisma.sql`
 const BATCH = 500;
 
 /**
- * Deletes a search-by-upload row an hour after it passed the scan cleanly or the scan failed (a day
- * when the scan never answered). Anything held or flagged
- * is kept: deleting an image cascades its pending ScanLabelItem vote, a ToS violation may be
- * moderation evidence, and an uploader with an unsent CSAM report keeps every row.
+ * Deletes a search-by-upload row an hour after upload once its scan finished (a day if the scan
+ * never answered). Held or flagged rows are kept: deleting an image cascades its pending
+ * ScanLabelItem vote, a ToS violation may be moderation evidence, and an uploader with an unsent
+ * CSAM report keeps every row.
  */
 export const searchUploadSweepJob = createJob('search-upload-sweep', '*/10 * * * *', () =>
   sweepSearchUploads()

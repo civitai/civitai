@@ -110,4 +110,10 @@ describe('imageSearchUpload', () => {
       })
     );
   });
+
+  it('stops before searching when the gate refuses the upload', async () => {
+    h.anchor.mockRejectedValue(Object.assign(new Error('refused'), { code: 'FORBIDDEN' }));
+    await expect(search(USER)).rejects.toThrow();
+    expect(h.search).not.toHaveBeenCalled();
+  });
 });

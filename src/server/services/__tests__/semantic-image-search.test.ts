@@ -1205,6 +1205,38 @@ describe('search by uploaded image', () => {
     expect(page.items.length).toBeGreaterThan(0);
   });
 
+  it('never serves an upload from the shared candidate cache', async () => {
+    const counted = (user: SessionUser) => {
+      const { source, calls } = rankedSource([101, 102]);
+      h.fakeGetAllImages = async (args) => ({
+        items: args.ids.map((id) => ({ id, nsfwLevel: PG })),
+        nextCursor: undefined,
+      });
+      const once = (over: object) =>
+        searchSemanticImages({
+          ...SESSION_VIEWS,
+          input: { browsingLevel: ALL_LEVELS, limit: 50 } as SemanticImageSearchInput,
+          user,
+          candidateSource: source,
+          ...over,
+        });
+      return { calls, once };
+    };
+    const upload = counted(VIEWER);
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    expect(upload.calls).toHaveLength(2);
+    // Control: the same repeat as a text search is answered from the cache the second time.
+    const text = counted({ id: 502, isModerator: false } as SessionUser);
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    expect(text.calls).toHaveLength(1);
+  });
+
   it('leaves a moderator at every level', async () => {
     const { calls } = await run(PG, ALL_LEVELS, { id: 501, isModerator: true } as SessionUser);
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
