@@ -302,6 +302,14 @@ class EmerchantPayCaller extends HttpCaller {
   }
 }
 
-export default EmerchantPayCaller.getInstance();
+// Built on first use, not at import: the constructor throws without its env, and a static
+// import chain (tRPC routers) loads this module during the build's page-data collection.
+export default new Proxy({} as EmerchantPayCaller, {
+  get(_, key) {
+    const instance = EmerchantPayCaller.getInstance();
+    const value = Reflect.get(instance, key, instance);
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+});
 
 export { EmerchantPayCaller };

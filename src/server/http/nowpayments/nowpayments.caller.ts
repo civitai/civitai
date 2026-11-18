@@ -296,4 +296,12 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 }
 
-export default NOWPaymentsCaller.getInstance();
+// Built on first use, not at import: the constructor throws without its env, and a static
+// import chain (tRPC routers) loads this module during the build's page-data collection.
+export default new Proxy({} as NOWPaymentsCaller, {
+  get(_, key) {
+    const instance = NOWPaymentsCaller.getInstance();
+    const value = Reflect.get(instance, key, instance);
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+});
