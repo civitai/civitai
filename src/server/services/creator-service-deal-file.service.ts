@@ -580,9 +580,12 @@ async function deleteFileObjects(file: FileObjects) {
   for (const { client, bucket, key } of targets) {
     const remaining = await purgeObjectVersions({ client, bucket, key })
       .then((result) => result.remaining)
-      .catch(async () => {
+      .catch(async (error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
         await deleteObject(bucket, key, client).catch(() => null);
-        return null;
+        // A store without versioning answers 501: the plain delete is the whole delete there.
+        const unversioned =
+          error?.$metadata?.httpStatusCode === 501 || error?.name === 'NotImplemented';
+        return unversioned ? 0 : null;
       });
     if (remaining !== 0)
       logToAxiom({

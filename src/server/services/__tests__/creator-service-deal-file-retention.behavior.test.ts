@@ -34,7 +34,6 @@ vi.mock('~/utils/s3-utils', () => ({
   uploadImageBufferToStore: vi.fn(),
 }));
 vi.mock('~/utils/s3-purge-versions', () => ({ purgeObjectVersions: s3.purgeObjectVersions }));
-void loggingMock;
 
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {
@@ -409,13 +408,32 @@ describe('the purge after the sweep', () => {
     expect(JSON.stringify(record)).not.toContain('portrait');
   });
 
-  it('falls back to a plain delete where versions cannot be listed, and still purges', async () => {
+  it('takes a store without versioning (501) as a plain delete, with no warning', async () => {
+    const { dealId } = await closedDeal('Cancelled', 40);
+    s3.purgeObjectVersions.mockRejectedValue(
+      Object.assign(new Error('NotImplemented'), {
+        name: 'NotImplemented',
+        $metadata: { httpStatusCode: 501 },
+      })
+    );
+    await sweep();
+    expect(await files.purgeRemovedFiles()).toBe(2);
+    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'object versions may remain after delete' })
+    );
+  });
+
+  it('falls back to a plain delete on any other listing error, warns, and still purges', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied'));
     await sweep();
     expect(await files.purgeRemovedFiles()).toBe(2);
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
     expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'object versions may remain after delete' })
+    );
   });
 });
 
