@@ -79,12 +79,13 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 // metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
 // configured (cfg.ClickHouseURL empty) or its URL is invalid, so feed-go starts and those misses fall
 // back (`metrics-miss`). The error is for the startup log; it never names the URL or credentials.
-func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
+// tracer spans its reads (nil when tracing is off).
+func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
 	if cfg.ClickHouseURL == "" {
 		return nil, nil
 	}
 	c, err := chread.New(chread.Config{URL: cfg.ClickHouseURL, Username: cfg.ClickHouseUsername, Password: cfg.ClickHousePassword,
-		MaxInFlight: cfg.ClickHouseMaxInFlight})
+		MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer})
 	if err != nil {
 		return nil, err
 	}
@@ -92,9 +93,10 @@ func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
 }
 
 // attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
-// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). The error is metricsReader's.
-func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute) error {
-	reader, err := metricsReader(cfg)
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader), its reads spanned by tracer (nil:
+// tracing off). The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tracer chread.Tracer) error {
+	reader, err := metricsReader(cfg, tracer)
 	if c != nil && reader != nil {
 		c.ClickHouse = reader
 		c.MetricsTimeout = cfg.ClickHouseTimeout
@@ -185,7 +187,11 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
-	if err := attachMetricsReader(cfg, sources.Compute); err != nil {
+	var chTracer chread.Tracer
+	if tp != nil {
+		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
+	}
+	if err := attachMetricsReader(cfg, sources.Compute, chTracer); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -57,15 +58,15 @@ func TestMissCompute(t *testing.T) {
 // refuses is an error that names neither the URL nor the credentials, and no reader (feed-go still
 // starts and those misses fall back).
 func TestMetricsReader(t *testing.T) {
-	if r, err := metricsReader(&config.Config{}); r != nil || err != nil {
+	if r, err := metricsReader(&config.Config{}, nil); r != nil || err != nil {
 		t.Fatalf("unconfigured = %v, %v; want no reader, no error", r, err)
 	}
-	r, err := metricsReader(&config.Config{ClickHouseURL: "https://ch.example.test:8443", ClickHouseUsername: "u", ClickHouseMaxInFlight: 2})
+	r, err := metricsReader(&config.Config{ClickHouseURL: "https://ch.example.test:8443", ClickHouseUsername: "u", ClickHouseMaxInFlight: 2}, nil)
 	if err != nil || r == nil {
 		t.Fatalf("configured = %v, %v; want a reader", r, err)
 	}
 	for _, bad := range []string{"ch.example.test:8443", "https://user:secret-pw@ch.example.test", "ftp://ch.example.test", "http://%zz"} {
-		r, err := metricsReader(&config.Config{ClickHouseURL: bad, ClickHouseUsername: "u"})
+		r, err := metricsReader(&config.Config{ClickHouseURL: bad, ClickHouseUsername: "u"}, nil)
 		if r != nil || err == nil {
 			t.Fatalf("%q = %v, %v; want no reader and an error", bad, r, err)
 		}
@@ -98,11 +99,11 @@ func loadConfig(t *testing.T, env map[string]string) *config.Config {
 // builds a reader; feed-go's own variables do.
 func TestMetricsReaderIgnoresTheAppLogin(t *testing.T) {
 	app := map[string]string{"CLICKHOUSE_HOST": "https://app-ch.example.test:8443", "CLICKHOUSE_USERNAME": "app-writer", "CLICKHOUSE_PASSWORD": "app-pw"}
-	if r, err := metricsReader(loadConfig(t, app)); r != nil || err != nil {
+	if r, err := metricsReader(loadConfig(t, app), nil); r != nil || err != nil {
 		t.Fatalf("the app's variables only = %v, %v; want no reader", r, err)
 	}
 	own := map[string]string{"FEED_GO_CLICKHOUSE_HOST": "https://ch.example.test:8443", "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader", "FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw"}
-	if r, err := metricsReader(loadConfig(t, own)); r == nil || err != nil {
+	if r, err := metricsReader(loadConfig(t, own), nil); r == nil || err != nil {
 		t.Fatalf("feed-go's variables = %v, %v; want a reader", r, err)
 	}
 }
@@ -140,7 +141,7 @@ func TestAttachMetricsReader(t *testing.T) {
 
 	cfg := loadConfig(t, app)
 	c := compute(cfg)
-	if err := attachMetricsReader(cfg, c); err != nil || c.ClickHouse != nil {
+	if err := attachMetricsReader(cfg, c, nil); err != nil || c.ClickHouse != nil {
 		t.Fatalf("the app's variables only: reader %v, %v; want none", c.ClickHouse, err)
 	}
 
@@ -151,7 +152,7 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 	cfg = loadConfig(t, env)
 	c = compute(cfg)
-	if err := attachMetricsReader(cfg, c); err != nil || c.ClickHouse == nil {
+	if err := attachMetricsReader(cfg, c, nil); err != nil || c.ClickHouse == nil {
 		t.Fatalf("feed-go's variables: reader %v, %v; want one", c.ClickHouse, err)
 	}
 	if c.MetricsTimeout != 10*time.Second {
@@ -164,5 +165,54 @@ func TestAttachMetricsReader(t *testing.T) {
 	defer mu.Unlock()
 	if len(appHits) != 0 || !reflect.DeepEqual(ownHits, []seen{{"feed-go-reader", "feed-go-pw"}}) {
 		t.Fatalf("app endpoint hit %v, own endpoint hit %v; want only the own endpoint, with feed-go's login", appHits, ownHits)
+	}
+}
+
+// countingTracer is a chread.Tracer that counts the calls it sees.
+type countingTracer struct {
+	mu           sync.Mutex
+	starts, ends int
+	rows         int
+}
+
+func (c *countingTracer) QueryStart(ctx context.Context, _ string) context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.starts++
+	return ctx
+}
+
+func (c *countingTracer) QueryEnd(_ context.Context, rows int, _ error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ends++
+	c.rows += rows
+}
+
+var _ chread.Tracer = (*countingTracer)(nil)
+
+// The tracer run() hands attachMetricsReader (tracing.ClickHouseTracer when tracing is on) is the one
+// the miss computation's reader calls on every read.
+func TestAttachMetricsReaderTracesItsReads(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("{\"entityId\":32,\"metricType\":\"Like\",\"value\":4}\n{\"entityId\":33,\"metricType\":\"Cry\",\"value\":2}\n"))
+	}))
+	t.Cleanup(srv.Close)
+	cfg := loadConfig(t, map[string]string{"FEED_GO_CLICKHOUSE_HOST": srv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader"})
+	c := missCompute(cfg, &testkit.DB{}, nil, &feed.BlockedTags{Cache: testkit.NewRedis()}, nil)
+	if c == nil {
+		t.Fatal("no miss computation")
+	}
+	tr := &countingTracer{}
+	if err := attachMetricsReader(cfg, c, tr); err != nil || c.ClickHouse == nil {
+		t.Fatalf("reader %v, %v; want one", c.ClickHouse, err)
+	}
+	if _, err := c.ClickHouse.Query(context.Background(), "SELECT 1", nil); err != nil {
+		t.Fatal(err)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.starts != 1 || tr.ends != 1 || tr.rows != 2 {
+		t.Fatalf("tracer saw %d starts, %d ends, %d rows; want 1, 1, 2", tr.starts, tr.ends, tr.rows)
 	}
 }

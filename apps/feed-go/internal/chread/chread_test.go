@@ -251,3 +251,116 @@ func TestNew(t *testing.T) {
 		t.Fatalf("MaxInFlight 0: %v, %d slots; want 1", err, cap(c.slots))
 	}
 }
+
+// tracerKey carries, on the context a recordingTracer's QueryStart returned, the SQL it started.
+type tracerKey struct{}
+
+// recordingTracer is a Tracer that records each call: the SQL QueryStart saw, and for each QueryEnd
+// the SQL its context was started for, the rows and the error.
+type recordingTracer struct {
+	mu     sync.Mutex
+	starts []string
+	ends   []string
+	rows   []int
+	errs   []error
+}
+
+func (r *recordingTracer) QueryStart(ctx context.Context, sql string) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.starts = append(r.starts, sql)
+	return context.WithValue(ctx, tracerKey{}, sql)
+}
+
+func (r *recordingTracer) QueryEnd(ctx context.Context, rows int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, _ := ctx.Value(tracerKey{}).(string)
+	r.ends = append(r.ends, s)
+	r.rows = append(r.rows, rows)
+	r.errs = append(r.errs, err)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A Config.Tracer sees every Query: the SQL as passed, then the rows returned or the error, on the
+// context its QueryStart returned, which is also the context the request is sent on (so a span it
+// starts is the parent of the HTTP round trip). A read refused for its slot (ErrBusy) is seen too,
+// and sends nothing.
+func TestQueryTracer(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	srv, _ := fakeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("query") {
+		case WireQuery("SELECT bad"):
+			w.Header().Set("X-ClickHouse-Exception-Code", "62")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("Code: 62. DB::Exception: Syntax error"))
+		case WireQuery("SELECT slow"):
+			entered <- struct{}{}
+			<-release
+			_, _ = w.Write([]byte("{\"a\":1}\n"))
+		default:
+			_, _ = w.Write([]byte("{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n"))
+		}
+	})
+	var mu sync.Mutex
+	var sentOn []string
+	hc := srv.Client()
+	inner := hc.Transport
+	hc.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		s, _ := r.Context().Value(tracerKey{}).(string)
+		mu.Lock()
+		sentOn = append(sentOn, s)
+		mu.Unlock()
+		return inner.RoundTrip(r)
+	})
+	tr := &recordingTracer{}
+	c, err := New(Config{URL: srv.URL, MaxInFlight: 1, HTTP: hc, Tracer: tr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := c.Query(context.Background(), "SELECT ok", nil); err != nil || len(rows) != 3 {
+		t.Fatalf("ok: %d rows, %v; want 3, nil", len(rows), err)
+	}
+	if _, err := c.Query(context.Background(), "SELECT bad", nil); err == nil {
+		t.Fatal("bad: no error")
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Query(context.Background(), "SELECT slow", nil)
+		done <- err
+	}()
+	<-entered
+	if _, err := c.Query(context.Background(), "SELECT refused", nil); !errors.Is(err, ErrBusy) {
+		t.Fatalf("refused: %v, want ErrBusy", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("slow: %v", err)
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if want := []string{"SELECT ok", "SELECT bad", "SELECT slow", "SELECT refused"}; !reflect.DeepEqual(tr.starts, want) {
+		t.Fatalf("QueryStart saw %q, want %q", tr.starts, want)
+	}
+	// The refused read ends while the slow one still holds the slot.
+	if want := []string{"SELECT ok", "SELECT bad", "SELECT refused", "SELECT slow"}; !reflect.DeepEqual(tr.ends, want) {
+		t.Fatalf("QueryEnd got the contexts of %q, want %q", tr.ends, want)
+	}
+	if want := []int{3, 0, 0, 1}; !reflect.DeepEqual(tr.rows, want) {
+		t.Fatalf("QueryEnd rows %v, want %v", tr.rows, want)
+	}
+	var se *ServerError
+	if tr.errs[0] != nil || !errors.As(tr.errs[1], &se) || se.Code != 62 || !errors.Is(tr.errs[2], ErrBusy) || tr.errs[3] != nil {
+		t.Fatalf("QueryEnd errors %v; want nil, code 62, ErrBusy, nil", tr.errs)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"SELECT ok", "SELECT bad", "SELECT slow"}; !reflect.DeepEqual(sentOn, want) {
+		t.Fatalf("requests sent on the contexts of %q, want %q", sentOn, want)
+	}
+}

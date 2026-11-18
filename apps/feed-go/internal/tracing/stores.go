@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
@@ -26,6 +27,7 @@ var (
 	attrRedisClient = attribute.Key("feed_go.redis")
 	attrErrorType   = attribute.Key("error.type")
 	attrRowsAff     = attribute.Key("db.response.rows_affected")
+	attrRowsRet     = attribute.Key("db.response.returned_rows")
 )
 
 // pgxSpanKey holds the span TraceQueryStart started, for TraceQueryEnd.
@@ -164,6 +166,47 @@ func endRedis(span trace.Span, err error) {
 	if err != nil && !errors.Is(err, redis.Nil) {
 		span.SetStatus(codes.Error, fallback.Class(err))
 		span.SetAttributes(attrErrorType.String(fallback.Type(err)))
+	}
+	span.End()
+}
+
+// chSpanKey holds the span ClickHouseTracer.QueryStart started, for QueryEnd.
+type chSpanKey struct{}
+
+// ClickHouseTracer is a chread.Tracer: one client span per ClickHouse read (`clickhouse query`, its
+// operation keyword as db.operation.name), started only under a RECORDING span (an unsampled request
+// pays one context read). No text of the query is recorded, not even a hash: the metrics read inlines
+// its ids into the SQL, so a hash would be one value per id list. Nor the request URL (it carries
+// the query) or the login.
+type ClickHouseTracer struct {
+	Tracer trace.Tracer
+}
+
+var _ chread.Tracer = ClickHouseTracer{}
+
+// QueryStart starts the read's span.
+func (t ClickHouseTracer) QueryStart(ctx context.Context, sql string) context.Context {
+	if !trace.SpanFromContext(ctx).IsRecording() {
+		return ctx
+	}
+	ctx, span := t.Tracer.Start(ctx, "clickhouse query", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		attrDBSystem.String("clickhouse"), attrDBOperation.String(Operation(sql))))
+	return context.WithValue(ctx, chSpanKey{}, span)
+}
+
+// QueryEnd ends it: an error (a refused slot, a timeout, a ClickHouse exception) is the status (its
+// class, fallback.Class) and error.type, never its text (a ClickHouse exception quotes the query);
+// else the rows returned.
+func (t ClickHouseTracer) QueryEnd(ctx context.Context, rows int, err error) {
+	span, ok := ctx.Value(chSpanKey{}).(trace.Span)
+	if !ok {
+		return
+	}
+	if err != nil {
+		span.SetStatus(codes.Error, fallback.Class(err))
+		span.SetAttributes(attrErrorType.String(fallback.Type(err)))
+	} else {
+		span.SetAttributes(attrRowsRet.Int(rows))
 	}
 	span.End()
 }
