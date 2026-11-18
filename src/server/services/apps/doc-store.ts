@@ -1511,6 +1511,16 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
+ * THE RATER (content levels): list the shared documents that need a rating and record one, as a
+ * SEPARATE object from the viewer store, so holding the block-token routes' store gives no path to
+ * writing a rating. Only `doc-store-rater.instance.ts` builds one in production.
+ */
+export function createDocStoreRater(deps: DocStoreDeps) {
+  return buildDocStore(deps).rater;
+}
+export type DocStoreRater = ReturnType<typeof createDocStoreRater>;
+
+/**
  * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`), account deletion
  * (`wipeAccount`) and app deletion (`purgeApp`) — as a separate object from the viewer store: the
  * first runs with the setting that reaches every `rev:` row of a request, the second with the one
@@ -3611,6 +3621,7 @@ function buildDocStore(deps: DocStoreDeps) {
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
+    rater: createRater({ withTx, charge }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
     viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
   };
@@ -3893,6 +3904,36 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   FOR UPDATE`;
 
+// THE RATER (content levels, build 3; `doc-rater.service.ts`). The shared documents of one
+// collection that are not rated for their current version — never rated (NULL), `pending`, or
+// rated or overridden for an older version (`RATED_NOW` is false) — oldest change first, after a
+// seq cursor. Counter documents hold no `data` to rate, and a hidden one waits for a moderator.
+// Read server-side to be rated; never returned to a viewer. Uses `doc_feed_shared_seq_idx`.
+// $1 app, $2 ns, $3 coll, $4 seq cursor (exclusive), $5 limit
+const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.author_kind <> 'counter' AND d.hidden_at IS NULL
+    AND NOT ${RATED_NOW}
+  ORDER BY d.seq
+  LIMIT $5::int`;
+
+// The rater's lock read: the revision its rating is bound to. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_LOCK = `SELECT d.seq, d.author_kind, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  FOR UPDATE`;
+
+// Record a rating for the document's CURRENT version and give it the next seq, so a feed reader
+// sees the change. A moderator's override is kept, and wins while it is for this version
+// (`CURRENT_LEVEL`). Returns the level readers now get. $1 app, $2 ns, $3 coll, $4 key,
+// $5 level, $6 seq
+const SQL_RATER_APPLY = `UPDATE appdata.doc d
+  SET level = $5::int, rating_status = 'rated', rated_version = d.version, rated_at = now(),
+    seq = $6::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING ${CURRENT_LEVEL} AS current_level`;
+
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
   assertKey(key);
@@ -4154,4 +4195,93 @@ function createModeration({ withTx, charge }: ModerationDeps) {
   }
 
   return { listReported, get, setHidden, dismissReports, delete: remove };
+}
+
+/** A shared document waiting for a rating, as the rater reads it. */
+export type UnratedDoc = {
+  key: string;
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+};
+
+export type ApplyRatingResult =
+  | { applied: true; seq: number; currentLevel: number }
+  | { applied: false; reason: 'gone' | 'changed' | 'hidden' | 'counter' };
+
+/** The levels a rating may carry: one NsfwLevel bit (the CHECK `doc_level_bit`). */
+const RATING_LEVEL_BITS = new Set([1, 2, 4, 8, 16, 32]);
+
+function createRater({ withTx, charge }: ModerationDeps) {
+  /**
+   * Up to `limit` shared documents of one collection that need a rating, oldest change first,
+   * after the seq cursor `afterSeq` (exclusive; 0 from the start).
+   */
+  async function listUnrated(
+    appId: string,
+    ns: string,
+    collection: string,
+    opts: { afterSeq: number; limit: number }
+  ): Promise<UnratedDoc[]> {
+    if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
+    if (!Number.isSafeInteger(opts.afterSeq) || opts.afterSeq < 0) {
+      throw invalid('afterSeq must be a non-negative integer');
+    }
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > B.listLimitMax) {
+      throw invalid(`limit must be 1–${B.listLimitMax}`);
+    }
+    const rows = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) =>
+        (
+          await c.query(SQL_RATER_UNRATED, [appId, ns, collection, opts.afterSeq, opts.limit])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data,
+      version: Number(r.version),
+      seq: Number(r.seq),
+    }));
+  }
+
+  /**
+   * Record `level` as the rating of the shared document `key` — only if it is still at the
+   * revision `seq` the rater read and scanned. Any write since (an edit, a delete and re-create, a
+   * schema migration) moved its seq, so the rating is dropped (`changed`) and the document stays
+   * pending for the next pass; `version` alone cannot tell, as it restarts at 1 on a re-create. The
+   * rating is recorded for the document's current version, takes the next seq (a feed reader sees
+   * it), and a moderator's override for this version still wins.
+   */
+  async function applyRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string,
+    opts: { seq: number; level: number }
+  ): Promise<ApplyRatingResult> {
+    assertModTarget(collection, key);
+    if (!RATING_LEVEL_BITS.has(opts.level)) throw invalid('level must be one NsfwLevel bit');
+    if (!Number.isSafeInteger(opts.seq) || opts.seq < 1) throw invalid('malformed seq');
+    const ctx: DocStoreContext = { appId, ns, viewerUid: null };
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_RATER_LOCK, [appId, ns, collection, key])).rows[0];
+      if (!row) return { applied: false, reason: 'gone' } as const;
+      if (Number(row.seq) !== opts.seq) return { applied: false, reason: 'changed' } as const;
+      if (row.hidden) return { applied: false, reason: 'hidden' } as const;
+      if (row.author_kind === 'counter') return { applied: false, reason: 'counter' } as const;
+      // No bytes move; the charge only takes the next seq under the usage_app lock (LOCK ORDER (2)).
+      const seq = await charge(c, ctx, NO_APP_CHARGE, {
+        uid: 0,
+        bytes: 0,
+        docs: 0,
+        ceiling: 'app',
+      });
+      const out = await c.query(SQL_RATER_APPLY, [appId, ns, collection, key, opts.level, seq]);
+      return { applied: true, seq, currentLevel: Number(out.rows[0].current_level) } as const;
+    });
+  }
+
+  return { listUnrated, applyRating };
 }
