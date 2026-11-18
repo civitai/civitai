@@ -294,7 +294,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
               isModerator: locals.user.isModerator,
             },
             // Graded in this request, so the warning or smite shows on the answer that caused it.
-            { ...queueDeps, grade: { settings: hiddenSettings(), ...resetDeps } }
+            { ...queueDeps, grade: { settings: await hiddenSettings(), ...resetDeps } }
           )
         : ref.kind === 'yesno'
         ? await castYesNoVote(
@@ -321,6 +321,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
       refused(result.reason, { ref, itemId }, locals.user.id);
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
+        reason: result.reason,
       });
     }
     return 'check' in result && result.check

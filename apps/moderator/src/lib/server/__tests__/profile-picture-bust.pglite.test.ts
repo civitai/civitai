@@ -16,9 +16,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * has to evict that user's entry, and must not fail the action when the eviction fails.
  */
 
-const { dbHandle, del, syncSearchIndexBulk } = vi.hoisted(() => ({
+const { dbHandle, del, hSet, syncSearchIndexBulk } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   del: vi.fn(async (_keys: string[]) => 0),
+  hSet: vi.fn(async (_key: string, _value: Record<string, string>) => 1),
   syncSearchIndexBulk: vi.fn(async (_batch: { entityIds: number[]; action?: string }) => undefined),
 }));
 
@@ -40,7 +41,7 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../redis', () => ({
-  getRedis: () => ({ del }),
+  getRedis: () => ({ del, hSet, expire: async () => true }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
 vi.mock('../image-moderation-effects', () => ({
@@ -126,6 +127,7 @@ let db: PGlite;
 beforeEach(async () => {
   del.mockReset();
   del.mockImplementation(async () => 0);
+  hSet.mockClear();
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
@@ -151,6 +153,11 @@ describe('moderator writes to an image that is a profile picture', () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
+    // The event engine's copy too.
+    expect(hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
   });
 
   it('updateImageNsfwLevel evicts it', async () => {

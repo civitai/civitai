@@ -8,7 +8,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   deleteFilesForModelVersionCache,
@@ -659,10 +659,11 @@ type FailedScanFile = {
 // Logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {
-    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    // A lost marker costs one more bust.
+    const prefix = REDIS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
     const [bustVersion, bustFile] = await Promise.all([
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
     ]);
     await Promise.all([
       bustVersion && bustOrchestratorModelCache(modelVersionId),

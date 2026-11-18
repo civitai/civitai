@@ -1,10 +1,5 @@
-import type { ImageScanningInput } from '@civitai/orchestration-client';
-
 /** The rater the imageScanning recipe runs when asked for a v2 rating. */
 export const RATER_MODEL = 'radio-alpha';
-
-/** The recipe body. `rater-model` is not in @civitai/orchestration-client 0.2.0's types yet. */
-export type RatingV2ScanInput = ImageScanningInput & { 'rater-model': typeof RATER_MODEL };
 
 /** One image's v2 rating, as the shared cache keeps it: the sexual level (0-4) and the routing flag.
  *  Stored raw, so a change of the mature setting needs no re-rating. */

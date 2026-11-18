@@ -9,10 +9,9 @@ import { getTrainingServiceStatus } from './service-status';
 import * as core from '$lib/train-core';
 import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 import type { DatasetRating } from '$lib/dataset-rating';
-import { warmDatasetRating } from './dataset-rating';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
-export { MatureAckRequiredError } from '$lib/train-core';
+export { MatureRepriceError } from '$lib/train-core';
 
 // Live NDJSON tracing is in production orchestrator-side, so it defaults ON; TRAINING_TRACE_MODE
 // (`events` | `logs` | `none`) remains the kill switch if the submit ever starts rejecting it.
@@ -89,7 +88,6 @@ export async function continueTraining(
 /** Price a "keep training" continuation without submitting (the same body, `whatif`). */
 export async function continueTrainingWhatIf(
   token: string,
-  userId: number,
   opts: ContinueOpts,
   datasetRating?: DatasetRating,
   kohyaAllowed = false
@@ -98,10 +96,6 @@ export async function continueTrainingWhatIf(
     status: await getTrainingServiceStatus(),
     kohyaAllowed,
     datasetRating,
-    // The quote is the continuation's Review: rate the source's unrated images before the submit.
-    onMatureCount: datasetRating
-      ? ({ unratedKeys }) => warmDatasetRating(token, userId, unratedKeys)
-      : undefined,
     traceMode: TRACE_MODE,
   });
 }

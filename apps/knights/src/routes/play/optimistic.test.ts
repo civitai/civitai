@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BUFFER_TARGET,
   refillCount,
-  READY_TARGET,
-  REFILL_AT,
   MAX_EXCLUDED,
   createItemBuffer,
   createSerialQueue,
@@ -13,6 +11,7 @@ import {
   postVote,
   NETWORK_NOTICE,
   refusedNote,
+  refusalNote,
   skillCheckCue,
   sendWithRetry,
 } from './optimistic';
@@ -117,9 +116,37 @@ describe('describeOutcome', () => {
       describeOutcome({
         type: 'failure',
         status: 409,
-        data: { message: 'You have already judged this one.' },
+        data: { message: 'You have already judged this one.', reason: 'already-voted' },
       })
-    ).toEqual({ ok: false, message: 'You have already judged this one.', resync: false });
+    ).toEqual({
+      ok: false,
+      message: 'You have already judged this one.',
+      resync: false,
+      stale: false,
+    });
+  });
+
+  it.each(['not-open', 'not-eligible', 'unavailable'])(
+    'marks a vote refused as %s stale: the item moved on while it waited in the buffer',
+    (reason) => {
+      expect(
+        describeOutcome({
+          type: 'failure',
+          status: 409,
+          data: { message: 'This one has already been settled.', reason },
+        })
+      ).toMatchObject({ ok: false, stale: true });
+    }
+  );
+
+  it('does not mark a refusal stale from its message alone', () => {
+    expect(
+      describeOutcome({
+        type: 'failure',
+        status: 409,
+        data: { message: 'This one has already been settled.' },
+      })
+    ).toMatchObject({ stale: false });
   });
 
   it('resyncs when the server paces the player, because the page must show the rest', () => {
@@ -175,12 +202,6 @@ describe('createItemBuffer', () => {
     return started;
   };
 
-  it('holds 10 downloaded, 3 of them ready, and refills from 5 down', () => {
-    expect(BUFFER_TARGET).toBe(10);
-    expect(READY_TARGET).toBe(3);
-    expect(REFILL_AT).toBe(5);
-  });
-
   it('hands items out in the order they were enqueued, the head only once it is decoded', () => {
     const buffer = createItemBuffer();
     fill(buffer, ['a', 'b']);
@@ -202,8 +223,11 @@ describe('createItemBuffer', () => {
     expect(buffer.readyCount).toBe(1);
   });
 
+  // The layering, at a buffer deeper than the default: downloaded items wait behind the decoded window.
+  const deep = () => createItemBuffer({ total: 10, ready: 3, refillAt: 5 });
+
   it('promotes the next downloaded item to be decoded when a ready one is consumed', () => {
-    const buffer = createItemBuffer();
+    const buffer = deep();
     fill(buffer, ['a', 'b', 'c', 'd', 'e']);
     expect(decode(buffer)).toEqual(['a', 'b', 'c']);
     expect(buffer.next()?.item.id).toBe('a');
@@ -214,7 +238,7 @@ describe('createItemBuffer', () => {
   });
 
   it('promotes the next item when a ready one is dropped, and fills the window as items arrive', () => {
-    const buffer = createItemBuffer();
+    const buffer = deep();
     fill(buffer, ['a', 'b']);
     expect(decode(buffer)).toEqual(['a', 'b']);
     fill(buffer, ['c', 'd']);
@@ -254,20 +278,17 @@ describe('createItemBuffer', () => {
     expect(buffer.tokens()).toEqual(['token-1']);
   });
 
-  it('asks for more once downloaded plus ready is 5 or fewer, and for enough to reach 10', () => {
+  it('asks for more once 2 or fewer are buffered, and for enough to reach 3', () => {
     const buffer = createItemBuffer();
     expect(buffer.needsRefill()).toBe(true);
-    expect(buffer.missing()).toBe(10);
-    fill(buffer, ['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(buffer.missing()).toBe(3);
+    fill(buffer, ['a', 'b', 'c', 'd']);
+    expect(buffer.size).toBe(3);
     expect(buffer.needsRefill()).toBe(false);
-    expect(buffer.missing()).toBe(4);
-    buffer.next();
-    expect(buffer.size).toBe(5);
-    expect(buffer.needsRefill()).toBe(true);
-    expect(buffer.missing()).toBe(5);
-    fill(buffer, ['g', 'h', 'i', 'j', 'k']);
     expect(buffer.missing()).toBe(0);
-    expect(buffer.needsRefill()).toBe(false);
+    buffer.next();
+    expect(buffer.needsRefill()).toBe(true);
+    expect(buffer.missing()).toBe(1);
   });
 
   it('drops one item by key and clears all', () => {
@@ -287,8 +308,8 @@ describe('refillCount', () => {
   });
 
   it('tops up to the full buffer otherwise, always asking for at least one', () => {
-    expect(refillCount(4)).toBe(6);
-    expect(refillCount(10)).toBe(1);
+    expect(refillCount(1)).toBe(2);
+    expect(refillCount(3)).toBe(1);
   });
 });
 
@@ -349,7 +370,12 @@ describe('sendWithRetry', () => {
     const result = await sendWithRetry(send, async () => undefined, [1, 1, 1]);
 
     expect(send).toHaveBeenCalledTimes(4);
-    expect(describeOutcome(result)).toEqual({ ok: false, message: 'busy', resync: false });
+    expect(describeOutcome(result)).toEqual({
+      ok: false,
+      message: 'busy',
+      resync: false,
+      stale: false,
+    });
   });
 
   it('does not resend a real cooldown, which still asks for the lockout screen', async () => {
@@ -366,6 +392,33 @@ describe('sendWithRetry', () => {
     const send = vi.fn(async () => null);
     expect(await sendWithRetry(send, async () => undefined)).toBeNull();
     expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('refusalNote', () => {
+  it('says nothing for a stale item: the player has moved on and did nothing wrong', () => {
+    expect(
+      refusalNote({
+        ok: false,
+        message: 'This one has already been settled.',
+        resync: false,
+        stale: true,
+      })
+    ).toBeNull();
+  });
+
+  it('keeps the note for any other refusal', () => {
+    expect(
+      refusalNote({
+        ok: false,
+        message: 'You have already judged this one.',
+        resync: false,
+        stale: false,
+      })
+    ).toBe(refusedNote('You have already judged this one.'));
+    expect(refusalNote({ ok: false, message: NETWORK_NOTICE, resync: false, stale: false })).toBe(
+      NETWORK_NOTICE
+    );
   });
 });
 
@@ -491,7 +544,7 @@ describe('postVote', () => {
     expect(tracker.has('b')).toBe(true);
     expect(tracker.pending).toBe(0);
     expect(failures).toEqual([
-      { ok: false, message: expect.stringMatching(/connection/i), resync: false },
+      { ok: false, message: expect.stringMatching(/connection/i), resync: false, stale: false },
     ]);
   });
 
@@ -536,7 +589,7 @@ describe('postVote', () => {
 
     expect(tracker.pending).toBe(0);
     expect(tracker.has('a')).toBe(true);
-    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true }]);
+    expect(failures).toEqual([{ ok: false, message: 'too quick', resync: true, stale: false }]);
   });
 
   it('retries a busy vote and records it', async () => {
@@ -554,7 +607,7 @@ describe('postVote', () => {
     const { tracker, failures, post } = setup(async () => ({ reached: true, result: busy }));
     await post('a');
     expect(tracker.has('a')).toBe(false);
-    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false }]);
+    expect(failures).toEqual([{ ok: false, message: 'busy', resync: false, stale: false }]);
   });
 
   it('frees the item when a busy vote is followed by a lost connection', async () => {

@@ -27,9 +27,11 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
-import { handleLogError } from '~/server/utils/errorHandling';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { toSearchUploadFaceScan } from '~/server/services/search-upload-gate';
+import { isSearchUploadRow, writeSearchUploadFaceScan } from '~/server/services/search-upload-rows';
 
 type RawRepeatStep = {
   $type?: string;
@@ -56,6 +58,8 @@ export type ImageScanningResult = {
   tags: Record<string, number>;
   csam: boolean | null;
   ageDetections: ImageScanningJointAgeDetection[];
+  /** The age model (and its person detector) ran; for a video, on every frame. */
+  ageClassificationRan: boolean;
   minorDetected: boolean;
   /** Set when the orchestrator refuses the image; null when it passes. */
   blockedReason: string | null;
@@ -93,6 +97,7 @@ function readScan(output: ScanningOutput, workflowId: string): ImageScanningResu
     tags,
     csam: output.csam ?? null,
     ageDetections: jointAgeClassification?.detections ?? [],
+    ageClassificationRan: jointAgeClassification?.ran === true,
     minorDetected: !!jointAgeClassification?.minorDetected,
     blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
@@ -118,6 +123,7 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       tags,
       csam: acc.csam || frame.csam ? true : acc.csam ?? frame.csam,
       ageDetections: [...acc.ageDetections, ...frame.ageDetections],
+      ageClassificationRan: acc.ageClassificationRan && frame.ageClassificationRan,
       minorDetected: acc.minorDetected || frame.minorDetected,
       blockedReason: acc.blockedReason ?? frame.blockedReason,
       aiRecognition: higher(acc.aiRecognition, frame.aiRecognition),
@@ -279,6 +285,9 @@ export async function processImageScanningWorkflow({
     if (pHash) await logPerceptualHashMatch({ imageId, pHash, log: IMAGE_SCANNING_LOG });
 
     image = await loadImageForScan(imageId);
+    // Before the verdict: the upload gate reads it as soon as the row is Scanned.
+    if (isSearchUploadRow(image.metadata))
+      await writeSearchUploadFaceScan(imageId, toSearchUploadFaceScan(scan));
     const { prompt, negativePrompt } = (image.meta ?? {}) as {
       prompt?: string;
       negativePrompt?: string;
@@ -338,8 +347,8 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     );
-    // The showcase bust runs late in the side effects; a step before it may be what threw.
-    if (image.postId) await bustPostCaches(image.postId);
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.
@@ -372,14 +381,4 @@ export async function processImageScanningWorkflow({
     void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
       () => null
     );
-}
-
-/** Never throws. Call-site import: post.service loads most of the server, which this handler's tests stub. */
-async function bustPostCaches(postId: number) {
-  try {
-    const { bustCachesForPosts } = await import('~/server/services/post.service');
-    await bustCachesForPosts(postId);
-  } catch (error) {
-    handleLogError(error as Error);
-  }
 }

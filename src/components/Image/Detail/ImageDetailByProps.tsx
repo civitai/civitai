@@ -281,6 +281,7 @@ export function ImageDetailByProps({
                           reactions={reactions}
                           stats={stats}
                           userId={user?.id}
+                          poi={!!(data?.poi || image.poi)}
                         />
                         {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
                       </Stack>
@@ -441,11 +442,13 @@ function ImageDetailByPropsReactions({
   reactions,
   stats,
   userId,
+  poi,
 }: {
   imageId: number;
   reactions: { userId: number; reaction: any }[];
   stats: ImageDetailStats | null;
   userId?: number;
+  poi: boolean;
 }) {
   return (
     <Metrics entityType="Image" entityId={imageId} initial={imageStatsToReactionMetrics(stats)}>
@@ -457,6 +460,7 @@ function ImageDetailByPropsReactions({
           metrics={metrics}
           metricsUnknown={stats?.statsUnknown}
           targetUserId={userId}
+          disableBuzzTip={poi}
         />
       )}
     </Metrics>

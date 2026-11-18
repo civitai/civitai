@@ -62,7 +62,11 @@ vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => redis }));
+// The held sheet keeps its codes and sessions on the cache cluster (`getRedis`). System Redis is
+// a separate spy over the same fake, so a held-sheet path that reached it would still work here
+// and is caught by the test that asserts it is never called.
+const getSysRedis = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/redis', () => ({ getRedis: () => redis, getSysRedis }));
 vi.mock('$lib/server/auth', () => ({
   guard: { check: guardCheck },
   isRevoked,
@@ -156,6 +160,7 @@ async function signIn(): Promise<string> {
 }
 
 beforeEach(() => {
+  getSysRedis.mockImplementation(() => redis);
   process.env.HELD_SHEET_CALLBACK_URL = CALLBACK;
   store.clear();
   vi.clearAllMocks();
@@ -300,6 +305,13 @@ describe('auth/exchange', () => {
     expect(res.headers.get('set-cookie')).toMatch(
       /^__Secure-held_sheet=[A-Za-z0-9_-]{43}; Path=\/api\/held-media\/; Max-Age=900; Secure; HttpOnly; SameSite=Strict$/
     );
+  });
+
+  it('keeps the code and the session on the cache cluster, never in system Redis', async () => {
+    const res = await exchangePost({ code: await issue(), code_verifier: VERIFIER });
+    expect(res.status).toBe(204);
+    expect([...store.keys()]).toEqual([expect.stringMatching(/^app:held-sheet:session:/)]);
+    expect(getSysRedis).not.toHaveBeenCalled();
   });
 
   it('refuses a replayed code', async () => {

@@ -48,8 +48,8 @@ answers with Node's for fixed inputs (`testdata/golden/`). The integration tier 
 
 See `.env.example`. Variable names match the main app's where the value is the same thing. The
 `FEED_GO_*` flag mirrors default to ON (`FEED_GO_FRAME_CACHE_NEGATIVE` and `FEED_GO_PRIORITIZED_VERSION_CACHE` to off); set each to its Flipt flag's real value (DESIGN.md §8).
-Cache misses on user cosmetics, image frames and event decorations are computed with the Node
-lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only with
+The per-entity cache misses of DESIGN.md §3.1 (and model.getAll's official-models entry, §15.2.2)
+are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only with
 `FEED_GO_CACHE_WRITEBACK=true` (default off; it then needs `DATABASE_URL`, the primary; DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
 falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
@@ -64,3 +64,20 @@ samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
+
+Traces, exemplars and the fallback log lines are off by default (DESIGN.md §10.3); the compute- and
+proxy-error lines log the error's class and type (not its text), capped per minute, and
+`feed_go_errors_total{feed_endpoint,mode,class}` counts every error. Tracing
+reads the Node app's variables where they mean the same thing — `OTEL_EXPORTER_OTLP_ENDPOINT`
+(OTLP/HTTP, `<it>/v1/traces`), `OTEL_SERVICE_NAME` (default `feed-go`), `OTEL_TRACES_SAMPLE_RATIO`
+(default 0.1, the same ParentBased trace-id-ratio sampling, so a trace continues browser → feed-go →
+Node) — and is switched on by feed-go's own `FEED_GO_OTEL_ENABLED=true`, not the app's
+`OTEL_ENABLED` (the shared app config is in feed-go's environment). Set `OTEL_SERVICE_NAME=feed-go`
+explicitly on the deployment when enabling it, for the same reason. With tracing on, the fallback
+proxy hands feed-go's sampling decision to Node (its `traceparent`), so Node's traces of proxied
+requests are capped at min(feed-go ratio, Node ratio): keep feed-go's `OTEL_TRACES_SAMPLE_RATIO` at or
+above Node's (normally equal; DESIGN.md §10.3). With it on, `/metrics` serves
+OpenMetrics to a scrape that asks, carrying trace-id exemplars on `feed_go_request_duration_seconds`
+and `feed_go_shadow_phase_seconds`. `FEED_GO_FALLBACK_LOG_PER_MIN` (default 0) logs one line per
+fallback with its reason and safe detail, rate-limited per endpoint and reason;
+`FEED_GO_ERROR_LOG_PER_MIN` (default 60) bounds the error lines the same way.
