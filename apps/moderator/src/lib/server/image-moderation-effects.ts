@@ -16,6 +16,7 @@ import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
 import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
+import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
@@ -128,7 +129,10 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   const showcaseModelIds = [
     ...new Set(rows.filter((r) => r.isShowcase && r.modelId != null).map((r) => r.modelId!)),
   ];
-  await syncSearchIndexBulk({ entityType: 'model', entityIds: showcaseModelIds, action: 'update' });
+  await syncSearchIndexBulk(
+    { entityType: 'model', entityIds: showcaseModelIds, action: 'update' },
+    { strict: true }
+  ).catch(() => parkModelSearchUpdates(showcaseModelIds));
 }
 
 // Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`

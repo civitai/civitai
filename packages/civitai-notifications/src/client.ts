@@ -3,6 +3,7 @@ import {
   createNotificationsBulkInput,
   markReadByKeysInput,
   sendSystemNoticesInput,
+  unseenNotificationsInput,
   type SendSystemNoticesInput,
   type SendSystemNoticesResult,
   type SystemNoticeSendRecord,
@@ -16,6 +17,8 @@ import {
   type NotificationExistsInput,
   type NotificationRow,
   type QueryNotificationsInput,
+  type UnseenNotifications,
+  type UnseenNotificationsInput,
 } from './schema';
 
 export type NotificationsClientConfig = {
@@ -299,6 +302,27 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
         | { exists?: boolean }
         | undefined;
       return res?.exists === true;
+    },
+
+    /** The digest read: per user, the newest notifications not seen since their `since`. */
+    queryUnseenNotifications: async (
+      input: UnseenNotificationsInput
+    ): Promise<UnseenNotifications[]> => {
+      const res = (await post(
+        '/notifications/unseen',
+        unseenNotificationsInput.parse(input),
+        config
+      )) as Array<
+        Omit<UnseenNotifications, 'items'> & {
+          items: Array<
+            Omit<UnseenNotifications['items'][number], 'createdAt'> & { createdAt: string }
+          >;
+        }
+      >;
+      return res.map((user) => ({
+        ...user,
+        items: user.items.map((item) => ({ ...item, createdAt: new Date(item.createdAt) })),
+      }));
     },
 
     cleanupNotifications: async (
