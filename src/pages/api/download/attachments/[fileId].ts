@@ -54,7 +54,10 @@ export default PublicEndpoint(
     const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+    const session = await getApiAuthSession(
+      { req, res },
+      { whenBanned: 'anonymous', scope: 'selfGated' }
+    );
     const credential = await checkDownloadCredential(req, session?.user, {
       route: '/api/download/attachments/[fileId]',
       requiredScope: TokenScope.ModelsRead,

@@ -72,10 +72,10 @@ import {
 } from '~/server/utils/mini-epoch-caller';
 import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
 
 const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
-const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
+const MINI_SCOPES = { anyOfScopes: MODEL_VIEW_SCOPES };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -158,7 +158,9 @@ type FileRow = {
   virusScanResult: ScanResultCode | null;
 };
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: 'selfGated' });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   sessionUser: Session['user'] | undefined
@@ -827,7 +829,7 @@ export default MixedAuthEndpoint(async function handler(
   // Read by the orchestrator as the absolute time its cached copy of this response expires.
   if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
-});
+}
 
 /**
  * The orchestrator's link to the file this response describes, for an allowlisted ApiKey; undefined
