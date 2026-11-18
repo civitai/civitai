@@ -471,9 +471,6 @@ export const upsertDealChat = async ({
   return { id: created.id };
 };
 
-/**
- * Create a message (direct)
- */
 const signalNewMessage = (chatId: number, message: ChatAllMessages[number]) =>
   withSignals(() =>
     fetch(
@@ -522,6 +519,9 @@ async function joinInvitedSender(
   });
 }
 
+/**
+ * Create a message (direct)
+ */
 export const createMessage = async ({
   userId,
   muted,

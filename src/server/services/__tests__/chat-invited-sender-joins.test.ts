@@ -162,6 +162,20 @@ describe('createMessage from an Invited member', () => {
     expect(messages.filter((m) => m.userId === -1)).toHaveLength(1);
   });
 
+  it('posts no second notice when a concurrent first send joined them after the read', async () => {
+    // createMessage reads the member as Invited; the other send's join commits before the write.
+    const read = dbMock.dbWrite.chat.findFirst.getMockImplementation()!;
+    dbMock.dbWrite.chat.findFirst.mockImplementationOnce((async (...args: never[]) => {
+      const snapshot = await read(...args);
+      agent().status = ChatMemberStatus.Joined;
+      return snapshot;
+    }) as never);
+
+    await send(AGENT, 'second');
+
+    expect(messages.map((m) => [m.userId, m.content])).toEqual([[AGENT, 'second']]);
+  });
+
   it('refuses the send when the member was kicked after the read, and does not rejoin them', async () => {
     // createMessage reads the member as Invited; the owner's kick lands before the write.
     const read = dbMock.dbWrite.chat.findFirst.getMockImplementation()!;
