@@ -245,7 +245,6 @@ describe('GET /api/v1/blocks/me', () => {
     expect(res._getStatusCode()).toBe(401);
     // The route renders BOTH kill-switch refusals with its own generic literal and does
     // NOT echo the gate's message. Asserted from both sides: the operator-facing text
-    // (which is also a compiled-branch watchlist anchor, and must stay unique app-wide)
     // must not reach a third-party block iframe.
     expect((res._getJSONData() as { error: string }).error).toBe('Apps are not enabled');
     expect(JSON.stringify(res._getJSONData())).not.toContain('could not be resolved');
