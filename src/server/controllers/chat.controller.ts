@@ -26,7 +26,12 @@ import type {
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
 import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
-import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
+import {
+  inReadWindow,
+  markAllReadSql,
+  memberReadWindow,
+  unreadCountSql,
+} from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -48,6 +53,7 @@ import {
   signalJoined,
   maxUsersPerChat,
   resolveChatRecipients,
+  scopeChatPreviews,
   signalChatMembersUpdated,
   upsertChat,
   deleteChatMessage,
@@ -199,18 +205,17 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
 
     // A deleted conversation is gone from this user's list until the other side
     // writes again, at which point it returns holding only what came after the
-    // watermark. `latestChat` is a static selector and cannot be scoped per
-    // member, so the preview is trimmed here instead.
-    return chats
-      .map((chat) => {
-        const scoped = { ...chat, chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)) };
-        const clearedAt = scoped.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-        if (!clearedAt) return scoped;
-
-        const messages = scoped.messages.filter((msg) => msg.createdAt > clearedAt);
-        return messages.length ? { ...scoped, messages } : null;
-      })
-      .filter(isDefined);
+    // watermark.
+    // Decided on the clear watermark alone, before the preview is scoped: an
+    // exit empties the preview but must not take the chat out of the list.
+    const listed = chats.filter((chat) => {
+      const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+      return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
+    });
+    return (await scopeChatPreviews(listed, userId)).map((chat) => ({
+      ...chat,
+      chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -525,6 +530,7 @@ export const modifyUserHandler = async ({
         id: true,
         userId: true,
         status: true,
+        leftAt: true,
         isOwner: true,
         user: {
           select: {
@@ -654,7 +660,13 @@ export const modifyUserHandler = async ({
     const extra = {
       ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
-      kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
+      // Kicking someone who already left must not reopen what was said since.
+      kickedAt:
+        status === ChatMemberStatus.Kicked
+          ? existing.status === ChatMemberStatus.Left && existing.leftAt
+            ? existing.leftAt
+            : new Date()
+          : undefined,
       pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
       ...deriveMuteColumns({ isMuted, notifyLevel }),
     };
@@ -915,22 +927,7 @@ export const getInfiniteMessagesHandler = async ({
       throw throwNotFoundError(`No chat found for ID (${input.chatId})`);
     }
 
-    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
-    const createdAt: { lt?: Date; gt?: Date } = {};
-    if (!thisMember) {
-      createdAt.lt = new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Left) {
-      createdAt.lt = thisMember.leftAt ?? new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Kicked) {
-      createdAt.lt = thisMember.kickedAt ?? new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Ignored) {
-      // TODO do we need ignoredAt?
-      createdAt.lt = new Date(1970);
-    }
-    // Deleted-conversation watermark. Combines with the status limits above
-    // rather than replacing them — a member who cleared and later left is bounded
-    // on both ends.
-    if (thisMember?.clearedAt) createdAt.gt = thisMember.clearedAt;
+    const createdAt = memberReadWindow(chat.chatMembers.find((cm) => cm.userId === userId));
 
     const dateLimit = Object.keys(createdAt).length ? { createdAt } : {};
 
@@ -952,7 +949,7 @@ export const getInfiniteMessagesHandler = async ({
       item.referenceMessage &&
       (item.referenceMessage.chatId !== input.chatId ||
         !!item.referenceMessage.deletedAt ||
-        (!!thisMember?.clearedAt && item.referenceMessage.createdAt <= thisMember.clearedAt))
+        !inReadWindow(createdAt, item.referenceMessage.createdAt))
         ? { ...item, referenceMessage: null }
         : item
     );
@@ -996,6 +993,7 @@ export const getMessageByIdHandler = async ({
     const msg = await dbWrite.chatMessage.findFirst({
       where: { id: input.messageId, deletedAt: null },
       select: {
+        createdAt: true,
         content: true,
         contentType: true,
         user: {
@@ -1018,6 +1016,7 @@ export const getMessageByIdHandler = async ({
                 status: true,
                 leftAt: true,
                 kickedAt: true,
+                clearedAt: true,
               },
             },
           },
@@ -1025,8 +1024,8 @@ export const getMessageByIdHandler = async ({
       },
     });
 
-    // TODO fix this and above to check for the user status too (by date)
-    if (!msg || !msg.chat.chatMembers.map((cm) => cm.userId).includes(userId)) {
+    const me = msg?.chat.chatMembers.find((cm) => cm.userId === userId);
+    if (!msg || !me || !inReadWindow(memberReadWindow(me), msg.createdAt)) {
       throw throwNotFoundError(`No message found for ID (${input.messageId})`);
     }
 
@@ -1343,6 +1342,7 @@ export const isTypingHandler = async ({
           select: {
             userId: true,
             isOwner: true,
+            status: true,
             user: {
               select: {
                 username: true,
@@ -1356,7 +1356,12 @@ export const isTypingHandler = async ({
 
     if (!existing) return;
     const existingUser = existing.chatMembers.find((cm) => cm.userId === userId);
-    if (!existingUser) return;
+    // Invited counts: their first message joins them.
+    if (
+      existingUser?.status !== ChatMemberStatus.Joined &&
+      existingUser?.status !== ChatMemberStatus.Invited
+    )
+      return;
 
     if (muted) {
       const owner = existing.chatMembers.find((cm) => cm.isOwner === true);

@@ -4,6 +4,7 @@ import {
   imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
+  notHeldForReviewSql,
 } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -137,6 +138,8 @@ export function imageVisibilityConditions({
     userId
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
+    // Not even to the owner (or a collection manager).
+    notHeldForReviewSql(),
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
     imageNotRestrictedSql({ viewerId: userId }),

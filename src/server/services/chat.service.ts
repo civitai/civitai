@@ -21,7 +21,7 @@ import { getChatRedesignRecipients } from '~/server/services/chat-redesign-recip
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
-import { decideDmRouting } from '~/server/utils/chat';
+import { decideDmRouting, inReadWindow, memberPreviewWindow } from '~/server/utils/chat';
 import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { truncateAuditValue, type ChatAuditRow } from '~/server/common/chat-audit.constants';
@@ -213,6 +213,42 @@ export const signalChatMembersUpdated = async ({
   );
 };
 
+/**
+ * Trims each chat's `latestChat` preview to what the caller may read. The
+ * selector cannot be scoped per member, and only a Left or Kicked caller needs
+ * their exit time read, so that is one extra query for those chats alone.
+ */
+export async function scopeChatPreviews<
+  T extends {
+    id: number;
+    messages: { createdAt: Date }[];
+    chatMembers: { userId: number; status: ChatMemberStatus; clearedAt: Date | null }[];
+  }
+>(chats: T[], userId: number): Promise<T[]> {
+  const exited = chats
+    .filter((chat) => {
+      const status = chat.chatMembers.find((cm) => cm.userId === userId)?.status;
+      return status === ChatMemberStatus.Left || status === ChatMemberStatus.Kicked;
+    })
+    .map((chat) => chat.id);
+  // A replica that lags a fresh exit returns no time, which withholds the preview.
+  const exits = exited.length
+    ? await dbRead.chatMember.findMany({
+        where: { userId, chatId: { in: exited } },
+        select: { chatId: true, leftAt: true, kickedAt: true },
+      })
+    : [];
+  const exitByChat = new Map(exits.map((e) => [e.chatId, e]));
+  return chats.map((chat) => {
+    const me = chat.chatMembers.find((cm) => cm.userId === userId);
+    const window = memberPreviewWindow(me && { ...me, ...exitByChat.get(chat.id) });
+    return {
+      ...chat,
+      messages: chat.messages.filter((msg) => inReadWindow(window, msg.createdAt)),
+    };
+  });
+}
+
 export const upsertChat = async ({
   userIds,
   isGroup,
@@ -273,17 +309,10 @@ export const upsertChat = async ({
       for (const cm of toFilter) cm.filteredAt = filteredAt;
     }
 
-    // The preview rides along on `latestChat` unfiltered. Re-opening a chat the
-    // caller cleared would hand back a message from before their watermark —
-    // the one path that broke the clean slate.
-    const callerClearedAt = existing.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-    if (callerClearedAt) {
-      return {
-        ...existing,
-        messages: existing.messages.filter((msg) => msg.createdAt > callerClearedAt),
-      };
-    }
-    return existing;
+    // The preview rides along on `latestChat` unfiltered; re-opening must not
+    // hand back a message the caller may not read.
+    const [scoped] = await scopeChatPreviews([existing], userId);
+    return scoped;
   }
 
   const canBypassLimits = isModerator || isSupporter;
