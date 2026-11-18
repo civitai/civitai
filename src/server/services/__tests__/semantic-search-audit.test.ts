@@ -60,11 +60,14 @@ describe('buildSemanticAuditRow', () => {
     expect(r.query).toBe('fox');
   });
 
-  it('records the served ids of a search a minor verdict narrowed', () => {
-    const r = row(entry({ wordVerdict: 'minor', searchPath: 'narrowed' }));
-    expect(r.resultIds).toEqual(SERVED.slice(0, 20));
-    expect(r.searchPath).toBe('narrowed');
-  });
+  it.each(['minor', 'minor-safe'] as const)(
+    'records the served ids of a search a %s verdict narrowed',
+    (wordVerdict) => {
+      const r = row(entry({ wordVerdict, searchPath: 'narrowed' }));
+      expect(r.resultIds).toEqual(SERVED.slice(0, 20));
+      expect(r.searchPath).toBe('narrowed');
+    }
+  );
 
   it.each(['served', 'refused_query', 'refused_own_images'] as const)(
     'stores no ids for a minor verdict on the %s path',
@@ -73,7 +76,7 @@ describe('buildSemanticAuditRow', () => {
     }
   );
 
-  it.each(['minor-safe', 'poi-minor', 'not-yet-a-verdict' as QueryRefusal] as const)(
+  it.each(['poi-minor', 'not-yet-a-verdict' as QueryRefusal] as const)(
     'stores no ids for a search a %s verdict narrowed',
     (wordVerdict) => {
       expect(row(entry({ wordVerdict, searchPath: 'narrowed' })).resultIds).toEqual([]);

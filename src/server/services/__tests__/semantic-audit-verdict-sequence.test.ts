@@ -82,14 +82,17 @@ function servedIds(sequence: QueryRefusal[]) {
 
 describe('a served search stores its ids only when every verdict keeps them', () => {
   it.each<[string, QueryRefusal[]]>([
-    ['minor then minor-safe', ['minor', 'minor-safe']],
-    ['minor then poi', ['minor', 'poi']],
-    ['minor-safe alone', ['minor-safe']],
+    ['minor then poi-minor', ['minor', 'poi-minor']],
+    ['minor-safe then poi', ['minor-safe', 'poi']],
   ])('%s: no ids stored', (_, sequence) => {
     expect(servedIds(sequence)).toEqual([]);
   });
 
-  it('minor alone: ids stored', () => {
-    expect(servedIds(['minor'])).toEqual([5, 6]);
+  it.each<[string, QueryRefusal[]]>([
+    ['minor alone', ['minor']],
+    ['minor-safe alone', ['minor-safe']],
+    ['minor then minor-safe', ['minor', 'minor-safe']],
+  ])('%s: ids stored', (_, sequence) => {
+    expect(servedIds(sequence)).toEqual([5, 6]);
   });
 });

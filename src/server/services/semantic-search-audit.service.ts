@@ -30,7 +30,7 @@ const MAX_QUERY_LENGTH = 1_000;
 // Only a passed query or a minor-narrowed one keeps what was served. Every other verdict withholds
 // the ids, including any added later; its row keeps the query, rule and level.
 export function verdictKeepsServedIds(verdict: QueryRefusal) {
-  return verdict === false || verdict === 'minor';
+  return verdict === false || verdict === 'minor' || verdict === 'minor-safe';
 }
 
 export type SemanticSearchPath =
