@@ -226,15 +226,14 @@ export async function drainDroppedEnqueues() {
     }
     replayed += ids.length;
 
-    // Length guard, not an unconditional delete by key: a drop landing between the read
-    // and here appends to the same row, and deleting it wholesale would swallow ids that
-    // were never replayed. A grown row survives and is replayed in full next run —
-    // duplicated work, which is a no-op, rather than lost work, which is not.
+    // Deletes only the value it replayed, not the row by key: a drop landing between the
+    // read and here appends to the row, and an overlapping run can clear it and a writer
+    // park a new one of the same length. Either changed row survives and is replayed in
+    // full next run — duplicated work, which is a no-op, rather than lost work, which is not.
     await dbWrite.$executeRaw`
       DELETE FROM "KeyValue"
       WHERE "key" = ${row.key}
-        AND jsonb_typeof("value") = 'array'
-        AND jsonb_array_length("value") = ${ids.length}
+        AND "value" = ${JSON.stringify(ids)}::jsonb
     `;
   }
   return { keys: rows.length, replayed, reparked };
