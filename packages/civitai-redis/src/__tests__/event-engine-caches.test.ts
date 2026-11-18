@@ -21,8 +21,8 @@ describe('the event-engine profile-picture bust', () => {
 
   it('writes the debounce marker the event engine reads as a miss, with a short expiry', async () => {
     expect(eventEngine('base.ts')).toContain("cacheResult.debounce === '1'");
-    const hSet = vi.fn(async () => 1);
-    const expire = vi.fn(async () => true);
+    const hSet = vi.fn(async (_key: string, _value: Record<string, string>) => 1);
+    const expire = vi.fn(async (_key: string, _seconds: number) => true);
 
     await bustEventEngineProfilePictures({ hSet, expire }, [7, 8, 7]);
 
@@ -45,7 +45,7 @@ describe('the event-engine profile-picture bust', () => {
   it('busts a large batch at most ten users at a time', async () => {
     let inFlight = 0;
     let peak = 0;
-    const hSet = vi.fn(async () => {
+    const hSet = vi.fn(async (_key: string, _value: Record<string, string>) => {
       peak = Math.max(peak, ++inFlight);
       await new Promise((resolve) => setTimeout(resolve, 1));
       inFlight--;
