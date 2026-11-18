@@ -1,15 +1,10 @@
 import { randomUUID } from 'crypto';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-count';
 
-// Every call is raced against this deadline, writes included: the part route holds a buffering
-// slot across `recordRelaySessionPart`, and a write parked on a half-open socket would hold it for
-// the cluster client's much longer per-command deadline.
-const SESSION_DEADLINE_MS = 1_000;
-
-function bounded<T>(fn: string, op: () => Promise<T>): Promise<T> {
-  return clusterCacheGuard.call(fn, op, { deadlineMs: SESSION_DEADLINE_MS });
-}
+// Every call is bounded, writes included: the part route holds a buffering slot across
+// `recordRelaySessionPart`, and a write parked on a half-open socket would hold it for the cluster
+// client's much longer per-command deadline.
 
 /**
  * Server-side state of one chunked upload-relay session.

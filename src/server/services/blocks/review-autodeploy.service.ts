@@ -426,14 +426,14 @@ export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
 /**
  * The submission-alert, listing-check-spend and agent-review reservation counters are TTL'd
- * per-hour or per-day windows on the cache cluster, one key per command. Each call is bounded so a
- * stalled socket cannot hold the request, and throws on failure,
- * which every caller already turns into its fail-safe answer.
+ * per-hour or per-day windows on the cache cluster, one key per command. Every call throws on
+ * failure, which each caller turns into its fail-safe answer. Loaded lazily, like the rest of
+ * this module's dependencies.
  */
-async function boundedCacheCall<T>(fn: string, op: () => Promise<T>): Promise<T> {
-  const { clusterCacheGuard } = await import('~/server/redis/cluster-cache-guard');
-  return clusterCacheGuard.call(fn, op, { deadlineMs: 1_000 });
-}
+const clusterCounters = () => import('~/server/utils/cluster-window-count');
+
+/** A UTC-day window's TTL: a day plus slack, so a key outlives the day it counts. */
+const AGENT_DAY_KEY_TTL_S = 26 * 60 * 60;
 
 /**
  * Whether this submitter's next alert is posted: `alert` up to the hourly limit, `rollup` exactly
@@ -442,17 +442,11 @@ async function boundedCacheCall<T>(fn: string, op: () => Promise<T>): Promise<T>
  */
 async function takeSubmissionAlertSlot(userId: number): Promise<'alert' | 'rollup' | 'silent'> {
   try {
-    const { redis, REDIS_KEYS } = await import('~/server/redis/client');
+    const { REDIS_KEYS } = await import('~/server/redis/client');
     const hour = new Date().toISOString().slice(0, 13);
     const key = `${REDIS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
-    const res = await boundedCacheCall('takeSubmissionAlertSlot', () =>
-      redis
-        .multi()
-        .set(key, '0', { NX: true, EX: 2 * 60 * 60 })
-        .incr(key)
-        .exec()
-    );
-    const n = Number(res?.[1]);
+    const { takeClusterWindowCount } = await clusterCounters();
+    const n = await takeClusterWindowCount('takeSubmissionAlertSlot', key, 2 * 60 * 60);
     if (!Number.isFinite(n)) return 'silent';
     if (n <= SUBMISSION_ALERTS_PER_USER_PER_HOUR) return 'alert';
     return n === SUBMISSION_ALERTS_PER_USER_PER_HOUR + 1 ? 'rollup' : 'silent';
@@ -622,7 +616,8 @@ async function readListingCheckSpendUsd(now: Date): Promise<number> {
   try {
     const { redis } = await import('~/server/redis/client');
     const key = await listingCheckSpendKey(now);
-    const raw = await boundedCacheCall('readListingCheckSpendUsd', () => redis.get(key));
+    const { boundedClusterCall } = await clusterCounters();
+    const raw = await boundedClusterCall('readListingCheckSpendUsd', () => redis.get(key));
     const cents = Number(raw);
     return Number.isFinite(cents) && cents > 0 ? cents / 100 : 0;
   } catch {
@@ -634,15 +629,11 @@ async function readListingCheckSpendUsd(now: Date): Promise<number> {
 export async function recordListingCheckSpendUsd(usd: number): Promise<void> {
   if (!Number.isFinite(usd) || usd <= 0) return;
   try {
-    const { redis } = await import('~/server/redis/client');
     const key = await listingCheckSpendKey(new Date());
-    await boundedCacheCall('recordListingCheckSpendUsd', () =>
-      redis
-        .multi()
-        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
-        .incrBy(key, Math.max(1, Math.round(usd * 100)))
-        .exec()
-    );
+    const { takeClusterWindowCount } = await clusterCounters();
+    await takeClusterWindowCount('recordListingCheckSpendUsd', key, AGENT_DAY_KEY_TTL_S, {
+      by: Math.max(1, Math.round(usd * 100)),
+    });
   } catch {
     // Lost spend only makes the day's total read low by a fraction of a cent.
   }
@@ -737,30 +728,34 @@ async function reserveAgentAutostartBudget(
   cents: number
 ): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
   try {
-    const { redis } = await import('~/server/redis/client');
     const key = await agentAutostartReservedKey();
-    const res = await boundedCacheCall('reserveAgentAutostartBudget', () =>
-      redis
-        .multi()
-        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
-        .incrBy(key, cents)
-        .exec()
+    const { takeClusterWindowCount } = await clusterCounters();
+    const total = await takeClusterWindowCount(
+      'reserveAgentAutostartBudget',
+      key,
+      AGENT_DAY_KEY_TTL_S,
+      { by: cents }
     );
-    const total = Number(res?.[1]);
     return Number.isFinite(total) ? { totalCents: total, key } : null;
   } catch {
     return null;
   }
 }
 
-/** Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. */
+/**
+ * Release a reservation taken by {@link reserveAgentAutostartBudget}. Best-effort. The release
+ * re-applies the day's TTL, so one landing after the key was evicted leaves a negative total that
+ * still expires, never an immortal one.
+ */
 async function releaseAgentAutostartBudget(
   cents: number,
   key: AgentAutostartReservedKey
 ): Promise<void> {
   try {
-    const { redis } = await import('~/server/redis/client');
-    await boundedCacheCall('releaseAgentAutostartBudget', () => redis.incrBy(key, -cents));
+    const { takeClusterWindowCount } = await clusterCounters();
+    await takeClusterWindowCount('releaseAgentAutostartBudget', key, AGENT_DAY_KEY_TTL_S, {
+      by: -cents,
+    });
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

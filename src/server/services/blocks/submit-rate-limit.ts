@@ -5,8 +5,7 @@ import {
   REDIS_SYS_KEYS,
   withSysReadDeadline,
 } from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
-import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
@@ -28,9 +27,6 @@ const RATE_KEYS = {
   push: REDIS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
 } as const;
 
-// Bounds the call so a stalled socket cannot hold the request.
-const PUSH_WINDOW_DEADLINE_MS = 1_000;
-
 /**
  * One window's count after this take, and its TTL on the 429 path, from the store the family
  * lives in. The push window is on the cache cluster: it bounds build and alert churn and fails
@@ -39,12 +35,9 @@ const PUSH_WINDOW_DEADLINE_MS = 1_000;
 function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
   if (family === 'push') {
     const key = `${RATE_KEYS.push}:${subject}` as const;
-    const opts = { deadlineMs: PUSH_WINDOW_DEADLINE_MS };
     return {
-      take: (): Promise<number> =>
-        takeClusterWindowCount('takePushReviewSlot', key, windowSeconds, opts),
-      ttl: (): Promise<number> =>
-        clusterCacheGuard.call('takePushReviewSlot', () => redis.ttl(key), opts),
+      take: (): Promise<number> => takeClusterWindowCount('takePushReviewSlot', key, windowSeconds),
+      ttl: (): Promise<number> => boundedClusterCall('takePushReviewSlot', () => redis.ttl(key)),
     };
   }
   const key = `${RATE_KEYS.submit}:${subject}` as const;

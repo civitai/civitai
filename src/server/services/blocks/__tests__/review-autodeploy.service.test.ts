@@ -1097,3 +1097,80 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     });
   });
 });
+
+describe('agent review auto-start: a release after the reservation key was evicted', () => {
+  /** The cache cluster as a key store with TTLs: a key missing from `ttls` never expires. */
+  const store = new Map<string, number>();
+  const ttls = new Map<string, number>();
+  const incrBy = (key: string, by: number) => {
+    const next = (store.get(key) ?? 0) + by;
+    store.set(key, next);
+    return next;
+  };
+  const deps = {
+    automationOn: async () => true,
+    startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
+  };
+
+  beforeEach(() => {
+    store.clear();
+    ttls.clear();
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockResolvedValue(0);
+    redisMock.redis.multi.mockImplementation(() => {
+      const ops: Array<() => unknown> = [];
+      const chain = {
+        set: vi.fn((key: string, value: string, opts: { NX?: boolean; EX?: number }) => {
+          ops.push(() => {
+            if (opts.NX && store.has(key)) return null;
+            store.set(key, Number(value));
+            if (opts.EX) ttls.set(key, opts.EX);
+            return 'OK';
+          });
+          return chain;
+        }),
+        incr: vi.fn((key: string) => {
+          ops.push(() => incrBy(key, 1));
+          return chain;
+        }),
+        incrBy: vi.fn((key: string, by: number) => {
+          ops.push(() => incrBy(key, by));
+          return chain;
+        }),
+        exec: vi.fn(async () => ops.map((op) => op())),
+      };
+      return chain;
+    });
+    // A bare INCRBY, as Redis does it: creates a missing key with no TTL.
+    redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => incrBy(key, by));
+  });
+
+  it('leaves no reservation key without a TTL', async () => {
+    m.startAgentReview.mockImplementation(async () => {
+      // The cluster evicts the reservation while the start is in flight.
+      store.clear();
+      ttls.clear();
+      return {};
+    });
+
+    expect(await maybeAutoStartAgentReview('pubreq_evicted', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toEqual([
+      expect.stringMatching(/^system:blocks:agent-review-autostart-reserved:\d{4}-\d{2}-\d{2}$/),
+    ]);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
+  });
+
+  it('CONTROL: a release on a live key hands the reservation back and keeps its TTL', async () => {
+    m.startAgentReview.mockResolvedValue({});
+
+    expect(await maybeAutoStartAgentReview('pubreq_live_key', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toHaveLength(1);
+    expect(store.get(keys[0])).toBe(0);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
+  });
+});

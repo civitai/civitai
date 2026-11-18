@@ -10,8 +10,8 @@ import {
 } from '@civitai/app-assistant';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-count';
 
 /**
  * The errors an app's own code reported in its LIVE DEV PREVIEW, kept for App Assistant's
@@ -102,12 +102,7 @@ export function previewErrorsKey(userId: number, blockId: string) {
   return `${REDIS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
 }
 
-// A 2h log on the cache cluster: every command touches the one list, so none spans slots. Each
-// call is bounded so a stalled socket cannot hold the request.
-const PREVIEW_ERRORS_DEADLINE_MS = 1_000;
-function bounded<T>(fn: string, op: () => Promise<T>): Promise<T> {
-  return clusterCacheGuard.call(fn, op, { deadlineMs: PREVIEW_ERRORS_DEADLINE_MS });
-}
+// A 2h log on the cache cluster: every command touches the one list, so none spans slots.
 
 /** Back-to-back repeats in `entries` (oldest first) folded into one entry each. */
 function foldRepeats(entries: ErrorActivity[]): ErrorActivity[] {

@@ -382,9 +382,6 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // Rate limit
 // ---------------------------------------------------------------------------
 
-// Bounds the call so a stalled socket cannot hold the request.
-const FORK_RATE_DEADLINE_MS = 1_000;
-
 /**
  * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
@@ -396,9 +393,7 @@ async function consumeForkStart(userId: number): Promise<void> {
     const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds, {
-        deadlineMs: FORK_RATE_DEADLINE_MS,
-      });
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds);
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }

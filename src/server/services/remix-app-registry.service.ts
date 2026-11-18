@@ -4,10 +4,10 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import {
@@ -141,8 +141,6 @@ const REGISTRY_TTL = CacheTTL.hour;
  * after it.
  */
 const GENERATION_TTL_SECONDS = 24 * 60 * 60;
-// The menu and the quote wait on this read, so a stalled socket must not hold them.
-const GENERATION_READ_DEADLINE_MS = 1_000;
 
 /**
  * On the primary: a mod's write is followed by this read, and a lagging replica would cache the
@@ -191,9 +189,7 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
 async function registryGeneration() {
   const key = REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION;
   const bounded = <T>(op: () => Promise<T>) =>
-    clusterCacheGuard.call('remixAppRegistryGeneration', op, {
-      deadlineMs: GENERATION_READ_DEADLINE_MS,
-    });
+    boundedClusterCall('remixAppRegistryGeneration', op);
   try {
     const generation = await bounded(() => redis.get(key));
     if (generation) return generation;

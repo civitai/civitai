@@ -6,8 +6,6 @@ import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 const HOUR_MS = 60 * 60 * 1000;
 /** Two hours, so a key outlives the hour it counts. */
 const KEY_TTL_S = 2 * 60 * 60;
-// The download waits on this, so a stalled socket must not hold it.
-const COUNTER_DEADLINE_MS = 1_000;
 
 /**
  * Counts one request for `provider` in the current clock hour and says whether it is within
@@ -24,7 +22,6 @@ export async function takeProviderDownload(
   const key = `${REDIS_KEYS.DOWNLOAD.PROVIDER}:${provider}:${Math.floor(now / HOUR_MS)}` as const;
   try {
     const count = await takeClusterWindowCount('takeProviderDownload', key, KEY_TTL_S, {
-      deadlineMs: COUNTER_DEADLINE_MS,
       logExtra: { provider },
     });
     if (!Number.isFinite(count)) throw new Error('unexpected counter reply');

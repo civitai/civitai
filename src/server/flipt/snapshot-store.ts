@@ -1,11 +1,8 @@
 import { createKvSnapshotStore, loadFliptTuning } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { setFliptSnapshotStore } from '~/server/flipt/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-
-// Bounds the read so a stalled socket cannot hold the Flipt client's fallback.
-const SNAPSHOT_READ_DEADLINE_MS = 1_000;
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 
 type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
 
@@ -22,9 +19,7 @@ type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
  * Its own module, registered from instrumentation.node.ts, because ~/server/flipt/client is in
  * the _app client graph and must not reach the Redis clients.
  *
- * A cache: it is rebuilt by any pod that has live state, so losing it costs nothing until Flipt is
- * also down. A read is bounded by the cluster cache guard;
- * a write is in the background. Either throws on failure, which the Flipt client catches.
+ * A cache: any pod with live state rebuilds it, so losing it costs nothing until Flipt is down.
  */
 export function registerFliptSnapshotStore(): void {
   const tuning = loadFliptTuning();
@@ -33,9 +28,7 @@ export function registerFliptSnapshotStore(): void {
     createKvSnapshotStore({
       kv: {
         get: (key) =>
-          clusterCacheGuard.call('fliptSnapshotGet', () => redis.get(key as SnapshotKey), {
-            deadlineMs: SNAPSHOT_READ_DEADLINE_MS,
-          }),
+          boundedClusterCall('fliptSnapshotGet', () => redis.get(key as SnapshotKey)),
         set: (key, value, ttlMs) => redis.set(key as SnapshotKey, value, { PX: ttlMs }),
       },
       key: `${REDIS_KEYS.FLIPT.SNAPSHOT}:${tuning.environment}`,

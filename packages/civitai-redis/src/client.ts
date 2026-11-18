@@ -3124,9 +3124,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
     // See `src/server/services/blocks/github-actions-oidc.service.ts`.
     ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
-    // The keys below moved here from system Redis. Each is a TTL'd counter, flag or short-lived
-    // record that starts empty at no more cost than the comment on it names, and every command on
-    // it touches that one key, so none spans slots.
+    // Every command on each key below touches that one key, so none spans slots (no CROSSSLOT).
     //
     // The viewer chose to continue on their own Buzz past their plan's daily app Buzz cap, for
     // one UTC day: `system:blocks:buzz-opt-in:${userId}:${UTC-day}` = '1', 25h TTL. Per user
@@ -3212,7 +3210,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   DOWNLOAD_LINK: {
     // `dl:mint-rate:<cred|user>:<id>:<minute>` — fixed-window mint counters (INCRBY + EXPIRE in one
-    // single-key MULTI). The links themselves stay in system Redis.
+    // single-key MULTI).
     MINT_RATE: 'dl:mint-rate',
   },
   USER: {
