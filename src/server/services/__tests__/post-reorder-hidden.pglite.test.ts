@@ -392,6 +392,30 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(after[60]).toBeLessThan(2);
   });
 
+  it('saves either order of a visible image and a new upload placed after held images', async () => {
+    // Visible A (10) at 0, held 1 and 2 at 1 and 2, the new upload (40) at 3 where addPostImage puts it.
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), (1, ${POST}, ${XXX}, 1, 'minor'),
+        (2, ${POST}, ${XXX}, 2, 'csam'), (40, ${POST}, ${PG}, 3, NULL);
+    `);
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [40, 10] });
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [10, 40] });
+    const after = await indexes();
+    expect([after[1], after[2]]).toEqual([1, 2]);
+  });
+
+  it("control: an upload left at a held image's index makes the post refuse a reorder", async () => {
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), (1, ${POST}, ${XXX}, 1, 'minor'),
+        (2, ${POST}, ${XXX}, 2, 'csam'), (40, ${POST}, ${PG}, 2, NULL);
+    `);
+    await expect(
+      reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [40, 10] })
+    ).rejects.toThrow('This order could not be saved.');
+  });
+
   // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
   it.each([
     [

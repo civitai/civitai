@@ -217,6 +217,49 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     );
   });
 
+  it('puts a new image last when another image already holds the index the client sent', async () => {
+    // Visible A at 0, and images at 1 and 2 the editor is not served: it counts one image and sends 2.
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValueOnce({ id: 12 } as never);
+    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 2 } } as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
+      () => null
+    );
+
+    expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ index: 3 })
+    );
+  });
+
+  it('keeps the index of each of several parallel uploads to a fresh post', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.postText.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValue(null as never);
+    const { createImage } = await import('~/server/services/image.service');
+
+    await Promise.all(
+      [0, 1, 2].map((index) =>
+        addPostImage({
+          url: `${KEY}${index}`,
+          type: 'image',
+          postId: 1,
+          user,
+          index,
+        } as never).catch(() => null)
+      )
+    );
+
+    const indexes = vi
+      .mocked(createImage)
+      .mock.calls.map(([args]) => (args as { index: number }).index);
+    expect([...indexes].sort()).toEqual([0, 1, 2]);
+  });
+
   it('sends an upload to a judge-rated collection through the normal scan', async () => {
     dbMock.dbRead.post.findFirst.mockResolvedValue({
       userId: 5,

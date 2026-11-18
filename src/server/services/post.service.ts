@@ -1775,18 +1775,29 @@ export const addPostImage = async ({
 
   const { generationWorkflowId, ...imageProps } = props;
   // On a post with storyline text items, a new image goes after the last item whatever index the
-  // client sent: an editor without text items counts only images.
+  // client sent: an editor without text items counts only images. Without text, the client's index
+  // stands unless another image already holds it (the editor does not count images it is not
+  // served) or there is none; then the image goes last.
   const lastText = await dbWrite.postText.findFirst({
     where: { postId: props.postId },
     orderBy: { index: 'desc' },
     select: { index: true },
   });
-  if (lastText) {
+  const sentIndex = imageProps.index;
+  const sentTaken =
+    !lastText &&
+    sentIndex != null &&
+    // primary: decides the index this upload is written at
+    !!(await dbWrite.image.findFirst({
+      where: { postId: props.postId, index: sentIndex },
+      select: { id: true },
+    }));
+  if (lastText || sentIndex == null || sentTaken) {
     const imageEnd = await dbWrite.image.aggregate({
       where: { postId: props.postId },
       _max: { index: true },
     });
-    imageProps.index = Math.max(lastText.index, imageEnd._max.index ?? -1) + 1;
+    imageProps.index = Math.max(lastText?.index ?? -1, imageEnd?._max.index ?? -1) + 1;
   }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
