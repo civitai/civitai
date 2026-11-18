@@ -253,7 +253,7 @@ async function searchFacetValues(facetName: string, facetQuery: string) {
 type MyImagesInput = Parameters<typeof trpcVanilla.image.getMyImages.query>[0];
 type MyImagesOutput = Awaited<ReturnType<typeof trpcVanilla.image.getMyImages.query>>;
 
-type OwnerImageUser = {
+export type OwnerImageUser = {
   id: number;
   username?: string | null;
   image?: string | null;

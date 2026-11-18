@@ -6,6 +6,7 @@ import { createInstantMeiliSearch } from '~/components/Search/site-search-client
 import {
   createOwnerImageSearch,
   withSemanticImageSearch,
+  type OwnerImageUser,
 } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
@@ -72,9 +73,7 @@ const semanticMeilisearch = withUserHydration(
 );
 
 // An owner-scoped Images search (the showcase picker), with or without `imageSearch`.
-const createOwnerImagesClient = (
-  getUser: Parameters<typeof createOwnerImageSearch>[0]['getUser']
-) =>
+const createOwnerImagesClient = (getUser: () => OwnerImageUser | undefined) =>
   withUserHydration(
     createResilientSearchClient(
       withSemanticImageSearch(
