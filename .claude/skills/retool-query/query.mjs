@@ -121,13 +121,15 @@ Examples:
 // without --writable can't see more than that login grants. --writable uses the application login:
 // MODERATOR_DATABASE_URL, or RETOOL_DATABASE_URL for a checkout whose .env predates the 2026-08 merge.
 const connectionString = writable
-  ? (process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL)
+  ? process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL
   : process.env.MODERATOR_DATABASE_READONLY_URL;
 
 if (!connectionString) {
   const name = writable ? 'MODERATOR_DATABASE_URL' : 'MODERATOR_DATABASE_READONLY_URL';
   console.error(`Error: ${name} not set`);
-  console.error(`Add ${name} to .claude/skills/retool-query/.env (see .env.example); ask an infra owner for it.`);
+  console.error(
+    `Add ${name} to .claude/skills/retool-query/.env (see .env.example); ask an infra owner for it.`
+  );
   process.exit(1);
 }
 
