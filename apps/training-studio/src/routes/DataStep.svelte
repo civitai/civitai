@@ -133,7 +133,6 @@
     excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
-    /** The tag find-and-replace row in Manage tags (its Flipt gate; off by default). */
     findReplace?: boolean;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];

@@ -9,9 +9,9 @@
   import { splitTags, type Img } from './trainingFlow';
   import { planReplace } from './tagReplace';
 
-  // Dataset-wide add/rename/remove of one tag. `images` is the flow's own state proxy, so mutating a
-  // tile's tags here applies live to the grid (the label editor's contract). Exact-string tag
-  // identity — the rows come from the stored tags themselves. Every change is undoable once: a
+  // Dataset-wide edits: add/rename/remove one tag, and find-and-replace inside tags. `images` is the flow's
+  // own state proxy, so mutating a tile's tags here applies live to the grid (the label editor's contract).
+  // The per-tag rows use exact-string identity — they come from the stored tags themselves. Every change is undoable once: a
   // dataset-wide edit that lands wrong has no other way back.
   let {
     open = $bindable(false),

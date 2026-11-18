@@ -933,7 +933,7 @@ export const KOHYA_FLAG_KEY = 'training-studio-kohya';
  *  Flipt flag exists, then its segments decide. */
 export const TAG_FIND_REPLACE_FLAG_KEY = 'training-studio-tag-find-replace';
 
-/** Every gate a host evaluates for the flow: the catalog's, the Kohya engine's, then the tag find-replace. */
+/** Every gate a host evaluates for the flow. */
 export const hostFlagKeys = (): string[] => [
   ...catalogFlagKeys(),
   KOHYA_FLAG_KEY,
