@@ -268,7 +268,12 @@ describe('who gets the weekly digest', () => {
 
   it('stops for the run budget before reading a page, not only before a send', async () => {
     const result = await run({ budgetMs: 0 });
-    expect(result).toMatchObject({ considered: 0, emailed: 0, stopped: 'budget', cycleDone: false });
+    expect(result).toMatchObject({
+      considered: 0,
+      emailed: 0,
+      stopped: 'budget',
+      cycleDone: false,
+    });
     expect(h.unseen).not.toHaveBeenCalled();
   });
 
