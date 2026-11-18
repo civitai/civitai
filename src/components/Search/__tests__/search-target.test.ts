@@ -165,3 +165,12 @@ describe('pageSearchFor', () => {
     expect(pageSearchFor({ pageSearch: true }, '/challenges')).toBeUndefined();
   });
 });
+
+describe('the bounties feed search', () => {
+  it('searches /bounties in place under semanticBountySearch, with no profile tab', () => {
+    const bountiesOnly = { semanticBountySearch: true };
+    expect(searchesFeedInPlace(bountiesOnly, 'bounties', '/bounties')).toBe(true);
+    expect(searchesFeedInPlace({}, 'bounties', '/bounties')).toBe(false);
+    expect(feedSearchPathname(bountiesOnly, 'bounties')).toBe('/bounties');
+  });
+});

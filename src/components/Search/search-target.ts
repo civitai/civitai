@@ -30,7 +30,14 @@ export function resolveSearchTarget(
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
 type FeedSearchFlags = Partial<
-  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch' | 'servicesFeedSearch'>
+  Pick<
+    FeatureAccess,
+    | 'feedSearch'
+    | 'modelFeedSearch'
+    | 'articleFeedSearch'
+    | 'servicesFeedSearch'
+    | 'semanticBountySearch'
+  >
 >;
 
 /**
@@ -54,8 +61,12 @@ const FEED_SEARCH = {
     pathname: '/articles',
     profilePathname: '/user/[username]/articles',
   },
+  bounties: { flag: 'semanticBountySearch', pathname: '/bounties', profilePathname: undefined },
 } as const satisfies Partial<
-  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string }>
+  Record<
+    SearchIndexKey,
+    { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string | undefined }
+  >
 >;
 
 /** The feed a search on `index` lands on, when that feed answers `?query=` for this viewer. */
