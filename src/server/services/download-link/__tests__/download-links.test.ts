@@ -166,7 +166,10 @@ vi.mock('~/server/redis/caches', () => ({
 import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
-import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import {
+  revokeLinksOfRevokedCredentials,
+  takeMintBudget,
+} from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
 import { mintProviderLink } from '~/server/services/download-link/download-link.service';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
@@ -204,8 +207,11 @@ const ops = {
     const entry = live(key);
     if (entry) entry.expiresAt = Date.now() + seconds * 1000;
   },
-  set(key: string, value: string, options?: { PXAT?: number }) {
-    store.set(key, { type: 'string', value, expiresAt: options?.PXAT ?? null });
+  set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
+    if (options?.NX && live(key)) return null;
+    const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
+    store.set(key, { type: 'string', value, expiresAt });
+    return 'OK';
   },
   sAdd(key: string, member: string) {
     const entry = live(key);
@@ -1154,6 +1160,29 @@ describe('mint limits', () => {
     ]);
     expect(res.status).toBe(429);
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('a mint window key carries its TTL from the first take', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    const windows = [...store.entries()].filter(([key]) => key.startsWith('dl:mint-rate:'));
+    expect(windows.length).toBeGreaterThan(0);
+    for (const [key, entry] of windows) expect(entry.expiresAt, key).not.toBeNull();
+  });
+
+  it('a hung cache cluster refuses the take by its deadline, not stalling the mint', async () => {
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain: Record<string, unknown> = {
+        exec: () => new Promise(() => undefined),
+      };
+      for (const name of ['set', 'incr', 'incrBy', 'expire']) chain[name] = () => chain;
+      return chain;
+    });
+    const started = Date.now();
+    await expect(takeMintBudget('user:1', 1, 10, started)).rejects.toMatchObject({
+      name: 'ClusterCacheUnavailableError',
+      reason: 'timeout',
+    });
+    expect(Date.now() - started).toBeLessThan(4_000);
   });
 });
 
