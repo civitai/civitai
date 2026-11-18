@@ -12,7 +12,7 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 const BATCH_SIZE = 500;
 
-type QueueRow = { id: number; moderatorDelete: boolean };
+type QueueRow = { id: number; moderatorDelete: boolean; attempted: boolean };
 
 /**
  * What the DELETE re-checks: an owner under a hold, or with a safety report on file, keeps every
@@ -39,7 +39,8 @@ export const queuedImageDeleteCondition = (moderatorDelete: boolean) =>
 export const imageDeletes = createJob('image-deletes', '* * * * *', async () => {
   // First attempts before retries, so images that keep failing cannot hold back new ones.
   const rows = await dbWrite.$queryRaw<QueueRow[]>`
-    SELECT "entityId" AS id, COALESCE((data->>'moderatorDelete')::boolean, false) AS "moderatorDelete"
+    SELECT "entityId" AS id, COALESCE((data->>'moderatorDelete')::boolean, false) AS "moderatorDelete",
+      (data->>'attempted') IS NOT NULL AS attempted
     FROM "JobQueue"
     WHERE type = ${JobQueueType.ImageDelete}::"JobQueueType"
       AND "entityType" = ${EntityType.Image}::"EntityType"
@@ -61,19 +62,29 @@ export const imageDeletes = createJob('image-deletes', '* * * * *', async () => 
 
   let deleted = 0;
   const failed: number[] = [];
+  const oneAtATime = async (ids: number[], moderatorDelete: boolean) => {
+    for (const id of ids)
+      deleted += await run([id], moderatorDelete).catch(() => {
+        failed.push(id);
+        return 0;
+      });
+  };
   for (const moderatorDelete of [false, true]) {
-    const ids = rows.filter((row) => row.moderatorDelete === moderatorDelete).map((row) => row.id);
-    if (!ids.length) continue;
-    try {
-      deleted += await run(ids, moderatorDelete);
-    } catch {
-      // One at a time, so an image that keeps failing cannot hold back the rest.
-      for (const id of ids)
-        deleted += await run([id], moderatorDelete).catch(() => {
-          failed.push(id);
-          return 0;
-        });
+    const of = (attempted: boolean) =>
+      rows
+        .filter((row) => row.moderatorDelete === moderatorDelete && row.attempted === attempted)
+        .map((row) => row.id);
+    const [firsts, retries] = [of(false), of(true)];
+    if (firsts.length) {
+      // One at a time after a failure, so an image that fails cannot hold back the rest.
+      try {
+        deleted += await run(firsts, moderatorDelete);
+      } catch {
+        await oneAtATime(firsts, moderatorDelete);
+      }
     }
+    // Retries alone, so one that keeps failing cannot fail every batch it joins.
+    await oneAtATime(retries, moderatorDelete);
   }
 
   if (failed.length) {

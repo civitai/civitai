@@ -103,7 +103,7 @@ afterEach(async () => {
 });
 
 const rows = async (query: string) => (await db.query(query)).rows;
-const deleteArticle = () => moderateArticle({ action: 'delete', articleId: 50, userId: 1 });
+const deleteArticle = () => moderateArticle({ action: 'delete', articleId: 50, userId: 99 });
 
 describe("a moderator's article delete", () => {
   it('deletes the article with its comments when no author is held', async () => {

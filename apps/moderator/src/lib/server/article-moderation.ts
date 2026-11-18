@@ -37,7 +37,7 @@ export async function moderateArticle(
     if (input.action === 'restore') await restoreArticle(input.articleId);
     else if (input.action === 'unpublish')
       await unpublishArticle(input.articleId, input.userId, input.reason, input.customMessage);
-    else await deleteArticle(input.articleId);
+    else await deleteArticle(input.articleId, input.userId);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -321,7 +321,7 @@ async function restoreArticle(id: number): Promise<void> {
 }
 
 /** Deletes the article and queues its orphaned images for deletion. */
-async function deleteArticle(id: number): Promise<void> {
+async function deleteArticle(id: number, moderatorId: number): Promise<void> {
   // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
@@ -374,6 +374,10 @@ async function deleteArticle(id: number): Promise<void> {
       .execute();
     await trx.deleteFrom('Article').where('id', '=', id).execute();
 
-    await queueImageDeletes(trx, candidates, { ownerId: article.userId, moderatorDelete: true });
+    // A moderator deleting their own article deletes it as its owner.
+    await queueImageDeletes(trx, candidates, {
+      ownerId: article.userId,
+      moderatorDelete: article.userId !== moderatorId,
+    });
   });
 }

@@ -134,12 +134,12 @@ describe('image-deletes', () => {
     });
   });
 
-  it('takes a retry after the first attempts, however old', async () => {
+  it('takes a retry after the first attempts, however old, and on its own', async () => {
     await queueOld(11, { attempted: true }, 30);
 
     await runJob();
 
-    expect(mockDeleteImages.mock.calls[0][0]).toEqual([1, 2, 7, 11]);
+    expect(mockDeleteImages.mock.calls.map(([ids]) => ids)).toEqual([[1, 2, 7], [11], [5]]);
   });
 });
 

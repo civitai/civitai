@@ -290,6 +290,16 @@ describe("a moderator's article delete", () => {
     expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
   });
 
+  it('queues them as an owner delete when the moderator wrote the article', async () => {
+    await articleWithCover(10, 1);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: OWNER })).toEqual({
+      ok: true,
+    });
+
+    expect(await queued()).toEqual([{ entityId: 1, data: {} }]);
+  });
+
   // Which images qualify is queue-image-deletes.pglite.test.ts; this pins that the delete removes only
   // this article's links before the check, and the lock order.
   it('queues an orphaned content image and not one another entity still uses', async () => {

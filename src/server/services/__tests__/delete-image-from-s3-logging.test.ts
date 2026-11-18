@@ -340,7 +340,6 @@ describe('deleteImageFromS3', () => {
     expect(outcome).toBe('failed');
     expect(retryInserts()).toHaveLength(1);
     const [insert] = retryInserts();
-    expect(insert.values).toHaveLength(2);
     const rows = queuedRows(insert);
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(4242);
@@ -348,16 +347,7 @@ describe('deleteImageFromS3', () => {
     expect(imageStorageDeletePayloadSchema.parse(rows[0].data)).toEqual({
       url: 'abc-def/original.jpeg',
     });
-    expect(insert.sql).toMatch(
-      /VALUES \(\?, 'Image'::"EntityType", 'ImageStorageDelete'::"JobQueueType",\s+\?::jsonb\)/
-    );
-    // The retry job re-enters this path for a key already queued. Without the upsert that is a
-    // primary-key violation, logged as a lost key every run for every stuck key.
-    // Anchored at the end: an extra SET (`"createdAt" = now()`) would reset the age the overdue
-    // check reads, and a missing WHERE writes a dead row version on every failed retry.
-    expect(insert.sql).toMatch(
-      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "data" = EXCLUDED\."data"\s+WHERE "JobQueue"\."data"->>'url' IS DISTINCT FROM EXCLUDED\."data"->>'url'\s+OR \(EXCLUDED\."data"->>'allVersions' IS NOT NULL AND "JobQueue"\."data"->>'allVersions' IS NULL\)\s*$/
-    );
+    // The upsert itself runs against Postgres in content-deletion.behavior.test.ts.
   });
 
   it("hands the caller's abort signal to the B2 delete", async () => {
