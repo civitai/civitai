@@ -214,8 +214,7 @@ so the digest never repeats one. Users with nothing unseen get nothing.
   the rollout, never the backlog. Per user: a user added to the rollout later gets their own later
   floor. A user turned off and back on keeps their old row, so their next digest can reach back up
   to the seven-day window. So the table holds a row per user started, not only per user sent one:
-  after a run, its row count grows by `emailed` plus `skipped.first-pass` (the migration's
-  "has grown by `emailed`" check predates the floor).
+  a run adds `skipped.first-pass` rows, and `emailed` users move their existing row's `lastSentAt`.
 - **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user (entity = user id,
   context = `userId` and `isModerator`, so the `is-zach`, `moderators` and `userId` segments match;
   tier is not passed). Off, it emails no one.
