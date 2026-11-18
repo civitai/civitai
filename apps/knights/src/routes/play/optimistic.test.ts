@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   BUFFER_TARGET,
   refillCount,
-  READY_TARGET,
-  REFILL_AT,
   MAX_EXCLUDED,
   createItemBuffer,
   createSerialQueue,
@@ -203,14 +201,6 @@ describe('createItemBuffer', () => {
     started.forEach((id) => buffer.markDecoded(id));
     return started;
   };
-
-  // Items resolve in seconds under load, so a deep buffer serves items that closed while they waited (11-18: about 1 in 4
-  // votes refused 'not-open'). 3 keeps the next ones decoded without holding any long.
-  it('holds 3, all of them ready, and refills from 2 down', () => {
-    expect(BUFFER_TARGET).toBe(3);
-    expect(READY_TARGET).toBe(3);
-    expect(REFILL_AT).toBe(2);
-  });
 
   it('hands items out in the order they were enqueued, the head only once it is decoded', () => {
     const buffer = createItemBuffer();
