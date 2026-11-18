@@ -87,6 +87,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     ...real,
     isFlipt: (flag: string, entityId?: string, context?: unknown) =>
       h.isFlipt(flag, entityId, context),
+    // The levels flag is read through this one (`doc-levels.ts` fails closed on `null`).
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      h.isFlipt(flag, entityId, context),
   };
 });
 vi.mock('~/server/clickhouse/client', async (importOriginal) => {

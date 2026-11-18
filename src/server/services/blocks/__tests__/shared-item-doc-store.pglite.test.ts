@@ -51,6 +51,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(h.docLevels)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(h.docLevels)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 

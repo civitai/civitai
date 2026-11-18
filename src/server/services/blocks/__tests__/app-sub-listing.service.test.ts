@@ -42,6 +42,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       flag === 'app-blocks-shared-doc-levels'
         ? Promise.resolve(docLevels.on)
         : real.isFlipt(flag, entityId, context as never),
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(docLevels.on)
+        : real.readFliptBoolean(flag, entityId, context as never),
   };
 });
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));

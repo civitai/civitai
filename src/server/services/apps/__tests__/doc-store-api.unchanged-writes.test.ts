@@ -62,7 +62,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     }
     return real.isFlipt(flag, entityId, context as never);
   };
-  return { ...real, isFlipt };
+  // The levels flag is read through `readFliptBoolean` (`doc-levels.ts` fails closed on `null`).
+  return { ...real, isFlipt, readFliptBoolean: isFlipt };
 });
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
