@@ -133,7 +133,8 @@ const defaultDeps: AdsTxtDeps = {
   getLastGood: (name) => dbKV.get<SourceBody>(lastGoodKey(name)),
   setLastGood: (name, value) => dbKV.set(lastGoodKey(name), value),
   now: () => new Date(),
-  log: (data) => logToAxiom({ name: 'ads-txt', type: 'warning', ...data }).catch(() => undefined),
+  log: ({ message, ...payload }) =>
+    logToAxiom({ name: 'ads-txt', type: 'warning', message: String(message), payload }),
 };
 
 const ageMs = (now: Date, iso: string | undefined) =>
