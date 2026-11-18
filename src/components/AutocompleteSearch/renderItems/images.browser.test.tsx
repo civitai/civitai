@@ -2,10 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
-// The real row, not a stub: what the showcase picker shows for an image above PG-13.
-
-// The picture and the avatar need session and settings providers; they are stubs, the row's own
-// choice between picture and blur is what is under test.
+// Stubbed: both need session and settings providers.
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => <div data-testid="thumbnail" />,
 }));
@@ -32,8 +29,10 @@ const hit = (nsfwLevel: number) =>
     user: { id: 7, username: 'fox' },
   } as never);
 
-const renderRow = (nsfwLevel: number, extra: Record<string, unknown> = {}) =>
-  renderWithProviders(<ImagesSearchItem value="5" hit={hit(nsfwLevel)} {...extra} />);
+const renderRow = (
+  nsfwLevel: number,
+  extra: { pickerRow?: boolean; viewerLevel?: number; blurLevels?: number } = {}
+) => renderWithProviders(<ImagesSearchItem value="5" label="5" hit={hit(nsfwLevel)} {...extra} />);
 
 const thumbnail = () => page.getByTestId('thumbnail').elements().length;
 
@@ -67,7 +66,6 @@ describe('ImagesSearchItem in the showcase picker', () => {
     expect(thumbnail()).toBe(1);
   });
 
-  // Control: the site search dropdown keeps its behaviour, whatever the viewer's level.
   test('without the picker flag a mature image stays blurred and unlabelled', async () => {
     renderRow(R, { viewerLevel: PG | PG13 | R });
 

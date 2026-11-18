@@ -394,7 +394,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
-  /** The showcase picker's Images: its rows show the viewer's mature images and rate the rest. */
   ownerPicker?: boolean;
   carriedSearchText: React.MutableRefObject<string>;
 }) {

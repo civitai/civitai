@@ -12,22 +12,19 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { Flags } from '~/shared/utils/flags';
-import { getCrucibleRatingLabel } from '~/utils/crucible-helpers';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getBrowsingLevelLabel,
+  getIsSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import styles from './common.module.scss';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
   ComboboxItem & {
     hit: SearchIndexDataMap['images'][number];
-    /**
-     * The showcase picker's row: a mature image shows its picture when `viewerLevel` includes its
-     * rating and a blur when it does not, and carries its rating either way. Without it the row
-     * blurs every image above PG-13, as the site search dropdown does.
-     */
+    /** Without it the row blurs every image above PG-13, as the site search dropdown does. */
     pickerRow?: boolean;
     viewerLevel?: number;
-    /** The viewer's blur preference (`useBrowsingLevelContext`): levels they keep blurred. */
     blurLevels?: number;
   }
 >(({ value, hit, pickerRow, viewerLevel, blurLevels, ...props }, ref) => {
@@ -100,7 +97,7 @@ export const ImagesSearchItem = forwardRef<
             color="dark"
             style={{ position: 'absolute', bottom: 2, left: 2 }}
           >
-            {getCrucibleRatingLabel(hit.nsfwLevel)}
+            {getBrowsingLevelLabel(hit.nsfwLevel)}
           </Badge>
         )}
       </Center>

@@ -179,8 +179,11 @@ describe('Images search in the showcase picker', () => {
     await vi.waitFor(() => expect(offeredIds()).toEqual([RECENT_SAFE]), { timeout: 3000 });
     // A blurred row draws its placeholder from these; without them it is an empty box.
     expect(state.renderedHits.at(-1)).toMatchObject({ hash: 'h', width: 3, height: 2 });
-    // The picker's rows rate mature images and show the ones the viewer's level (3 here) allows.
-    expect(state.rowProps.at(-1)).toMatchObject({ pickerRow: true, viewerLevel: 3 });
+    expect(state.rowProps.at(-1)).toMatchObject({
+      pickerRow: true,
+      viewerLevel: 3,
+      blurLevels: expect.any(Number),
+    });
     expect(state.semanticQuery).not.toHaveBeenCalled();
     // Whose images is the session's call: the request names no user.
     expect(state.myImages).toHaveBeenCalledWith({
