@@ -38,6 +38,7 @@ import {
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
 import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
+import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
 
 const url = '/api/trpc';
 
@@ -401,10 +402,15 @@ function terminatingLink({
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
+  // `feed_transport` RUM timing (`~/utils/faro/feedTransport`): one timing link INSIDE each branch,
+  // so the transport tag is the branch the request actually took, never a re-derived predicate.
   return splitLink({
     condition: shouldUseGoTransport,
-    true: httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
-    false: defaultLink,
+    true: [
+      feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
+      httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+    ],
+    false: [feedTransportTimingLink({ transport: 'node', isAuthed: isAuthedBrowser }), defaultLink],
   });
 }
 
