@@ -196,6 +196,25 @@ describe('base model filter (Models and Images)', () => {
   });
 });
 
+describe('base model filter on images', () => {
+  // Images made with a generation-only base (no model uploads, so hidden) can still be filtered.
+  const nanoBanana = async (includeHidden?: boolean) => {
+    renderWithProviders(
+      <BaseModelFilterSelect includeHidden={includeHidden} value={[]} onChange={vi.fn()} />
+    );
+    await page.getByPlaceholder('All Base Models').fill('Nano');
+    return page.getByRole('option', { name: /^Nano Banana/ });
+  };
+
+  test('lists the hidden bases when asked', async () => {
+    await expect.element(await nanoBanana(true)).toBeInTheDocument();
+  });
+
+  test('leaves them out otherwise', async () => {
+    await expect.element(await nanoBanana()).not.toBeInTheDocument();
+  });
+});
+
 describe('search refinement list', () => {
   const renderRefinement = () => {
     mocks.refinementItems = ['SD 3.5 Large Turbo', 'SDXL 1.0', 'Ideogram 4.5'].map((value) => ({

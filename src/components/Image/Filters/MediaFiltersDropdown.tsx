@@ -622,6 +622,7 @@ export function MediaFiltersDropdown({
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
             <BaseModelFilterSelect
+              includeHidden
               value={mergedFilters.baseModels ?? []}
               onChange={(baseModels) => handleChange({ baseModels })}
             />
