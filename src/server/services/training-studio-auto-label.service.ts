@@ -156,7 +156,7 @@ async function reserveDailyItems(userId: number, count: number) {
 
 /** Gives each failed step's item back to the quota it was counted against, once per step however
  *  often the workflow is polled, and only for a workflow this service submitted for this user (its
- *  submit record), never more items than it counted. Only today's quota: an earlier day's has no use
+ *  submit record), never more items than it counted, and at most the daily limit per day. Only today's quota: an earlier day's has no use
  *  for it, and a decrement on an expired key would leave a negative counter with no TTL. Best effort:
  *  a poll is never failed by it, and a miss only keeps the item counted, as before. */
 async function releaseFailedItems(workflowId: string, userId: number, failedSteps: string[]) {
@@ -171,8 +171,17 @@ async function releaseFailedItems(workflowId: string, userId: number, failedStep
     const releasedKey = `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED}:${workflowId}` as const;
     const added = await redis.sAdd(releasedKey, counted);
     if (added > 0) {
-      await sysRedis.decrBy(dailyKey(userId, record.day), added);
       await redis.expire(releasedKey, QUOTA_TTL_SECONDS);
+      // Backstop: at most the daily limit comes back per day; past it, failed items stay counted.
+      const releasedDailyKey =
+        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:${userId}:${record.day}` as const;
+      const released = await redis.incrBy(releasedDailyKey, added);
+      if (released === added) await redis.expire(releasedDailyKey, QUOTA_TTL_SECONDS);
+      const allowed = Math.min(
+        added,
+        Math.max(0, STUDIO_AUTO_LABEL_DAILY_ITEMS - (released - added))
+      );
+      if (allowed > 0) await sysRedis.decrBy(dailyKey(userId, record.day), allowed);
     }
   } catch (e) {
     console.warn('[training-studio] auto-label quota release failed', workflowId, e);

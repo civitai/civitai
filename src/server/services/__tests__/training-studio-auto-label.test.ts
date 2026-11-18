@@ -270,6 +270,10 @@ describe('Training Studio auto-label', () => {
       redisMock.redis.get.mockImplementation(
         (async (k: string) => strings.get(k) ?? null) as never
       );
+      redisMock.redis.incrBy.mockImplementation((async (k: string, n: number) => {
+        counters.set(k, (counters.get(k) ?? 0) + n);
+        return counters.get(k)!;
+      }) as never);
     });
     const workflow = (steps: { name: string; status: string }[]) => ({
       data: {
@@ -316,6 +320,18 @@ describe('Training Studio auto-label', () => {
       record('wf-q', { userId: 7, day: today(), count: 2 });
       await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
       expect(counters.get(quotaKey())).toBe(1);
+    });
+
+    it('gives back at most the daily limit per day: past it, failed items stay counted', async () => {
+      counters.set(quotaKey(), STUDIO_AUTO_LABEL_DAILY_ITEMS);
+      counters.set(
+        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`,
+        STUDIO_AUTO_LABEL_DAILY_ITEMS - 1
+      );
+      record('wf-q', { userId: 7, day: today(), count: 2 });
+      orch.getWorkflow.mockResolvedValue(failed(2));
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      expect(counters.get(quotaKey())).toBe(STUDIO_AUTO_LABEL_DAILY_ITEMS - 1);
     });
 
     it("gives nothing back to today's quota for a workflow counted on another day or user", async () => {
