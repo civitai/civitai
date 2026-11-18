@@ -152,8 +152,9 @@ export async function harvestRulings(
             };
           })
         )
-        // A moderator ruling outranks players' agreement: it replaces an agreement reference, retired or not, and
-        // leaves every other existing reference alone.
+        // A moderator ruling outranks players' agreement: it replaces an agreement reference, retired or not, that
+        // never graded anyone. Its id is reused, and graded votes under it would then read the ruling as their answer,
+        // so a promoted one that graded players is left to retireStale. Every other existing reference is left alone.
         .onConflict((oc) =>
           oc
             .column('imageId')
@@ -169,6 +170,9 @@ export async function harvestRulings(
               failures: 0,
             }))
             .where('KnightsReferenceImage.source', '=', REFERENCE_SOURCE.agreement)
+            .where(
+              sql<boolean>`NOT EXISTS (SELECT 1 FROM "KnightsVote" v WHERE v."itemId" = -"KnightsReferenceImage"."id" AND v."verdict" IN ('correct', 'failed'))`
+            )
         )
         .returning('id')
         .execute();

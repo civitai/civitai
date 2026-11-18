@@ -97,6 +97,18 @@ describe('reviewProbation', () => {
     expect(await statusOf(trials.id)).toBe('probation');
   });
 
+  it('counts a player who answered twice once', async () => {
+    // 5 rows, 4 players: too few, however many rows agree.
+    const { id, players } = await check(10, {}, agree(4, 0));
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES ($1,$2,$3,$4,10,'Knight','4',1)`,
+      [-id, players[0], new Date(NOW.getTime() - 60_000).toISOString(), Q]
+    );
+    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 0, retired: 0 });
+    expect(await statusOf(id)).toBe('probation');
+  });
+
   it('does not count held players, whose votes carry no weight', async () => {
     // 3 agree and 2 disagree, but 2 of the agreeing are held: 1 of 3 weighted players is too few to decide.
     const { id } = await check(10, {}, agree(1, 2));

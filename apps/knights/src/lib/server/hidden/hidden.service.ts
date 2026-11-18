@@ -261,6 +261,7 @@ export async function answerHiddenCheck(
       .executeTakeFirst();
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;
+    // Unreachable while the query lists only these two; kept so widening that list cannot serve a check ungraded.
     if (!probation && ref.status !== REFERENCE_STATUS.active) {
       return { status: 'rejected', reason: 'unavailable' };
     }

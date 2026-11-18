@@ -23,7 +23,7 @@ export const AGREEMENT_INTAKE = {
 };
 
 const LIVE = [REFERENCE_STATUS.probation, REFERENCE_STATUS.active];
-/** PG, PG-13 and R. X and XXX wait for a moderator-ruled anchor: an under-rating of those is the costly mistake. */
+/** PG, PG-13 and R: verdicts at X or XXX wait for a moderator-ruled anchor. An image under-rated to R still arrives as R. */
 const INTAKE_LEVELS = BUCKET_LEVELS.slice(0, 3);
 
 /**
@@ -79,6 +79,7 @@ export async function takeAgreementIntake(
                 .select(sql<number>`1`.as('one'))
                 .whereRef('m.entityId', '=', 'i.imageId')
                 .where('m.entityType', '=', 'image')
+                // Not `setNsfwLevelKono`: that is Knights' own write-back of this verdict, always after resolvedAt.
                 .where('m.activity', '=', MODERATOR_RULING_ACTIVITY)
                 .whereRef('m.createdAt', '>', 'i.resolvedAt')
             )

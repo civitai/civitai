@@ -240,6 +240,7 @@ describe('the harvest job', () => {
     const paused = await runHarvestJob(db, {
       now: NOW,
       settings: { paused: true, hiddenCheckShare: 0 },
+      probationShare: 0.5,
     });
     expect(paused).toEqual({ paused: true, retired: 1, probation: { promoted: 0, retired: 0 } });
     expect((await references()).map((r) => [r.imageId, r.status])).toEqual([[60, 'retired']]);
