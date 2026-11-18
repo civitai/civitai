@@ -40,7 +40,9 @@ export async function getRetractedMedia(
     .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
     .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
     .where('i.id', '=', imageId)
-    .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
+    .where(
+      sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
+    )
     .executeTakeFirst();
   if (!row) return null;
   const tier = retractedTier(row, blockedForPatterns());
@@ -67,3 +69,6 @@ export function recordRetractedView(moderatorId: number, imageId: number) {
 
 /** `/api/retracted-media` answers 404 unless this is exactly 'true'. */
 export const retractedMediaEnabled = () => env.RETRACTED_MEDIA_ENABLED === 'true';
+
+/** Whether a scanned image whose url the image CDN retracted is eligible too. Off unless exactly 'true'. */
+export const retractedMediaCdnLeg = () => env.RETRACTED_MEDIA_CDN_LEG === 'true';
