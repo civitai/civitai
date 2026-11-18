@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { getBrowsingLevelLabel } from '@civitai/shared';
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
@@ -7,15 +6,14 @@
   import { shortAge } from '$lib/format';
   import {
     DEFAULT_INQUISITOR_FILTER,
-    ESCALATION_REASON_LABELS,
     INQUISITOR_FILTER_LABELS,
     INQUISITOR_FILTERS,
-    WRITEBACK_REASON_LABELS,
     type InquisitorFilter,
   } from '$lib/knights/inquisitor-filters';
   import type { InquisitorItem } from '$lib/server/knights/inquisitor.service';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
+  import InquisitorChips from './InquisitorChips.svelte';
   import InquisitorDetail, { inquisitorDecisionsEnabled } from './InquisitorDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -80,7 +78,7 @@
       pageNumber={1}
       hasMore={false}
       offset={0}
-      total={data.counts[data.filter]}
+      total={Math.min(data.counts[data.filter], data.limit)}
       {form}
       {listHeader}
       {empty}
@@ -99,22 +97,7 @@
           onselect={state.select}
         >
           {#snippet badges()}
-            <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-semibold text-white">
-              {getBrowsingLevelLabel(row.currentLevel)}
-            </span>
-            {#if row.hasBlockMarker}
-              <span class="rounded bg-red-900 px-1.5 py-px text-[11px] font-semibold text-red-100">Blocked</span>
-            {/if}
-            {#if row.escalationReason}
-              <span class="rounded border border-dark-4 px-1.5 py-px text-[11px] text-dark-1">
-                {ESCALATION_REASON_LABELS[row.escalationReason]}
-              </span>
-            {/if}
-            {#if row.reason}
-              <span class="rounded border border-dark-4 px-1.5 py-px text-[11px] text-dark-1">
-                {WRITEBACK_REASON_LABELS[row.reason]}
-              </span>
-            {/if}
+            <InquisitorChips {row} />
             {#if row.votes[0]}
               <span class="basis-full truncate text-xs text-dark-2">
                 Knights lean {row.votes[0].label} · {row.votes.reduce((sum, v) => sum + v.votes, 0)} votes

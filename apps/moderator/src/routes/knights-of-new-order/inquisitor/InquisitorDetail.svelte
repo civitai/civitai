@@ -20,6 +20,7 @@
     label: r.label,
     description: r.label,
   }));
+  // No Knights reason requires a note (`reasonRequiresNote` matches only 'other'), so the picker gets none.
   const blockReasonLabel = (value: string) =>
     BLOCK_REASONS.find((r) => r.value === value)?.label ?? value;
 </script>
@@ -47,11 +48,8 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, dateTime, num, shortAge } from '$lib/format';
-  import {
-    ESCALATION_REASON_LABELS,
-    WRITEBACK_REASON_LABELS,
-  } from '$lib/knights/inquisitor-filters';
   import type { Outcome } from '$lib/triage/queue';
+  import InquisitorChips from './InquisitorChips.svelte';
   import {
     closeReasonPickerBeyond,
     openReasonPicker,
@@ -89,11 +87,16 @@
     }
     if (level !== NsfwLevel.Blocked) input.formData.delete('blockReason');
     resetReasonPicker();
-    return submit(
+    const finish = submit(
       level === NsfwLevel.Blocked
         ? `Blocked: ${blockReasonLabel(blockReason)}`
         : `Rated ${getBrowsingLevelLabel(level)}`
     )(input);
+    // A refused Blocked asks for its reason again, by mouse as by key.
+    return async (opts) => {
+      if (opts.result.type !== 'success') blockReason = '';
+      await (await finish)?.(opts);
+    };
   };
 </script>
 
@@ -105,7 +108,7 @@
       name="level"
       value={level}
       tone={String(level) === topVote ? 'blue' : undefined}
-      disabled={row.hasBlockMarker}
+      disabled={!inquisitorDecisionsEnabled(row)[i]}
     >
       {getBrowsingLevelLabel(level)}
       {#if level === row.currentLevel}
@@ -141,29 +144,7 @@
   {#snippet header()}
     <div class="space-y-2">
       <TriageDetailHeader title="Image #{row.imageId}" reference="item {row.id}" linksBeside>
-        {#snippet chips()}
-          <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-semibold text-white">
-            Currently {getBrowsingLevelLabel(row.currentLevel)}
-          </span>
-          {#if row.hasBlockMarker}
-            <span class="rounded bg-red-900 px-1.5 py-px text-[11px] font-semibold text-red-100">
-              Blocked{row.blockedFor ? ` (${row.blockedFor})` : ''}
-            </span>
-          {/if}
-          {#if row.locked}
-            <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] text-dark-1">Rating locked</span>
-          {/if}
-          {#if row.escalationReason}
-            <span class="rounded border border-dark-4 px-1.5 py-px text-[11px] text-dark-1">
-              {ESCALATION_REASON_LABELS[row.escalationReason]}
-            </span>
-          {/if}
-          {#if row.reason}
-            <span class="rounded border border-dark-4 px-1.5 py-px text-[11px] text-dark-1">
-              {WRITEBACK_REASON_LABELS[row.reason]}
-            </span>
-          {/if}
-        {/snippet}
+        {#snippet chips()}<InquisitorChips {row} detailed />{/snippet}
         {#snippet links()}
           <Button variant="outline" size="sm" class={LINK_BUTTON} href={imageLookupUrl(row.imageId)}>
             <IconExternalLink aria-hidden="true" /> Image lookup
