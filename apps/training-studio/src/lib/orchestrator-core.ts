@@ -1,4 +1,11 @@
-import { trainingLearningRates } from './data/trainingModels';
+import { buildKohyaInput, type KohyaRunParams } from './kohya-training';
+import { kohyaDefaults } from './data/kohya';
+import {
+  isFlux2,
+  MODEL_CARDS,
+  trainingLearningRates,
+  versionStepDefault,
+} from './data/trainingModels';
 import {
   parseAiToolkitOptions,
   trainingIgnoredWarnings,
@@ -32,6 +39,7 @@ import {
   type TrainingDetail,
   type TrainingRow,
 } from '$lib/data/trainingRows';
+import { withoutCallbacks } from '$lib/workflow-redaction';
 import type { Media } from '$lib/data/trainingModels';
 
 export type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
@@ -54,11 +62,7 @@ export function resolveCurrencies(
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
 
-/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
- *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
-export function isFlux2(engine?: string): boolean {
-  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
-}
+export { isFlux2 };
 
 const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
 
@@ -70,6 +74,9 @@ function describeHtmlPage(body: string): string {
     code ? ` (HTTP ${code})` : ''
   } — try again in a minute`;
 }
+
+// Callback configuration is the server's own and never the user's to fix.
+const CALLBACK_ERROR_KEY = /(^|[.$[])callbacks\b/i;
 
 /** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
  *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
@@ -83,6 +90,7 @@ export function describeSubmitError(error: unknown, status?: number): string {
     | undefined;
   if (e?.errors && typeof e.errors === 'object') {
     const fields = Object.entries(e.errors)
+      .filter(([key]) => !CALLBACK_ERROR_KEY.test(key))
       .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join('; ') : val}`)
       .join(' | ');
     if (fields) return `${e.title ?? 'validation failed'} — ${fields}`;
@@ -164,14 +172,25 @@ export async function listTrainingWorkflows(client: OrchestratorClient): Promise
 }
 
 /** The caller's workflows carrying every one of `tags`, newest first, within the retention window. */
-export async function queryRecentWorkflows(client: OrchestratorClient, tags: string[]) {
+export async function queryRecentWorkflows(
+  client: OrchestratorClient,
+  tags: string[],
+  opts: { signal?: AbortSignal } = {}
+) {
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
     query: { tags, take: 100, fromDate, hideMatureContent: false },
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return data.items ?? [];
+  return (data.items ?? []).map((w) => withoutCallbacks(w));
+}
+
+/** Server-side single-workflow reads, returned without the workflow's `callbacks`. */
+export async function readWorkflow(client: OrchestratorClient, workflowId: string) {
+  const result = await getWorkflow({ client, path: { workflowId } });
+  return { ...result, data: result.data && withoutCallbacks(result.data) };
 }
 
 /** Workflow statuses that end a run — a poll stops on any of them. */
@@ -321,6 +340,7 @@ export async function whatIfCost(
  */
 export interface TrainingWhatIfInput
   extends AiToolkitOptions,
+    Partial<KohyaRunParams>,
     Partial<
       Pick<
         TrainingRunInput,
@@ -344,13 +364,14 @@ export interface TrainingWhatIfInput
    * submit will pin (shared-ecosystem cards like Illustrious would otherwise quote/train the
    * ecosystem default). Price-neutral, but the whatif and the real submit MUST stay identical. */
   model?: string;
-  /** Non-default engine (e.g. `flux2-dev`); when set the whatif uses the `imageResourceTraining` shape. */
+  /** Defaults to AI Toolkit; the quote uses the chosen engine's submission contract. */
   engine?: string;
   /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
   version?: string;
   /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
   editTraining?: boolean;
-  /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
+  /** Omitted, the orchestrator prices its per-ecosystem default step budget, which need not be the
+   *  Review step's default (`versionStepDefault`). */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
   epochs?: number;
@@ -378,6 +399,32 @@ export async function trainingPreview(
   input: TrainingWhatIfInput
 ): Promise<TrainingQuote> {
   const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
+  if (input.engine === 'kohya') {
+    const version =
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.air === input.model) ??
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.ecosystem === input.ecosystem);
+    if (!version) throw new Error('Unsupported Kohya model family.');
+    const defaults = kohyaDefaults(version);
+    const config = buildKohyaInput(
+      {
+        ...defaults,
+        ...input,
+        steps: input.steps ?? versionStepDefault(version.key),
+        epochs: input.epochs ?? defaults.epochs,
+        trigger: '',
+        prompts: WHATIF_SAMPLE_PROMPTS,
+      },
+      { type: 'zip', sourceUrl: 'https://fake', count },
+      'none'
+    );
+    const cost = await whatIfCost(
+      client,
+      { $type: 'training', priority: 'normal', input: config } as unknown as WorkflowStepTemplate,
+      'training whatif'
+    );
+    return { cost, warnings: [] };
+  }
+
   const { lr, textEncoderLr } = trainingLearningRates(
     input.ecosystem,
     input.optimizer,
@@ -460,7 +507,7 @@ export async function getTrainingWorkflow(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<TrainingDetail | null> {
-  const { data, error } = await getWorkflow({ client, path: { workflowId } });
+  const { data, error } = await readWorkflow(client, workflowId);
   if (!data) {
     if (error?.status === 404) return null;
     throw new Error(`getWorkflow failed: ${error?.detail ?? 'no data returned'}`);
@@ -503,7 +550,7 @@ export async function createEpochArchive(
   workflowId: string,
   kind: ArchiveKind
 ): Promise<EpochArchive[]> {
-  const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: wf, error: getError } = await readWorkflow(client, workflowId);
   if (!wf) {
     if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
     throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);

@@ -410,15 +410,25 @@ async function runLeg(
           placementId,
           kind,
           amount: attempted.amount,
-        }).catch(() => null);
+        });
 
       let transactionId: string | null;
+      const startedAt = Date.now();
       try {
         transactionId = await pay(
           placementTransactionId(placementId, kind),
           claimed?.amount ?? amount
         );
       } catch (error) {
+        logToAxiom({
+          name: 'placement-escrow',
+          type: 'error',
+          message: 'placement leg payment failed',
+          placementId,
+          kind,
+          durationMs: Date.now() - startedAt,
+          error: String((error as Error).message ?? error).slice(0, 500),
+        });
         // Recorded before rethrowing, so a leg that keeps failing says why on the
         // row rather than only in a log nobody correlates.
         await dbWrite.placementTransaction.update({
@@ -427,6 +437,15 @@ async function runLeg(
         });
         throw error;
       }
+
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'info',
+        message: 'placement leg paid',
+        placementId,
+        kind,
+        durationMs: Date.now() - startedAt,
+      });
 
       await dbWrite.placementTransaction.update({
         where: { placementId_kind: { placementId, kind } },
@@ -654,11 +673,21 @@ export async function settlePlacement({
   action,
   actorId,
   inTransaction,
+  payout = 'await',
 }: {
   placementId: number;
   action: SettleAction;
   actorId?: number;
   inTransaction?: (tx: Prisma.TransactionClient, pending: PlacementRow) => Promise<unknown>;
+  /**
+   * `background` returns once the status flip commits and moves the Buzz after.
+   * For a person waiting on a button: a slow Buzz call would otherwise hold the
+   * request for up to `BUZZ_CALL_TIMEOUT_MS` per leg. The legs are already on
+   * disk, so `sweepUnpaidLegs` pays one that fails or never starts. The accept
+   * reward is not retried: if this payout fails or the process stops first, the
+   * owner is paid by the sweep but never rewarded.
+   */
+  payout?: 'await' | 'background';
 }) {
   const status = STATUS_FOR_ACTION[action];
   const removedBy = REMOVED_BY_FOR_ACTION[action] ?? null;
@@ -715,9 +744,22 @@ export async function settlePlacement({
   // takedown of the same placement.
   if (count > 0 && status === 'approved') void onPlacementApproved(placement);
 
-  await payOutPlacement(placement);
+  const payOut = async () => {
+    await payOutPlacement(placement);
+    if (count > 0 && status === 'approved') await rewardAccepted(placement);
+  };
 
-  if (count > 0 && status === 'approved') await rewardAccepted(placement);
+  if (payout === 'await') await payOut();
+  else
+    void payOut().catch((error) =>
+      logToAxiom({
+        name: 'placement-escrow',
+        type: 'error',
+        message: 'background payout failed',
+        placementId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
 
   return { settled: count > 0, placement };
 }
@@ -764,7 +806,7 @@ async function rewardAccepted(placement: PlacementRow) {
         message: 'accept reward failed',
         placementId: placement.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null)
+      })
     );
 }
 
@@ -1052,7 +1094,7 @@ export async function expirePlacements({ limit = 100 }: { limit?: number } = {})
         message: 'expiry failed',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1130,7 +1172,7 @@ export async function sweepUnpaidLegs({
         message: 'unpaid leg could not be resumed',
         placementId,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1236,7 +1278,7 @@ export async function sweepUnplannedSettlements({
           type: 'error',
           message: 'settled placement has no funded escrow behind it',
           placementId: id,
-        }).catch(() => null);
+        });
       }
     } catch (error) {
       logToAxiom({
@@ -1245,7 +1287,7 @@ export async function sweepUnplannedSettlements({
         message: 'unplanned settlement could not be resolved',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 

@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -15,9 +16,11 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * GET /api/v1/articles — public, edge-cacheable list/search over articles.
+ * GET /api/v1/articles — public list/search over articles, edge-cacheable except at `?nsfw=true`,
+ * whose body depends on the caller's region and is `private, no-store`.
  *
  * Wraps the EXISTING `getArticles` service (the same function that powers the
  * website's article feed via `articleRouter.getInfinite`). This endpoint serves
@@ -68,7 +71,9 @@ function parseArticleCursor(
   return { v, id };
 }
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: { anyOf: [TokenScope.ArticlesRead] } });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -91,11 +96,12 @@ export default MixedAuthEndpoint(async function handler(
   const parsedCursor = parseArticleCursor(cursor);
   if (parsedCursor === null) return res.status(400).json({ error: 'Invalid cursor' });
 
-  // Maturity/region ceiling — identical derivation to models/index.ts. This is
-  // the ONE legitimate response variation (region-derived); the CDN keys on it.
+  // Maturity/region ceiling — identical derivation to models/index.ts.
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     const { items, nextCursor } = await getArticles({
@@ -126,8 +132,13 @@ export default MixedAuthEndpoint(async function handler(
     const nextCursorStr = nextCursor ? `${nextCursor.v}|${nextCursor.id}` : undefined;
     const { nextPage } = getNextPage({ req, nextCursor: nextCursorStr });
 
-    return res.status(200).json({ items, metadata: { nextCursor: nextCursorStr, nextPage } });
+    return res.status(200).json({
+      items: items.map((item) =>
+        item.user ? { ...item, user: withPublicAvatar(item.user, browsingLevel) } : item
+      ),
+      metadata: { nextCursor: nextCursorStr, nextPage },
+    });
   } catch (e) {
     return handleEndpointError(res, e);
   }
-});
+}

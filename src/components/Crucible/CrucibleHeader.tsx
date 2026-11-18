@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import Linkify from 'linkify-react';
 import type { Opts } from 'linkifyjs';
 import Link from 'next/link';
+import { Fragment, useMemo } from 'react';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { CrucibleFollowToggle } from '~/components/Crucible/CrucibleFollowToggle';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -20,6 +21,8 @@ import { CrucibleContentBadges } from '~/components/Crucible/CrucibleContentBadg
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
+import { isSameSitePath, toOwnRootRelative } from '~/utils/current-domain-href';
 import {
   CRUCIBLE_NO_DESCRIPTION,
   getCrucibleStatusBadge,
@@ -38,24 +41,77 @@ type CrucibleHeaderImage = {
   height: number | null;
 };
 
-// Protocol required: bare hosts, emails and mailto: stay text. Credentials in the URL are refused.
-const descriptionLinkOptions: Opts = {
-  target: '_blank',
-  className: 'text-blue-6 underline dark:text-blue-4',
-  rel: 'nofollow ugc noopener noreferrer',
-  validate: {
-    email: () => false,
-    url: (value) => {
-      if (!/^https?:\/\//i.test(value)) return false;
-      try {
-        const { username, password } = new URL(value);
-        return !username && !password;
-      } catch {
-        return false;
-      }
+const linkClassName = 'text-blue-6 underline dark:text-blue-4';
+
+// Links to our own sites render as root-relative paths, so a civitai.red reader stays on .red.
+// Elsewhere a protocol is required: bare third-party hosts, emails and mailto: stay text.
+// Credentials in the URL are refused.
+const descriptionLinkOptions = (ownHosts: readonly string[]): Opts => {
+  const sameSite = (href: string) => isSameSitePath(toOwnRootRelative(href, ownHosts));
+  return {
+    className: linkClassName,
+    formatHref: (href) => toOwnRootRelative(href, ownHosts),
+    // Linkify omits a falsy attribute.
+    target: (href) => (sameSite(href) ? '' : '_blank'),
+    rel: (href) => (sameSite(href) ? '' : 'nofollow ugc noopener noreferrer'),
+    validate: {
+      email: () => false,
+      url: (value) => {
+        const hasScheme = /^https?:\/\//i.test(value);
+        try {
+          const url = new URL(hasScheme ? value : `https://${value}`);
+          if (url.username || url.password) return false;
+          if (hasScheme) return true;
+          // A bare mention of our own homepage stays text: linked, it would leave this site.
+          return ownHosts.includes(url.host.toLowerCase()) && url.pathname !== '/';
+        } catch {
+          return false;
+        }
+      },
     },
-  },
+  };
 };
+
+// A path that starts the text or follows whitespace or an opening bracket, so "and/or" is not one.
+// "//host" and "/\host" are excluded here and again by isSameSitePath: browsers treat both as
+// another host. So is "/<tab>/host": a browser strips the tab and reads "//host".
+const ROOT_PATH = /(^|(?<!\/)[\s([{])(\/[^\s/\\]\S*)/g;
+const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"]+$/;
+
+function CrucibleDescription({ text }: { text: string }) {
+  const { ownHosts } = useCurrentDomainHosts();
+  const options = useMemo(() => descriptionLinkOptions(ownHosts), [ownHosts]);
+
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(ROOT_PATH)) {
+    const path = match[2].replace(TRAILING_PUNCTUATION, '');
+    if (!isSameSitePath(path)) continue;
+    const start = match.index + match[1].length;
+    parts.push(text.slice(last, start));
+    parts.push(
+      <a key={start} href={path} className={linkClassName}>
+        {path}
+      </a>
+    );
+    last = start + path.length;
+  }
+  parts.push(text.slice(last));
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        typeof part === 'string' ? (
+          <Linkify key={i} options={options}>
+            {part}
+          </Linkify>
+        ) : (
+          <Fragment key={i}>{part}</Fragment>
+        )
+      )}
+    </>
+  );
+}
 
 export type CrucibleHeaderData = {
   id: number;
@@ -220,7 +276,7 @@ export function CrucibleHeader({
                   className="[overflow-wrap:anywhere]"
                   data-testid="crucible-description"
                 >
-                  <Linkify options={descriptionLinkOptions}>{description}</Linkify>
+                  <CrucibleDescription text={description} />
                 </Text>
               </ContentClamp>
             </div>

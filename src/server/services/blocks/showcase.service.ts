@@ -1,10 +1,19 @@
 import { dbRead } from '~/server/db/client';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
+import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
+import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
 import {
   domainBrowsingCeiling,
+  heldGalleryLevel,
   onlySelectableLevels,
+  parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -104,21 +113,29 @@ export interface ShowcaseImage {
 }
 
 /**
- * Fetch up to N images for a model version, ordered by all-time reaction
- * count. The query goes through ImageResource (the M:N join) so we only
- * pull images that were actually generated using this specific version.
+ * Fetch up to N images for a model version: the most-reacted (all time) of
+ * its newest 50 eligible images. The query goes through ImageResource (the
+ * M:N join) so we only pull images that were actually generated using this
+ * specific version.
  *
  * Filters:
  *   - ingestion: Scanned (the moderation gate the rest of the platform
  *     already enforces; unmoderated images are never surfaced).
- *   - tosViolation: false (defense in depth — Scanned alone is supposed
- *     to drop these, but enforce here too).
+ *   - `publicPostImageWhere`: no TOS violation, not held for review, and in a
+ *     published post that is not Private (the block is a public read).
  *   - postId IS NOT NULL (orphaned images shouldn't show up).
- *   - nsfwLevel intersects the viewer's allowed browsing levels (see
+ *   - nsfwLevel is one of the viewer's allowed browsing levels (see
  *     `resolveAllowedBrowsingLevel` / `ShowcaseViewer`). Anon → SFW only.
- *     Images with `nsfwLevel = 0` (unrated / pending) never intersect and are
- *     therefore excluded — the same fail-closed stance the feed takes for
- *     non-own unrated content.
+ *     Images with `nsfwLevel = 0` (unrated / pending) are never in that list
+ *     — the same fail-closed stance the feed takes for non-own unrated content.
+ *   - not a restricted mature image (`imageNotRestrictedWhere`), unless the
+ *     viewer uploaded it.
+ *   - per row, `classifyGatedImageForViewer`: the moderation flags the other
+ *     public block reads hide on.
+ *
+ * Nothing is served for a version or model that is not published (or is
+ * scheduled), is a POI model, is Private, or is taken down; a minor or SFW-only model's images are held to its gallery
+ * level, as on the model page.
  *
  * Returns an empty array when the version has no images yet — block UI
  * renders a "no preview images" state rather than crashing.
@@ -127,7 +144,53 @@ export async function getModelShowcaseImages(
   modelVersionId: number,
   viewer?: ShowcaseViewer
 ): Promise<ShowcaseImage[]> {
-  const allowedBrowsingLevel = resolveAllowedBrowsingLevel(viewer);
+  const version = await dbRead.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: {
+      status: true,
+      availability: true,
+      publishedAt: true,
+      model: {
+        select: {
+          userId: true,
+          poi: true,
+          status: true,
+          availability: true,
+          mode: true,
+          minor: true,
+          sfwOnly: true,
+          gallerySettings: true,
+        },
+      },
+    },
+  });
+  const model = version?.model;
+  // The model page's rules, with no viewer: the block is shared, so no owner or moderator view.
+  if (
+    !version ||
+    !model ||
+    !canViewModelVersionStatus({
+      viewer: null,
+      ownerId: model.userId,
+      modelStatus: model.status,
+      versionStatus: version.status,
+      publishedAt: version.publishedAt,
+    }) ||
+    !canViewPoiModel(model.poi, model.userId, null) ||
+    version.availability === Availability.Private ||
+    model.availability === Availability.Private ||
+    isModelWithheld(model)
+  )
+    return [];
+
+  let allowedBrowsingLevel = resolveAllowedBrowsingLevel(viewer);
+  if (model.minor || model.sfwOnly) {
+    const stored = (model.gallerySettings as { level?: unknown } | null)?.level;
+    allowedBrowsingLevel = Flags.intersection(
+      allowedBrowsingLevel,
+      heldGalleryLevel(typeof stored === 'number' ? stored : undefined, model)
+    );
+  }
   // ImageResourceNew is the live table; the legacy ImageResource was fully
   // migrated and is now empty (verified 2026-05-25: 0 rows vs 417M).
   const rows = await dbRead.imageResourceNew.findMany({
@@ -135,8 +198,12 @@ export async function getModelShowcaseImages(
       modelVersionId,
       image: {
         ingestion: 'Scanned',
-        tosViolation: false,
         postId: { not: null },
+        ...publicPostImageWhere(),
+        // In SQL, not only after the fetch: past the 50-row cap a SFW viewer of a mostly-NSFW
+        // version would otherwise get few or no images.
+        nsfwLevel: { in: parseBitwiseBrowsingLevel(allowedBrowsingLevel) },
+        AND: [imageNotRestrictedWhere({ viewerId: viewer?.userId })],
       },
     },
     select: {
@@ -147,7 +214,15 @@ export async function getModelShowcaseImages(
           width: true,
           height: true,
           meta: true,
+          hideMeta: true,
           nsfwLevel: true,
+          ingestion: true,
+          needsReview: true,
+          poi: true,
+          minor: true,
+          tosViolation: true,
+          acceptableMinor: true,
+          blockedFor: true,
         },
       },
     },
@@ -155,6 +230,8 @@ export async function getModelShowcaseImages(
     // showed up under multiple ImageResource rows (e.g. an image that
     // used both this version's checkpoint and a LoRA from the same
     // model) before slicing. Cap at 50 to bound the query cost.
+    // Newest first, so the 50 are the same on every request.
+    orderBy: { imageId: 'desc' },
     take: 50,
   });
 
@@ -187,11 +264,10 @@ export async function getModelShowcaseImages(
     const img = row.image;
     if (!img || seen.has(img.id)) continue;
     seen.add(img.id);
-    // Browsing-level gate: drop any image whose nsfwLevel isn't in the
-    // viewer's allowed levels BEFORE the MAX cap, so a wall of NSFW top
-    // images doesn't starve a SFW viewer of the SFW ones further down.
-    // `Flags.intersects(0, …)` is false → unrated (nsfwLevel = 0) is excluded.
-    if (!Flags.intersects(img.nsfwLevel, allowedBrowsingLevel)) continue;
+    // The public block image gate (moderation flags, then level), before the MAX cap so a wall
+    // of hidden top images doesn't starve the viewer. Unrated (nsfwLevel = 0) is `pending`,
+    // which is not served.
+    if (classifyGatedImageForViewer(img, allowedBrowsingLevel).status !== 'visible') continue;
     const reactions = reactionByImage.get(img.id) ?? 0;
     flat.push({ img, reactions });
   }
@@ -199,7 +275,7 @@ export async function getModelShowcaseImages(
   const top = flat.slice(0, MAX_SHOWCASE_IMAGES);
 
   return top.map(({ img }) => {
-    const meta = extractMeta(img.meta);
+    const meta = extractMeta(img.hideMeta ? null : img.meta);
     // Prefer the meta-recorded generation dimensions over the image-file
     // dimensions when present. Many showcase images are upscaled offline
     // before upload — Image.width/Image.height reflect the post-upscale

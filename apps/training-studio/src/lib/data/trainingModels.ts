@@ -120,6 +120,12 @@ export interface ModelCard {
   versions: ModelVersionInfo[];
 }
 
+/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
+ *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
+export function isFlux2(engine?: string): boolean {
+  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
+}
+
 export const MODEL_CARDS: ModelCard[] = [
   // ---- Image · captions ----
   {
@@ -434,6 +440,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'K2',
     media: 'image',
     label: 'caption',
+    bothLabels: true,
     description: 'The realism pick — skin, hair and light from real photos.',
     released: '2026-06-22',
     flag: 'latest',
@@ -918,6 +925,21 @@ export const catalogFlagKeys = (): string[] => [
       (k): k is string => !!k
     )
   ),
+];
+
+/** The Kohya engine's gate. Same fail-closed semantics as a catalog gate: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const KOHYA_FLAG_KEY = 'training-studio-kohya';
+
+/** Gates the Manage tags find-and-replace row. Same fail-closed semantics: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const TAG_FIND_REPLACE_FLAG_KEY = 'training-studio-tag-find-replace';
+
+/** Every gate a host evaluates for the flow. */
+export const hostFlagKeys = (): string[] => [
+  ...catalogFlagKeys(),
+  KOHYA_FLAG_KEY,
+  TAG_FIND_REPLACE_FLAG_KEY,
 ];
 
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see

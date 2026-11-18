@@ -25,11 +25,25 @@ export const semanticImageSearchSchema = baseQuerySchema
     // Bounds on `sortAt`, the publish time for a published image.
     postedAfter: z.coerce.date().optional(),
     postedBefore: z.coerce.date().optional(),
+    // The feed's "Made On-site": generated here, as the feed judges it from the image's meta.
+    fromPlatform: z.boolean().optional(),
+    withMeta: z.boolean().optional(),
     limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
     // Offset into the ranked candidate list.
     cursor: z.number().int().min(0).optional(),
+    // newest: the best matches by similarity, newest first (text queries only; "more like this"
+    // stays in similarity order). Absent or relevance: similarity order.
+    sort: z.enum(['relevance', 'newest']).optional(),
   })
   .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' });
+
+export const prepareImageSearchUploadSchema = z.object({ url: z.string().max(2048) });
+export const imageSearchUploadStatusSchema = z.object({ uploadId: z.number().int().positive() });
+export const imageSearchUploadSearchSchema = baseQuerySchema.extend({
+  uploadId: z.number().int().positive(),
+  limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
+  cursor: z.number().int().min(0).optional(),
+});
 
 export type SemanticSearchFeedbackInput = z.infer<typeof semanticSearchFeedbackSchema>;
 export const semanticSearchFeedbackSchema = z.object({

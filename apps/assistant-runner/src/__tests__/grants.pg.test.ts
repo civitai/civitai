@@ -1,5 +1,5 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
-import pg from 'pg';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { OrchestrationConversationStore } from '../conversation-store';
@@ -8,6 +8,7 @@ import { startTurn, withPatch } from '../core/head';
 import { RunGrants } from '../grants';
 import { OrchestrationClient } from '../orchestration';
 import { FakeOrchestration } from '../test-support/fake-orchestration';
+import { createPool } from '../core/pg-pool';
 import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
@@ -23,7 +24,9 @@ describePg('run grants and conversation locks in the runner’s database', () =>
 
   beforeAll(async () => {
     db = await freshDatabase('grants');
-    pool = new pg.Pool({ connectionString: db.url, max: 6 });
+    // Guarded: pool.end() resolves before its sockets close, so the forced drop below can still
+    // reach a closing idle client with FATAL 57P01; unguarded, that is an uncaught exception.
+    pool = createPool({ connectionString: db.url, max: 6 }, 'grants-test');
     grants = new RunGrants(pool);
     await grants.init();
     // The sweep reads DBOS's run statuses: launch DBOS so its schema exists.

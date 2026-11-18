@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { untrack } from 'svelte';
@@ -9,6 +10,7 @@
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import AgeBadge from '$lib/components/AgeBadge.svelte';
+  import MatureRestrictedBadge from '$lib/components/MatureRestrictedBadge.svelte';
   import QueueHeader from './QueueHeader.svelte';
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
@@ -207,6 +209,7 @@
   tagOptions={data.tagOptions}
   {itemKeys}
   {selected}
+  agentFilter={data.kind === 'reported' ? data.agentFilter : null}
 >
   {#snippet meta()}
     {#if reported}<LastWorked entity={ReportEntity.Image} />{/if}
@@ -250,6 +253,7 @@
   username: string | null;
   profilePicture?: boolean | null;
   capture?: FeedbackCaptureStamp | null;
+  modelRestricted: boolean;
 })}
   {#if item.capture}
     <!-- A capture's owner is a system account and its reporter is not its subject: never a profile. -->
@@ -280,6 +284,7 @@
     {/if}
   </div>
   {/if}
+  <MatureRestrictedBadge restricted={item.modelRestricted} />
 {/snippet}
 
 <!-- Accept / Remove for the review queues, Unaction / Remove for the reported one. A `reportId`
@@ -405,6 +410,7 @@
           >
             {item.report.username ?? `[deleted] #${item.report.userId}`}
           </a>
+          {#if item.report.agentFiled}<AgentBadge />{/if}
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
         {#each reportDetailEntries(item.report.details) as [k, v] (k)}

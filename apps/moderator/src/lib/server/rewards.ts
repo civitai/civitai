@@ -70,22 +70,26 @@ export async function rewardReportReporters(input: {
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier was negative and was floored to 0',
-        flooredEvents: floored.length,
-        batchSize: rows.length,
-        // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
-        // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
-        ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
-      }).catch(() => null);
+        payload: {
+          flooredEvents: floored.length,
+          batchSize: rows.length,
+          // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
+          // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
+          ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
+        },
+      });
     }
     if (clamped.length) {
       logToAxiom({
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
-        clampedEvents: clamped.length,
-        batchSize: rows.length,
-        maxRaw: Math.max(...clamped),
-      }).catch(() => null);
+        payload: {
+          clampedEvents: clamped.length,
+          batchSize: rows.length,
+          maxRaw: Math.max(...clamped),
+        },
+      });
     }
     await getClickhouse().insert({ table: 'buzzEvents', values: rows, format: 'JSONEachRow' });
   } catch (err) {
@@ -139,7 +143,7 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
         type: 'error',
         message: 'Cached rewards multiplier was not finite; paid the base multiplier instead',
         userId,
-      }).catch(() => null);
+      });
     }
   } catch {
     // Shared-cache read is best-effort; fall back to the base multiplier.

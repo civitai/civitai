@@ -27,14 +27,14 @@ const getAllHiddenForUser = vi.fn(async () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: (...a: unknown[]) => getAllHiddenForUser(...(a as [])),
 }));
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 import { splitPassThroughStepOutput } from '../steps';
 import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 /**
  * A `$type` the step registry does not know and `workflow.service` does not
@@ -253,6 +253,8 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: { capacity },
       model3d: [],
+      slots: [],
+      truncated: 0,
     });
   });
 
@@ -273,37 +275,40 @@ describe('splitPassThroughStepOutput', () => {
   // suite, and without it a pure-array chain never increments, so the cap never
   // fires at all and a deep orchestrator response overflows the stack (see
   // `PASS_THROUGH_OUTPUT_WALK_DEPTH`).
-  it('counts array levels toward the depth cap', () => {
-    const atCap = splitPassThroughStepOutput({ a: [{ b: [{ url: BLOB_URL, available: true }] }] });
-    expect(atCap.media.map((m) => m.url)).toEqual([BLOB_URL]);
-    expect(JSON.stringify(atCap.rest)).not.toContain(BLOB_URL);
+  // 🔴 BOTH SIDES OF THE BOUNDARY, or the cap is pinned only from one side.
+  const WALK_CAP = 32;
+  const nest = (levels: number, leaf: unknown, viaArrays = false): unknown =>
+    levels === 0
+      ? leaf
+      : viaArrays && levels % 2
+      ? [nest(levels - 1, leaf, viaArrays)]
+      : { k: nest(levels - 1, leaf, viaArrays) };
+  const blob = { id: 'b1', url: BLOB_URL, available: true, blockedReason: 'Blocked' };
 
-    const pastCap = splitPassThroughStepOutput({
-      z: { a: [{ b: [{ url: BLOB_URL, available: true }] }] },
-    });
-    expect(pastCap.media).toEqual([]);
-    expect(JSON.stringify(pastCap.rest)).toContain(BLOB_URL);
-  });
-
-  // 🔴 BOTH SIDES OF THE BOUNDARY, or the constant is pinned to an INTERVAL. A
-  // negative case alone bounds it from above only; this pair pins the value.
-  // (An earlier version of this note justified it by the `epochs` fixture
-  // needing ≥3 — true of the all-or-nothing array rule that preceded the
-  // per-element walk, and stale the moment that changed. The structural reason
-  // is the one that survives a fixture reshape.)
   it('reaches a blob at exactly the deepest level the cap examines', () => {
-    const { media, rest } = splitPassThroughStepOutput({
-      a: { b: { c: { d: { url: BLOB_URL, available: true } } } },
-    });
-    expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
-    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+    for (const viaArrays of [false, true]) {
+      const { media, rest, truncated } = splitPassThroughStepOutput(
+        nest(WALK_CAP, { ...blob, blockedReason: null }, viaArrays)
+      );
+      expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
+      expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+      expect(truncated).toBe(0);
+    }
   });
 
-  it('does NOT descend past the depth cap', () => {
-    const deep = { a: { b: { c: { d: { e: { url: BLOB_URL, available: true } } } } } };
-    const { media, rest } = splitPassThroughStepOutput(deep);
-    expect(media).toEqual([]);
-    expect(JSON.stringify(rest)).toContain(BLOB_URL);
+  it('drops a subtree past the cap instead of forwarding it: no url, id or blockedReason survives', () => {
+    for (const viaArrays of [false, true]) {
+      const { media, rest, truncated } = splitPassThroughStepOutput(
+        nest(WALK_CAP + 1, blob, viaArrays)
+      );
+      expect(media).toEqual([]);
+      const wire = JSON.stringify(rest);
+      expect(wire).not.toContain(BLOB_URL);
+      expect(wire).not.toContain('"b1"');
+      expect(wire).not.toContain('blockedReason');
+      expect(wire).not.toContain('available');
+      expect(truncated).toBe(1);
+    }
   });
 
   // 🔴 THE UNCONDITIONAL STRIP AT THE WHOLE-VALUE SITE — the per-key site has its
@@ -313,11 +318,13 @@ describe('splitPassThroughStepOutput', () => {
   it('strips a whole-value blob that produced NO media', () => {
     expect(
       splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
-    ).toEqual({ media: [], rest: {}, model3d: [] });
+    ).toEqual({ media: [], rest: {}, model3d: [], slots: [], truncated: 0 });
     expect(splitPassThroughStepOutput([{ url: BLOB_URL, available: false }])).toEqual({
       media: [],
       rest: [],
       model3d: [],
+      slots: [],
+      truncated: 0,
     });
   });
 
@@ -327,12 +334,30 @@ describe('splitPassThroughStepOutput', () => {
   // "a dropped blob cannot ride out through `rest`" claim was false.
   it('strips a blob whose `url` key is ABSENT', () => {
     const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'csam-policy' };
+    // A blocked blob keeps its POSITION in `slots` (no media, no url) — F3.
+    const blockedSlot = {
+      url: '',
+      width: null,
+      height: null,
+      nsfwLevel: null,
+      type: 'image',
+      format: null,
+      blockedReason: 'csam-policy',
+    };
     expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({
       media: [],
       rest: {},
       model3d: [],
+      slots: [blockedSlot],
+      truncated: 0,
     });
-    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {}, model3d: [] });
+    expect(splitPassThroughStepOutput(blocked)).toEqual({
+      media: [],
+      rest: {},
+      model3d: [],
+      slots: [blockedSlot],
+      truncated: 0,
+    });
     expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain(
       'csam-policy'
     );
@@ -346,11 +371,15 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: 'just text',
       model3d: [],
+      slots: [],
+      truncated: 0,
     });
     expect(splitPassThroughStepOutput(undefined)).toEqual({
       media: [],
       rest: undefined,
       model3d: [],
+      slots: [],
+      truncated: 0,
     });
   });
 });
@@ -361,7 +390,8 @@ describe('snapshotFromWorkflow — pass-through step', () => {
       workflowWithPassThroughStep({
         blobs: [{ url: BLOB_URL, available: true }],
         text: 'a model reply',
-      }) as never
+      }) as never,
+      TEST_OUTPUT_CEILING
     );
     expect(snap.imageUrls).toEqual([BLOB_URL]);
     expect(snap.stepOutputs).toEqual([
@@ -373,7 +403,8 @@ describe('snapshotFromWorkflow — pass-through step', () => {
 
   it('forwards a non-media output whole', () => {
     const snap = snapshotFromWorkflow(
-      workflowWithPassThroughStep({ text: 'hello', tokens: { in: 3, out: 9 } }) as never
+      workflowWithPassThroughStep({ text: 'hello', tokens: { in: 3, out: 9 } }) as never,
+      TEST_OUTPUT_CEILING
     );
     expect(snap.imageUrls).toBeUndefined();
     expect(snap.stepOutputs).toEqual([
@@ -391,20 +422,23 @@ describe('snapshotFromWorkflow — pass-through step', () => {
       { blobs: [{ url: BLOB_URL, available: true }], text: 'secret' },
       'some-other-step'
     );
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toBeUndefined();
     expect(snap.stepOutputs).toBeUndefined();
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([]);
   });
 
   // A fresh submit reply carries steps with no `output` at all. An entry there
   // would say nothing and would appear on EVERY pass-through submit reply.
   it('OMITS stepOutputs for a step that has produced nothing yet', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_pt_new',
-      status: 'processing',
-      steps: [{ $type: PASS_THROUGH_TYPE, name: BLOCK_STEP_NAME }],
-    } as never);
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_pt_new',
+        status: 'processing',
+        steps: [{ $type: PASS_THROUGH_TYPE, name: BLOCK_STEP_NAME }],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.stepOutputs).toBeUndefined();
   });
 
@@ -413,28 +447,34 @@ describe('snapshotFromWorkflow — pass-through step', () => {
   // native step alongside a step this bridge did not submit must produce the
   // pre-change snapshot exactly: the native urls, and no `stepOutputs` at all.
   it('a NATIVE step beside a foreign step yields the pre-change snapshot', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_mixed',
-      status: 'succeeded',
-      steps: [
-        {
-          $type: 'textToImage',
-          name: 't',
-          output: { images: [{ url: 'https://i/x.png', available: true }] },
-        },
-        {
-          $type: PASS_THROUGH_TYPE,
-          name: 'orchestrator-added',
-          output: { blobs: [{ url: BLOB_URL, available: true }] },
-        },
-      ],
-    } as never);
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_mixed',
+        status: 'succeeded',
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 't',
+            output: { images: [{ url: 'https://i/x.png', available: true }] },
+          },
+          {
+            $type: PASS_THROUGH_TYPE,
+            name: 'orchestrator-added',
+            output: { blobs: [{ url: BLOB_URL, available: true }] },
+          },
+        ],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.imageUrls).toEqual(['https://i/x.png']);
     expect(snap.stepOutputs).toBeUndefined();
   });
 
   it('KEEPS an entry for an empty-object output (distinct from absent)', () => {
-    const snap = snapshotFromWorkflow(workflowWithPassThroughStep({}) as never);
+    const snap = snapshotFromWorkflow(
+      workflowWithPassThroughStep({}) as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.stepOutputs).toEqual([{ $type: PASS_THROUGH_TYPE, output: {} }]);
   });
 
@@ -442,25 +482,37 @@ describe('snapshotFromWorkflow — pass-through step', () => {
   // existed before this arm, or an SDK validator sees a shape change on a
   // snapshot nothing about this change touched.
   it('OMITS stepOutputs for a native textToImage workflow', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_t2i',
-      status: 'succeeded',
-      steps: [
-        { $type: 'textToImage', output: { images: [{ url: 'https://i/x.png', available: true }] } },
-      ],
-    } as never);
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_t2i',
+        status: 'succeeded',
+        steps: [
+          {
+            $type: 'textToImage',
+            output: { images: [{ url: 'https://i/x.png', available: true }] },
+          },
+        ],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.imageUrls).toEqual(['https://i/x.png']);
     expect(snap.stepOutputs).toBeUndefined();
   });
 
   it('OMITS stepOutputs for a native customComfy workflow', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_cc',
-      status: 'succeeded',
-      steps: [
-        { $type: 'customComfy', output: { blobs: [{ url: 'https://i/c.png', available: true }] } },
-      ],
-    } as never);
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_cc',
+        status: 'succeeded',
+        steps: [
+          {
+            $type: 'customComfy',
+            output: { blobs: [{ url: 'https://i/c.png', available: true }] },
+          },
+        ],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.imageUrls).toEqual(['https://i/c.png']);
     expect(snap.stepOutputs).toBeUndefined();
   });
@@ -477,20 +529,24 @@ describe('projectAppWorkflow — pass-through step', () => {
       workflowWithPassThroughStep({
         blobs: [{ url: BLOB_URL, available: true, width: 64, height: 48, nsfwLevel: 'pg13' }],
         text: 'not an image',
-      }) as never
+      }) as never,
+      TEST_OUTPUT_CEILING
     );
     expect(projected.images).toEqual([
       { url: BLOB_URL, width: 64, height: 48, nsfwLevel: NsfwLevel.PG13 },
     ]);
-    // `AppWorkflow` is the queue contract — images, cost, status and nothing else.
+    // `AppWorkflow` is the queue contract — images (and the same outputs, per
+    // output), cost, status and nothing else.
     expect(Object.keys(projected).sort()).toEqual(
-      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+      ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
+    expect(projected.outputs).toStrictEqual([{ url: BLOB_URL, nsfwLevel: 'pg13' }]);
   });
 
   it('drops an unavailable pass-through blob rather than handing over a dead link', () => {
     const projected = projectAppWorkflow(
-      workflowWithPassThroughStep({ blobs: [{ url: BLOB_URL, available: false }] }) as never
+      workflowWithPassThroughStep({ blobs: [{ url: BLOB_URL, available: false }] }) as never,
+      TEST_OUTPUT_CEILING
     );
     expect(projected.images).toEqual([]);
   });
@@ -539,7 +595,8 @@ describe('the gated read over an Image row a pass-through publish would produce'
     const projected = projectAppWorkflow(
       workflowWithPassThroughStep({
         blobs: [{ url: BLOB_URL, available: true, width: 512, height: 384 }],
-      }) as never
+      }) as never,
+      TEST_OUTPUT_CEILING
     );
     expect(
       projected.images,
@@ -580,6 +637,8 @@ describe('the gated read over an Image row a pass-through publish would produce'
       tosViolation: false,
       acceptableMinor: false,
       blockedFor: null,
+      // The row carries THIS app's published key (the SQL's `viaPublished`).
+      viaPublished: true,
       ...over,
     };
   };
@@ -717,7 +776,7 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
   });
 
   it('the snapshot carries the labels; `imageUrls` is unchanged', () => {
-    const snap = snapshotFromWorkflow(polyGenWorkflow() as never);
+    const snap = snapshotFromWorkflow(polyGenWorkflow() as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(EXPECTED_URLS);
     expect(snap.model3dOutputs).toEqual(EXPECTED_LABELS);
     // Every label points at a url the existing channel already carries.
@@ -725,7 +784,7 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
   });
 
   it('the app-queue projection carries them too; `images` is unchanged', () => {
-    const wf = projectAppWorkflow(polyGenWorkflow() as never);
+    const wf = projectAppWorkflow(polyGenWorkflow() as never, TEST_OUTPUT_CEILING);
     expect(wf.images.map((i) => i.url)).toEqual(EXPECTED_URLS);
     expect(wf.model3dOutputs).toEqual(EXPECTED_LABELS);
   });
@@ -734,7 +793,9 @@ describe('3D output labels (Model3dBlob format + variant)', () => {
     const plain = workflowWithPassThroughStep({
       blobs: [{ url: BLOB_URL, available: true, width: 10, height: 20, nsfwLevel: 'pg' }],
     });
-    expect('model3dOutputs' in snapshotFromWorkflow(plain as never)).toBe(false);
-    expect('model3dOutputs' in projectAppWorkflow(plain as never)).toBe(false);
+    expect('model3dOutputs' in snapshotFromWorkflow(plain as never, TEST_OUTPUT_CEILING)).toBe(
+      false
+    );
+    expect('model3dOutputs' in projectAppWorkflow(plain as never, TEST_OUTPUT_CEILING)).toBe(false);
   });
 });

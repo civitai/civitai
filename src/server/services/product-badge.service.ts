@@ -20,6 +20,7 @@ import {
 } from '~/server/utils/image-scan-url';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { CosmeticSource, CosmeticType, PaymentProvider } from '~/shared/utils/prisma/enums';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const BADGE_TARGET_SIZE = 200;
 
@@ -223,7 +224,7 @@ export const resizeBadgeImage = async ({
   const blobUrl: string | undefined = step?.output?.blob?.url;
   if (!blobUrl) throw new Error('Badge resize did not return an output blob');
 
-  const blobResponse = await fetch(blobUrl);
+  const blobResponse = await outboundFetch(blobUrl, { timeoutMs: 60_000 });
   if (!blobResponse.ok) {
     throw new Error(`Failed to download resized badge: ${blobResponse.status}`);
   }

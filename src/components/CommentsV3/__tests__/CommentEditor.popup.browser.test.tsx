@@ -1,7 +1,7 @@
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeAll, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type { CommentV3Comment } from '../types';
 
@@ -46,6 +46,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 const { CommentEditor } = await import('../CommentComposer');
+
+// The editor is a lazy chunk (next/dynamic). Loaded here, so the 1 s waits below cover a render, not
+// a cold import of the editor, which a busy runner can take longer than that to fetch.
+beforeAll(async () => {
+  await import('~/components/RichTextEditor/RichTextEditorComponent');
+}, 30_000);
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

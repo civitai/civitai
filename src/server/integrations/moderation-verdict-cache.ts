@@ -29,13 +29,13 @@
 //      model being retrained behind a stable name), which the TTL bounds and nothing here can see.
 //
 // 🔴 WHAT IS NOT CACHED, AND WHY EACH OMISSION IS LOAD-BEARING:
-//   * FAILURES. Only an `ok` outcome is stored. `moderatePrompt` is fail-SOFT on error — the caller
-//     catches and proceeds with `flagged:false`, with the local regex audit still gating — so
-//     caching a failure would convert one transient gateway error into TTL-long silent
+//   * FAILURES. Only an `ok` outcome is stored. `moderatePrompt`'s callers read an error as "not
+//     flagged" (`classifyPromptServer`; `auditPromptServer` then refuses the submit) — so caching a
+//     failure as a verdict would convert one transient gateway error into TTL-long silent
 //     under-moderation of that exact prompt. A failure must cost a retry, every time.
 //   * CACHE ERRORS. A Redis failure resolves to a MISS and the classifier is called. There is no
 //     path from a cache problem to a weaker verdict. The added latency is bounded by
-//     `withSysReadDeadline` (`REDIS_SYS_READ_TIMEOUT_MS`, default 2000 ms) — NOT by the Redis
+//     `withSysReadDeadline` (`REDIS_SYS_READ_TIMEOUT_MS`, default 1000 ms) — NOT by the Redis
 //     client, which has no socket timeout, and NOT by the try/catch, which cannot see a hang.
 import { createHash } from 'node:crypto';
 

@@ -476,7 +476,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: networkFailure },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC FORBIDDEN → terminal failure snapshot',
@@ -494,7 +497,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: boom },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC SERVICE_UNAVAILABLE → "processing" placeholder',
@@ -503,7 +509,10 @@ const POLL = rowsFor('POLL_WORKFLOW', 'blocks.pollWorkflow', { snapshot: POLL_SN
     rpc: { rejects: trpcError('SERVICE_UNAVAILABLE', 503, 'upstream down') },
     payload: { requestId: 'rq_1', workflowId: 'wf_1' },
     call: [{ blockToken: TOKEN, workflowId: 'wf_1' }],
-    reply: { requestId: 'rq_1', snapshot: { workflowId: 'wf_1', status: 'processing' } },
+    reply: {
+      requestId: 'rq_1',
+      snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true },
+    },
   },
   {
     scenario: 'rpc rejects with tRPC NOT_FOUND → terminal failure snapshot',

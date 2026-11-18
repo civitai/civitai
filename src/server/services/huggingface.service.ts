@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const HF_API = 'https://huggingface.co/api';
 const HF_HOST = 'https://huggingface.co';
@@ -83,7 +84,7 @@ function authHeaders(): Record<string, string> {
 }
 
 async function hfFetch(url: string) {
-  const res = await fetch(url, { headers: authHeaders() });
+  const res = await outboundFetch(url, { timeoutMs: 30_000, headers: authHeaders() });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     throw new HuggingFaceError(
@@ -199,7 +200,12 @@ export async function readHuggingFaceRange({
 }
 
 export async function headHuggingFaceFile(url: string) {
-  const res = await fetch(url, { method: 'HEAD', headers: authHeaders(), redirect: 'follow' });
+  const res = await outboundFetch(url, {
+    timeoutMs: 30_000,
+    method: 'HEAD',
+    headers: authHeaders(),
+    redirect: 'follow',
+  });
   if (!res.ok) throw new HuggingFaceError(`HEAD failed with ${res.status} for ${url}`, res.status);
   const length = Number(res.headers.get('content-length') ?? '0');
   return Number.isFinite(length) && length > 0 ? length : null;

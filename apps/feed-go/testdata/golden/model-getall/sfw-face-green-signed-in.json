@@ -1,0 +1,1132 @@
+{
+  "name": "sfw-face-green-signed-in",
+  "description": "A mature model with a .com face on the SFW domain: its .com name and cover, PG/PG-13 images only, a blank version description; a model-locked checkpoint answers by the live coverage column.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "baseModelMetrics": true,
+    "modelImagesSlim": true,
+    "coverageNext": true,
+    "loadingOpenToAll": true,
+    "decorationEvents": []
+  },
+  "request": {
+    "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":2,\"browsingLevel\":31}}",
+    "headers": {
+      "host": "green.example.test"
+    },
+    "session": {
+      "userId": 1003
+    }
+  },
+  "redis": {
+    "packed:caches:basic-tags:702": {
+      "value": {
+        "id": 702,
+        "name": "style",
+        "nsfwLevel": 1,
+        "type": "UserGenerated",
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQK+pG5hbWWlc3R5bGWpbnNmd0xldmVsAaR0eXBlrVVzZXJHZW5lcmF0ZWSoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWlaW1hZ2XZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDkwMalkZWxldGVkQXTAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:basic-users:1002": {
+      "value": {
+        "id": 1002,
+        "username": "artist_two",
+        "image": null,
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPqqHVzZXJuYW1lqmFydGlzdF90d2+laW1hZ2XAqWRlbGV0ZWRBdMCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:301": {
+      "value": {
+        "id": 301,
+        "name": "Golden Badge",
+        "type": "Badge",
+        "data": {
+          "url": "00000000-0000-4000-8000-000000003011"
+        },
+        "source": "Trophy",
+        "flags": 0,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAHomlkzQEtpG5hbWWsR29sZGVuIEJhZGdlpHR5cGWlQmFkZ2WkZGF0Yd4AAaN1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMzAxMaZzb3VyY2WmVHJvcGh5pWZsYWdzAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:cosmetics2:Model:5006": {
+      "value": {
+        "equippedToId": 5006,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tjqhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:cosmetics2:Model:5009": {
+      "value": {
+        "equippedToId": 5009,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrGVxdWlwcGVkVG9JZM0Tkahub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:creator-membership-valid:1001": {
+      "value": true,
+      "packed": "ww=="
+    },
+    "packed:caches:data-for-model-2:5006": {
+      "value": {
+        "modelId": 5006,
+        "hashes": [
+          "HASH5006"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6009,
+            "index": 0,
+            "name": "v6009",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Ernie",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6009</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": false,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE46maGFzaGVzkahIQVNINTAwNqR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF3mlaW5kZXgApG5hbWWldjYwMDm0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKVFcm5pZa1iYXNlTW9kZWxUeXBlqFN0YW5kYXJkqWNyZWF0ZWRBdNb/ah1YIK50cmFpbmluZ1N0YXR1c8CrcHVibGlzaGVkQXTW/2oeqaCmc3RhdHVzqVB1Ymxpc2hlZKVmbGFncwCsYXZhaWxhYmlsaXR5plB1YmxpY6luc2Z3TGV2ZWwBq2Rlc2NyaXB0aW9usTxwPmFib3V0IDYwMDk8L3A+rHRyYWluZWRXb3Jkc5Gkd29yZKV2YWVJZMCnY292ZXJlZMKrY292ZXJlZE5leHTDqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:data-for-model-2:5009": {
+      "value": {
+        "modelId": 5009,
+        "hashes": [
+          "HASH5009"
+        ],
+        "tags": [],
+        "versions": [
+          {
+            "id": 6012,
+            "index": 0,
+            "name": "v6012",
+            "earlyAccessTimeFrame": 0,
+            "baseModel": "Pony",
+            "baseModelType": "Standard",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "trainingStatus": null,
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "status": "Published",
+            "flags": 0,
+            "availability": "Public",
+            "nsfwLevel": 1,
+            "description": "<p>about 6012</p>",
+            "trainedWords": [
+              "word"
+            ],
+            "vaeId": null,
+            "covered": true,
+            "coveredNext": true
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFp21vZGVsSWTNE5GmaGFzaGVzkahIQVNINTAwOaR0YWdzkKh2ZXJzaW9uc5HeABKiaWTNF3ylaW5kZXgApG5hbWWldjYwMTK0ZWFybHlBY2Nlc3NUaW1lRnJhbWUAqWJhc2VNb2RlbKRQb255rWJhc2VNb2RlbFR5cGWoU3RhbmRhcmSpY3JlYXRlZEF01v9qHVggrnRyYWluaW5nU3RhdHVzwKtwdWJsaXNoZWRBdNb/ah6poKZzdGF0dXOpUHVibGlzaGVkpWZsYWdzAKxhdmFpbGFiaWxpdHmmUHVibGljqW5zZndMZXZlbAGrZGVzY3JpcHRpb26xPHA+YWJvdXQgNjAxMjwvcD6sdHJhaW5lZFdvcmRzkaR3b3JkpXZhZUlkwKdjb3ZlcmVkw6tjb3ZlcmVkTmV4dMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:images-for-model-version-2:6009": {
+      "value": {
+        "modelVersionId": 6009,
+        "images": [
+          {
+            "id": 8061,
+            "userId": 1001,
+            "name": "img-8061.png",
+            "url": "00000000-0000-4000-8000-000000008061",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8061",
+            "modelVersionId": 6009,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8062,
+            "userId": 1001,
+            "name": "img-8062.png",
+            "url": "00000000-0000-4000-8000-000000008062",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8062",
+            "modelVersionId": 6009,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8063,
+            "userId": 1001,
+            "name": "img-8063.png",
+            "url": "00000000-0000-4000-8000-000000008063",
+            "nsfwLevel": 2,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8063",
+            "modelVersionId": 6009,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRd5pmltYWdlc5PeABKiaWTNH32mdXNlcklkzQPppG5hbWWsaW1nLTgwNjEucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MDYxqW5zZndMZXZlbASld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MDYxrm1vZGVsVmVyc2lvbklkzRd5pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0ffqZ1c2VySWTNA+mkbmFtZaxpbWctODA2Mi5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgwNjKpbnNmd0xldmVsAaV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgwNjKubW9kZWxWZXJzaW9uSWTNF3mkdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR9/pnVzZXJJZM0D6aRuYW1lrGltZy04MDYzLnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODA2M6luc2Z3TGV2ZWwCpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODA2M65tb2RlbFZlcnNpb25JZM0XeaR0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsKoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:images-for-model-version-2:6012": {
+      "value": {
+        "modelVersionId": 6012,
+        "images": [
+          {
+            "id": 8120,
+            "userId": 1002,
+            "name": "img-8120.png",
+            "url": "00000000-0000-4000-8000-000000008120",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8120",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8121,
+            "userId": 1002,
+            "name": "img-8121.png",
+            "url": "00000000-0000-4000-8000-000000008121",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8121",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8122,
+            "userId": 1002,
+            "name": "img-8122.png",
+            "url": "00000000-0000-4000-8000-000000008122",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8122",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8123,
+            "userId": 1002,
+            "name": "img-8123.png",
+            "url": "00000000-0000-4000-8000-000000008123",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8123",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8124,
+            "userId": 1002,
+            "name": "img-8124.png",
+            "url": "00000000-0000-4000-8000-000000008124",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8124",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8125,
+            "userId": 1002,
+            "name": "img-8125.png",
+            "url": "00000000-0000-4000-8000-000000008125",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8125",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8126,
+            "userId": 1002,
+            "name": "img-8126.png",
+            "url": "00000000-0000-4000-8000-000000008126",
+            "nsfwLevel": 1,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8126",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8127,
+            "userId": 1002,
+            "name": "img-8127.png",
+            "url": "00000000-0000-4000-8000-000000008127",
+            "nsfwLevel": 2,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8127",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          },
+          {
+            "id": 8128,
+            "userId": 1002,
+            "name": "img-8128.png",
+            "url": "00000000-0000-4000-8000-000000008128",
+            "nsfwLevel": 4,
+            "width": 832,
+            "height": 1216,
+            "hash": "UHASH8128",
+            "modelVersionId": 6012,
+            "type": "image",
+            "metadata": {
+              "width": 832,
+              "height": 1216
+            },
+            "availability": "Public",
+            "onSite": false,
+            "hasMeta": true,
+            "remixOfId": null,
+            "hasPositivePrompt": true,
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADrm1vZGVsVmVyc2lvbklkzRd8pmltYWdlc5neABKiaWTNH7imdXNlcklkzQPqpG5hbWWsaW1nLTgxMjAucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MTIwqW5zZndMZXZlbASld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MTIwrm1vZGVsVmVyc2lvbklkzRd8pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0fuaZ1c2VySWTNA+qkbmFtZaxpbWctODEyMS5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgxMjGpbnNmd0xldmVsBKV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgxMjGubW9kZWxWZXJzaW9uSWTNF3ykdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR+6pnVzZXJJZM0D6qRuYW1lrGltZy04MTIyLnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODEyMqluc2Z3TGV2ZWwEpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODEyMq5tb2RlbFZlcnNpb25JZM0XfKR0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsLeABKiaWTNH7umdXNlcklkzQPqpG5hbWWsaW1nLTgxMjMucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MTIzqW5zZndMZXZlbASld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MTIzrm1vZGVsVmVyc2lvbklkzRd8pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0fvKZ1c2VySWTNA+qkbmFtZaxpbWctODEyNC5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgxMjSpbnNmd0xldmVsBKV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgxMjSubW9kZWxWZXJzaW9uSWTNF3ykdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR+9pnVzZXJJZM0D6qRuYW1lrGltZy04MTI1LnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODEyNaluc2Z3TGV2ZWwEpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODEyNa5tb2RlbFZlcnNpb25JZM0XfKR0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsLeABKiaWTNH76mdXNlcklkzQPqpG5hbWWsaW1nLTgxMjYucG5no3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4MTI2qW5zZndMZXZlbAGld2lkdGjNA0CmaGVpZ2h0zQTApGhhc2ipVUhBU0g4MTI2rm1vZGVsVmVyc2lvbklkzRd8pHR5cGWlaW1hZ2WobWV0YWRhdGHeAAKld2lkdGjNA0CmaGVpZ2h0zQTArGF2YWlsYWJpbGl0eaZQdWJsaWOmb25TaXRlwqdoYXNNZXRhw6lyZW1peE9mSWTAsWhhc1Bvc2l0aXZlUHJvbXB0w6Nwb2nCpW1pbm9ywt4AEqJpZM0fv6Z1c2VySWTNA+qkbmFtZaxpbWctODEyNy5wbmejdXJs2SQwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDgxMjepbnNmd0xldmVsAqV3aWR0aM0DQKZoZWlnaHTNBMCkaGFzaKlVSEFTSDgxMjeubW9kZWxWZXJzaW9uSWTNF3ykdHlwZaVpbWFnZahtZXRhZGF0Yd4AAqV3aWR0aM0DQKZoZWlnaHTNBMCsYXZhaWxhYmlsaXR5plB1YmxpY6ZvblNpdGXCp2hhc01ldGHDqXJlbWl4T2ZJZMCxaGFzUG9zaXRpdmVQcm9tcHTDo3BvacKlbWlub3LC3gASomlkzR/ApnVzZXJJZM0D6qRuYW1lrGltZy04MTI4LnBuZ6N1cmzZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwODEyOKluc2Z3TGV2ZWwEpXdpZHRozQNApmhlaWdodM0EwKRoYXNoqVVIQVNIODEyOK5tb2RlbFZlcnNpb25JZM0XfKR0eXBlpWltYWdlqG1ldGFkYXRh3gACpXdpZHRozQNApmhlaWdodM0EwKxhdmFpbGFiaWxpdHmmUHVibGljpm9uU2l0ZcKnaGFzTWV0YcOpcmVtaXhPZklkwLFoYXNQb3NpdGl2ZVByb21wdMOjcG9pwqVtaW5vcsKoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:model-tags:5006": {
+      "value": {
+        "modelId": 5006,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE46mdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:model-tags:5009": {
+      "value": {
+        "modelId": 5009,
+        "tagIds": [
+          702
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp21vZGVsSWTNE5GmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UPROFILE",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKhVUFJPRklMRaZ1c2VySWTNA+mpaW5nZXN0aW9up1NjYW5uZWSkdHlwZaVpbWFnZaV3aWR0aM0CAKZoZWlnaHTNAgCobWV0YWRhdGHeAAKld2lkdGjNAgCmaGVpZ2h0zQIAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:profile-pictures:v4:1002": {
+      "value": {
+        "userId": 1002,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6qhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8061": {
+      "value": {
+        "imageId": 8061,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH32kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8062": {
+      "value": {
+        "imageId": 8062,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH36kdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8063": {
+      "value": {
+        "imageId": 8063,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH3+kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8120": {
+      "value": {
+        "imageId": 8120,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7ikdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8121": {
+      "value": {
+        "imageId": 8121,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7mkdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8122": {
+      "value": {
+        "imageId": 8122,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7qkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8123": {
+      "value": {
+        "imageId": 8123,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7ukdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8124": {
+      "value": {
+        "imageId": 8124,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7ykdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8125": {
+      "value": {
+        "imageId": 8125,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH72kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8126": {
+      "value": {
+        "imageId": 8126,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH76kdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8127": {
+      "value": {
+        "imageId": 8127,
+        "tags": [
+          501
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH7+kdGFnc5HNAfWoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8128": {
+      "value": {
+        "imageId": 8128,
+        "tags": [],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH8CkdGFnc5CoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-cosmetics:1001": {
+      "value": {
+        "userId": 1001,
+        "cosmetics": [
+          {
+            "cosmeticId": 301,
+            "data": null
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6aljb3NtZXRpY3OR3gACqmNvc21ldGljSWTNAS2kZGF0YcCoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-cosmetics:1002": {
+      "value": {
+        "userId": 1002,
+        "notFound": true,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADpnVzZXJJZM0D6qhub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:user-metric-privacy-defaults:1001": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": true
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPD"
+    },
+    "packed:caches:user-metric-privacy-defaults:1002": {
+      "value": {
+        "hideModelBuzz": false,
+        "hideModelDownloads": false,
+        "hideModelGenerations": false
+      },
+      "packed": "3gADrWhpZGVNb2RlbEJ1enrCsmhpZGVNb2RlbERvd25sb2Fkc8K0aGlkZU1vZGVsR2VuZXJhdGlvbnPC"
+    },
+    "session:data2:1003": {
+      "value": {
+        "id": 1003,
+        "username": "viewer_three",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPrqHVzZXJuYW1lrHZpZXdlcl90aHJlZatpc01vZGVyYXRvcsKoYmFubmVkQXTApHRpZXLA"
+    },
+    "system:blocked-browsing-tags": {
+      "raw": "[{\"id\":703,\"name\":\"BlockedName\"}]"
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "modelPages": [
+      {
+        "cursor": null,
+        "bound": null,
+        "rows": [
+          {
+            "id": 5006,
+            "name": "Spicy model",
+            "sfwName": "Safe model",
+            "coverImageId": 8061,
+            "sfwCoverImageId": 8062,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": true,
+            "nsfwLevel": 5,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-06T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 20,
+              "thumbsUpCount": 10,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1001,
+            "cursorId": "10|20|5006"
+          },
+          {
+            "id": 5009,
+            "name": "Golden model 5009",
+            "sfwName": null,
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": {
+              "$date": "2026-06-01T10:00:00.000Z"
+            },
+            "lastVersionAt": {
+              "$date": "2026-06-03T10:00:00.000Z"
+            },
+            "publishedAt": {
+              "$date": "2026-06-02T10:00:00.000Z"
+            },
+            "locked": false,
+            "meta": null,
+            "mode": null,
+            "availability": "Public",
+            "rank": {
+              "downloadCount": 4,
+              "thumbsUpCount": 4,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "userId": 1002,
+            "cursorId": "4|4|5009"
+          }
+        ]
+      }
+    ],
+    "paidAccess": [],
+    "coverImages": [],
+    "tags": [],
+    "creators": []
+  },
+  "expect": {
+    "envelope": {
+      "json": {
+        "items": [
+          {
+            "id": 5006,
+            "name": "Safe model",
+            "coverImageId": 8061,
+            "sfwCoverImageId": 8062,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": true,
+            "nsfwLevel": 5,
+            "status": "Published",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "lastVersionAt": "2026-06-06T10:00:00.000Z",
+            "publishedAt": "2026-06-02T10:00:00.000Z",
+            "locked": false,
+            "mode": null,
+            "availability": "Public",
+            "userId": 1001,
+            "earlyAccessDeadline": null,
+            "hasActivePaidAccess": false,
+            "hasSfwFace": true,
+            "baseModels": [
+              "Ernie"
+            ],
+            "user": {
+              "id": 1001,
+              "username": "artist_one",
+              "deletedAt": null,
+              "image": "00000000-0000-4000-8000-000000000901",
+              "profilePicture": {
+                "id": 8901,
+                "name": null,
+                "url": "00000000-0000-4000-8000-000000008901",
+                "nsfwLevel": 1,
+                "hash": "UPROFILE",
+                "userId": 1001,
+                "ingestion": "Scanned",
+                "type": "image",
+                "width": 512,
+                "height": 512,
+                "metadata": {
+                  "width": 512,
+                  "height": 512
+                }
+              },
+              "cosmetics": [
+                {
+                  "cosmeticId": 301,
+                  "data": null,
+                  "cosmetic": {
+                    "id": 301,
+                    "name": "Golden Badge",
+                    "type": "Badge",
+                    "data": {
+                      "url": "00000000-0000-4000-8000-000000003011"
+                    },
+                    "source": "Trophy",
+                    "flags": 0
+                  }
+                }
+              ]
+            },
+            "cosmetic": null,
+            "eventDecoration": null,
+            "tags": [
+              702
+            ],
+            "hashes": [
+              "hash5006"
+            ],
+            "hiddenMetrics": {
+              "buzz": false,
+              "downloads": false,
+              "generations": true
+            },
+            "rank": {
+              "downloadCount": 20,
+              "thumbsUpCount": 10,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "version": {
+              "id": 6009,
+              "index": 0,
+              "name": "v6009",
+              "earlyAccessTimeFrame": 0,
+              "baseModel": "Ernie",
+              "baseModelType": "Standard",
+              "createdAt": "2026-06-01T10:00:00.000Z",
+              "trainingStatus": null,
+              "publishedAt": "2026-06-02T10:00:00.000Z",
+              "status": "Published",
+              "flags": 0,
+              "availability": "Public",
+              "nsfwLevel": 1,
+              "description": "",
+              "trainedWords": [
+                "word"
+              ],
+              "vaeId": null,
+              "covered": false,
+              "coveredNext": true
+            },
+            "images": [
+              {
+                "id": 8062,
+                "userId": 1001,
+                "name": "img-8062.png",
+                "url": "00000000-0000-4000-8000-000000008062",
+                "nsfwLevel": 1,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8062",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": []
+              },
+              {
+                "id": 8063,
+                "userId": 1001,
+                "name": "img-8063.png",
+                "url": "00000000-0000-4000-8000-000000008063",
+                "nsfwLevel": 2,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8063",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": [
+                  501
+                ]
+              }
+            ],
+            "canGenerate": false
+          },
+          {
+            "id": 5009,
+            "name": "Golden model 5009",
+            "coverImageId": null,
+            "sfwCoverImageId": null,
+            "type": "Checkpoint",
+            "minor": false,
+            "sfwOnly": false,
+            "poi": false,
+            "nsfw": false,
+            "nsfwLevel": 1,
+            "status": "Published",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "lastVersionAt": "2026-06-03T10:00:00.000Z",
+            "publishedAt": "2026-06-02T10:00:00.000Z",
+            "locked": false,
+            "mode": null,
+            "availability": "Public",
+            "userId": 1002,
+            "earlyAccessDeadline": null,
+            "hasActivePaidAccess": false,
+            "hasSfwFace": false,
+            "baseModels": [
+              "Pony"
+            ],
+            "user": {
+              "id": 1002,
+              "username": "artist_two",
+              "deletedAt": null,
+              "image": null,
+              "profilePicture": null,
+              "cosmetics": []
+            },
+            "cosmetic": null,
+            "eventDecoration": null,
+            "tags": [
+              702
+            ],
+            "hashes": [
+              "hash5009"
+            ],
+            "hiddenMetrics": {
+              "buzz": false,
+              "downloads": false,
+              "generations": false
+            },
+            "rank": {
+              "downloadCount": 4,
+              "thumbsUpCount": 4,
+              "thumbsDownCount": 1,
+              "commentCount": 3,
+              "collectedCount": 4,
+              "tippedAmountCount": 5
+            },
+            "version": {
+              "id": 6012,
+              "index": 0,
+              "name": "v6012",
+              "earlyAccessTimeFrame": 0,
+              "baseModel": "Pony",
+              "baseModelType": "Standard",
+              "createdAt": "2026-06-01T10:00:00.000Z",
+              "trainingStatus": null,
+              "publishedAt": "2026-06-02T10:00:00.000Z",
+              "status": "Published",
+              "flags": 0,
+              "availability": "Public",
+              "nsfwLevel": 1,
+              "description": "<p>about 6012</p>",
+              "trainedWords": [
+                "word"
+              ],
+              "vaeId": null,
+              "covered": true,
+              "coveredNext": true
+            },
+            "images": [
+              {
+                "id": 8126,
+                "userId": 1002,
+                "name": "img-8126.png",
+                "url": "00000000-0000-4000-8000-000000008126",
+                "nsfwLevel": 1,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8126",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": []
+              },
+              {
+                "id": 8127,
+                "userId": 1002,
+                "name": "img-8127.png",
+                "url": "00000000-0000-4000-8000-000000008127",
+                "nsfwLevel": 2,
+                "width": 832,
+                "height": 1216,
+                "hash": "UHASH8127",
+                "type": "image",
+                "metadata": {
+                  "width": 832,
+                  "height": 1216
+                },
+                "remixOfId": null,
+                "poi": false,
+                "minor": false,
+                "tags": [
+                  501
+                ]
+              }
+            ],
+            "canGenerate": true
+          }
+        ],
+        "nextCursor": null
+      },
+      "meta": {
+        "values": {
+          "items.0.createdAt": [
+            "Date"
+          ],
+          "items.0.lastVersionAt": [
+            "Date"
+          ],
+          "items.0.publishedAt": [
+            "Date"
+          ],
+          "items.0.version.createdAt": [
+            "Date"
+          ],
+          "items.0.version.publishedAt": [
+            "Date"
+          ],
+          "items.1.createdAt": [
+            "Date"
+          ],
+          "items.1.lastVersionAt": [
+            "Date"
+          ],
+          "items.1.publishedAt": [
+            "Date"
+          ],
+          "items.1.version.createdAt": [
+            "Date"
+          ],
+          "items.1.version.publishedAt": [
+            "Date"
+          ],
+          "nextCursor": [
+            "undefined"
+          ]
+        },
+        "v": 1
+      }
+    },
+    "writes": {}
+  }
+}

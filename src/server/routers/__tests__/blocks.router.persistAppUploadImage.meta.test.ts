@@ -139,7 +139,7 @@ function writtenRow() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(VIEWER_ID)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(VIEWER_ID)] as never);
   parserOverride.throws = false;
   mockAuthorizeBlockBridgeToken.mockResolvedValue({
     sub: `user:${VIEWER_ID}`,

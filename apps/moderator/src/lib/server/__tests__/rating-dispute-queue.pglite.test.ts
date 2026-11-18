@@ -591,7 +591,7 @@ describe('getRatingReviewImagesBatch covers', () => {
   });
 
   it('counts and previews only connections whose image still exists', async () => {
-    const dangling = 987654;
+    const dangling = 990100024;
     const cover = await seedImage({ url: 'cover' });
     const article = await seedEntity(db, 'Article', { userId: alice, coverId: cover });
     const bounty = await seedEntity(db, 'Bounty', { userId: alice });

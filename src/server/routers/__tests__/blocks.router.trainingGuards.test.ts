@@ -195,6 +195,10 @@ const repeatOverImages = (template: Record<string, unknown>) => ({
 });
 
 beforeEach(() => {
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
@@ -293,61 +297,31 @@ describe('the trigger word of a pass-through `kind:step` training step', () => {
   });
 });
 
-describe('the trigger word of a training step inside a `kind:workflow`', () => {
-  it('is checked at the estimate and the submit, before the orchestrator is asked', async () => {
-    const body = workflowBody([
-      { name: 'tag', $type: 'wdTagging', input: {} },
-      { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
-    ]);
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.check).toHaveBeenCalledTimes(2);
-    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('checks every training step’s word, skipping blank ones and non-training steps', async () => {
-    const body = workflowBody([
-      { name: 'tag', $type: 'wdTagging', input: { triggerWord: 'nottraining' } },
-      { name: 'a', $type: 'training', input: { triggerWord: 'cleanword' } },
-      { name: 'b', $type: 'training', input: { triggerWord: '   ' } },
-      { name: 'c', $type: 'imageResourceTraining', input: irtInput('badword') },
-    ]);
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    expect(h.check.mock.calls.map(([input]) => input.triggerWord)).toEqual([
-      'cleanword',
-      'badword',
-    ]);
-  });
-
-  it('checks an `imageResourceTraining` step’s `loraName`, inside a `repeat` too', async () => {
-    const direct = workflowBody([{ $type: 'imageResourceTraining', input: irtInput('badword') }]);
-    const repeated = workflowBody(
-      [repeatOverImages({ $type: 'imageResourceTraining', input: irtInput('badword') })],
-      { images: [{ url: 'a' }] }
-    );
-    for (const body of [direct, repeated]) {
-      await expect(estimate(body)).rejects.toThrow(REFUSED);
-      await expect(submit(body)).rejects.toThrow(REFUSED);
+describe('a training step inside a `kind:workflow`', () => {
+  it('is refused before any training check, at the estimate and the submit, inside a `repeat` too', async () => {
+    const bodies = [
+      workflowBody([
+        { name: 'tag', $type: 'wdTagging', input: {} },
+        { name: 'train', $type: 'training', input: { triggerWord: 'badword' } },
+      ]),
+      workflowBody([{ $type: 'imageResourceTraining', input: irtInput('badword') }]),
+      workflowBody([repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })], {
+        images: [{ url: 'a' }],
+      }),
+      workflowBody(
+        [{ $type: 'training', input: { triggerWord: { $ref: '$arguments', path: 'tw' } } }],
+        { tw: 'badword' }
+      ),
+    ];
+    for (const body of bodies) {
+      for (const call of [estimate, submit]) {
+        await expect(call(body)).resolves.toMatchObject({
+          snapshot: { status: 'failed', errorCode: 'workflow_step_denied' },
+        });
+      }
     }
-    expect(h.check).toHaveBeenCalledTimes(4);
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('refuses a `$ref` `loraName` in a workflow, before any check or orchestrator call', async () => {
-    const body = workflowBody(
-      [{ $type: 'imageResourceTraining', input: irtInput({ $ref: '$arguments', path: 'n' }) }],
-      { n: 'badword' }
-    );
-    await expect(estimate(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING_LORA,
-    });
-    await expect(submit(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING_LORA,
-    });
     expect(h.check).not.toHaveBeenCalled();
+    expect(h.trainingStatus).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
@@ -360,52 +334,16 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
     expect(h.check).not.toHaveBeenCalled();
   });
 
-  it('is checked inside a `repeat` template', async () => {
-    const body = workflowBody(
-      [repeatOverImages({ $type: 'training', input: { triggerWord: 'badword' } })],
-      { images: [{ url: 'a' }] }
-    );
-    await expect(estimate(body)).rejects.toThrow(REFUSED);
-    await expect(submit(body)).rejects.toThrow(REFUSED);
-    expect(h.check).toHaveBeenCalledWith(expect.objectContaining({ triggerWord: 'badword' }));
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'a `$ref` trigger word',
-      workflowBody(
-        [{ $type: 'training', input: { triggerWord: { $ref: '$arguments', path: 'tw' } } }],
-        { tw: 'badword' }
-      ),
-    ],
-    [
-      'a `$ref` trigger word inside a `repeat` template',
-      workflowBody(
-        [
-          repeatOverImages({
-            $type: 'training',
-            input: { triggerWord: { $ref: 'item', path: 'url' } },
-          }),
-        ],
-        { images: [{ url: 'a' }] }
-      ),
-    ],
-    [
-      'a training input that is itself a reference',
-      workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
-        cfg: { triggerWord: 'badword' },
-      }),
-    ],
-  ])('refuses %s, before any check or orchestrator call', async (_label, body) => {
-    await expect(estimate(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING,
+  it('refuses a training input that is itself a reference, before any check or orchestrator call', async () => {
+    const body = workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
+      cfg: { triggerWord: 'badword' },
     });
-    await expect(submit(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: NOT_A_STRING,
-    });
+    const refused = expect.stringContaining('a step input must be an object, not a reference');
+    for (const call of [estimate, submit]) {
+      await expect(call(body)).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'workflow_ref_invalid', error: refused },
+      });
+    }
     expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
@@ -518,34 +456,6 @@ describe('the base model of a training step an app names itself', () => {
     await expect(submit(stepBody(fluxDev))).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'Training is paused',
-    });
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('refuses a blocked model in a `kind:workflow` step, inside a `repeat` too', async () => {
-    blockStatus(['flux_dev']);
-    const direct = workflowBody([
-      { name: 'tag', $type: 'wdTagging', input: {} },
-      { name: 'train', $type: 'training', input: fluxDev },
-    ]);
-    const repeated = workflowBody([repeatOverImages({ $type: 'training', input: fluxDev })], {
-      images: [{ url: 'a' }],
-    });
-    for (const body of [direct, repeated]) {
-      await expect(estimate(body)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      await expect(submit(body)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    }
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('refuses a model field that is not a literal string', async () => {
-    const body = workflowBody(
-      [{ $type: 'training', input: { ...fluxDev, ecosystem: { $ref: '$arguments', path: 'e' } } }],
-      { e: 'flux1' }
-    );
-    await expect(estimate(body)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: 'a training step’s ecosystem must be a literal string',
     });
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });

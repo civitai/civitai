@@ -11,16 +11,20 @@ import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
   isComSafeLevel,
 } from '~/shared/utils/model-sfw-face';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const createCaller = createCallerFactory(appRouter);
 
 const cardMessages: Record<string, string> = {
   [COM_FACE_REFUSED_MESSAGE]:
+    "Its civitai.red title, description or trigger words can't be shown on civitai.com. Edit them in the model editor, or dispute this there if you think it's wrong.",
+  [COM_FACE_REFUSED_EDIT_MESSAGE]:
     "Its civitai.red title, description or trigger words can't be shown on civitai.com. Edit them in the model editor.",
   [COM_FACE_CHECK_UNAVAILABLE_MESSAGE]:
     "Couldn't check its civitai.red listing just now. Try again later.",
@@ -150,11 +154,17 @@ export default AuthedEndpoint(
     } catch (error) {
       // Creator Studio shows the message on the model's card, away from the editor's tabs.
       const message = error instanceof Error ? cardMessages[error.message] : undefined;
+      // The card offers the dispute, which lives in the editor.
+      if (error instanceof Error && error.message === COM_FACE_REFUSED_MESSAGE)
+        return res
+          .status(422)
+          .json({ error: cardMessages[COM_FACE_REFUSED_MESSAGE], code: 'intent-refused' });
       return handleEndpointError(
         res,
         message ? new TRPCError({ code: 'BAD_REQUEST', message }) : error
       );
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.ModelsWrite } }
 );

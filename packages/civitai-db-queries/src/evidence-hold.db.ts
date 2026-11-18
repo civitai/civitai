@@ -32,9 +32,16 @@ export async function countEvidenceHoldsEnding(
   return { owners: Number(owners), earliest };
 }
 
+/**
+ * The manual hold generator evidence places for a CSAM report still being prepared. Until the report
+ * is sent it is the only thing holding the owner, so it is never released from the moderator page.
+ */
+export const GENERATOR_EVIDENCE_HOLD_REASON = 'generator evidence preserved for a CSAM report';
+
 export type EvidenceHoldEntry = {
   id: number;
   role: string;
+  reason: string;
   csamReportId: number | null;
   releaseAt: Date | null;
   extendedUntil: Date | null;
@@ -76,6 +83,7 @@ export async function listEvidenceHeldOwners(
       'id',
       'userId',
       'role',
+      'reason',
       'csamReportId',
       utc('releaseAt').as('releaseAt'),
       utc('extendedUntil').as('extendedUntil'),
@@ -102,3 +110,84 @@ export async function listEvidenceHeldOwners(
     hasMore: owners.length > limit,
   };
 }
+
+/**
+ * Places a manual hold unless one in force with the same reason already lasts as long as the one
+ * asked for, so a repeat does not stack rows. Only `manual`: `subject` and `secondary` holds belong
+ * to a CSAM report and the table's role check refuses them without one. A null `releaseAt` holds
+ * until released; a date ends the hold in the "EvidenceHeldUser" view, with no job.
+ */
+export async function placeEvidenceHold(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    role: 'manual';
+    reason: string;
+    createdById: number | null;
+    releaseAt?: Date | null;
+  }
+): Promise<{ id: number; created: boolean }> {
+  const open = await db
+    .selectFrom('EvidenceHold')
+    .select('id')
+    .where('userId', '=', input.userId)
+    .where('role', '=', input.role)
+    .where('reason', '=', input.reason)
+    .where('releasedAt', 'is', null)
+    // Still in force, by the same test as "EvidenceHeldUser": a row past its dates holds nothing.
+    .where(sql<boolean>`("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())`)
+    // ...and lasting at least as long as the one asked for: an indefinite request is met only by an
+    // indefinite hold, never by a dated one that would lapse first.
+    .where(
+      input.releaseAt
+        ? sql<boolean>`("releaseAt" IS NULL OR GREATEST("releaseAt", COALESCE("extendedUntil", "releaseAt")) >= ${toUtcTimestamp(
+            input.releaseAt
+          )})`
+        : sql<boolean>`"releaseAt" IS NULL`
+    )
+    .executeTakeFirst();
+  if (open) return { id: open.id, created: false };
+
+  const { id } = await db
+    .insertInto('EvidenceHold')
+    .values({
+      userId: input.userId,
+      role: input.role,
+      reason: input.reason,
+      createdById: input.createdById,
+      releaseAt: input.releaseAt ? toUtcTimestamp(input.releaseAt) : null,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return { id, created: true };
+}
+
+/**
+ * Releases one open manual hold. False when there is no such hold: unknown, already released, a
+ * report hold, the generator-evidence hold, or a hold under an extension still in force. Those are
+ * not a moderator's to end, and a release purges what the hold kept.
+ */
+export async function releaseEvidenceHold(
+  db: Kysely<DB>,
+  input: { id: number; releasedById: number; releaseReason: string }
+): Promise<boolean> {
+  const result = await db
+    .updateTable('EvidenceHold')
+    .set({
+      releasedAt: sql`now() AT TIME ZONE 'UTC'`,
+      releasedById: input.releasedById,
+      releaseReason: input.releaseReason,
+    })
+    .where('id', '=', input.id)
+    .where('role', '=', 'manual')
+    .where('reason', '!=', GENERATOR_EVIDENCE_HOLD_REASON)
+    .where('releasedAt', 'is', null)
+    // An extension is an outside request to keep the evidence; it is not a moderator's to cut short.
+    .where(sql<boolean>`("extendedUntil" IS NULL OR "extendedUntil" <= now())`)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows) > 0;
+}
+
+// The columns are zoneless and hold UTC, so a Date is written as its UTC wall time.
+const toUtcTimestamp = (date: Date) =>
+  sql<Date>`${date.toISOString()}::timestamptz AT TIME ZONE 'UTC'`;

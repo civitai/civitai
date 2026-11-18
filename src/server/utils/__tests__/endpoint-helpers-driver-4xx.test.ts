@@ -216,14 +216,13 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
       secrets: ['appListing', 'delete()', 'prisma.', 'invocation'],
     },
     {
-      label: 'P2024 → 408 discloses the CONNECTION POOL shape',
-      code: 'P2024',
+      label: 'P1008 → 408 discloses the engine timeout text',
+      code: 'P1008',
       status: 408,
       restCode: 'TIMEOUT',
       expected: 'The request timed out',
-      message:
-        'Timed out fetching a new connection from the connection pool. (More info: http://pris.ly/d/connection-pool) (Current connection pool timeout: 10, connection limit: 21)',
-      secrets: ['connection limit', 'pris.ly', 'connection pool timeout'],
+      message: 'Operations timed out after `10s` (More info: http://pris.ly/d/operations-timeout)',
+      secrets: ['pris.ly', 'Operations timed out'],
     },
   ])(
     '$label — status kept, message genericized',
@@ -254,6 +253,18 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
   );
 
   // ── The headline severity case: actual ROW DATA, from `pg`, not Prisma ──────
+  it('P2024 (no pooled connection in time) → a retryable 503 with none of the pool shape', () => {
+    const res = throughTheSeam(
+      prismaError(
+        'P2024',
+        'Timed out fetching a new connection from the connection pool. (More info: http://pris.ly/d/connection-pool) (Current connection pool timeout: 10, connection limit: 21)'
+      )
+    );
+
+    expect(res._status()).toBe(503);
+    expectNoneDisclosed(res, ['connection limit', 'pris.ly', 'connection pool timeout']);
+  });
+
   it('INVARIANT: a real pg 23505 does NOT put the offending row value (an email) on the wire', () => {
     // 🔴 An INVARIANT GUARD, not regression coverage for THIS change: it is green
     // on both sides. `throwDbError`'s generic tail maps a non-Prisma error to a

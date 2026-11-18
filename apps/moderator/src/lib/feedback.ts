@@ -3,6 +3,7 @@ import {
   APPS_PLATFORM_FEEDBACK_AREA,
   FEEDBACK_AREAS,
   FEEDBACK_ERROR_REF_PATTERN,
+  FEEDBACK_STATUSES,
   FEEDBACK_ORCHESTRATOR_ID_PATTERN,
   FEEDBACK_TOAST_TEXT_MAX_LENGTH,
   ORCHESTRATION_FEEDBACK_AREA,
@@ -13,13 +14,18 @@ import {
   type FeedbackCaptureView,
   type FeedbackScreenshotCheck,
 } from '@civitai/shared/feedback-capture';
+import { HQ_ORIGIN, HQ_TASK_ID_PATTERN } from '@civitai/shared/clickup-url';
 import type { LightboxItem } from './lightbox';
 
-export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
+// Owned by `@civitai/shared`, which the main app's triage API validates against too.
+export { FEEDBACK_STATUSES };
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
 export const isFeedbackStatus = (value: string): value is FeedbackStatus =>
   (FEEDBACK_STATUSES as readonly string[]).includes(value);
+
+/** A Knights report's path belongs to the Knights origin, which the moderator app has no address for, so it is not linked. */
+export const feedbackPathLinksToCivitai = (area: string): boolean => area !== 'knights';
 
 export const DEFAULT_FEEDBACK_STATUSES: FeedbackStatus[] = ['new'];
 
@@ -81,6 +87,7 @@ export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
 const FEEDBACK_AREA_LABELS = new Map<string, string>([
   [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
   [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+  ['knights', 'Knights of New Order'],
   [ORCHESTRATION_FEEDBACK_AREA, 'Generation & training errors'],
 ]);
 
@@ -360,12 +367,9 @@ const isToast = (value: unknown): value is { title?: string; message: string } =
  */
 const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 
-const HQ_ORIGIN = 'https://hq.civitai.com';
-const HQ_TASK_ID = /^[\w-]{1,100}$/;
-
 function isHqTask(value: unknown): value is { id: string; url: string } {
   if (!isPlainObject(value) || !isString(value.id) || !isString(value.url)) return false;
-  if (!HQ_TASK_ID.test(value.id)) return false;
+  if (!HQ_TASK_ID_PATTERN.test(value.id)) return false;
   try {
     return new URL(value.url).origin === HQ_ORIGIN;
   } catch {

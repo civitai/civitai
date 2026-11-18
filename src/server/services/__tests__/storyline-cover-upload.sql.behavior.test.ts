@@ -43,6 +43,8 @@ const migration = (name: string) =>
   );
 
 const db = { pg: null as unknown as PGlite };
+/** Whether chapter 1's first-image read (the fallback cover) reaches Postgres. */
+const fallback = { on: false };
 const r = dbMock.dbRead;
 
 const OWNER = 1;
@@ -64,7 +66,11 @@ beforeAll(async () => {
       "userId" integer NOT NULL, minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
       "postId" integer, ingestion text NOT NULL DEFAULT 'Pending',
       "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text,
-      "acceptableMinor" boolean NOT NULL DEFAULT false);
+      "acceptableMinor" boolean NOT NULL DEFAULT false, "blockedFor" text, index integer,
+      "modelRestricted" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer, disabled boolean DEFAULT false);
     CREATE TABLE "PlacementSpace" (surface text, "entityType" text, "entityId" integer, mode text,
       price integer);
@@ -132,7 +138,8 @@ beforeAll(async () => {
   r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join('?');
     return text.includes('FROM "Storyline" st') ||
-      text.includes('AS pick("storylineId", "imageId")')
+      text.includes('AS pick("storylineId", "imageId")') ||
+      (fallback.on && text.includes('DISTINCT ON (i."postId")'))
       ? raw.queryRaw(strings, ...values)
       : Promise.resolve([]);
   }) as never);
@@ -231,5 +238,48 @@ describe('a chapter-image card cover, read by the feed', () => {
 
   it("never shows an image from another storyline's chapter", async () => {
     await expect(coverFor(62)).resolves.toBeNull();
+  });
+});
+
+describe("chapter 1's first image, the cover when none is picked", () => {
+  const fallbackCover = async (flag: string) => {
+    fallback.on = true;
+    await db.pg.exec(`UPDATE "Storyline" SET "coverImageId" = NULL WHERE id = 1; ${flag}`);
+    try {
+      const { items } = await getStorylinesInfinite({
+        filter: 'all',
+        sort: 'newest',
+        limit: 20,
+        viewer: { id: READER },
+        browsingLevel: NsfwLevel.PG,
+      });
+      return items.find((item) => item.id === 1)?.coverImage?.id ?? null;
+    } finally {
+      fallback.on = false;
+      await db.pg.exec(`UPDATE "Image" SET "blockedFor" = NULL WHERE id = 60;
+        DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser";`);
+    }
+  };
+
+  it('is shown when clean', async () => {
+    await expect(fallbackCover('')).resolves.toBe(60);
+  });
+
+  it('is not shown when blocked', async () => {
+    await expect(
+      fallbackCover(`UPDATE "Image" SET "blockedFor" = 'TOS' WHERE id = 60`)
+    ).resolves.toBeNull();
+  });
+
+  it('is not shown when listed on a report', async () => {
+    await expect(
+      fallbackCover(`INSERT INTO "CsamReport" (images) VALUES ('[60]')`)
+    ).resolves.toBeNull();
+  });
+
+  it('is not shown when its owner is under an evidence hold', async () => {
+    await expect(
+      fallbackCover(`INSERT INTO "EvidenceHeldUser" VALUES (${OWNER})`)
+    ).resolves.toBeNull();
   });
 });

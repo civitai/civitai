@@ -9,12 +9,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * every authenticated generation call.
  *
  * The SLOW test is fail-on-revert: the underlying hGet NEVER settles, so if the
- * `withSysReadDeadline(...)` wrap were removed the caller would hang → timeout.
+ * `withSysReadBreaker(...)` wrap were removed the caller would hang → timeout.
  */
 
 const {
   mockHGet,
-  mockWithSysReadDeadline,
+  mockWithSysReadBreaker,
   mockLogSysRedisFailOpen,
   mockGetOrMint,
   mockGetTempKey,
@@ -22,7 +22,7 @@ const {
   mockObserveMismatch,
 } = vi.hoisted(() => ({
   mockHGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  mockWithSysReadBreaker: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
   mockLogSysRedisFailOpen: vi.fn(),
   mockGetOrMint: vi.fn(),
   mockGetTempKey: vi.fn(),
@@ -46,7 +46,7 @@ vi.mock('~/server/redis/client', () => {
           ? { TOKENS: 'generation:tokens', TOKENS_OWNED: 'generation:tokens:owned' }
           : Reflect.get(target, prop),
     }),
-    withSysReadDeadline: mockWithSysReadDeadline,
+    withSysReadBreaker: mockWithSysReadBreaker,
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
@@ -83,7 +83,7 @@ beforeEach(() => {
   // all three cases returned 'test-orchestrator-token'. Pin it explicitly so
   // the suite states what it depends on instead of inheriting a gap.
   setEnv({ ORCHESTRATOR_MODE: 'prod' });
-  mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  mockWithSysReadBreaker.mockImplementation((p) => p); // transparent by default
   // The mint path (used on DOWN/SLOW) — coalesced mint returns a fresh token.
   mockGetOrMint.mockImplementation(async (_userId: number, mint: () => Promise<string>) => mint());
   mockGetTempKey.mockResolvedValue('freshly-minted-token');
@@ -91,7 +91,7 @@ beforeEach(() => {
 });
 
 describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
-  it('happy path: returns the cached token through withSysReadDeadline, no mint', async () => {
+  it('happy path: returns the cached token through withSysReadBreaker, no mint', async () => {
     // Cached values carry their owner (`<userId>.<token>`) so the hit can be
     // verified — see orchestrator-token-identity.ts.
     mockHGet.mockResolvedValue('42.cached-token');
@@ -99,7 +99,7 @@ describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
     const token = await getOrchestratorToken(42, ctx);
 
     expect(token).toBe('cached-token');
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysReadBreaker).toHaveBeenCalledTimes(1);
     expect(mockGetOrMint).not.toHaveBeenCalled();
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
     expect(mockObserveMismatch).not.toHaveBeenCalled();
@@ -192,12 +192,12 @@ describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
 
   it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails open to the mint path (fail-on-revert)', async () => {
     mockHGet.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    mockWithSysReadBreaker.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const token = await getOrchestratorToken(42, ctx);
 
     expect(token).toBe('freshly-minted-token');
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysReadBreaker).toHaveBeenCalledTimes(1);
     expect(mockGetTempKey).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('token-mint-amplification');

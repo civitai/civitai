@@ -14,8 +14,13 @@
     buildTrainingRuns,
     stampMature,
     defaultRunParams,
+    isLabeled,
     isTrainable,
-    labelOptions,
+    expandedCount,
+    repeatsOf,
+    selectionTakesRepeats,
+    labelModeForCard,
+    sweepLabelMode,
     labelString,
     runCard,
     runParamsKey,
@@ -28,11 +33,16 @@
     type SamplePrompt,
     type Selection,
   } from './trainingFlow';
-  import type { FromPrices, LabelType } from '$lib/data/trainingModels';
+  import {
+    TAG_FIND_REPLACE_FLAG_KEY,
+    type FromPrices,
+    type LabelType,
+  } from '$lib/data/trainingModels';
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
   import type { TrainingRunPayload } from '$lib/backend';
+  import { newSubmitKey } from '$lib/submit-key';
   import { watchReadiness, type ReadinessView } from './uploadReadiness';
 
   let {
@@ -105,9 +115,26 @@
   // typed before switching to an edit model must not ride along.
   const runTrigger = $derived(trainsPairs ? '' : trigger);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
+  const takesRepeats = $derived(!!selection && selectionTakesRepeats(selection));
+  // Counts every repeat copy: the "seen ~N×" hint and the quote (Kohya prices by item count) must
+  // see what the submit sends.
   const trainableCount = $derived(
-    trainsPairs ? readyPairs.length : images.filter(isTrainable).length
+    trainsPairs
+      ? readyPairs.length
+      : takesRepeats
+      ? expandedCount(images)
+      : images.filter(isTrainable).length
   );
+  const repeated = $derived.by(() => {
+    if (trainsPairs || !takesRepeats) return undefined;
+    const imgs = images.filter((i) => isTrainable(i) && repeatsOf(i) > 1);
+    if (imgs.length === 0) return undefined;
+    return {
+      images: imgs.length,
+      extra: imgs.reduce((sum, i) => sum + repeatsOf(i) - 1, 0),
+      max: Math.max(...imgs.map(repeatsOf)),
+    };
+  });
   const matureCount = $derived(
     trainsPairs
       ? readyPairs.filter(
@@ -306,12 +333,15 @@
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
   // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
   // ReviewStep, which shows them on the Start button.
+  // One key per batch, kept across a failed Start so a retry finds the runs a lost response hid
+  // instead of charging them again; replaced once a Start lands. Run i's key is this plus its index.
+  let submitKey = newSubmitKey();
+
   async function start(
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
     name: string,
     currencies: string[],
-    matureAck: boolean,
     reviewedMature: number
   ) {
     if (!selection) return;
@@ -328,12 +358,15 @@
       labelMode,
       edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(
-      stampMature(runs, matureAck, reviewedMature)
-    );
+    const keyed = stampMature(runs, reviewedMature).map((run, i) => ({
+      ...run,
+      submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
+    }));
+    const { workflowIds: ids, failure } = await backend().submitTraining(keyed);
+    submitKey = newSubmitKey();
     if (failure)
       submitNotice.set(
-        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+        `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
       );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
@@ -393,16 +426,18 @@
       {prices}
       {enabledModelFlags}
       initial={selection}
+      flowLabelMode={labelMode}
+      datasetLabeled={images.some(isLabeled)}
       startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
+        const previous = selection ? runCard(selection.runs[0]!) : null;
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        // Reset the label mode to the model's default only when the current choice isn't valid for it —
-        // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
-        // single-format model snaps to its format.
-        const card = runCard(sel.runs[0]!);
-        if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
+        const labeled = images.some(isLabeled);
+        labelMode =
+          sweepLabelMode(sel.runs.map(runCard), previous, labelMode, labeled) ??
+          labelModeForCard(previous, runCard(sel.runs[0]!), labelMode, labeled);
         step = 2;
       }}
     />
@@ -420,6 +455,7 @@
     <DataStep
       {selection}
       {prices}
+      findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
       bind:trigger
@@ -447,6 +483,7 @@
       bind:openAdvanced
       bind:acknowledgedAdvanced
       imageCount={trainableCount}
+      {repeated}
       {trainsPairs}
       matureCount={reviewMatureCount}
       readiness={readinessView}

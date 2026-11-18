@@ -147,12 +147,21 @@ export async function grantMilestones(
 /**
  * Grants every score-track milestone at or below each user's new total. A tier the OLD total had
  * already reached is a late grant rather than a crossing, so it is granted silently, and only
- * crossings come back to be announced.
+ * crossings come back.
+ *
+ * `silenceCrossings` stamps a crossing seen in the same INSERT when its user is in `userIds` and its
+ * key is not in `announcedKeys`; a separate later stamp would leave it unseen if that statement
+ * failed, and ON CONFLICT never returns the row to stamp again. Its achievedAt is set 1ms before the
+ * seen stamp so achievedAtIsObserved still reads it as a dated crossing, not a late grant.
  */
 export async function grantScoreTierMilestones(
   pg: AugmentedPool,
   transitions: ScoreTotalTransition[],
-  onCancel?: CancelHook
+  onCancel?: CancelHook,
+  silenceCrossings: { userIds: number[]; announcedKeys: string[] } = {
+    userIds: [],
+    announcedKeys: [],
+  }
 ): Promise<ScoreTierCrossing[]> {
   if (!transitions.length) return [];
 
@@ -160,18 +169,31 @@ export async function grantScoreTierMilestones(
     pg,
     {
       sql: `
-        SELECT t."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt",
-          COALESCE(t."oldTotal", 0) >= m.threshold AS silent
-        FROM jsonb_to_recordset($1::jsonb)
-          AS t("userId" int, "oldTotal" numeric, "newTotal" numeric)
-        JOIN "CreatorMilestone" m
-          ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold`,
-      params: [JSON.stringify(transitions)],
+        SELECT "userId", "milestoneKey",
+          CASE WHEN quiet THEN now() - interval '1 millisecond' END AS "achievedAt",
+          late OR quiet AS silent
+        FROM (
+          SELECT t."userId", m.key AS "milestoneKey",
+            COALESCE(t."oldTotal", 0) >= m.threshold AS late,
+            COALESCE(t."oldTotal", 0) < m.threshold
+              AND t."userId" = ANY($2::int[]) AND m.key <> ALL($3::text[]) AS quiet
+          FROM jsonb_to_recordset($1::jsonb)
+            AS t("userId" int, "oldTotal" numeric, "newTotal" numeric)
+          JOIN "CreatorMilestone" m
+            ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold
+        ) s`,
+      params: [
+        JSON.stringify(transitions),
+        silenceCrossings.userIds,
+        silenceCrossings.announcedKeys,
+      ],
     },
     onCancel
   );
+  // `silent` also covers stamped crossings, so a crossing is told apart from a late grant here.
+  const oldTotals = new Map(transitions.map((t) => [t.userId, t.oldTotal ?? 0]));
   return grants
-    .filter((grant) => !grant.silent)
+    .filter((grant) => (oldTotals.get(grant.userId) ?? 0) < Number(grant.threshold))
     .map(({ userId, milestoneKey, name, threshold }) => ({
       userId,
       milestoneKey,

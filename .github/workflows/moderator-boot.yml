@@ -28,9 +28,11 @@ on:
 permissions:
   contents: read
 
+# A PR push cancels its PR's in-flight run; on `main` the group queues instead, for the reason in
+# lint.yml's `concurrency` comment.
 concurrency:
   group: moderator-boot-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   boot:

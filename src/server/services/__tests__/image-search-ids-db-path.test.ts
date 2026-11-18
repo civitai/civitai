@@ -16,7 +16,7 @@ import type { NextApiRequest } from 'next';
  *
  * 🔴 NOTE ON THE MEILI COMMENT IN `image-search.service.ts`: the reason is NOT
  * that image id is unindexed. `id` IS a filterable attribute on BOTH image
- * indexes (`metrics-images.search-index.ts` filterableAttributes, and
+ * indexes (the retired feeds index's processor declared it, and
  * `imagesFilterableAttributes` in `search-index/filterable-attributes.ts` —
  * "`id` is filterable on every index because the keyset cleanup scan pages on
  * it"). The feed's query builder simply never reads `ids`. Either way the

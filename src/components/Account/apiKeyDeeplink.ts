@@ -1,6 +1,6 @@
 import { TokenScopePresets } from '~/shared/constants/token-scope.constants';
 
-export type ApiKeyDeeplinkPrefill = { name: string; tokenScope: number };
+export type ApiKeyDeeplinkPrefill = { name: string; tokenScope: bigint };
 
 /** Structural shape of Next's `router.query` (a ParsedUrlQuery) — avoids a `querystring` import. */
 type RouterQuery = Record<string, string | string[] | undefined>;
@@ -42,11 +42,10 @@ const DEEPLINKABLE_PRESETS: ReadonlySet<string> = new Set(
  */
 export function parseApiKeyDeeplink(query: RouterQuery): ApiKeyDeeplinkPrefill | null {
   if (query.addApiKey == null) return null;
-  const name =
-    typeof query.name === 'string' ? query.name.trim().slice(0, DEEPLINK_NAME_MAX) : '';
+  const name = typeof query.name === 'string' ? query.name.trim().slice(0, DEEPLINK_NAME_MAX) : '';
   const scopeKey = typeof query.scope === 'string' ? query.scope : '';
   const tokenScope = DEEPLINKABLE_PRESETS.has(scopeKey)
-    ? (TokenScopePresets as Record<string, number>)[scopeKey]
+    ? TokenScopePresets[scopeKey as keyof typeof TokenScopePresets]
     : TokenScopePresets.ReadOnly;
   return { name, tokenScope };
 }

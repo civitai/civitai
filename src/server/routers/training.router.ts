@@ -39,6 +39,7 @@ import {
   getAutoLabelWorkflow,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
+  getTrainingServiceStatusState,
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
@@ -211,7 +212,13 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
-    .query(() => getTrainingServiceStatus()),
+    .query(async ({ ctx }) => {
+      const { status, known } = await getTrainingServiceStatusState();
+      // A cold pod's fail-closed fallback (status unreadable, never read) must not be cached at
+      // the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
+      return status;
+    }),
   /**
    * Training on/off for anyone, signed in or not: only `available`. getStatus stays behind the
    * imageTraining flag because it also carries the operator message and blocked models. Read by
@@ -220,8 +227,13 @@ export const trainingRouter = router({
   getPublicStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
-    .query(async () => {
-      const { available } = await getTrainingServiceStatus();
+    .query(async ({ ctx }) => {
+      const {
+        status: { available },
+        known,
+      } = await getTrainingServiceStatusState();
+      // As getStatus: never edge-cache the fail-closed fallback.
+      if (!known && ctx.cache) ctx.cache.skip = true;
       return { available };
     }),
   getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),

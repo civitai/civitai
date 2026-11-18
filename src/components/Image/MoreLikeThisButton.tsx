@@ -3,21 +3,26 @@ import Router from 'next/router';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { offersImageSearch } from '~/components/Search/search-target';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 type MoreLikeThisImage = { id: number; type: MediaType | `${MediaType}` };
 
+type MoreLikeThisFlags = Pick<FeatureAccess, 'imageSearch' | 'feedSearch' | 'moreLikeThis'>;
+
+export const offersMoreLikeThis = (features: MoreLikeThisFlags) =>
+  !!features.moreLikeThis && offersImageSearch(features);
+
 /** Only images are embedded, so videos have no "more like this". */
-export function isMoreLikeThisVisible(
-  features: Pick<FeatureAccess, 'imageSearch'>,
-  image: MoreLikeThisImage
-) {
-  return !!features.imageSearch && image.type === MediaType.image;
+export function isMoreLikeThisVisible(features: MoreLikeThisFlags, image: MoreLikeThisImage) {
+  return offersMoreLikeThis(features) && image.type === MediaType.image;
 }
 
-export const moreLikeThisHref = (imageId: number) => `/search/images?similarTo=${imageId}`;
+/** The images feed answers "more like this" under `feedSearch`; otherwise the image search page. */
+export const moreLikeThisHref = (features: Pick<FeatureAccess, 'feedSearch'>, imageId: number) =>
+  features.feedSearch ? `/images?similarTo=${imageId}` : `/search/images?similarTo=${imageId}`;
 
-/** Opens image search with the images that look like this one. */
+/** Opens the images that look like this one. */
 export function MoreLikeThisButton({ image }: { image: MoreLikeThisImage }) {
   const features = useFeatureFlags();
   if (!isMoreLikeThisVisible(features, image)) return null;
@@ -33,7 +38,7 @@ export function MoreLikeThisButton({ image }: { image: MoreLikeThisImage }) {
         // The card itself links to the image detail.
         e.preventDefault();
         e.stopPropagation();
-        void Router.push(moreLikeThisHref(image.id));
+        void Router.push(moreLikeThisHref(features, image.id));
       }}
     >
       <IconPhotoSearch stroke={2.5} size={16} />

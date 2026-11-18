@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CacheModule from '../lib/server/cache';
 import type * as EnvModule from '../env';
 
 // Behavioral coverage for the fan-out worker (closes G1 from the 2026-07-03 coverage audit). The sibling
@@ -45,7 +46,9 @@ vi.mock('../lib/server/clients/axiom', () => ({
 
 vi.mock('./email', () => ({ dispatchEmail: vi.fn(async () => undefined) }));
 
-vi.mock('../lib/server/cache', () => ({
+vi.mock('../lib/server/cache', async (importOriginal) => ({
+  // The real redisWithin: the code under test bounds its redis calls through it.
+  ...(await importOriginal<typeof CacheModule>()),
   notificationCache: {
     incrementUser: vi.fn(async () => {}),
     decrementUser: vi.fn(async () => {}),
@@ -62,6 +65,7 @@ vi.mock('../lib/server/metrics', () => ({
   workerPendingProcessedTotal: { inc: vi.fn() },
   workerTickSeconds: { startTimer: () => () => {} },
   writePoolActive: { set: vi.fn() },
+  redisErrorsTotal: { inc: vi.fn() },
 }));
 
 vi.mock('../env', async (importOriginal) => ({

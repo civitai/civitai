@@ -41,7 +41,7 @@ export const GET: RequestHandler = async ({ params, url, locals, request }) => {
       days,
       limit,
       rows: items.length,
-    }).catch(() => null);
+    });
     return json({ items, truncated, days, limit });
   } catch (e) {
     console.error('[user-prompt-scans] query failed', e);

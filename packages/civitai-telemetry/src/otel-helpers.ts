@@ -13,8 +13,7 @@ const tracer = trace.getTracer('civitai-app');
 // The gate behind `withSpan`'s unsampled-parent shortcut (see `withSpan`). Kept on `globalThis`
 // because this module can be emitted into more than one bundled server chunk, and the app sets
 // the gate ONCE at boot: a module-scope variable would arm only the copy that boot imported and
-// leave every other copy's call sites on the old path, with no error. Enrolled as SHARED_STATE
-// in scripts/server-graph-watchlist.mjs. Unset (the default, and always in tests that do not
+// leave every other copy's call sites on the old path, with no error. Unset (the default, and always in tests that do not
 // set it) means withSpan behaves exactly as before the gate existed.
 type WithSpanGateState = { gate: (() => boolean) | undefined };
 declare global {
@@ -30,6 +29,24 @@ const withSpanGateState = (globalThis.__civitaiWithSpanSkipUnsampledGate ??= { g
  */
 export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined): void {
   withSpanGateState.gate = gate;
+}
+
+/**
+ * The context key `@opentelemetry/core`'s `suppressTracing` sets: `createContextKey(description)` is
+ * `Symbol.for(description)`, so this is the same key without a runtime dependency on core (a
+ * devDependency here). `with-span-suppressed.test.ts` pins it against core's own `suppressTracing`,
+ * so a core release that renames the key fails that test instead of silently disabling the checks
+ * below.
+ */
+const SUPPRESS_TRACING_KEY = Symbol.for('OpenTelemetry SDK Context Key SUPPRESS_TRACING');
+
+/**
+ * Whether tracing is suppressed in `ctx` — the state the app's root pre-sampler leaves an
+ * unsampled request in (src/server/otel-root-presample.ts). Under it the SDK tracer hands out a
+ * non-recording span with an invalid context for EVERY span, whatever the sampler says.
+ */
+export function isTracingSuppressedIn(ctx = context.active()): boolean {
+  return ctx.getValue(SUPPRESS_TRACING_KEY) === true;
 }
 
 /**
@@ -51,6 +68,16 @@ export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined):
 function shouldSkipUnsampledSpan(): boolean {
   const gate = withSpanGateState.gate;
   if (gate === undefined) return false;
+  // Tracing suppressed: the SDK would open a non-recording span with an invalid context whatever
+  // the parent, so not opening it is unobservable too. Checked first, because under suppression
+  // there is usually no valid parent at all, which the checks below treat as "a new root".
+  if (isTracingSuppressedIn()) {
+    try {
+      return gate() === true;
+    } catch {
+      return false;
+    }
+  }
   const parent = trace.getActiveSpan();
   if (parent === undefined || parent.isRecording()) return false;
   const parentContext = parent.spanContext();
@@ -105,11 +132,32 @@ export function setActiveSpanAttributes(attrs: Record<string, string | number | 
 export function traceContextHeaders(): Record<string, string> {
   try {
     const carrier: Record<string, string> = {};
-    propagation.inject(context.active(), carrier);
+    const active = context.active();
+    propagation.inject(active, carrier);
+    // Under suppressed tracing the W3C propagator injects nothing. Without a `traceparent` a callee
+    // makes its OWN root sampling decision, so it would start sampling requests it drops today (it
+    // used to receive an unsampled parent). Send an unsampled parent instead: same decision
+    // downstream as before. Fresh random ids, since no span exists here to name.
+    if (!carrier.traceparent && isTracingSuppressedIn(active)) {
+      carrier.traceparent = unsampledTraceparent();
+    }
     return carrier;
   } catch {
     return {};
   }
+}
+
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buf);
+  let out = '';
+  for (const b of buf) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+/** A valid W3C `traceparent` with the sampled flag clear. */
+export function unsampledTraceparent(): string {
+  return `00-${randomHex(16)}-${randomHex(8)}-00`;
 }
 
 export function withSpan<T>(name: string, fn: () => T): T;

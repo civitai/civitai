@@ -208,7 +208,7 @@ const logFailure = (message: string, postId: number) => (error: unknown) =>
     message,
     postId,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => undefined);
+  });
 
 type PendingChapterPromotion =
   | {

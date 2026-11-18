@@ -27,9 +27,28 @@ export const LISTING_COVER_WIDTH = 1200;
 /** Gallery screenshot render width — the same class as the cover, which it can stand in for. */
 export const LISTING_SCREENSHOT_WIDTH = 1200;
 
+/**
+ * The one CDN URL builder for a listing's icon, cover and screenshots.
+ *
+ * 🔴 `optimized: true` IS LOAD-BEARING. Without it the image CDN serves JPEG, which has no alpha
+ * channel, so every transparent pixel of an uploaded PNG icon is flattened to BLACK and the icon
+ * renders on a black square instead of the card behind it. With it the CDN serves WebP, which
+ * keeps alpha.
+ *
+ * 🔴 `anim: false` IS LOAD-BEARING TOO. With `optimized` alone the CDN serves ANIMATED WebP for an
+ * animated source, so a listing icon or cover would play. `getEdgeUrl` emits `anim=false`, and the
+ * CDN then serves a single-frame WebP that still keeps alpha.
+ *
+ * The listing's social image (`listingSocialImage`) deliberately does NOT use this: link-preview
+ * scrapers are not all WebP-capable, so the `og:image` stays JPEG.
+ */
+export function listingMediaEdgeUrl(url: string, width: number): string {
+  return getEdgeUrl(url, { width, anim: false, optimized: true });
+}
+
 /** Build a CDN icon URL from an icon `Image` row (or null/absent). */
 export function listingIconUrl(icon: { url: string | null } | null | undefined): string | null {
-  return icon?.url ? getEdgeUrl(icon.url, { width: LISTING_ICON_WIDTH }) : null;
+  return icon?.url ? listingMediaEdgeUrl(icon.url, LISTING_ICON_WIDTH) : null;
 }
 
 /**
@@ -50,6 +69,6 @@ export function listingCoverUrl(
   cover: { url: string | null } | null | undefined,
   fallbackUrl: string | null
 ): string | null {
-  if (cover?.url) return getEdgeUrl(cover.url, { width: LISTING_COVER_WIDTH });
+  if (cover?.url) return listingMediaEdgeUrl(cover.url, LISTING_COVER_WIDTH);
   return fallbackUrl;
 }

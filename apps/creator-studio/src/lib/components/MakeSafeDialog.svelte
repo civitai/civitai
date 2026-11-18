@@ -6,7 +6,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
-  import { modelUrl } from '$lib/model-url';
+  import { civitaiUrl, modelUrl } from '$lib/model-url';
   import type { CreatorModel } from '$lib/server/models';
 
   type Draft = {
@@ -20,7 +20,8 @@
     | { state: 'waiting' | 'drafting' | 'saving' }
     | { state: 'ready'; draft: Draft; accepted: boolean }
     | { state: 'saved'; listedOnCom: boolean }
-    | { state: 'failed'; reason: string; draft?: Draft };
+    | { state: 'failed'; reason: string; draft?: Draft }
+    | { state: 'refused'; reason: string };
 
   let open = $state(false);
   // A snapshot: the page reloads after a save, and the run keeps reviewing what it started with.
@@ -58,6 +59,7 @@
     if (!res.ok)
       throw Object.assign(new Error(data.error ?? `Request failed (${res.status})`), {
         status: res.status,
+        code: data.code,
       });
     return data;
   }
@@ -73,7 +75,12 @@
         cards[model.id] = { state: 'waiting' };
         return false;
       }
-      const err = e as Error & { status?: number };
+      const err = e as Error & { status?: number; code?: string };
+      // The listing check refused it: retrying gives the same answer; the editor offers a dispute.
+      if (err.code === 'intent-refused') {
+        cards[model.id] = { state: 'refused', reason: err.message };
+        return true;
+      }
       // Every 409 from com-face is a skip, not a failure.
       if (err.status === 409) {
         cards[model.id] = { state: 'skipped', reason: err.message };
@@ -224,6 +231,19 @@
               Saved, but not on civitai.com yet: its cover doesn't count until that image is
               published and reviewed. Pick another cover in the model editor if it stays off.
             </p>
+          {:else if card?.state === 'refused'}
+            <div class="mt-1 flex items-center gap-2">
+              <p class="flex-1 text-sm text-red-4">{card.reason}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                href={civitaiUrl(`models/${model.id}/edit`, model)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Dispute
+              </Button>
+            </div>
           {:else if card?.state === 'failed'}
             <div class="mt-1 flex items-center gap-2">
               <p class="flex-1 text-sm text-red-4">{card.reason}</p>

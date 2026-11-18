@@ -3,6 +3,7 @@ import {
   createNotificationsBulkInput,
   markReadByKeysInput,
   sendSystemNoticesInput,
+  unseenNotificationsInput,
   type SendSystemNoticesInput,
   type SendSystemNoticesResult,
   type SystemNoticeSendRecord,
@@ -16,6 +17,8 @@ import {
   type NotificationExistsInput,
   type NotificationRow,
   type QueryNotificationsInput,
+  type UnseenNotifications,
+  type UnseenNotificationsInput,
 } from './schema';
 
 export type NotificationsClientConfig = {
@@ -226,6 +229,14 @@ function noticesConfig(config: NotificationsClientConfig): NotificationsClientCo
   };
 }
 
+// The count feeds the bell badge, and its caller degrades a failure to no badge for the rest of the page
+// load (it is fetched once, not polled). So it gives up fast — 1.5 s per attempt — but retries once, so a
+// single blip (a pod restart, a dropped connection) doesn't zero the badge: ~3 s worst case. Other routes
+// keep the configured timeout and retries.
+function countConfig(config: NotificationsClientConfig): NotificationsClientConfig {
+  return { ...config, timeoutMs: 1500, retries: 1 };
+}
+
 // Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large
 // `users[]`) can't exceed the app's body limit. The app's DB-write batching is separate.
 const BULK_HTTP_BATCH_SIZE = 1000;
@@ -260,7 +271,7 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
     countNotifications: async (
       input: CountNotificationsInput
     ): Promise<NotificationCategoryCount[]> => {
-      const res = (await post('/notifications/count', input, config)) as Array<
+      const res = (await post('/notifications/count', input, countConfig(config))) as Array<
         Omit<NotificationCategoryCount, 'count'> & { count: number | string }
       >;
       return res.map((c) => ({
@@ -291,6 +302,27 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
         | { exists?: boolean }
         | undefined;
       return res?.exists === true;
+    },
+
+    /** The digest read: per user, the newest notifications not seen since their `since`. */
+    queryUnseenNotifications: async (
+      input: UnseenNotificationsInput
+    ): Promise<UnseenNotifications[]> => {
+      const res = (await post(
+        '/notifications/unseen',
+        unseenNotificationsInput.parse(input),
+        config
+      )) as Array<
+        Omit<UnseenNotifications, 'items'> & {
+          items: Array<
+            Omit<UnseenNotifications['items'][number], 'createdAt'> & { createdAt: string }
+          >;
+        }
+      >;
+      return res.map((user) => ({
+        ...user,
+        items: user.items.map((item) => ({ ...item, createdAt: new Date(item.createdAt) })),
+      }));
     },
 
     cleanupNotifications: async (

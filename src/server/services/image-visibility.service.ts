@@ -1,11 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  minorMatureImageVisibleSql,
+  notHeldForReviewSql,
+} from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
@@ -24,6 +30,41 @@ export function imageBlockedForConditions({
       ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
       : Prisma.sql`(i."blockedFor" IS NULL)`,
   ];
+}
+
+/**
+ * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
+ * `"Image" i`. Held, unscanned, unrated, blocked and minor-restricted images are the owner's and
+ * moderators' alone; base-model restricted images are the owner's alone.
+ */
+export function entityImageVisibilityConditions({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] {
+  const AND: Prisma.Sql[] = [];
+  if (!isModerator) {
+    AND.push(
+      Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+        userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+      })`,
+      userId
+        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" != 0`,
+      userId
+        ? Prisma.sql`(${Prisma.join(
+            [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],
+            ' OR '
+          )})`
+        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`
+    );
+  }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(imageNotRestrictedSql({ viewerId: userId }));
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  return AND;
 }
 
 /**
@@ -91,11 +132,17 @@ export function imageVisibilityConditions({
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // An unrated image is its owner's and moderators' alone, as in the image feeds.
+    Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`,
     // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
     userId
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
+    // Not even to the owner (or a collection manager).
+    notHeldForReviewSql(),
+    minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
+    imageNotRestrictedSql({ viewerId: userId }),
   ];
 }
 

@@ -59,13 +59,13 @@ export const restoreUserImages = createJob(
         }
       } catch (error) {
         // Caught per account so one that cannot be reversed doesn't strand the rest behind it.
-        await logToAxiom({
+        logToAxiom({
           type: 'error',
           name: 'restore-user-images',
           message: (error as Error)?.message,
           error: safeError(error),
           userId,
-        }).catch(() => undefined);
+        });
       }
     }
 

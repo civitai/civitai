@@ -24,10 +24,17 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { publicAvatarUrl } from '~/server/utils/public-avatar';
+import { Flags } from '~/shared/utils/flags';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { redis } from '~/server/redis/client';
+import {
+  beginFeedGoShadowV1Models,
+  captureFeedGoShadowRest,
+  finishFeedGoShadow,
+} from '~/server/trpc/feed-go-shadow';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -43,13 +50,11 @@ export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(214748364
 
 const baseUrl = getBaseUrl();
 
-// Origin-side response cache for the PUBLIC path. Cloudflare already caches this
-// endpoint at the edge (PublicEndpoint sets `s-maxage=300, swr=150`), but every
-// edge-MISS re-runs the full getModelsWithVersions pipeline — whose tail cost is a
-// cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares
-// that work on edge-misses. The TTL is held at CacheTTL.sm (180s) ≤ the 300s edge
-// TTL, so the origin cache introduces NO staleness beyond what the edge already
-// serves. Keyed by (modelId, browsingLevel) — browsingLevel is binary here
+// Origin-side response cache for the PUBLIC path. The response is not shared-cached at the
+// edge (its body depends on the caller's region, which the edge does not key on), so every
+// request reaches here, and each build runs the full getModelsWithVersions pipeline — whose tail
+// cost is a cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares that
+// work. TTL CacheTTL.sm (180s). Keyed by (modelId, browsingLevel) — browsingLevel is binary here
 // (sfwBrowsingLevelsFlag when region-restricted, else allBrowsingLevelsFlag), so
 // including its numeric flag value in the key is exact and self-documenting.
 const PUBLIC_MODEL_RESPONSE_TTL = env.IS_DATAPACKET ? CacheTTL.sm : 0;
@@ -89,15 +94,7 @@ async function buildPublicModelResponse(
     creator: user
       ? {
           username: user.username,
-          image: user.profilePicture
-            ? getEdgeUrl(user.profilePicture.url, {
-                width: 96,
-                name: user.username,
-                type: user.profilePicture.type,
-              })
-            : user.image
-            ? getEdgeUrl(user.image, { width: 96, name: user.username })
-            : null,
+          image: publicAvatarUrl(user, browsingLevel),
         }
       : undefined,
     tags: tagsOnModels.map(({ name }) => name),
@@ -156,15 +153,18 @@ async function buildPublicModelResponse(
                   visibility: undefined,
                 }))
             : [],
+          // Only images within the level this response is served at (SFW in a restricted region).
           images: includeImages
-            ? images.map(({ url, id, ...image }) => ({
-                url: getEdgeUrl(url, {
-                  original: true,
-                  name: id.toString(),
-                  type: image.type,
-                }),
-                ...image,
-              }))
+            ? images
+                .filter((image) => Flags.intersects(image.nsfwLevel, browsingLevel))
+                .map(({ url, id, ...image }) => ({
+                  url: getEdgeUrl(url, {
+                    original: true,
+                    name: id.toString(),
+                    type: image.type,
+                  }),
+                  ...image,
+                }))
             : [],
           downloadUrl: includeDownloadUrl
             ? `${baseUrl}${createModelFileDownloadUrl({
@@ -189,6 +189,9 @@ const baseHandler = PublicEndpoint(async function handler(
     });
 
   const browsingLevel = apiBrowsingLevel(req);
+  // The body depends on the caller's region (the level above), which the shared cache does not key
+  // on. The origin cache below is keyed by level.
+  res.setHeader('Cache-Control', 'private, no-store');
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path
@@ -216,10 +219,13 @@ const baseHandler = PublicEndpoint(async function handler(
   // ledger's classification of this route as READ_PUBLIC goes with it.
   const isBlockScoped = !!(req as BlockScopedNextApiRequest).blockClaims;
 
+  // feed-go shadow (flag `feed-go-shadow-v1-models`, default off): a sampled 200 body is POSTed to
+  // feed-go's internal compare endpoint after the handler, never awaited. Never throws. A request
+  // with an API credential (a block token included) is never mirrored. See
+  // `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadowV1Models(req, 'id');
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
-    // TTL (CacheTTL.sm = 180s) ≤ the edge s-maxage (300s), so the origin cache
-    // never serves staler than the edge already would.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;
     const body = shouldCache
       ? await fetchModelResponseCached(id, browsingLevel)
@@ -234,11 +240,13 @@ const baseHandler = PublicEndpoint(async function handler(
     // stored.
     if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res
-      .status(200)
-      .json(await withListableTrainingData(body, isRedCapableHost(req.headers.host)));
+    const out = await withListableTrainingData(body, isRedCapableHost(req.headers.host));
+    if (shadow) captureFeedGoShadowRest(shadow, out);
+    return res.status(200).json(out);
   } catch (error) {
     return handleEndpointError(res, error);
+  } finally {
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
 });
 
@@ -270,8 +278,7 @@ async function withListableTrainingData(body: Record<string, unknown>, redCapabl
 // fail-open Redis set, and matching the key scheme bustPublicModelResponseCache
 // busts). This deliberately forgoes fetchThroughCache's distributed cold-miss
 // single-flight lock; acceptable here because this is a low-volume endpoint
-// (~0.5 req/s) that Cloudflare already fronts (s-maxage=300), so a cold-key
-// thundering herd is negligible. (See FIX 3 in the PR description for the
+// (~0.5 req/s at the time), so a cold-key thundering herd is small. (See FIX 3 in the PR description for the
 // pre-existing ~15s lock-retry 500 on fetchThroughCache itself.)
 async function fetchModelResponseCached(
   id: number,
@@ -286,9 +293,7 @@ async function fetchModelResponseCached(
     // Honor the LOGICAL ttl. fetchThroughCache stores with EX = ttl*2 (the physical
     // key lives 360s) and normally gates freshness on `cachedAt`, serving older
     // entries only as stampede-protection stale. A bare presence check here would
-    // serve entries up to 2×ttl (360s) old — PAST the 300s edge s-maxage — breaking
-    // the "origin TTL ≤ edge TTL ⇒ no new staleness" invariant (and could compound
-    // through the edge's stale-while-revalidate). Re-apply the same cachedAt gate so
+    // serve entries up to 2×ttl (360s) old. Re-apply the same cachedAt gate so
     // a logically-expired-but-physically-present entry falls through to a rebuild.
     if (cached && Date.now() - cached.cachedAt <= PUBLIC_MODEL_RESPONSE_TTL * 1000)
       return cached.data;
@@ -312,6 +317,11 @@ async function fetchModelResponseCached(
 // App Blocks: allow this route to be called with an RS256 block JWT carrying
 // the `models:read:self` scope. When no block JWT is present the call falls
 // through to the existing PublicEndpoint path, so legacy callers are unaffected.
+/**
+ * @ported-to-go feed-go · status: shadow · see ports/manifest.json (id: GET /api/v1/models/[id]).
+ * Changing this behaviour? Update apps/feed-go/internal/server/v1models.go, apps/feed-go/internal/v1models/serve.go in the same PR; CI lists every port a PR touches.
+ * Generated by `node scripts/ports/generate.mjs` from ports/manifest.json: edit the manifest, not this block.
+ */
 export default withBlockScope(baseHandler, {
   endpoint: 'model_detail',
   requiredScope: 'models:read:self',

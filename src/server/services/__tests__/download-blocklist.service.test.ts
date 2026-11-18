@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
@@ -137,6 +138,9 @@ describe('getDownloadBlocklistValue', () => {
   });
 
   it('reads the database once the deadline passes when the cache read stalls', async () => {
+    // The cluster-cache guard inside fetchThroughCache has its own, shorter deadline; switch it off
+    // so this pins THIS service's deadline, which still bounds the read when the guard is disabled.
+    setEnv({ REDIS_CACHE_READ_DEADLINE_MS: 0 });
     vi.useFakeTimers();
     // A read that never settles: what a stalled cache socket looks like to the caller.
     const neverSettles = new Promise<never>((resolve) => void resolve);

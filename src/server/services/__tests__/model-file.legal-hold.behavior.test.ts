@@ -189,7 +189,7 @@ describe('a new upload replacing a file', () => {
         model: { type: 'Checkpoint', userId: owner },
       },
     } as never);
-    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: 99_999 } as never);
+    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: 990200001 } as never);
   }
   const replace = (owner: number, isModerator = false) =>
     updateFile({

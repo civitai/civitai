@@ -3,8 +3,12 @@ import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import {
+  createOwnerImageSearch,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +41,7 @@ import {
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -54,12 +59,24 @@ import { searchHitName } from '~/shared/utils/model-sfw-face';
 const meilisearch = withUserHydration(
   createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
 );
-// The semantic search is flag-protected on the server: without `imageSearch` it rejects, and the
-// resilient wrapper turns that into an empty dropdown. Images go to Meili for everyone else.
+// The semantic search is flag-protected on the server: without `imageSearch` it rejects (except an
+// owner's search of their own images), and the resilient wrapper turns that into an empty dropdown.
 const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
-    withSemanticArticleSearch(
-      withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+    withSemanticComicSearch(
+      withSemanticArticleSearch(
+        withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+      )
+    )
+  )
+);
+
+// An owner-scoped Images search (the showcase picker), with or without `imageSearch`.
+const ownerImagesSearch = withUserHydration(
+  createResilientSearchClient(
+    withSemanticImageSearch(
+      createInstantMeiliSearch({ primaryKey: 'id' }),
+      createOwnerImageSearch()
     )
   )
 );
@@ -187,11 +204,10 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   placeholder?: string;
   disableInitialSearch?: boolean;
   /**
-   * Keeps images on Meilisearch even when semantic image search is on. For a caller whose
-   * `filters` scope images to one owner: the semantic search ignores the `filters` string, so it
-   * would offer everyone's images, and it answers nothing for an empty query.
+   * Scopes the Images search to this username's images. The semantic image search ignores the
+   * `filters` string, so the scope goes as a `user.username` facet, which it applies server-side.
    */
-  imagesFromIndex?: boolean;
+  imageOwner?: string;
   /**
    * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
    *
@@ -209,7 +225,7 @@ const QuickSearchDropdownInner = ({
   startingIndex,
   disableInitialSearch,
   showIndexSelect = true,
-  imagesFromIndex,
+  imageOwner,
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
@@ -247,6 +263,11 @@ const QuickSearchDropdownInner = ({
     filters,
     buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
   ].filter(isDefined);
+  const ownerScopedImages = !!imageOwner && indexName === IMAGES_SEARCH_INDEX;
+  const facetFilters = useMemo(
+    () => (ownerScopedImages ? [`user.username:${imageOwner}`] : undefined),
+    [ownerScopedImages, imageOwner]
+  );
 
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
   // once here because the render below reads it twice — as `data`, and in the `value` expression
@@ -259,7 +280,9 @@ const QuickSearchDropdownInner = ({
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
-        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+        (features.imageSearch || imageOwner
+          ? true
+          : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
         (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
         (features.articles ? true : value !== 'articles')
     )
@@ -327,7 +350,10 @@ const QuickSearchDropdownInner = ({
         searchClient={
           disableInitialSearch
             ? searchClient
-            : features.imageSearch && !imagesFromIndex
+            : ownerScopedImages
+            ? ownerImagesSearch
+            : // With an owner scope, the other tabs stay on Meili: the semantic searches ignore `filters`.
+            features.imageSearch && !imageOwner
             ? semanticMeilisearch
             : meilisearch
         }
@@ -337,12 +363,14 @@ const QuickSearchDropdownInner = ({
         <BrowsingLevelFilter
           indexKey={targetIndex}
           filters={indexFilters}
+          facetFilters={facetFilters}
           hitsPerPage={dropdownItemLimit}
         />
 
         <QuickSearchDropdownContent
           {...props}
           indexName={targetIndex}
+          ownerPicker={ownerScopedImages}
           dropdownItemLimit={dropdownItemLimit}
           carriedSearchText={carriedSearchText}
         />
@@ -362,12 +390,16 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   placeholder,
   onHits,
   carriedSearchText,
+  ownerPicker,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
+  ownerPicker?: boolean;
   carriedSearchText: React.MutableRefObject<string>;
 }) {
   // const currentUser = useCurrentUser();
+  const { browsingLevel: viewerLevel } = useBrowsingSettingsAddons();
+  const { blurLevels } = useBrowsingLevelContext();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
@@ -441,9 +473,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       if (!item) return null;
 
       const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
-      return <RenderItem {...item} />;
+      const pickerRow = ownerPicker && indexName === 'images';
+      return <RenderItem {...item} {...(pickerRow && { pickerRow, viewerLevel, blurLevels })} />;
     },
-    [getItemFromValue, indexName]
+    [getItemFromValue, indexName, ownerPicker, viewerLevel, blurLevels]
   );
 
   useEffect(() => {

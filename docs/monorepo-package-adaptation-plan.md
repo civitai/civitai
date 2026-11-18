@@ -1,8 +1,8 @@
 # Monorepo — Base Package Adaptation Plan
 
-**Status:** Planning only. The base-package file *moves* are staged but **not yet committed**;
-none of the content rewrites below have been applied. This document is the concrete
-implementation spec for turning the five staged base packages into true,
+**Status:** superseded; kept as history, not instructions. Packages that need configuration read
+their own env in `src/env.ts` (for example `packages/civitai-redis/src/env.ts`); see each package's
+README. This document was the implementation spec for turning the five base packages into true,
 infrastructure-only packages that import **external npm dependencies only**.
 
 Read first: [`monorepo-bootstrap-handoff.md`](./monorepo-bootstrap-handoff.md) and

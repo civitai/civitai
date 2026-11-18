@@ -145,6 +145,16 @@ const LEDGER = [
     why: 'The viewer-settings write, reachable under any private-run token.',
   },
   {
+    file: 'src/server/services/blocks/scope-grant.service.ts',
+    count: 1,
+    exempt: 'viewer-consent',
+    why:
+      'EXEMPT. Records the VIEWER changing their own daily Buzz limit from host UI, a session ' +
+      'path no block token reaches, so there is no private-run claim to thread. Its row carries ' +
+      'the app id, so it is kept out of owner aggregates by its `viewer-consent` source, which ' +
+      'OWNER_VISIBLE_INVOCATION_FILTER and the raw distinct-users read exclude (pinned below).',
+  },
+  {
     file: 'src/server/services/oauth/oauth-scope-audit.ts',
     count: 1,
     exempt: true,
@@ -590,7 +600,7 @@ describe('every block_scope_invocations writer carries the private-run marker', 
   });
 
   describe.each(LEDGER)('$file', ({ file, count, why, ...rest }) => {
-    const exempt = 'exempt' in rest && rest.exempt === true;
+    const exempt = 'exempt' in rest ? rest.exempt : false;
     const source = read(file);
     const sites = callSites(source, OPENER);
 
@@ -618,7 +628,21 @@ describe('every block_scope_invocations writer carries the private-run marker', 
       ).toBe(sites.length);
     });
 
-    if (exempt) {
+    if (exempt === 'viewer-consent') {
+      it('[INV] the exemption is still structurally justified — viewer-consent source, no block token', () => {
+        // Its rows DO carry an app id, so the exemption rests on two things: every site tags
+        // the source the owner reads exclude (the filter's exact value is pinned elsewhere in
+        // this file), and nothing in the file reads a block-token claim it could have threaded.
+        for (const site of sites) {
+          expect(topLevelPropertyText(site), 'the exempt writer must tag viewer-consent').toContain(
+            'source: VIEWER_CONSENT_INVOCATION_SOURCE'
+          );
+        }
+        expect(source, 'a viewer-consent writer must not see a block-token claim').not.toMatch(
+          /privateRun|BlockTokenClaims/
+        );
+      });
+    } else if (exempt) {
       it('[INV] the exemption is still structurally justified — no appBlockId, external-oauth source', () => {
         // 🔴 AN EXEMPTION IS A CLAIM ABOUT THE CODE, SO CHECK THE CODE. Both halves must
         // hold: if this writer ever gained an `appBlockId` its rows could reach an owner
@@ -933,7 +957,9 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     // the whole suite is built around. Measured surviving by a round-2 audit. The literal is
     // spelled out rather than built from the constant so this cannot agree with a wrong
     // constant.
-    expect(OWNER_VISIBLE_INVOCATION_FILTER).toEqual({ source: { not: 'private-run' } });
+    expect(OWNER_VISIBLE_INVOCATION_FILTER).toEqual({
+      source: { notIn: ['private-run', 'viewer-consent'] },
+    });
   });
 
   it(`[REG] all ${OWNER_VISIBLE_PRISMA_READS} Prisma engagement reads spread OWNER_VISIBLE_INVOCATION_FILTER`, () => {
@@ -1013,7 +1039,7 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     // a read constraining `source` on its own terms.
     const analytics = read(ANALYTICS_MODULE);
     // Positive control: the raw statement's mention is findable, so a zero is a measurement.
-    expect(analytics).toContain('"source" <> ');
+    expect(analytics).toContain('"source" NOT IN (');
     expect(
       analytics.split('source: {').length - 1,
       'no read in this file may constrain `source` with its own object literal — spread ' +
@@ -1116,7 +1142,7 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
         'every distinct user of every app in the table — worse than the leak this PR closes.'
     ).toBe(
       'WHERE "app_block_id" IN (?) AND "invoked_at" >= ? AND "invoked_at" <= ? ' +
-        'AND "source" <> ?'
+        'AND "source" NOT IN (?, ?)'
     );
 
     // 🔴 AND WHICH VALUE LANDS IN WHICH SLOT, IN ORDER — because the collapse above cannot see
@@ -1142,7 +1168,13 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
         'check above collapses every `${…}` to `?`, so it cannot tell `>= from AND <= to` ' +
         'from `>= to AND <= from` — same shape, inverted window, empty result. If you renamed ' +
         'one of these, update this list; if you REORDERED them, do not.'
-    ).toEqual(['Prisma.join(ownedIds)', 'range.from', 'range.to', 'PRIVATE_RUN_INVOCATION_SOURCE']);
+    ).toEqual([
+      'Prisma.join(ownedIds)',
+      'range.from',
+      'range.to',
+      'PRIVATE_RUN_INVOCATION_SOURCE',
+      'VIEWER_CONSENT_INVOCATION_SOURCE',
+    ]);
 
     // 🔴 AND THE PROJECTION AND TABLE, which the `WHERE`-onward slice stopped covering. Not a
     // hole today — the table name is asserted above and the anchor pins the projection — but

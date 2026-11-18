@@ -543,14 +543,11 @@ export const constants = {
     // Hosts a chat link may point at, matched exactly against the parsed hostname
     // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
     civHosts: chatCivHosts(),
-    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
-    externalHosts: [
-      'github.com',
-      'twitter.com',
-      'x.com',
-      'civitai.red',
-      'education.civitai.com',
-    ].flatMap((host) => [host, `www.${host}`]),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only. Our other
+    // sites (civitai.red, civitai.green) come from the domain config: see `isExternalChatLink`.
+    externalHosts: ['github.com', 'twitter.com', 'x.com', 'education.civitai.com'].flatMap(
+      (host) => [host, `www.${host}`]
+    ),
   },
   entityCollaborators: {
     maxCollaborators: 15,
@@ -597,10 +594,12 @@ export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
+export const ORCHESTRATOR_HOSTNAME_PATTERN = 'orchestration[a-z0-9-]*\\.civitai\\.com';
+
 export function isOrchestratorUrl(url: string) {
   try {
     const { host } = new URL(url);
-    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+    return new RegExp(`^${ORCHESTRATOR_HOSTNAME_PATTERN}$`, 'i').test(host);
   } catch {
     return false;
   }
@@ -659,10 +658,6 @@ type LicenseDetails = {
   // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
-  restrictedNsfwLevels?: NsfwLevel[];
-  // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
-  // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
-  disableMature?: boolean;
   // When true, the license forbids commercial use. Drives both the commercial-use
   // permission override (-> [None]) and the per-version monetization block. The set
   // of affected base models is derived from this flag (see nonCommercialBaseModels).
@@ -672,8 +667,6 @@ type LicenseDetails = {
   requiresSameLicense?: boolean;
 };
 
-// Levels considered "mature" — restricted whenever a license sets disableMature.
-const MATURE_NSFW_LEVELS: NsfwLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
     url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
@@ -703,7 +696,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Stability AI Non-Commercial Research Community License',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     nonCommercial: true,
   },
   'SAI CLA': {
@@ -712,7 +704,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
@@ -862,9 +853,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Section 3(iii) wording, URL included: the licence’s own link drops /blob/main/ and 404s.
     notice:
       'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://github.com/ideogram-oss/ideogram4/blob/main/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL. All rights reserved. Copyright © Ideogram, Inc.',
-    // License AUP bars pornographic/obscene content. `disableMature` auto-derives
-    // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
-    disableMature: true,
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
     // Redistribution must be on terms no less restrictive.
@@ -877,8 +865,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
   'ideogram tos': {
     url: 'https://ideogram.ai/legal/api-tos',
     name: 'Ideogram Developer API Agreement and Policy',
-    // The agreement bars sexually explicit output.
-    disableMature: true,
   },
   'qwen research': {
     url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/f52e6a529129fff6a994469561673ea45a84043d/LICENSE',
@@ -916,7 +902,6 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
     name: 'FIBO 2.0 Platform License',
     poweredBy: 'Powered by Bria AI',
-    disableMature: true,
     requiresSameLicense: true,
   },
   'minimax music 3': {
@@ -1061,6 +1046,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
   'Fibo 2.0': baseLicenses['bria fibo'],
+  'Fibo 2.0 Turbo': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
@@ -1200,27 +1186,8 @@ export function getDisplayedBaseModelLicense(
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
-// Resolve the restricted NSFW levels for a license, deriving from `disableMature`
-// when an explicit `restrictedNsfwLevels` array isn't provided.
-function getLicenseRestrictedNsfwLevels(license: LicenseDetails | undefined): NsfwLevel[] {
-  if (!license) return [];
-  if (license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0)
-    return license.restrictedNsfwLevels;
-  if (license.disableMature) return MATURE_NSFW_LEVELS;
-  return [];
-}
-
-// Base models that use licenses with NSFW restrictions
-export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
-  .filter(([, license]) => getLicenseRestrictedNsfwLevels(license).length > 0)
-  .map(([baseModel]) => baseModel as BaseModel);
-
-export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
-  return getLicenseRestrictedNsfwLevels(baseModelLicenses[baseModel as BaseModel]);
-}
-
 // Base models whose license forbids commercial use — derived from the `nonCommercial`
-// license flag (single source of truth), mirroring nsfwRestrictedBaseModels.
+// license flag (single source of truth).
 export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
   .filter(([, license]) => !!license?.nonCommercial)
   .map(([baseModel]) => baseModel as BaseModel);
@@ -1319,14 +1286,6 @@ export function hasAdditionalLicensePermissions(permissions: {
   );
 }
 
-export function isNsfwLevelRestrictedForBaseModel(
-  baseModel: string,
-  nsfwLevel: NsfwLevel
-): boolean {
-  const restrictedLevels = getRestrictedNsfwLevelsForBaseModel(baseModel);
-  return restrictedLevels.includes(nsfwLevel);
-}
-
 export const maxRandomSeed = 2147483647;
 // Postgres INT4 (integer) column bounds — the ceiling any value written to an
 // `integer` column (e.g. metric counts) must fit under.
@@ -1336,7 +1295,7 @@ export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
 
-export const MODELS_SEARCH_INDEX = 'models_v9';
+export { MODELS_SEARCH_INDEX } from '@civitai/shared/search-index-queue';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';

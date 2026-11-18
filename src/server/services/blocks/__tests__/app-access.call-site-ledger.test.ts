@@ -94,7 +94,7 @@ const GATE_LEDGER: Record<string, string> = {
     'getMyForgejoCloneInfo) now route through the shared assertAppEditAccess → ' +
     'resolveAppAccess, so an ACCEPTED collaborator reaches them and a pending/rejected ' +
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
-    'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
+    'widened to owned+seated via getMyAppRoles; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
   'src/server/services/blocks/app-source-repo.service.ts':
     'resolveSourceRepoAccess is THE gate on a SOURCE repo (civitai-apps-src/<slug>): a row ' +

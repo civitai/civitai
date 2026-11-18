@@ -89,6 +89,8 @@ import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
 import { isViewer } from '~/utils/is-viewer';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const NOT_FOUND = Symbol('article-not-found');
 
@@ -497,6 +499,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         style={imageMediaHatClearLeft(showEventCosmetics ? article.eventDecoration : null)}
       >
         <ArticleCoverHat articleId={article.id} decoration={article.eventDecoration} />
+        {/* The owner and moderators see a cover hidden from everyone else; say so. */}
+        <MatureRestrictedBadge
+          restricted={isOwner && !!article.coverImage && isRestrictedImage(article.coverImage)}
+          className="absolute bottom-2 left-2 z-20"
+        />
         <ImageGuard2 image={image} connectType="article" connectId={article.id}>
           {(safe) => (
             <>
@@ -546,6 +553,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <RenderRichText
             content={article.contentJson}
             fallbackHtml={article.content}
+            imageGuard={{ images: article.contentImages, nsfwLevel: article.nsfwLevel }}
             className={features.articleTypography ? articleBodyClasses.articleBody : undefined}
           />
         </article>

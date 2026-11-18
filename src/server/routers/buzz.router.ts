@@ -30,7 +30,7 @@ import {
   getClaimStatus,
   getEarnPotential,
   getPoolForecast,
-  getUserBuzzAccounts,
+  getUserBuzzAccountsForDisplay,
 } from '~/server/services/buzz.service';
 import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
@@ -45,7 +45,9 @@ export const buzzRouter = router({
   // getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
   getBuzzAccount: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
-    .query(({ ctx }) => getUserBuzzAccounts({ userId: ctx.user.id })),
+    // The header and `useBuzz` (client affordability checks) read this: bounded at 2s; the
+    // last-good fallback is dark unless BUZZ_BALANCE_SERVE_STALE=true (buzz-balance-display.ts).
+    .query(({ ctx }) => getUserBuzzAccountsForDisplay({ userId: ctx.user.id })),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })

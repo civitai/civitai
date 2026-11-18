@@ -15,6 +15,8 @@
     BUZZ_SEND_REASONS,
   } from './enforcement-options';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { onMount } from 'svelte';
+  import { newBuzzSubmissionId } from '$lib/buzz-submission';
 
   let { userId, onSuccess }: { userId: number; onSuccess: () => void } = $props();
 
@@ -59,6 +61,10 @@
   let description = $state('');
   let entityType = $state('');
   let entityId = $state('');
+  // One id per adjustment: kept across a failed submit (so a resubmit is recognised, never filed
+  // twice), replaced after a filed one. Minted on mount, so the submit stays disabled until then.
+  let submissionId = $state('');
+  onMount(() => (submissionId = newBuzzSubmissionId()));
 
   const actionLabel = $derived(BUZZ_ACTIONS.find(([v]) => v === action)?.[1] ?? action);
   const colorLabel = $derived(BUZZ_COLORS.find(([v]) => v === color)?.[1] ?? color);
@@ -108,6 +114,7 @@
       description = '';
       entityType = '';
       entityId = '';
+      submissionId = newBuzzSubmissionId();
       filed = describe(data?.filed as Filed | undefined);
       onSuccess();
     },
@@ -146,6 +153,7 @@
 
     <form method="POST" action="?/sendBuzz" use:enhance={buzz.enhance} class="space-y-3">
       <input type="hidden" name="userId" value={userId} />
+      <input type="hidden" name="submissionId" value={submissionId} />
 
       <div>
         <Label for="buzz-action">Action</Label>
@@ -234,7 +242,7 @@
         type="submit"
         variant={deducting ? 'destructive' : 'default'}
         class="w-full"
-        disabled={buzz.submitting || !reason}
+        disabled={buzz.submitting || !reason || !submissionId}
       >
         {buzz.submitting ? 'Working…' : deducting ? 'Deduct Buzz' : 'Send Buzz'}
       </Button>

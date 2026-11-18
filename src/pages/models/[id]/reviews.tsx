@@ -41,7 +41,9 @@ import {
   getReviewsFilterInput,
   parseReviewsFilter,
   resolveReviewsVersion,
+  shouldShowRecommendedBy,
 } from '~/components/ResourceReview/model-reviews-url';
+import { RecommendedBy } from '~/components/ResourceReview/RecommendedBy';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
@@ -51,19 +53,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
-import { TRPCError } from '@trpc/server';
+import { nullIfNotFound } from '~/server/utils/ssr-not-found';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRatingSummary } from '~/utils/rating-label';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-
-// Only a missing model or version reads as "no version"; any other lookup error must surface,
-// not redirect away from a valid version or cache a 404.
-const nullIfNotFound = (error: unknown) => {
-  if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
-  throw error;
-};
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -102,9 +97,9 @@ export const getServerSideProps = createServerSideProps({
     const decision = await resolveReviewsVersion({
       modelVersionId,
       requested: modelVersionId
-        ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(nullIfNotFound)
+        ? await getDefaultModelVersion({ modelId, modelVersionId }).catch(nullIfNotFound(ctx.res))
         : null,
-      loadFallback: () => getDefaultModelVersion({ modelId }).catch(nullIfNotFound),
+      loadFallback: () => getDefaultModelVersion({ modelId }).catch(nullIfNotFound(ctx.res)),
     });
     if (decision.type === 'notFound') return { notFound: true };
     if (decision.type === 'redirect') {
@@ -414,7 +409,7 @@ export default function ModelReviews() {
                 ))}
                 {resourceReviews && !resourceReviews.items.length && (
                   <Text c="dimmed" ta="center" py="xl">
-                    No reviews match this filter.
+                    {filter ? 'No reviews match this filter.' : 'No written reviews yet.'}
                   </Text>
                 )}
                 {resourceReviews &&
@@ -439,6 +434,14 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
+            {modelVersionId &&
+              shouldShowRecommendedBy({
+                filter,
+                modelVersionId,
+                listLoaded: !!resourceReviews,
+                hasMoreWritten:
+                  !!resourceReviews && 'hasMore' in resourceReviews && !!resourceReviews.hasMore,
+              }) && <RecommendedBy modelId={modelId} modelVersionId={modelVersionId} />}
           </div>
         </div>
       </Container>

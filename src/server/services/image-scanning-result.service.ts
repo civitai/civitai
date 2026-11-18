@@ -8,9 +8,8 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   combineFrameAxes,
   readRatingAxes,
-  writeRatedAxes,
   type RatingAxes,
-} from '~/server/services/image-axis-rating.service';
+} from '~/server/services/image-nsfw-axes';
 import {
   applyIngestionSideEffects,
   buildAndInsertScanTags,
@@ -28,8 +27,11 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { toSearchUploadFaceScan } from '~/server/services/search-upload-gate';
+import { isSearchUploadRow, writeSearchUploadFaceScan } from '~/server/services/search-upload-rows';
 
 type RawRepeatStep = {
   $type?: string;
@@ -56,6 +58,8 @@ export type ImageScanningResult = {
   tags: Record<string, number>;
   csam: boolean | null;
   ageDetections: ImageScanningJointAgeDetection[];
+  /** The age model (and its person detector) ran; for a video, on every frame. */
+  ageClassificationRan: boolean;
   minorDetected: boolean;
   /** Set when the orchestrator refuses the image; null when it passes. */
   blockedReason: string | null;
@@ -93,6 +97,7 @@ function readScan(output: ScanningOutput, workflowId: string): ImageScanningResu
     tags,
     csam: output.csam ?? null,
     ageDetections: jointAgeClassification?.detections ?? [],
+    ageClassificationRan: jointAgeClassification?.ran === true,
     minorDetected: !!jointAgeClassification?.minorDetected,
     blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
@@ -118,6 +123,7 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       tags,
       csam: acc.csam || frame.csam ? true : acc.csam ?? frame.csam,
       ageDetections: [...acc.ageDetections, ...frame.ageDetections],
+      ageClassificationRan: acc.ageClassificationRan && frame.ageClassificationRan,
       minorDetected: acc.minorDetected || frame.minorDetected,
       blockedReason: acc.blockedReason ?? frame.blockedReason,
       aiRecognition: higher(acc.aiRecognition, frame.aiRecognition),
@@ -210,7 +216,7 @@ async function failScan(
       retryCount,
     },
     'webhooks'
-  ).catch(() => null);
+  );
   await sendIngestionSignal({
     imageId: error.imageId,
     userId,
@@ -279,6 +285,9 @@ export async function processImageScanningWorkflow({
     if (pHash) await logPerceptualHashMatch({ imageId, pHash, log: IMAGE_SCANNING_LOG });
 
     image = await loadImageForScan(imageId);
+    // Before the verdict: the upload gate reads it as soon as the row is Scanned.
+    if (isSearchUploadRow(image.metadata))
+      await writeSearchUploadFaceScan(imageId, toSearchUploadFaceScan(scan));
     const { prompt, negativePrompt } = (image.meta ?? {}) as {
       prompt?: string;
       negativePrompt?: string;
@@ -295,6 +304,7 @@ export async function processImageScanningWorkflow({
       workflowId,
       prompt,
       negativePrompt,
+      axes: scan.axes,
       log: IMAGE_SCANNING_LOG,
     });
   } catch (error) {
@@ -336,16 +346,9 @@ export async function processImageScanningWorkflow({
         ingestion: outcome.ingestion,
       },
       'webhooks'
-    ).catch(() => null);
-  }
-
-  // Its own try: a failed side effect must not cost the image its axes, nor the axes the scan.
-  if (scan.axes) {
-    try {
-      await writeRatedAxes({ imageId, axes: scan.axes, workflowId, completedAt });
-    } catch {
-      // writeRatedAxes logs its own failures.
-    }
+    );
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

@@ -135,6 +135,24 @@ export async function swapFlagDay(
         VALUES ${Prisma.join(rows)}
       `;
     }
+    if (flags.allTimeCollectionId) {
+      // Every day's flags so far, so the first swap after it is set adds the earlier days too. NOT
+      // EXISTS rather than ON CONFLICT: the unique index spans nullable columns, so it never fires.
+      await tx.$executeRaw`
+        INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "createdAt")
+        SELECT ${flags.allTimeCollectionId}, f.img, 'ACCEPTED'::"CollectionItemStatus", f.at
+        FROM (
+          SELECT DISTINCT ON (u.img) u.img, d."startsAt" - u.ord * interval '1 millisecond' AS at
+          FROM "FlagDay" d, unnest(d."imageIds") WITH ORDINALITY AS u(img, ord)
+          WHERE d.event = ${event.name}
+          ORDER BY u.img, d."startsAt" DESC
+        ) f
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "CollectionItem" ci
+          WHERE ci."collectionId" = ${flags.allTimeCollectionId} AND ci."imageId" = f.img
+        )
+      `;
+    }
     return made;
   });
   if (!day) return undefined;
@@ -151,10 +169,9 @@ export async function swapFlagDay(
     type: 'info',
     name: 'flag-race-swap',
     event: event.name,
-    flagDayId: day.id,
     crucibleId: crucible.id,
-    flags: imageIds.length,
-  }).catch(() => null);
+    payload: { flagDayId: day.id, flags: imageIds.length },
+  });
   return day;
 }
 

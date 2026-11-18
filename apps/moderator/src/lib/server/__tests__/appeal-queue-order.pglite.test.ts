@@ -41,6 +41,7 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
   "blockedFor" TEXT,
   "userId" INTEGER NOT NULL
 );

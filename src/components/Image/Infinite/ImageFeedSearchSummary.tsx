@@ -1,6 +1,7 @@
 import { Alert, Anchor, Button, Pill, Text, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
 import {
@@ -18,13 +19,22 @@ const isEmptyFilter = (value: unknown) =>
 
 type Props = {
   query: string;
+  /** "More like this": the image matched while no query is set. */
+  similarTo?: number;
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
   onRetry: () => void;
 };
 
-export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed, onRetry }: Props) {
+export function ImageFeedSearchSummary({
+  query,
+  similarTo,
+  correctedQuery,
+  filters,
+  failed,
+  onRetry,
+}: Props) {
   const router = useRouter();
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
@@ -36,13 +46,17 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
   // A filter set by the URL is changed there, one from the saved feed filters in the store. Emptying
   // a URL filter would uncover the saved one under it, so that is cleared too.
   const update = (patch: Partial<ImagesQueryParamSchema>) => {
-    const inUrl = Object.keys(patch).filter((key) => key in router.query || key === 'query');
+    const inUrl = Object.keys(patch).filter(
+      (key) => key in router.query || key === 'query' || key === 'similarTo'
+    );
     const uncovered = inUrl.filter(
       (key) =>
         isEmptyFilter(patch[key as keyof typeof patch]) && !isEmptyFilter(storeFilters?.[key])
     );
+    // A new search is a history entry, so Back returns to the previous one; a filter tweak is not.
+    const method = 'query' in patch || 'similarTo' in patch ? 'push' : 'replace';
     if (inUrl.length)
-      void router.replace(
+      void router[method](
         {
           pathname: router.pathname,
           query: removeEmpty({
@@ -65,7 +79,16 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
   return (
     <div className="flex flex-col gap-2 pb-2">
       <Title order={2} size="h3">
-        Images matching &ldquo;{query}&rdquo;
+        {similarTo ? (
+          <>
+            Images like{' '}
+            <Anchor component={NextLink} href={`/images/${similarTo}`} inherit>
+              this image
+            </Anchor>
+          </>
+        ) : (
+          <>Images matching &ldquo;{query}&rdquo;</>
+        )}
       </Title>
       {shownQuery && (
         <Text size="sm" c="dimmed">
@@ -85,9 +108,15 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
         </Alert>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
-          &ldquo;{query}&rdquo;
-        </Pill>
+        {similarTo ? (
+          <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
+            Similar to this image
+          </Pill>
+        ) : (
+          <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
+            &ldquo;{query}&rdquo;
+          </Pill>
+        )}
         {isClient && filters.period && filters.period !== MetricTimeframe.AllTime && (
           <Pill withRemoveButton onRemove={() => update({ period: MetricTimeframe.AllTime })}>
             Posted: past {filters.period.toLowerCase()}
@@ -110,7 +139,21 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
             @{filters.username}
           </Pill>
         )}
-        <Anchor component="button" size="sm" onClick={() => update({ query: undefined })}>
+        {isClient && filters.fromPlatform && (
+          <Pill withRemoveButton onRemove={() => update({ fromPlatform: undefined })}>
+            Made On-site
+          </Pill>
+        )}
+        {isClient && filters.withMeta && (
+          <Pill withRemoveButton onRemove={() => update({ withMeta: undefined })}>
+            Metadata only
+          </Pill>
+        )}
+        <Anchor
+          component="button"
+          size="sm"
+          onClick={() => update({ query: undefined, similarTo: undefined })}
+        >
           Clear search
         </Anchor>
       </div>

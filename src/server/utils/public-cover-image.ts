@@ -75,7 +75,9 @@ export async function getCoverBrowsingLevels(
 ) {
   // Loaded on demand: the model service's import graph is large.
   const { getHeldLevelsByPost } = await import('~/server/services/model.service');
-  const held = await getHeldLevelsByPost(covers.map((cover) => cover?.postId).filter(isDefined));
+  const held = await getHeldLevelsByPost(covers.map((cover) => cover?.postId).filter(isDefined), {
+    withOwners: false,
+  });
   return (cover: Pick<PublicCoverImage, 'postId'> | null | undefined) => {
     const hold = cover?.postId ? held.get(cover.postId) : undefined;
     return hold ? Flags.intersection(browsingLevel, hold.level) : browsingLevel;

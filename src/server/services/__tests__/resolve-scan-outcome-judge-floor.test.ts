@@ -104,6 +104,7 @@ beforeAll(async () => {
 afterAll(() => db.close());
 
 type Row = {
+  ingestion?: string;
   nsfwLevel: number;
   nsfwLevelLocked?: boolean;
   metadata?: object | null;
@@ -116,7 +117,7 @@ async function arrange(stored: Row, loaded: Row = stored) {
   await db.exec(`DELETE FROM "Image"; DELETE FROM "JobQueue";`);
   await db.query(
     `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", metadata, "needsReview", "scanJobs")
-     VALUES ($1, 'Rescan', $2, $3, $4, $5, $6)`,
+     VALUES ($1, $7, $2, $3, $4, $5, $6)`,
     [
       ID,
       stored.nsfwLevel,
@@ -124,6 +125,7 @@ async function arrange(stored: Row, loaded: Row = stored) {
       stored.metadata ?? null,
       stored.needsReview ?? null,
       stored.scanJobs ?? null,
+      stored.ingestion ?? 'Rescan',
     ]
   );
   return {
@@ -165,9 +167,12 @@ beforeEach(() => {
   // The scan's reads and writes of the image row itself go to the real row.
   const isImageWrite = (strings: unknown) =>
     Array.isArray(strings) &&
-    ['UPDATE "Image"', '"judgeFloor"', 'INSERT INTO "JobQueue"'].some((t) =>
-      (strings as string[]).join('').includes(t)
-    );
+    [
+      'UPDATE "Image"',
+      '"judgeFloor"',
+      'INSERT INTO "JobQueue"',
+      'SELECT "ingestion" FROM "Image"',
+    ].some((t) => (strings as string[]).join('').includes(t));
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -341,6 +346,43 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(row.nsfwLevel).toBe(PG13);
   });
 
+  it('rates an image locked with no rating, and drops that lock', async () => {
+    scanTagLevel = X;
+    const lockedUnrated = { ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true };
+    const { row } = await scan(await arrange(lockedUnrated));
+
+    expect(row.nsfwLevel).toBe(X);
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(false);
+  });
+
+  it('keeps a rating a moderator locked after the scan loaded the image', async () => {
+    scanTagLevel = X;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET "nsfwLevel" = $1, "nsfwLevelLocked" = true WHERE id = $2`, [
+        PG13,
+        ID,
+      ]);
+    const { row } = await scan(
+      await arrange({ ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true })
+    );
+
+    expect(row.nsfwLevel).toBe(PG13);
+  });
+
+  it('keeps the lock on a moderator rating it respects', async () => {
+    scanTagLevel = X;
+    await scan(await arrange({ nsfwLevel: PG13, nsfwLevelLocked: true }));
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(true);
+  });
+
   it('blocks on an audit block, whatever the judge rated', async () => {
     vi.mocked(auditPostImageMeta).mockReturnValueOnce({
       success: false,
@@ -351,6 +393,79 @@ describe('resolveScanOutcome with a collection judge rating', () => {
 
     expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
     expect(outcome.nsfwLevel).toBe(BLOCKED);
+  });
+
+  // No verdict, floor or rescan write may move a NotFound image back toward public; a block still lands.
+  describe('an image hidden as NotFound', () => {
+    it('stays NotFound under a clean verdict', async () => {
+      scanTagLevel = PG13;
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound' });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('stays NotFound when a judge floor would send it back for a rescan', async () => {
+      scanTagLevel = PG13;
+      holder.beforeVerdict = () =>
+        db.query(`UPDATE "Image" SET metadata = $1 WHERE id = $2`, [judgeRated(X), ID]);
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound', nsfwLevel: PG13 });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('reports Scanned when a rescan request moved the row after it was loaded', async () => {
+      scanTagLevel = PG13;
+      const loadedAsNotFound = await arrange(
+        { nsfwLevel: PG13, ingestion: 'Rescan' },
+        { nsfwLevel: PG13, ingestion: 'NotFound' }
+      );
+      const { outcome, row } = await scan(loadedAsNotFound);
+
+      expect(row).toMatchObject({ ingestion: 'Scanned' });
+      expect(outcome.ingestion).toBe('Scanned');
+    });
+
+    it('keeps the landed verdict when the read-back fails', async () => {
+      scanTagLevel = PG13;
+      const passthrough = vi
+        .mocked(dbMock.dbWrite.$queryRaw)
+        .getMockImplementation() as unknown as (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => Promise<unknown>;
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        if (strings.join('').includes('SELECT "ingestion" FROM "Image"')) throw new Error('boom');
+        return passthrough(strings, ...values);
+      }) as never);
+
+      const { outcome, row } = await scan(
+        await arrange({ nsfwLevel: PG13, ingestion: 'NotFound' })
+      );
+
+      expect(row).toMatchObject({ ingestion: 'NotFound' });
+      expect(outcome.ingestion).toBe('NotFound');
+    });
+
+    it('is still blocked by an audit block', async () => {
+      vi.mocked(auditPostImageMeta).mockReturnValueOnce({
+        success: false,
+        blockedFor: ['prompt'],
+        softBlockedFor: [],
+      });
+      const { outcome, row } = await scan(await arrange({ nsfwLevel: R, ingestion: 'NotFound' }));
+
+      expect(row).toMatchObject({ ingestion: 'Blocked', nsfwLevel: BLOCKED });
+      expect(outcome.ingestion).toBe('Blocked');
+    });
   });
 
   it('ignores a judge rating that is not a level', async () => {

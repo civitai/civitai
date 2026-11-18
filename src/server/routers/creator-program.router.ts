@@ -45,7 +45,7 @@ export const creatorProgramRouter = router({
     .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
     .input(bankBuzzSchema)
     .mutation(({ ctx, input }) => {
-      return bankBuzz(ctx.user.id, input.amount, input.accountType);
+      return bankBuzz(ctx.user.id, input.amount, input.accountType, input.idempotencyKey);
     }),
   extractBuzz: protectedProcedure
     .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
@@ -56,7 +56,7 @@ export const creatorProgramRouter = router({
     .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
     .input(withdrawCashSchema)
     .mutation(({ ctx, input }) => {
-      return withdrawCash(ctx.user.id, input.amount);
+      return withdrawCash(ctx.user.id, input.amount, input.idempotencyKey);
     }),
   getPrevMonthStats: protectedProcedure.meta({ requiredScope: TokenScope.Full }).query(() => {
     return getPrevMonthStats();

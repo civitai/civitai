@@ -11,12 +11,15 @@
  * Writes are fire-and-forget: any ClickHouse failure is logged to Axiom but
  * never propagates back to the operational webhook path.
  */
-import crypto from 'crypto';
 import type {
   MediaRatingOutput,
   Workflow,
   XGuardModerationStep,
 } from '@civitai/orchestration-client';
+import {
+  imageAuditContentHash,
+  scannerContentHash as computeContentHash,
+} from '@civitai/shared/review-batch';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { ImageScanningResult } from '~/server/services/image-scanning-result.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -107,10 +110,6 @@ type WriteParams = {
   labels: LabelRowSeed[];
 };
 
-function computeContentHash(input: string): string {
-  return crypto.createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 16);
-}
-
 function toClickhouseDateTime(input: Date | string | null | undefined): string | null {
   if (!input) return null;
   const d = typeof input === 'string' ? new Date(input) : input;
@@ -180,7 +179,7 @@ async function insertRows({
     });
   } catch (e) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-audit-write-failed',
       type: 'error',
       message: error.message,
@@ -253,7 +252,7 @@ async function writeRegexShadowComparison(args: {
     });
   } catch (e) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-regex-shadow-write-failed',
       type: 'error',
       message: error.message,
@@ -526,7 +525,7 @@ export async function recordImageScan({
   await insertRows({
     workflowId,
     scanner: 'image_ingestion',
-    contentHash: computeContentHash(`image:${imageId}`),
+    contentHash: imageAuditContentHash(imageId),
     entityType: 'image',
     entityId: String(imageId),
     modelVersion: '1',
@@ -614,7 +613,7 @@ export async function recordImageScanningResult({
   await insertRows({
     workflowId,
     scanner: 'image_ingestion',
-    contentHash: computeContentHash(`image:${imageId}`),
+    contentHash: imageAuditContentHash(imageId),
     entityType: 'image',
     entityId: String(imageId),
     modelVersion: IMAGE_SCANNING_AUDIT_VERSION,

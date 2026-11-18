@@ -2,6 +2,7 @@ import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { getRegion } from '~/server/utils/region-blocking';
+import { creatorMysteryPacksEnabled } from '~/server/schema/creator-shop.schema';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
@@ -155,6 +156,7 @@ export const cosmeticShopRouter = router({
         stickersEnabled: ctx.features.stickers,
         packsEnabled: ctx.features.cosmeticPacks,
         mysteryBoxEnabled: ctx.features.mysteryBox,
+        creatorMysteryPacksEnabled: creatorMysteryPacksEnabled(ctx.features),
         countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
         userId: ctx.user.id,
         isModerator: eventViewerOf(ctx).isModerator,

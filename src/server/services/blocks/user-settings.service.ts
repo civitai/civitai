@@ -354,13 +354,6 @@ export async function setUserCheckpointOverride(
  * `isAppBlocksAuthorEnabled`, so this narrowing is what makes the next line compile, and
  * deleting it is a type error rather than a silent re-opening.
  *
- * 🔴 UNLIKE ITS SIBLING `assertAppBlocksEnabledForTokenUser`, THIS REFUSAL IS NOT ON THE
- * COMPILED-BRANCH WATCHLIST, and that is measured rather than assumed: losing it cannot
- * silently re-open anything, because `isAppBlocksAuthorEnabled` takes a non-nullable subject
- * and dereferences it immediately, so a dropped guard yields a `TypeError` (a 500) rather
- * than a pass. The enabled gate's guard IS watchlisted, because losing THAT one falls
- * through to a global eval returning the flag's base value.
- *
  * The two messages differ on purpose — two different conditions, and an identical string
  * under a different code is not separable in a log. Both are also distinct APP-WIDE, which
  * is the level that matters to an operator. If you add another refusal of this shape, give
