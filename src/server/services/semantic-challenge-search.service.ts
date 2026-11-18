@@ -1,19 +1,15 @@
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
-import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { logToAxiom } from '~/server/logging/client';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import type { SemanticChallengeSearchInput } from '~/server/schema/semantic-challenge-search.schema';
 import { getInfiniteChallenges } from '~/server/services/challenge.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
-  isNonModClampOn,
-  makeRefusalOf,
-  type QueryTracker,
   queryVerdictLevel,
   recordRefusal,
-  resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
+  semanticSearchPrelude,
+  type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
   auditedTextCandidates,
@@ -100,34 +96,17 @@ export async function searchSemanticChallenges({
     nextCursor: undefined,
     correctedQuery: undefined,
   };
-  let browsingLevel = resolveSemanticBrowsingLevel(
-    input.browsingLevel,
-    user,
-    await isNonModClampOn(user)
-  );
-  if (browsingLevelCap !== undefined)
-    browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
-  const [hidden, addonData] = await Promise.all([
-    getAllHiddenForUser({ userId: user?.id }),
-    getBrowsingSettingAddons(),
-  ]);
-  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
-  const refusalOf = makeRefusalOf({
+  const prelude = await semanticSearchPrelude({
     index: 'challenges_semantic',
-    track,
-    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
-  });
-  const refusal = await refusalOf(input.query, 'query');
-  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
-  // The level the feed itself filters on, so the candidates and the hydration agree.
-  browsingLevel = getEffectiveBrowsingLevel({
+    query: input.query,
+    requestedLevel: input.browsingLevel,
+    user,
     isGreen,
-    isLoggedIn: !!user,
-    requested: verdictLevel,
+    browsingLevelCap,
+    track,
   });
+  if (!prelude) return none;
+  const { browsingLevel, hidden, refusalOf } = prelude;
 
   const statuses = input.status?.length
     ? input.status
@@ -178,6 +157,8 @@ export async function searchSemanticChallenges({
       participation: input.participation,
       browsingLevel,
       currentUserId: user?.id,
+      // A minor-narrowed query must not show the viewer's own challenges above its level either.
+      ownRowsExempt: false,
       isGreen,
       canAccessUserChallenges,
     });

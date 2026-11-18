@@ -588,36 +588,40 @@ export async function getDailyChallenges(
 
 // Who may see challenge `c` in a public list: the feed and event listings share these, so one
 // can't drift from the other.
-async function challengeVisibilityConditions({
+export async function challengeVisibilityConditions({
   isGreen,
   viewerId,
   canAccessUserChallenges,
   browsingLevel,
+  ownRowsExempt = true,
 }: {
   isGreen: boolean;
   viewerId: number | undefined;
   canAccessUserChallenges: boolean;
   browsingLevel?: number;
+  /** False: the viewer's own challenges meet every gate too (a minor-narrowed search). */
+  ownRowsExempt?: boolean;
 }): Promise<Prisma.Sql[]> {
   const conditions: Prisma.Sql[] = [];
+  const own = ownRowsExempt ? viewerId : undefined;
 
   // Only show challenges past their visibility window — except to their own creator, so a creator
   // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan gates below.
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${own})`
       : Prisma.sql`c."visibleAt" <= now()`
   );
 
-  conditions.push(...challengeScanGates(viewerId));
+  conditions.push(...challengeScanGates(own));
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
   // universal and show on both domains, mirroring the scan/POI gates.
   const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${own})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
@@ -635,8 +639,8 @@ async function challengeVisibilityConditions({
   // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
   // cover level is required to intersect too, so a challenge that under-declares its rating can't
   // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
-  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
-  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. The creator
+  // sees their own unless `ownRowsExempt` is off. A challenge with no cover is already excluded by the IS NOT NULL gate
   // above.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
@@ -645,9 +649,7 @@ async function challengeVisibilityConditions({
   });
   if (effectiveBrowsingLevel > 0) {
     const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      viewerId ? Prisma.sql`(c."createdById" = ${viewerId} OR ${levelSql})` : levelSql
-    );
+    conditions.push(own ? Prisma.sql`(c."createdById" = ${own} OR ${levelSql})` : levelSql);
   }
 
   return conditions;
@@ -660,6 +662,8 @@ export async function getInfiniteChallenges(
     canAccessUserChallenges?: boolean;
     /** Server-only: only these challenges, e.g. the semantic search's candidates. */
     ids?: number[];
+    /** Server-only: see challengeVisibilityConditions. */
+    ownRowsExempt?: boolean;
   }
 ) {
   const {
@@ -680,6 +684,7 @@ export async function getInfiniteChallenges(
     currentUserId,
     isGreen,
     canAccessUserChallenges = false,
+    ownRowsExempt,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -691,6 +696,7 @@ export async function getInfiniteChallenges(
       viewerId: currentUserId,
       canAccessUserChallenges,
       browsingLevel,
+      ownRowsExempt,
     }))
   );
 
