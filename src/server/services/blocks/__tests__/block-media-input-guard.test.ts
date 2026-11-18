@@ -1,5 +1,8 @@
+import client from 'prom-client';
 import { describe, expect, it } from 'vitest';
+import '~/__tests__/mocks/logging.mock';
 import {
+  assertNoBlockMediaInputs,
   containsBlockMediaReference,
   isBlockMediaReference,
 } from '~/server/services/blocks/block-media-input-guard';
@@ -89,5 +92,31 @@ describe('🔴 tied to the mint: whatever the media route issues, the guard refu
     const ref = sealBlockMediaRef(minted);
     expect(isBlockMediaReference(ticket!)).toBe(true);
     expect(isBlockMediaReference(ref!)).toBe(true);
+  });
+});
+
+describe('a refused body is counted by phase', () => {
+  const refusals = async (phase: string) => {
+    const metric = client.register.getSingleMetric('civitai_app_block_media_input_refused_total');
+    const values = metric ? (await metric.get()).values : [];
+    return values.find((v) => v.labels.phase === phase)?.value ?? 0;
+  };
+
+  it('one refused submit counts one submit, and no estimate', async () => {
+    const [submit, estimate] = [await refusals('submit'), await refusals('estimate')];
+    expect(() =>
+      assertNoBlockMediaInputs({ image: PATH }, { appBlockId: 'apb_1', phase: 'submit' })
+    ).toThrow();
+    expect(await refusals('submit')).toBe(submit + 1);
+    expect(await refusals('estimate')).toBe(estimate);
+  });
+
+  it('CONTROL: an allowed body counts nothing', async () => {
+    const before = await refusals('estimate');
+    assertNoBlockMediaInputs(
+      { image: 'https://example.com/a.png' },
+      { appBlockId: 'apb_1', phase: 'estimate' }
+    );
+    expect(await refusals('estimate')).toBe(before);
   });
 });
