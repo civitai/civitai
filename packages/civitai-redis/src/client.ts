@@ -3177,11 +3177,6 @@ const REDIS_KEYS_UNPREFIXED = {
   POST_INTENT: {
     RATE_LIMIT: 'post-intent:rate-limit',
   },
-  TRAINING_STUDIO: {
-    // Images the main app rated for the Training Studio per user per UTC day (system-paid),
-    // key :<userId>:<yyyy-mm-dd>.
-    DATASET_RATING_DAILY: 'training-studio:dataset-rating-daily',
-  },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',

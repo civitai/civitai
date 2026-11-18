@@ -1,15 +1,21 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as RatingService from '~/server/services/training-studio-dataset-rating.service';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /** The Studio's dataset-rating endpoint runs free GPU work: it must sit behind the Studio gate and
- *  refuse an oversized batch before anything is submitted. */
+ *  its rate limits, and refuse an oversized batch, before anything is submitted. */
 
 const service = vi.hoisted(() => ({
   rate: vi.fn<(input: unknown) => Promise<{ results: never[] }>>(async () => ({ results: [] })),
 }));
-vi.mock('~/server/services/training-studio-dataset-rating.service', () => ({
+vi.mock('~/server/services/training-studio-dataset-rating.service', async (importOriginal) => ({
+  STUDIO_DATASET_RATING_RATE_LIMIT: (await importOriginal<typeof RatingService>())
+    .STUDIO_DATASET_RATING_RATE_LIMIT,
   rateStudioDatasetImages: service.rate,
 }));
+const limiter = vi.hoisted(() => ({ claim: vi.fn(), record: vi.fn(async () => undefined) }));
+vi.mock('~/server/utils/rate-limit-bucket', () => ({ claimRateLimitAttempt: limiter.claim }));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -55,12 +61,28 @@ describe('POST /api/training-studio/dataset-rating', () => {
   beforeEach(() => {
     service.rate.mockClear();
     gate.allow.mockReset().mockResolvedValue(true);
+    limiter.record.mockClear();
+    limiter.claim.mockReset().mockResolvedValue(limiter.record);
   });
 
-  it('rates for the session user', async () => {
+  it('rates for the session user, counting the image against its per-minute and daily limits', async () => {
     const res = await call({ items: [item(1)] });
     expect(res.statusCode).toBe(200);
     expect(service.rate).toHaveBeenCalledWith({ items: [item(1)], userId: 7 });
+    expect(limiter.claim.mock.calls[0][0]).toMatchObject({
+      keyName: 'training:studioDatasetRating',
+      rules: { usageLimitIds: ['dataset-rating.submit', 'dataset-rating.daily'] },
+    });
+    expect(limiter.record).toHaveBeenCalled();
+  });
+
+  it('over a limit: 429 with 0 submits', async () => {
+    limiter.claim.mockRejectedValue(
+      new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded' })
+    );
+    const res = await call({ items: [item(1)] });
+    expect(res.statusCode).toBe(429);
+    expect(service.rate).not.toHaveBeenCalled();
   });
 
   it('a user the Studio gate refuses rates nothing', async () => {

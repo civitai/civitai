@@ -1,7 +1,7 @@
 import * as z from 'zod';
 
-/** Images one Training Studio dataset-rating request may carry. */
-export const STUDIO_DATASET_RATING_BATCH = 4;
+/** One image per request, so the per-request rate limits count images. */
+export const STUDIO_DATASET_RATING_BATCH = 1;
 
 export type StudioDatasetRatingInput = z.infer<typeof studioDatasetRatingSchema>;
 export const studioDatasetRatingSchema = z.object({

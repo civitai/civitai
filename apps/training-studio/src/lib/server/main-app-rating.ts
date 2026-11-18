@@ -1,7 +1,7 @@
 import { mainAppSessionOrigin } from './main-app';
 
-// The v2 rating runs on the main app's system-paid path, called as this user with their forwarded
-// session cookie, like auto-label: a scan submitted with the user's own orchestrator token charges them.
+// The v2 rating runs on the main app's system token: a scan submitted with the user's own orchestrator
+// token charges them.
 
 const TIMEOUT_MS = 25_000;
 /** A refusal past the main app's daily quota carries no Retry-After; this outlasts a job's deadline. */
