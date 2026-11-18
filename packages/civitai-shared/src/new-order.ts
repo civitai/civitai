@@ -41,6 +41,8 @@ export type KnightsSourcesConfig = {
   nsfwRate: number;
   /** Scan sampling pauses while more than this many Knight-stage rating items are open (yes/no questions do not count). Absent when not stored: read it with `knightsSourcesMaxOpen`. */
   maxOpen?: number;
+  /** Share of yes/no questions Knights serves, 0 to 1 (0 turns them off). Absent when not stored: Knights then uses its environment default. */
+  yesNoShare?: number;
 };
 
 /** The rates used when the stored JSON omits one. Reading never turns a missing key on. */
@@ -59,6 +61,11 @@ const KNIGHTS_SOURCES_OFF: KnightsSourcesConfig = {
 const clampRate = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
 
+const readShare = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+    ? value
+    : undefined;
+
 const readCap = (value: unknown) =>
   Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined;
 
@@ -74,6 +81,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return off;
     const config = parsed as Record<string, unknown>;
     const maxOpen = readCap(config.maxOpen);
+    const yesNoShare = readShare(config.yesNoShare);
     return {
       stored: true,
       config: {
@@ -82,6 +90,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
         nsfwRate: clampRate(config.nsfwRate, KNIGHTS_SOURCES_DEFAULT_RATES.nsfwRate),
         // Left out when not stored, so the moderator page's three-field shape reads back unchanged.
         ...(maxOpen === undefined ? {} : { maxOpen }),
+        ...(yesNoShare === undefined ? {} : { yesNoShare }),
       },
     };
   } catch {

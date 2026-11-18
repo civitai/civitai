@@ -1352,6 +1352,7 @@ export async function getPendingStickerPlacements({
       // kinds, so the caller needs it per row rather than per page.
       free: true,
       data: true,
+      track: true,
       createdAt: true,
       expiresAt: true,
       placer: { select: { id: true, username: true, image: true } },
@@ -1385,7 +1386,7 @@ export async function getPendingStickerPlacements({
   });
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  const items = page.flatMap((row) => {
+  const items = page.flatMap(({ track, ...row }) => {
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
@@ -1393,6 +1394,7 @@ export async function getPendingStickerPlacements({
       {
         ...row,
         data,
+        moving: isPlayableTrack(track),
         // The image is the owner's own upload, so nothing is filtered out here.
         // Dropping the row would take the approve/decline with it and the escrow
         // would expire unanswered — withheld, not hidden.
@@ -1441,6 +1443,7 @@ export async function getMyStickerPlacements({
       // instead of reporting the zero its `amount` carries.
       free: true,
       data: true,
+      track: true,
       createdAt: true,
       expiresAt: true,
       owner: { select: { id: true, username: true, image: true } },
@@ -1462,7 +1465,7 @@ export async function getMyStickerPlacements({
     : [];
   const byId = new Map(images.map((image) => [image.id, image]));
 
-  return rows.flatMap((row) => {
+  return rows.flatMap(({ track, ...row }) => {
     const data = parseStickerPlacementData(row.data);
     if (!data) return [];
 
@@ -1470,6 +1473,7 @@ export async function getMyStickerPlacements({
       {
         ...row,
         data,
+        moving: isPlayableTrack(track),
         image: toQueueImage(byId.get(row.targetId), domainLevels, viewerLevels),
       },
     ];

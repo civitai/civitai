@@ -59,7 +59,8 @@
         <div class="body">
           <p class="prompt">{judgment.prompt}</p>
           <p class="answer">
-            Your answer: {judgment.answerLabel}{#if judgment.verdictLabel}
+            Your answer: {judgment.answerLabel}{#if judgment.close && judgment.verdictLabel}
+              <span class="dot">·</span> Close: the answer was {judgment.verdictLabel}, one level off, so no reward and no penalty{:else if judgment.verdictLabel}
               <span class="dot">·</span> The verdict: {judgment.verdictLabel}{/if}
           </p>
           <p class="when">

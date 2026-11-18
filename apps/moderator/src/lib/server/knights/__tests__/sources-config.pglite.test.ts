@@ -187,6 +187,74 @@ describe('saveSourcesConfig', () => {
     });
   });
 
+  it('stores a yes/no share, 0 included, in the shape Knights reads', async () => {
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 }, MOD);
+
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: true,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      yesNoShare: 0,
+    });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).yesNoShare).toBe(0);
+  });
+
+  it.each([
+    ['above 1', 1.2],
+    ['negative', -0.1],
+    ['a string', '0.5'],
+  ])('refuses a yes/no share that is %s and changes nothing', async (_label, yesNoShare) => {
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare }, MOD)
+    ).toMatchObject({ ok: false });
+    expect(redisStore.has(KEY)).toBe(false);
+  });
+
+  it('keeps a stored yes/no share when a save leaves it out, so saving the rates never turns yes/no back on', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 })
+    );
+
+    expect(await saveSourcesConfig({ enabled: true, sfwRate: 0.5, nsfwRate: 0.3 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!).yesNoShare).toBe(0);
+  });
+
+  it('clears a stored yes/no share on request, so Knights falls back to its default, and audits it', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 })
+    );
+
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({ enabled: true, sfwRate: 1, nsfwRate: 0.3 });
+    const [row] = await activity();
+    expect(JSON.parse(row.activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1))).toEqual({
+      before: { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 },
+      after: { enabled: true, sfwRate: 1, nsfwRate: 0.3 },
+    });
+  });
+
+  it('records nothing when clearing a share that is not stored', async () => {
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: false });
+  });
+
+  it('records a change of the yes/no share alone', async () => {
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0.7 }, MOD);
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(await activity()).toHaveLength(2);
+  });
+
   it('records who changed it with the value before and after', async () => {
     await saveSourcesConfig({ enabled: true, sfwRate: 0.05, nsfwRate: 0.05 }, MOD);
     await saveSourcesConfig({ enabled: false, sfwRate: 0.05, nsfwRate: 0.1 }, 8);

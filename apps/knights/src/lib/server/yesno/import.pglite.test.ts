@@ -10,7 +10,7 @@ import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { castYesNoVote } from './vote';
 import { parseCsv } from './csv';
-import { importYesNo, toYesNoRows } from './import';
+import { importYesNo, importYesNoChunk, toYesNoRows } from './import';
 
 const HEADER =
   'question_id,case_id,image_id,axis,kind,question,yes_effect,no_effect,active_candidate,source_batch_id,source_purpose,promotion_status,policy_sha256';
@@ -457,6 +457,25 @@ describe('importYesNo', () => {
       const states = async () =>
         (await items()).map((i) => [i.externalId, i.status, i.reason] as const);
 
+      beforeEach(() => seedImage(pg, 10));
+
+      it('leaves the closed copy closed when its image can no longer be served', async () => {
+        await seedImage(pg, 11);
+        await importYesNo(db, load(line({ id: 'a', image: '11' })));
+        await retireByModerator('a');
+        await copy('a:r1', 'a', 'Open', null);
+        await importYesNo(db, [], { retire: ['a'] });
+        await pg.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE "id" = 11`);
+
+        const again = await importYesNo(db, load(line({ id: 'a', image: '10' })));
+
+        expect(again).toMatchObject({ revived: 0 });
+        expect(await states()).toEqual([
+          ['a', 'Closed', 'moderator-retired'],
+          ['a:r1', 'Closed', 'retired'],
+        ]);
+      });
+
       it('brings back the copy the withdrawal closed, leaving the original retired', async () => {
         await importYesNo(db, load(line({ id: 'a' })));
         await retireByModerator('a');
@@ -513,5 +532,59 @@ describe('importYesNo', () => {
         ]);
       });
     });
+  });
+});
+
+describe('importYesNoChunk', () => {
+  const chunk = (...lines: string[]) => [HEADER, ...lines].join('\n');
+  const hold = (id: number, column: string, value: string | boolean) =>
+    pg.query(`UPDATE "Image" SET "${column}" = $2 WHERE "id" = $1`, [id, value]);
+
+  beforeEach(async () => {
+    for (const id of [10, 21, 22, 23, 24]) await seedImage(pg, id);
+    await hold(21, 'blockedFor', 'tos');
+    await hold(22, 'ingestion', 'Blocked');
+    await hold(23, 'needsReview', 'minor');
+    await hold(24, 'acceptableMinor', true);
+  });
+
+  it.each([
+    ['blockedFor set', '21'],
+    ['ingestion Blocked', '22'],
+    ['needsReview set', '23'],
+    ['acceptableMinor', '24'],
+  ])(
+    'skips a row whose image has %s as unservable-image and imports the clean one',
+    async (_, image) => {
+      const summary = await importYesNoChunk(
+        db,
+        chunk(line({ id: 'clean', image: '10' }), line({ id: 'held', image })),
+        { dryRun: false }
+      );
+
+      expect(summary).toMatchObject({ toImport: 1, skipped: { 'unservable-image': 1 } });
+      expect((await items()).map((i) => i.externalId)).toEqual(['clean']);
+    }
+  );
+
+  it('counts an unservable image the same way on a dry run', async () => {
+    const summary = await importYesNoChunk(
+      db,
+      chunk(line({ id: 'clean', image: '10' }), line({ id: 'review', image: '23' })),
+      { dryRun: true }
+    );
+    expect(summary).toMatchObject({ toImport: 1, skipped: { 'unservable-image': 1 } });
+    expect(await items()).toEqual([]);
+  });
+
+  it('falls back to a later copy of the id whose image can be served', async () => {
+    const summary = await importYesNoChunk(
+      db,
+      chunk(line({ id: 'a', image: '21' }), line({ id: 'a', image: '10' })),
+      { dryRun: false }
+    );
+    expect(summary).toMatchObject({ toImport: 1, skipped: { 'unservable-image': 1 } });
+    expect(summary.skipped.duplicate).toBeUndefined();
+    expect((await items()).map((i) => [i.externalId, i.imageId])).toEqual([['a', 10]]);
   });
 });

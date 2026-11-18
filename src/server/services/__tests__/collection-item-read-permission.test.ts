@@ -112,6 +112,9 @@ const listItems = (collectionId: number, user?: object) =>
     input: { collectionId, limit: 10, browsingLevel: 3 } as never,
     user: user as never,
     requireRead: true,
+    // A session's views; the scoped-key cases below pass false.
+    asModerator: true,
+    asOwner: true,
   });
 const errorOf = (p: Promise<unknown>) =>
   p.then(

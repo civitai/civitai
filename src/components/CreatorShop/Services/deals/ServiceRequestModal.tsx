@@ -33,7 +33,6 @@ export function ServiceRequestModal({
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
-  const domain = useDomainColor();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
   // Each request is a separate hold, so a second click must never fire before the first settles.
@@ -80,12 +79,7 @@ export function ServiceRequestModal({
   return (
     <Modal {...dialog} size="lg" title={`Request: ${offering.title}`}>
       <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          From {sellerUsername} · {serviceTermsLine(offering)}
-        </Text>
-        <Text size="sm" className="whitespace-pre-line">
-          {offering.description}
-        </Text>
+        <ServiceOfferingTerms offering={offering} sellerUsername={sellerUsername} />
         <Textarea
           label="What do you want?"
           value={text}
@@ -95,24 +89,7 @@ export function ServiceRequestModal({
           maxLength={REQUEST_MAX}
           withAsterisk
         />
-        <Paper withBorder radius="md" p="md">
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Text fw={600}>{BUYER_DISCLOSURE_INTRO}</Text>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                type={domain === 'green' ? 'green' : 'yellow'}
-                unitAmount={offering.price}
-                variant="transparent"
-              />
-            </Group>
-            <List size="sm" spacing={4}>
-              {buyerDisclosureItems(offering).map((item) => (
-                <List.Item key={item}>{item}</List.Item>
-              ))}
-            </List>
-          </Stack>
-        </Paper>
+        <ServiceBuyerDisclosure offering={offering} />
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
@@ -139,5 +116,52 @@ export function ServiceRequestModal({
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+type RequestOffering = Parameters<typeof ServiceRequestModal>[0]['offering'];
+
+/** Who it's from, its terms and its full description: what a buyer reads before requesting. */
+export function ServiceOfferingTerms({
+  offering,
+  sellerUsername,
+}: {
+  offering: RequestOffering;
+  sellerUsername: string;
+}) {
+  return (
+    <>
+      <Text size="sm" c="dimmed">
+        From {sellerUsername} · {serviceTermsLine(offering)}
+      </Text>
+      <Text size="sm" className="whitespace-pre-line">
+        {offering.description}
+      </Text>
+    </>
+  );
+}
+
+/** The hold disclosure a buyer agrees to with the price. */
+export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering }) {
+  const domain = useDomainColor();
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Text fw={600}>{BUYER_DISCLOSURE_INTRO}</Text>
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            type={domain === 'green' ? 'green' : 'yellow'}
+            unitAmount={offering.price}
+            variant="transparent"
+          />
+        </Group>
+        <List size="sm" spacing={4}>
+          {buyerDisclosureItems(offering).map((item) => (
+            <List.Item key={item}>{item}</List.Item>
+          ))}
+        </List>
+      </Stack>
+    </Paper>
   );
 }
