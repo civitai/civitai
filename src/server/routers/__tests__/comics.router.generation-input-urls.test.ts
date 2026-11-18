@@ -273,6 +273,33 @@ describe('comics generation inputs the server loads', () => {
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
   });
 
+  it.each([
+    ['every image of one reference is blocked', 'moderated', true],
+    ['CONTROL: the reference keeps an unblocked image', null, false],
+  ] as const)('iterateGenerate tells the client when %s', async (_, blockedFor, skipped) => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([
+      { id: 5, name: 'A' },
+      { id: 6, name: 'B' },
+    ]);
+    dbMock.dbRead.comicReference.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) =>
+      args.where.id === 5
+        ? { name: 'A', images: [{ image: { id: 1, url: REF, width: 1, height: 1, blockedFor } }] }
+        : {
+            name: 'B',
+            images: [{ image: { id: 2, url: SOURCE, width: 1, height: 1, blockedFor: null } }],
+          }) as never);
+    mocks.submit.mockResolvedValue({ id: 'wf', cost: { total: 0 } });
+    const result = await caller().iterateGenerate({
+      projectId: 11,
+      chapterPosition: 0,
+      prompt: 'p',
+      referenceIds: [5, 6],
+    });
+    expect(result.referenceImagesSkipped).toBe(skipped);
+  });
+
   // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
   // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
   it('submits as the signed-in user, for the generation kill switch', async () => {
