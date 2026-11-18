@@ -1,5 +1,6 @@
 import { Button, Paper, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import type { ComponentProps, ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
@@ -30,6 +31,10 @@ type ServiceCoverImage = Pick<
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
 const COVER_ASPECT_RATIO = 4 / 3;
+
+const ServiceBuyerPreviewModal = dynamic(
+  () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal')
+);
 
 /**
  * Whether ImageGuard draws its own level chip on the cover: always while blurred, and on a
@@ -109,6 +114,7 @@ export function ServiceOfferingCard({
   href,
   canRequest = true,
   extra,
+  preview = false,
 }: {
   offering: Pick<
     ServiceOffering,
@@ -125,21 +131,25 @@ export function ServiceOfferingCard({
   canRequest?: boolean;
   /** Under the primary action; the storefront puts the owner's open-request shortcut here. */
   extra?: ReactNode;
+  /** The owner's "Preview as buyer": the buyer's card, with nothing on it that acts. */
+  preview?: boolean;
 }) {
   const domain = useDomainColor();
   const cover = offering.coverImage;
 
   const currentUser = useCurrentUser();
-  const isOwner = !!currentUser && currentUser.id === sellerId;
+  const isOwner = !preview && !!currentUser && currentUser.id === sellerId;
   const full = slotsOpen === 0;
   const header = (hideRating = false) => (
     <div className="flex w-full items-start justify-between gap-2">
       <div>{!hideRating && <ServiceRatingBadge rating={offering.maxNsfwLevel} />}</div>
-      <ServiceOfferingMenu
-        offering={offering}
-        isOwner={isOwner}
-        isModerator={!!currentUser?.isModerator}
-      />
+      {!preview && (
+        <ServiceOfferingMenu
+          offering={offering}
+          isOwner={isOwner}
+          isModerator={!!currentUser?.isModerator}
+        />
+      )}
     </div>
   );
   const price = (
@@ -208,14 +218,35 @@ export function ServiceOfferingCard({
         </Text>
         <div className="mt-auto flex flex-col gap-2 pt-1">
           {isOwner ? (
-            <Button
-              component={NextLink}
-              href={`/user/${sellerUsername}/shop/manage?tab=services`}
-              variant="default"
-              fullWidth
-            >
-              Manage
-            </Button>
+            <>
+              <Button
+                component={NextLink}
+                href={`/user/${sellerUsername}/shop/manage?tab=services&edit=${offering.id}`}
+                variant="default"
+                fullWidth
+              >
+                Manage
+              </Button>
+              <Button
+                variant="subtle"
+                color="gray"
+                fullWidth
+                onClick={() =>
+                  dialogStore.trigger({
+                    component: ServiceBuyerPreviewModal,
+                    props: { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest },
+                  })
+                }
+              >
+                Preview as buyer
+              </Button>
+            </>
+          ) : preview ? (
+            canRequest && (
+              <Button color="yellow" fullWidth disabled>
+                Request
+              </Button>
+            )
           ) : (
             canRequest && (
               <LoginRedirect reason="perform-action">

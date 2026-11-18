@@ -20,14 +20,15 @@ const withTag = (currentTags: readonly string[], tag: string): string[] =>
 /**
  * The fields of the PUT that hands a ticket to support. "Waiting on Mod Lead" becomes Open: a
  * moderation status outranks the sent-to-support tag in routing, so leaving it would keep the ticket in
- * moderation.
+ * moderation. The mod-lead tag goes too, or the mod lead's watch would still count the ticket as theirs.
  */
 export function escalationFields(
   currentTags: readonly string[],
   currentStatus: number
 ): EscalationFields {
+  const kept = currentTags.filter((t) => t.toLowerCase() !== MOD_LEAD_REVIEW_TAG);
   return {
-    tags: withTag(currentTags, SENT_TO_SUPPORT_TAG),
+    tags: withTag(kept, SENT_TO_SUPPORT_TAG),
     group_id: CUSTOMER_SUPPORT_GROUP_ID,
     ...((TICKET_ROUTING.moderationStatuses as readonly number[]).includes(currentStatus)
       ? { status: STATUS.open }

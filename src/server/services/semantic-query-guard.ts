@@ -49,7 +49,7 @@ export type QueryRefusal =
 
 /**
  * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
- * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn()`.
+ * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn(user)`.
  */
 export function resolveSemanticBrowsingLevel(
   requested: number | undefined,
@@ -64,9 +64,12 @@ export function resolveSemanticBrowsingLevel(
 /**
  * The containment switch, read fail-closed: only a successful evaluation that answers off lifts
  * the clamp. An unavailable client, an evaluation error (a missing key throws) or a malformed
- * answer all hold it. Read uncached so a flip takes effect at the next refresh.
+ * answer all hold it. Read uncached so a flip takes effect at the next refresh. Evaluated per
+ * viewer (`userId` in the context; signed out has none), so a segment can lift it for one account.
  */
-export async function isNonModClampOn(): Promise<boolean> {
+export async function isNonModClampOn(
+  viewer: Pick<SessionUser, 'id'> | undefined
+): Promise<boolean> {
   const flag = FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP;
   const override = getFliptLocalOverride(flag);
   if (override !== undefined) return override !== 'off';
@@ -75,7 +78,11 @@ export async function isNonModClampOn(): Promise<boolean> {
   if (!client) return true;
   try {
     return (
-      client.evaluateBoolean({ flagKey: flag, entityId: 'global', context: {} }).enabled !== false
+      client.evaluateBoolean({
+        flagKey: flag,
+        entityId: viewer ? String(viewer.id) : 'global',
+        context: viewer ? { userId: String(viewer.id) } : {},
+      }).enabled !== false
     );
   } catch (e) {
     const now = Date.now();
