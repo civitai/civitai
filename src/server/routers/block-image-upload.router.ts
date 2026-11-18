@@ -72,6 +72,7 @@ export const blockImageUploadRouter = router({
         userId: ctx.user.id,
         sharedWithAppId,
       });
+      // True only because persistBlockUploadImage stamps whenever sharedWithAppId is set, or throws.
       return { imageId, shared: sharedWithAppId !== undefined };
     }),
 
