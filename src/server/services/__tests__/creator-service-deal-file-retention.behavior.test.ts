@@ -384,6 +384,20 @@ describe('the purge after the sweep', () => {
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
   });
 
+  it('re-reads the holds before each delete: one landing after the claim stops it', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await sweep();
+    // The storage HEAD runs after the claim and before the first delete.
+    s3.send.mockImplementationOnce(async () => {
+      await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+      return { ETag: '"abc123"' };
+    });
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
+    expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
+  });
+
   it("deletes a zip's archive and a published preview's copy as well", async () => {
     const { dealId, finalId } = await closedDeal('Cancelled', 40);
     await q(

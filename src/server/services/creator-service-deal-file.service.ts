@@ -562,7 +562,11 @@ async function deleteImages(imageIds: number[]) {
  * upload, a zip's archive and a published preview's copy goes, so a versioned bucket keeps no copy.
  * Returns the upload's ETag for the purge record.
  */
-async function deleteFileObjects(file: FileObjects) {
+async function deleteFileObjects(
+  file: FileObjects,
+  /** Asked before each object delete; false stops, and the file counts as not deleted. */
+  stillDeletable: () => Promise<boolean> = async () => true
+) {
   const bucket = await getBucket();
   const client = getS3Client();
   const head = await client
@@ -579,6 +583,7 @@ async function deleteFileObjects(file: FileObjects) {
   ];
   let deleted = true;
   for (const { client, bucket, key } of targets) {
+    if (!(await stillDeletable())) return { etag, deleted: false };
     const remaining = await purgeObjectVersions({ client, bucket, key })
       .then((result) => result.remaining)
       .catch(async (error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
@@ -660,7 +665,14 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     if (!file) continue;
     // Objects before the row, outside any transaction: a delete that failed or left versions
     // keeps the row, and writes no record, for the next run to try again.
-    const { etag, deleted } = await deleteFileObjects(file);
+    // The claim's lock is gone by now, so each delete re-reads the holds first.
+    const stillDeletable = async () =>
+      (
+        await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT f."id" FROM "ServiceDealFile" f
+          WHERE f."id" = ${file.id}::int AND ${purgeable(Prisma.sql`f`)}`
+      ).length > 0;
+    const { etag, deleted } = await deleteFileObjects(file, stillDeletable);
     if (!deleted) continue;
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`
