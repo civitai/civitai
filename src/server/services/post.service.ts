@@ -98,6 +98,8 @@ import {
   imagesWithOpenReports,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
+import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
+import { mediaFromBlobs, type OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
@@ -2005,6 +2007,12 @@ export const addPostImage = async ({
     }).catch(handleLogError);
     if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
   }
+  if (song && songWorkflow && typeof song.metadata.coverImageId !== 'number')
+    await linkGeneratedSongCover({
+      songId: partialResult.id,
+      userId: user.id,
+      workflow: songWorkflow,
+    }).catch(handleLogError);
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({
@@ -2321,6 +2329,71 @@ export async function setSongCover({
   const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
   if (!saved) throw throwDbError('Cover not found');
   return saved;
+}
+
+// A generated cover is a nicety on a post request too: past this, the song posts without it.
+const GENERATED_COVER_COPY_TIMEOUT_MS = 10_000;
+
+/**
+ * The cover a song's generation made (ACE's suppressed `imageGen` step), when the orchestrator made
+ * it available, did not block it, and rated it.
+ */
+function readWorkflowCover(steps: UserWorkflow['steps']) {
+  const step = steps?.find((s) => s.$type === 'imageGen') as
+    | { output?: { images?: OrchestratorBlobLike[] } | null }
+    | undefined;
+  const [cover] = mediaFromBlobs(step?.output?.images);
+  return cover?.nsfwLevel && cover.nsfwLevel !== 'na' ? cover : undefined;
+}
+
+/**
+ * Copies the song's generated cover into our image store and links it as the song's cover, the
+ * same row and link `setSongCover` makes. The row goes through `createImage`, so it is scanned.
+ */
+async function linkGeneratedSongCover({
+  songId,
+  userId,
+  workflow,
+}: {
+  songId: number;
+  userId: number;
+  workflow: UserWorkflow;
+}) {
+  const blob = readWorkflowCover(workflow.steps);
+  if (!blob) return;
+
+  // Aborting stops the fetch and the store write, so a copy past the budget leaves no stored bytes.
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), GENERATED_COVER_COPY_TIMEOUT_MS);
+  const staged = await stageGenerationOutputImage({
+    imageUrl: blob.url,
+    width: blob.width,
+    height: blob.height,
+    source: 'song-generated-cover',
+    signal: budget.signal,
+  }).finally(() => clearTimeout(timer));
+
+  const cover = await createImage({
+    url: staged.url,
+    type: MediaType.image,
+    mimeType: staged.mimeType,
+    hash: staged.hash,
+    width: staged.width,
+    height: staged.height,
+    metadata: { ...staged.metadata, parentId: songId },
+    userId,
+  });
+  // Only a song still without a cover takes it; a row left unlinked is removed.
+  const linked = await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${cover.id}::int),
+      "updatedAt" = now()
+    WHERE id = ${songId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')
+  `.catch((error) => {
+    handleLogError(error);
+    return 0;
+  });
+  if (!linked) await deleteImageById({ id: cover.id, deletedById: userId });
 }
 
 /**

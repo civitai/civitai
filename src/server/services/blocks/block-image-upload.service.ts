@@ -173,7 +173,9 @@ const SUPPORTED_IMAGE_CONTENT_TYPE: Record<ImageMagicFormat, string> = {
  * client-correctable upstream problem — BAD_REQUEST.
  */
 export async function fetchGenerationOutputImage(
-  imageUrl: string
+  imageUrl: string,
+  /** Stops the fetch early; the 60s per-hop timeout still applies. */
+  signal?: AbortSignal
 ): Promise<{ bytes: Buffer; contentType: string }> {
   // The real output blob url 301s to a SAME-host content url, so we FOLLOW
   // redirects manually (up to MAX_OUTPUT_REDIRECTS hops) instead of the browser
@@ -196,7 +198,9 @@ export async function fetchGenerationOutputImage(
     try {
       hopResponse = await fetch(currentUrl, {
         redirect: 'manual', // follow manually so we can re-validate each hop's host
-        signal: AbortSignal.timeout(60_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
       });
     } catch {
       throw new TRPCError({
@@ -280,6 +284,7 @@ export async function stageGenerationOutputImage({
   height,
   source,
   transform,
+  signal,
 }: {
   imageUrl: string;
   width: number | null;
@@ -288,8 +293,10 @@ export async function stageGenerationOutputImage({
   source: string;
   /** Rewrites the bytes before they are stored; `width` / `height` are then measured from the result. */
   transform?: (bytes: Buffer) => Promise<Buffer>;
+  /** Abandons the copy: once aborted, nothing more is fetched or stored. */
+  signal?: AbortSignal;
 }) {
-  const fetched = await fetchGenerationOutputImage(imageUrl);
+  const fetched = await fetchGenerationOutputImage(imageUrl, signal);
   const bytes = transform ? await transform(fetched.bytes) : fetched.bytes;
   const contentType = transform ? sniffSupportedImage(bytes) : fetched.contentType;
   if (!contentType)
@@ -300,6 +307,7 @@ export async function stageGenerationOutputImage({
 
   // The store the browser-direct upload path uses, so the scanner can read it; `key` is a fresh
   // uuid (satisfies `imageSchema.url`).
+  signal?.throwIfAborted();
   const { key } = await uploadImageBufferToStore(bytes, { contentType });
 
   // The placeholder an on-site upload gets from the browser preprocessor; without it `MediaHash`

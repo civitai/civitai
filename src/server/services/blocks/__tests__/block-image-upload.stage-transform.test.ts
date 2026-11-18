@@ -58,3 +58,26 @@ describe('stageGenerationOutputImage transform', () => {
     expect(h.stored).toHaveLength(0);
   });
 });
+
+describe('stageGenerationOutputImage signal', () => {
+  it('passes the signal to the fetch and stores nothing once aborted', async () => {
+    const controller = new AbortController();
+    let fetchSignal: AbortSignal | null | undefined;
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      fetchSignal = init?.signal;
+      controller.abort();
+      return new Response(new Uint8Array(await png(10, 10)), { status: 200 });
+    });
+    await expect(
+      stageGenerationOutputImage({
+        imageUrl: 'https://orchestration.civitai.com/blob/1',
+        width: 10,
+        height: 10,
+        source: 'test',
+        signal: controller.signal,
+      })
+    ).rejects.toThrow();
+    expect(fetchSignal?.aborted).toBe(true);
+    expect(h.stored).toHaveLength(0);
+  });
+});

@@ -230,6 +230,13 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: ['pickClientImageColumns(cover)'],
     serverColumns: [],
   },
+  // A song's generated cover: bytes copied server-side from the caller's own workflow; the
+  // spread is the size and blurhash `stageGenerationOutputImage` measured.
+  'src/server/services/post.service.ts#linkGeneratedSongCover': {
+    calls: 1,
+    spreads: ['staged.metadata'],
+    serverColumns: [],
+  },
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
