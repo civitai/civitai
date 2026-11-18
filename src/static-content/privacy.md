@@ -77,7 +77,7 @@ User Content. Our Services are a social service in which you can find, enjoy, an
 **If you choose not to provide us with information we request, some features of our Services may not work as intended.**
 
 ## Third Parties
-We use a third-party to provide monetization technologies for our site. You can review their privacy and cookie policy [here](https://www.snigel.com/privacy-policy/).
+We use Sparteo, a service of Actirise, to provide advertising and monetization technologies on our site. Sparteo and its advertising partners may use cookies and similar technologies on our site to show ads, measure their performance, and prevent fraud. You can review Sparteo's privacy policy [here](https://corporate.sparteo.com/privacy-policy).
 
 Civit AI, Inc. participates in the IAB Europe Transparency & Consent Framework and complies with its Specifications and Policies. Civit AI, Inc. uses the Consent Management Platform with the identification number 9.
 
