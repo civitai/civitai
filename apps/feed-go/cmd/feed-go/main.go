@@ -313,12 +313,12 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(reason string, err error) {
+		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(_ *http.Request, reason string, err error) {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
 			if reason == proxyErrorUpstream {
 				log.Warn("fallback proxy: the Node app did not answer", "err", err)
 			}
-		})
+		}, nil)
 	}
 
 	public := server.PublicMux(srv)

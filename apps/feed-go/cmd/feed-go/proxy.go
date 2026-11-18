@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // fallbackIdleTimeout is how long the fallback proxy keeps an idle connection to the Node app. It must
@@ -51,7 +53,8 @@ var forwardingHeaders = []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-P
 // the Node app's response starts is answered 502 and reported to onError (if non-nil) with
 // proxyErrorCanceled or proxyErrorUpstream; one that fails mid-body is aborted by ReverseProxy
 // (http.ErrAbortHandler) and not reported.
-func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason string, err error)) *httputil.ReverseProxy {
+// API STUB: the new signature only (prop is unused); the next commit implements it.
+func fallbackProxy(target *url.URL, idle time.Duration, onError func(r *http.Request, reason string, err error), _ propagation.TextMapPropagator) *httputil.ReverseProxy {
 	p := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
 		pr.SetURL(target)
 		// The target has no query of its own; a target query would be dropped.
@@ -87,7 +90,7 @@ func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason stri
 			if r.Context().Err() != nil {
 				reason = proxyErrorCanceled
 			}
-			onError(reason, err)
+			onError(r, reason, err)
 		}
 		w.WriteHeader(http.StatusBadGateway)
 	}

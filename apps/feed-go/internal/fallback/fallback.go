@@ -32,6 +32,22 @@ func Newf(reason, format string, args ...any) error {
 	return &Error{Reason: reason, Detail: fmt.Sprintf(format, args...)}
 }
 
+// API STUBS ONLY (no behaviour): replaced by the implementation in the next commit.
+
+func Safef(reason, format string, args ...any) error { return Newf(reason, format, args...) }
+
+func NewfSafe(reason, _, format string, args ...any) error { return Newf(reason, format, args...) }
+
+func Wrap(reason string, err error) error { return Newf(reason, "%v", err) }
+
+func SafeDetail(error) string { return "" }
+
+func Token(s string) string { return s }
+
+func Class(error) string { return "" }
+
+func Type(error) string { return "" }
+
 // Reason returns the fallback reason of err, or "" when err is not a fallback.
 func Reason(err error) string {
 	var fe *Error

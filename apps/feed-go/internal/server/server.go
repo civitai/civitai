@@ -17,6 +17,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -119,6 +122,11 @@ type Server struct {
 	// Node app (feed_go_fallback_total and feed_go_serve_in_flight are per endpoint). Shadow samples
 	// and probes are bounded by their own queues and never take a serve slot.
 	MaxInFlight int
+
+	// API STUBS ONLY (unused here): replaced by the implementation in the next commit.
+	Tracer     trace.Tracer
+	Propagator propagation.TextMapPropagator
+	Events     *EventLog
 
 	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
 	inFlight atomic.Int64
