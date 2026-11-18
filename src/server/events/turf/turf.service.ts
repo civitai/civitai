@@ -749,6 +749,41 @@ export async function getFlagRaceEventForCollection(collectionId: number): Promi
   return null;
 }
 
+export type FlagRaceTotals = {
+  // Days frozen so far.
+  days: number;
+  // Every team, with the flags it won (a tie counts for each tied team) and the points they paid.
+  teams: { team: string; flags: number; points: number }[];
+};
+
+/** The Flag Race so far, from every frozen day's payouts: the same for every viewer. */
+export async function getFlagRaceTotals(eventName: string): Promise<FlagRaceTotals | null> {
+  const def = (await loadEvents()).find((e) => e.name === eventName);
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!def || !config) return null;
+  const [won, [frozen]] = await Promise.all([
+    dbRead.$queryRaw<{ team: string; flags: number; points: number }[]>`
+      SELECT team, count(*)::int AS flags, coalesce(sum(points), 0)::int AS points
+      FROM "EventAwardResult"
+      WHERE event = ${eventName} AND kind = ${FLAG_KIND} AND team IS NOT NULL AND "voidedAt" IS NULL
+      GROUP BY team
+    `,
+    dbRead.$queryRaw<{ days: number }[]>`
+      SELECT count(DISTINCT split_part("sourceId", ':', 2))::int AS days FROM "EventAwardResult"
+      WHERE event = ${eventName} AND kind = ${FLAG_KIND}
+    `,
+  ]);
+  const byTeam = new Map(won.map((r) => [r.team, r]));
+  const teams = def.teams
+    .map((team) => ({
+      team,
+      flags: byTeam.get(team)?.flags ?? 0,
+      points: byTeam.get(team)?.points ?? 0,
+    }))
+    .sort((a, b) => b.points - a.points || b.flags - a.flags);
+  return { days: frozen?.days ?? 0, teams };
+}
+
 // Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.
 export const REACTION_EARNS_MS = 1_500;
 

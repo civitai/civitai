@@ -52,7 +52,7 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptClientSync: () => null,
 }));
 
-const { placeFlagHats, placeTurfSticker, getFlagSummary } = await import(
+const { placeFlagHats, placeTurfSticker, getFlagSummary, getFlagRaceTotals } = await import(
   '~/server/events/turf/turf.service'
 );
 const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
@@ -230,6 +230,40 @@ describe('hats on a flag', () => {
         BEFORE
       )
     ).rejects.toThrow(/is a flag today/);
+  });
+});
+
+describe('the race so far', () => {
+  it("counts each team's unvoided flags won and their points over every frozen day, with every team listed", async () => {
+    const row = (sourceId: string, team: string | null, points: number, voided = false) =>
+      db.query(
+        `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs, "voidedAt")
+         VALUES ('e', $1, 'flag', $2, $3, $4, '{}', $5)`,
+        [sourceId, team, points, CUT, voided ? CUT : null]
+      );
+    expect(await getFlagRaceTotals('e')).toEqual({
+      days: 0,
+      teams: [
+        { team: 'Blue', flags: 0, points: 0 },
+        { team: 'Pink', flags: 0, points: 0 },
+      ],
+    });
+    await row('flag:4:1', null, 0);
+    await row('flag:4:1:Pink', 'Pink', 3);
+    await row('flag:4:2', null, 0);
+    await row('flag:4:2:Pink', 'Pink', 40, true);
+    await row('flag:5:3', null, 0);
+    await row('flag:5:3:Blue', 'Blue', 10);
+    await row('flag:5:4', null, 0);
+    await row('flag:5:4:Blue', 'Blue', 5);
+    await row('flag:5:4:Pink', 'Pink', 5);
+    expect(await getFlagRaceTotals('e')).toEqual({
+      days: 2,
+      teams: [
+        { team: 'Blue', flags: 2, points: 15 },
+        { team: 'Pink', flags: 2, points: 8 },
+      ],
+    });
   });
 });
 
