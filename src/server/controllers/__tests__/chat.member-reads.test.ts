@@ -11,9 +11,8 @@ vi.mock('~/server/signals/wrapper', () => ({
   },
 }));
 
-const { getMessageByIdHandler, getChatsForUserHandler, isTypingHandler } = await import(
-  '../chat.controller'
-);
+const { getMessageByIdHandler, getChatsForUserHandler, isTypingHandler, modifyUserHandler } =
+  await import('../chat.controller');
 
 const ME = 7;
 const OTHER = 8;
@@ -22,7 +21,12 @@ const BEFORE = new Date('2026-10-31T00:00:00Z');
 const AFTER = new Date('2026-11-02T00:00:00Z');
 const ctx = { user: { id: ME, muted: false } } as never;
 
-type Me = { status: ChatMemberStatus; leftAt?: Date | null; kickedAt?: Date | null };
+type Me = {
+  status: ChatMemberStatus;
+  leftAt?: Date | null;
+  kickedAt?: Date | null;
+  clearedAt?: Date | null;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,7 +80,7 @@ describe('the chat list preview', () => {
         id: 3,
         messages: [{ createdAt: AFTER, content: 'said after', userId: OTHER }],
         chatMembers: [
-          { userId: ME, status: me.status, clearedAt: null },
+          { userId: ME, status: me.status, clearedAt: me.clearedAt ?? null },
           { userId: OTHER, status: ChatMemberStatus.Joined, clearedAt: null },
         ],
       },
@@ -94,12 +98,50 @@ describe('the chat list preview', () => {
     expect(chat.messages).toEqual([]);
   });
 
+  it('keeps a chat they cleared and then left in the list', async () => {
+    // Cleared before leaving, and the chat came back with history: the exit
+    // empties the preview, not the list entry.
+    const chat = await list({
+      status: ChatMemberStatus.Left,
+      leftAt: EXIT,
+      clearedAt: new Date('2026-10-01T00:00:00Z'),
+    });
+    expect(chat).toBeDefined();
+    expect(chat.messages).toEqual([]);
+  });
+
   it('shows a Joined member the latest message', async () => {
     expect((await list({ status: ChatMemberStatus.Joined })).messages).toHaveLength(1);
   });
 
   it('keeps an archived (Ignored) conversation its preview', async () => {
     expect((await list({ status: ChatMemberStatus.Ignored })).messages).toHaveLength(1);
+  });
+});
+
+describe('kicking a member who already left', () => {
+  it('keeps their cutoff at when they left', async () => {
+    dbMock.dbWrite.chatMember.findFirst.mockResolvedValue({
+      id: 20,
+      userId: OTHER,
+      status: ChatMemberStatus.Left,
+      leftAt: EXIT,
+      isOwner: false,
+      user: { username: 'other', isModerator: false },
+      chat: { id: 3, ownerId: ME, isGroup: true, owner: { isModerator: false }, chatMembers: [] },
+    } as never);
+    dbMock.dbWrite.chatMember.updateMany.mockResolvedValue({ count: 1 } as never);
+    dbMock.dbWrite.chatMember.findUniqueOrThrow.mockResolvedValue({ id: 20 } as never);
+    dbMock.dbWrite.chat.findFirst.mockResolvedValue({ chatMembers: [] } as never);
+
+    await modifyUserHandler({
+      input: { chatMemberId: 20, status: ChatMemberStatus.Kicked } as never,
+      ctx: { user: { id: ME, isModerator: false } } as never,
+    });
+
+    expect(dbMock.dbWrite.chatMember.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ kickedAt: EXIT }) })
+    );
   });
 });
 

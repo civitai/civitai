@@ -206,13 +206,16 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
     // A deleted conversation is gone from this user's list until the other side
     // writes again, at which point it returns holding only what came after the
     // watermark.
-    return (await scopeChatPreviews(chats, userId))
-      .map((chat) => {
-        const scoped = { ...chat, chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)) };
-        const clearedAt = scoped.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-        return !clearedAt || scoped.messages.length ? scoped : null;
-      })
-      .filter(isDefined);
+    // Decided on the clear watermark alone, before the preview is scoped: an
+    // exit empties the preview but must not take the chat out of the list.
+    const listed = chats.filter((chat) => {
+      const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+      return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
+    });
+    return (await scopeChatPreviews(listed, userId)).map((chat) => ({
+      ...chat,
+      chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -527,6 +530,7 @@ export const modifyUserHandler = async ({
         id: true,
         userId: true,
         status: true,
+        leftAt: true,
         isOwner: true,
         user: {
           select: {
@@ -656,7 +660,13 @@ export const modifyUserHandler = async ({
     const extra = {
       ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
-      kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
+      // Kicking someone who already left must not reopen what was said since.
+      kickedAt:
+        status === ChatMemberStatus.Kicked
+          ? existing.status === ChatMemberStatus.Left && existing.leftAt
+            ? existing.leftAt
+            : new Date()
+          : undefined,
       pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
       ...deriveMuteColumns({ isMuted, notifyLevel }),
     };
