@@ -1,7 +1,7 @@
 import { mainAppSessionOrigin } from './main-app';
 
 const TIMEOUT_MS = 25_000;
-/** A refusal past the main app's daily quota carries no Retry-After; this outlasts a job's deadline. */
+/** The pause for a 429 that carries no Retry-After: past a job's deadline. */
 const LIMITED_PAUSE_MS = 60_000;
 
 export type MainAppRating =

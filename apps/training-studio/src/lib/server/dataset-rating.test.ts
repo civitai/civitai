@@ -41,6 +41,7 @@ vi.mock('./redis', () => ({
       return 'OK';
     },
     del: async (k: string) => Number(store.delete(k)),
+    mGet: async (keys: string[]) => keys.map((k) => (store.get(k) as string | undefined) ?? null),
   }),
 }));
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
@@ -231,6 +232,15 @@ describe('one rating call', () => {
     });
   });
 
+  it('a presign that throws is no rating, and nothing reached the rater', async () => {
+    refresh.mockRejectedValueOnce(new Error('aborted'));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('a thrown call is no rating', async () => {
     scan.mockRejectedValueOnce(new Error('socket hang up'));
     expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
@@ -337,6 +347,16 @@ describe('starting a job', () => {
     warmDatasetRating('t', 19, ['a.png'], 'c');
     await new Promise((r) => setTimeout(r, 20));
     expect(scan).toHaveBeenCalledTimes(1);
+  });
+
+  it('an image already sent takes no allowance slot from one that was not', async () => {
+    // One send left today, and the first image of the dataset was sent before.
+    await claimDaily('calls', 21, DATASET_RATING_DAILY_CALLS - 1);
+    store.set('sent:radio-alpha:a.png', '1');
+    scan.mockResolvedValue(out('S0'));
+    warmDatasetRating('t', 21, ['a.png', 'b.png'], 'c');
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    expect(scan.mock.calls[0]![0].key).toBe('b.png');
   });
 
   it('a view of an already-rated dataset, which has no unrated keys, makes 0 rate calls', async () => {

@@ -157,10 +157,15 @@ export async function rateImage(
   signal: AbortSignal
 ): Promise<RateResult> {
   if (!BLOB_ID.test(blobId)) return { rating: null, notSent: true };
+  let url: string | null | undefined;
   try {
-    const { data } = await refreshBlob({ client: caller.client, path: { blobId }, signal });
-    if (!data?.url) return { rating: null, notSent: true };
-    const answer = await mainAppRateImage(caller.cookie, blobId, data.url, signal);
+    url = (await refreshBlob({ client: caller.client, path: { blobId }, signal })).data?.url;
+  } catch {
+    return { rating: null, notSent: true };
+  }
+  if (!url) return { rating: null, notSent: true };
+  try {
+    const answer = await mainAppRateImage(caller.cookie, blobId, url, signal);
     if (!answer) return { rating: null };
     if ('refused' in answer) return { rating: null, notSent: true };
     if ('limited' in answer)
@@ -180,6 +185,17 @@ async function claimSend(blobKey: string): Promise<boolean> {
     return set !== null;
   } catch {
     return false;
+  }
+}
+
+/** The keys with no sent marker. A Redis failure answers none, like claimSend. */
+async function unsentKeys(blobKeys: string[]): Promise<string[]> {
+  if (blobKeys.length === 0) return [];
+  try {
+    const sent = await getSysRedis().mGet(blobKeys.map((k) => sentKey(k)));
+    return blobKeys.filter((_, i) => sent[i] == null);
+  } catch {
+    return [];
   }
 }
 
@@ -281,25 +297,30 @@ export function warmDatasetRating(
   const images = blobKeys.filter(isRateableKey);
   // No session to call the main app with (the dev-login preview): nothing is rated.
   if (cookie === null || images.length === 0 || activeJobs.has(userId)) return;
-  const job = claimAllowance('calls', userId, images.length)
-    .then(async ({ granted, key }) => {
+  const job = unsentKeys(images)
+    .then(async (unsent) => {
+      // Allowance only for images that will be sent: one already sent never takes a slot.
+      const { granted, key } = await claimAllowance('calls', userId, unsent.length);
       const summary = await runRatingJob(
         { client: orchestratorClient(token), cookie },
-        images.slice(0, granted),
+        unsent.slice(0, granted),
         rateImage,
         deadlineMs
       );
       // Images the job didn't reach go back to today's allowance, for the next look.
       await returnDaily(key, granted - summary.calls);
+      // alreadySent is not an Axiom field on this dataset, so it rides in payload.
+      const { alreadySent, ...counts } = summary;
       void logToAxiom({
         name: 'training-studio-dataset-rating',
         type: 'info',
         message: 'dataset rating job',
         userId,
-        ...summary,
+        ...counts,
         images: blobKeys.length,
         skipped: blobKeys.length - images.length,
-        overDailyCap: images.length - granted,
+        overDailyCap: unsent.length - granted,
+        payload: { alreadySent: alreadySent + images.length - unsent.length },
       });
     })
     .catch((err) => {

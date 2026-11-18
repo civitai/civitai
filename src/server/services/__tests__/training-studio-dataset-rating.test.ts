@@ -57,11 +57,11 @@ describe('Training Studio dataset rating', () => {
     expect(out).toEqual({ results: [{ key: 'k', output: null }] });
   });
 
-  it('an orchestrator error response throws rather than answering no rating', async () => {
+  it('an orchestrator error response is a retryable 503, not an answer of no rating', async () => {
     orch.submitWorkflow.mockResolvedValueOnce({ data: undefined, error: { status: 500 } });
     await expect(
       rateStudioDatasetImages({ userId: 7, items: [{ mediaUrl: signed, key: 'k' }] })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
   });
 
   it.each([
