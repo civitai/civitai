@@ -7,7 +7,7 @@
 import { spawnSync } from 'child_process';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { API_URL, createCli, isMain, trpcCall, whoami } from '../mod-actions/lib.mjs';
+import { API_URL, createCli, envKeysFromFiles, isMain, trpcCall, whoami } from '../mod-actions/lib.mjs';
 
 const QUERY_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), '../postgres-query/query.mjs');
 
@@ -21,9 +21,18 @@ export function resolveDbTarget(db) {
   return 'prod';
 }
 
+/**
+ * The environment for the postgres-query child: ours minus every key lib.mjs read from a .env file.
+ * Inherited, the repo-root DATABASE_REPLICA_URL looks caller-chosen to postgres-query, which then
+ * skips its own .env and its root-.env refusal, so `--prod` silently ran against the local database.
+ */
+export function childEnv(env = process.env, fromFiles = envKeysFromFiles) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !fromFiles.has(key)));
+}
+
 function runSql(sql, { db, write = false } = {}) {
   const args = [QUERY_SCRIPT, `--${resolveDbTarget(db)}`, '--json', ...(write ? ['--writable'] : []), sql];
-  const result = spawnSync(process.execPath, args, { encoding: 'utf-8' });
+  const result = spawnSync(process.execPath, args, { encoding: 'utf-8', env: childEnv() });
   const target = result.stderr?.split('\n').find((line) => line.startsWith('Target:'));
   if (result.status !== 0) throw new Error(`postgres-query failed:\n${result.stderr.trim()}`);
   return { ...JSON.parse(result.stdout), target };
