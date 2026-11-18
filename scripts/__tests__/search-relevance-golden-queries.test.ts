@@ -41,4 +41,26 @@ describe('defineGoldenSet', () => {
       ])
     ).toThrow(/duplicated/);
   });
+  it('refuses a subject with no term groups, which would match every prompt', () => {
+    expect(() =>
+      defineGoldenSet([
+        { id: 's', kind: 'subject', text: '2 girls', expectTerms: [], k: 10, targets: ['images'] },
+      ])
+    ).toThrow(/no term groups/);
+  });
+
+  it('refuses a subject with an empty term group, which could match no prompt', () => {
+    expect(() =>
+      defineGoldenSet([
+        {
+          id: 's',
+          kind: 'subject',
+          text: '2 girls',
+          expectTerms: [['2girls'], []],
+          k: 10,
+          targets: ['images'],
+        },
+      ])
+    ).toThrow(/empty term group/);
+  });
 });

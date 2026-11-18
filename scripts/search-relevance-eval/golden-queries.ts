@@ -10,6 +10,10 @@
  *           `models`, a Checkpoint whose base model is in that ecosystem; on `images`, an
  *           image generated on one. Matched by ecosystem, never by name substring, since
  *           many LoRAs carry an ecosystem's name ("Flux") and would pass any boost.
+ *   subject — graded by precision@k on `images`: the share of the top `k` whose prompt
+ *           matches every group in `expectTerms` (any term of a group, whole word,
+ *           case-insensitive). Prompt text is the point here: these came from reports
+ *           that semantic search returns look-alikes whose prompts never name the subject.
  */
 
 import type { ECO } from '~/shared/constants/basemodel.constants';
@@ -21,7 +25,8 @@ type GoldenQueryBase = { id: string; text: string; targets: GoldenTarget[]; note
 export type GoldenQuery =
   | (GoldenQueryBase & { kind: 'canonical' })
   | (GoldenQueryBase & { kind: 'typo'; canonical: string })
-  | (GoldenQueryBase & { kind: 'named'; expectEcosystem: keyof typeof ECO; k: number });
+  | (GoldenQueryBase & { kind: 'named'; expectEcosystem: keyof typeof ECO; k: number })
+  | (GoldenQueryBase & { kind: 'subject'; expectTerms: string[][]; k: number });
 
 export function defineGoldenSet(queries: GoldenQuery[]) {
   const byId = new Map<string, GoldenQuery>();
@@ -30,6 +35,10 @@ export function defineGoldenSet(queries: GoldenQuery[]) {
     byId.set(query.id, query);
   }
   for (const query of queries) {
+    if (query.kind === 'subject' && !query.expectTerms.length)
+      throw new Error(`subject "${query.id}" has no term groups`);
+    if (query.kind === 'subject' && !query.expectTerms.every((group) => group.length))
+      throw new Error(`subject "${query.id}" has an empty term group`);
     if (query.kind !== 'typo') continue;
     const canonical = byId.get(query.canonical);
     if (canonical?.kind !== 'canonical')
@@ -108,5 +117,46 @@ export const GOLDEN_QUERIES = defineGoldenSet([
     expectEcosystem: 'Flux1',
     k: 5,
     targets: ['models'],
+  },
+
+  // Subject counts (tester report): semantic search ranks images with the wrong number of
+  // subjects, or with the count written as text in the picture, above prompts that name it.
+  {
+    id: 'subject-count-2-girls',
+    kind: 'subject',
+    text: '2 girls',
+    expectTerms: [['2girls', '2 girls', 'two girls']],
+    k: 10,
+    targets: ['images'],
+    note: 'Reported with no correct match in the top results.',
+  },
+  {
+    id: 'subject-count-3-girls',
+    kind: 'subject',
+    text: '3 girls',
+    expectTerms: [['3girls', '3 girls', 'three girls']],
+    k: 20,
+    targets: ['images'],
+    note: 'Reported with the first miss around rank 20, so k is 20.',
+  },
+  {
+    id: 'subject-count-3-boys',
+    kind: 'subject',
+    text: '3 boys',
+    expectTerms: [['3boys', '3 boys', 'three boys']],
+    k: 10,
+    targets: ['images'],
+  },
+  {
+    id: 'subject-count-mixed',
+    kind: 'subject',
+    text: '2 girls 1 boy',
+    expectTerms: [
+      ['2girls', '2 girls', 'two girls'],
+      ['1boy', '1 boy', 'one boy'],
+    ],
+    k: 10,
+    targets: ['images'],
+    note: 'Mixed-gender counts were reported as worse than single-gender ones.',
   },
 ]);
