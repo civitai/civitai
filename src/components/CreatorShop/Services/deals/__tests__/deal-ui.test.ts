@@ -193,7 +193,7 @@ describe('seller held line', () => {
   it('tells the seller the held amount and the payout timings while the deal is open', () => {
     for (const status of ['Requested', 'Accepted', 'InRevision', 'Delivered'] as const)
       expect(sellerHeldLine({ status, held: true, price: 5000 })).toBe(
-        "5,000 Buzz from the buyer is already held for you. After you deliver, it's paid to you 48 hours after the buyer accepts, or 120 hours after delivery if they don't respond."
+        "5,000 Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you 48 hours after the buyer accepts, or 120 hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled."
       );
   });
 

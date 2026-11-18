@@ -116,13 +116,12 @@ const SELLER_HELD_STATUSES: ServiceDealStatus[] = [
   'Delivered',
 ];
 
-/** For the seller: the buyer's Buzz is already held, and when it is paid out. */
 export function sellerHeldLine(deal: { status: ServiceDealStatus; held: boolean; price: number }) {
   if (!deal.held || !SELLER_HELD_STATUSES.includes(deal.status)) return null;
   const hours = (ms: number) => ms / 3_600_000;
   const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
   const unanswered = hours(SERVICE_DEAL_AUTO_COMPLETE_MS) + dispute;
-  return `${deal.price.toLocaleString()} Buzz from the buyer is already held for you. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after delivery if they don't respond.`;
+  return `${deal.price.toLocaleString()} Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled.`;
 }
 
 /**
