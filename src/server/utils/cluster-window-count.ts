@@ -18,8 +18,8 @@ export function boundedClusterCall<T>(
 }
 
 /**
- * Adds `by` (default 1; negative releases) to a fixed window on the cache cluster and answers the
- * total after it.
+ * Adds one (`INCR`), or `by` when given (`INCRBY`; negative releases), to a fixed window on the
+ * cache cluster and answers the total after it.
  *
  * `SET NX EX` + `INCR`/`INCRBY` in one single-key MULTI, so the key always carries its TTL: a
  * crash between the two cannot strand a TTL-less counter, and a release that lands after the key
@@ -33,12 +33,12 @@ export async function takeClusterWindowCount(
   windowSeconds: number,
   opts: CallOptions & { by?: number } = {}
 ): Promise<number> {
-  const { by = 1, ...callOpts } = opts;
+  const { by, ...callOpts } = opts;
   const created = { NX: true, EX: windowSeconds } as const;
   const reply: unknown = await boundedClusterCall<unknown>(
     fn,
     () =>
-      by === 1
+      by === undefined
         ? redis.multi().set(key, '0', created).incr(key).exec()
         : redis.multi().set(key, '0', created).incrBy(key, by).exec(),
     callOpts
