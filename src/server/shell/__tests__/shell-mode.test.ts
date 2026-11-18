@@ -58,6 +58,25 @@ describe('shellRefusal', () => {
     expect(await resolveShellMode(eligible() as never, ROUTE)).toBe('images');
   });
 
+  it('does not count a shared-slot cookie on a site listed host as a session', async () => {
+    flipt.on = new Set(['shell-master']);
+    // Cookie names carry their __Secure-/__Host- prefixes only on an https deploy.
+    vi.stubEnv('NEXT_PUBLIC_BASE_URL', 'https://civitai.red');
+    vi.stubEnv('AUTH_SESSION_COOKIE_MODE_BY_SITE', 'civitai.red:host');
+    try {
+      const shared = '__Secure-civ-token=a.b.c; civ-shell-images=1';
+      expect(await refusal(eligible({}, { host: 'civitai.red', cookie: shared }))).toBe(
+        'no-session-cookie'
+      );
+      const own = '__Host-civ-token=a.b.c; civ-shell-images=1';
+      expect(await refusal(eligible({}, { host: 'civitai.red', cookie: own }))).not.toBe(
+        'no-session-cookie'
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('accepts the legacy session cookie family too', async () => {
     flipt.on = new Set(['shell-master']);
     const req = eligible({}, { cookie: '__Secure-civitai-token=legacy; civ-shell-images=1' });

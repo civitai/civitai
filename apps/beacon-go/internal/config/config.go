@@ -138,9 +138,8 @@ func Load(getenv func(string) string) (*Config, error) {
 	return c, nil
 }
 
-// CookieNames are the session cookie names to read for a request to reqHost, in the order getHubSession
-// reads them (readSlot): the mode's own slot first, the shared slot only when legacy read is on (ModeFor).
-// The `__Secure-`/`__Host-` prefixes apply when the issuer is https (isSecureCookie).
+// CookieNames are the session cookie names to read on a request to reqHost, in the order the main app
+// reads them. The prefixes apply only when the issuer is https.
 func (c *Config) CookieNames(reqHost string) []string {
 	secure := strings.HasPrefix(c.AuthIssuer, "https://")
 	if !secure {

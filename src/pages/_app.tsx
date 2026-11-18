@@ -67,6 +67,7 @@ import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
 import { appendSetCookie } from '~/server/utils/set-cookie';
+import { siteCookieJar } from '@civitai/auth/client';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -525,9 +526,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = hasSessionCookie(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const siteCookies = siteCookieJar(cookies, request.headers.host) ?? cookies;
+  let hasAuthCookie = hasSessionCookie(siteCookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = sessionCookieKind(cookies);
+  const sessionCookie = sessionCookieKind(siteCookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(

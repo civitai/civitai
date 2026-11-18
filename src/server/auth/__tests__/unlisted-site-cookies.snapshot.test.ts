@@ -6,8 +6,8 @@ vi.mock('~/shared/constants/generation.constants', () => ({
   generationServiceCookie: { name: 'civitai-generation' },
 }));
 
-// A site not listed in AUTH_SESSION_COOKIE_MODE_BY_SITE writes exactly what it wrote before that setting existed.
-// The inline snapshot was recorded from the code before it; listing civitai.red must not change civitai.com.
+// civitai.com's exact Set-Cookie output. Listing another site in AUTH_SESSION_COOKIE_MODE_BY_SITE must not change a
+// byte of it. The full lists are pinned on purpose: change them only for a deliberate change to civitai.com's cookies.
 
 const NOW = 2_000_000_000;
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');

@@ -95,7 +95,9 @@ export function parseCookieHeader(header: string): Record<string, string> {
 // One deployment of the main app serves several sites (civitai.com, civitai.red), so AUTH_SESSION_COOKIE_MODE_BY_SITE
 // sets the mode per site, keyed by registrable domain: `civitai.red:host` (comma-separated for more). A site listed
 // `host` keeps its session in the host-only slot alone: it never reads the shared slot, and expires a shared-slot
-// copy wherever it writes. A site not listed follows AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ as before.
+// copy wherever it writes. A site listed `shared` uses the shared slot and always reads it, whatever
+// AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ say: the way to return one site to shared cookies. A site not listed
+// follows AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ as before.
 
 /** A hostname's 2-label registrable domain (all we deploy); undefined for localhost and IPs. */
 export function registrableDomain(hostname: string): string | undefined {

@@ -346,9 +346,9 @@ func (e *Engine) rollDue(u *auth.SessionUser, host string) bool {
 	return age >= e.UpdateAgeMs
 }
 
-// rollSlot is rollSlot(readSessionToken(...)) !== null for the cookie the session was read from: a
+// rollSlot is whether the cookie the session was read from rolls, in the request host's mode: a
 // host-slot read rolls in either mode, a shared-slot read only in shared mode. Without the secure
-// prefixes both slots are named `civ-token`, and the slot is the one readSlot tried first.
+// prefixes both slots are named `civ-token`, and the slot is the one CookieNames lists first.
 func (e *Engine) rollSlot(cookie, host string) bool {
 	var mode string
 	var legacyRead bool

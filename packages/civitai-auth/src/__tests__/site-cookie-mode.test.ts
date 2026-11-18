@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ loadAuthEnv: vi.fn() }));
 vi.mock('../env', () => ({ loadAuthEnv: h.loadAuthEnv }));
 
-import { legacyCookieReadEnabled, sessionCookieMode, siteCookieHeader } from '../cookies';
+import {
+  legacyCookieReadEnabled,
+  readSessionToken,
+  sessionCookieMode,
+  siteCookieHeader,
+} from '../cookies';
 import { createDeviceAccountClient } from '../device-client';
 import { refreshInternalParity } from '../hub';
 import { createImpersonationClient } from '../impersonation-client';
@@ -32,6 +37,15 @@ describe('AUTH_SESSION_COOKIE_MODE_BY_SITE', () => {
       expect(sessionCookieMode(host)).toBe('shared');
       expect(legacyCookieReadEnabled(host)).toBe(true);
     }
+  });
+
+  it('a site listed shared reads the shared slot even with AUTH_LEGACY_READ off and the global mode host', () => {
+    process.env.AUTH_SESSION_COOKIE_MODE = 'host';
+    process.env.AUTH_LEGACY_READ = 'false';
+    process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE = 'civitai.red:shared';
+    const jar = { '__Secure-civ-token': 's' };
+    expect(readSessionToken(jar, { host: 'civitai.red' })?.value).toBe('s');
+    expect(readSessionToken(jar, { host: 'civitai.com' })).toBeNull();
   });
 
   it('ignores an entry whose mode is not exactly host or shared', () => {
@@ -80,10 +94,14 @@ describe('forwarding a host-only site’s cookies', () => {
       AUTH_INTERNAL_TOKEN: 'i',
     });
     await refreshInternalParity();
-    await createImpersonationClient().impersonate(header, 2, 'civitai.red');
-    const [, init] = fetch.mock.calls.at(-1) as unknown as [string, { body: string }];
-    expect(JSON.parse(init.body).token).toBe('h');
-    h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: 'https://auth.test' });
-    await refreshInternalParity();
+    try {
+      await createImpersonationClient().impersonate(header, 2, 'civitai.red');
+      const [, init] = fetch.mock.calls.at(-1) as unknown as [string, { body: string }];
+      expect(JSON.parse(init.body).token).toBe('h');
+    } finally {
+      // Back to the legacy shape (no internal credential), so later tests start from it.
+      h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: 'https://auth.test' });
+      await refreshInternalParity();
+    }
   });
 });

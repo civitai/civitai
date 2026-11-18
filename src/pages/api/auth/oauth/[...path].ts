@@ -45,7 +45,8 @@ const STRIP_REQUEST_HEADERS = new Set([
   'keep-alive',
   'upgrade',
 ]);
-// A host-only site's session cookies never cross the relay, in either direction.
+// A host-only site's session cookies never cross the relay, in either direction: every slot's names, where
+// siteCookieHeader keeps the host-only ones.
 const SESSION_COOKIE_NAMES = new Set([
   ...allCookieNames(SESSION_COOKIE_BASE),
   ...allCookieNames(DEVICE_COOKIE_BASE),

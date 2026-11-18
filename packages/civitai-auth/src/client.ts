@@ -14,6 +14,7 @@ export {
   registrableDomain,
   sessionCookieMode,
   sessionCookieNameForSlot,
+  siteCookieJar,
 } from './cookies';
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */

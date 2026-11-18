@@ -254,7 +254,7 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-// CookieNames returns the session cookie names to read for a request to reqHost, in the order getHubSession
+// CookieNames returns the session cookie names to read on a request to reqHost, in the order the main app
 // reads them.
 func (c *Config) CookieNames(reqHost string) []string {
 	secure := strings.HasPrefix(c.AuthIssuer, "https://")
