@@ -155,8 +155,9 @@ export const PERMISSIONS = [
   // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
   // its own call; reading a ticket view is the page grant.
   { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
-  // Hands a moderation ticket to support, naming the moderator who did it.
-  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
+  // Every hand-off of a moderation ticket (support, bug report, mod lead), each naming the moderator.
+  // Privacy needs it too.
+  { id: 'tickets.escalate', label: 'Hand off a moderation ticket (support, bug report, mod lead)' },
   // Its own grant because the privacy hand-off emails the requester Legal's acknowledgment.
   { id: 'tickets.privacy', label: 'Hand a moderation ticket to Legal as a privacy request' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },

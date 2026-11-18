@@ -14,7 +14,7 @@ import {
   resolveModelSearchIds,
   runModelSearch,
 } from '~/server/services/model-search.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import {
@@ -54,7 +54,7 @@ import { constants } from '~/server/common/constants';
  * `withBlockScope` gives this route the JWT gate, revocation, `private,
  * no-store`, the opaque-origin CORS and the audit row. It does NOT give it the
  * maturity clamp — `blocks/models.ts` states this in its own words, that
- * `resolveCatalogBrowsingLevel` "remains the whole authority surface". A route
+ * `resolveCatalogViewerBrowsingLevel` "remains the whole authority surface". A route
  * added under this prefix that forgets the call is UNCLAMPED while looking
  * exactly as protected as its neighbours, and nothing in the wrapper would say
  * so. That is the single most important line in this file, and it is why the
@@ -247,7 +247,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // 🔴 AUTHORITATIVE CLAMP — see the header. Never the client's; the tool
   // argument schema does not even carry a maturity field to ignore.
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   try {
     if (tool.name === 'search_models') {

@@ -83,7 +83,7 @@ beforeEach(() => {
   mockEnv.JOB_TOKEN = 'job-secret';
   mockValidator.validate.mockReturnValue({ valid: true });
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
-    allowedScopes: 0xffffff,
+    allowedScopes: 0xffffffn,
     allowedOrigins: ['https://blocks.civitai.com'],
   });
   mockDbRead.appBlock.findUnique.mockResolvedValue(null);

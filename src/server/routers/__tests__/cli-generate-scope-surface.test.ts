@@ -83,12 +83,12 @@ const TOTAL_PROCEDURES = GENERATE_SURFACE.reduce((n, g) => n + g.procedures.leng
  * the migration (which is the source of truth for the DB value) and cross-checked
  * against the enum below.
  */
-const CLI_GRANT = 100777985;
+const CLI_GRANT = 100777985n;
 
 interface ProcedureScope {
   key: string;
   /** Resolved `requiredScope`, or `null` when the procedure carries no `.meta({ requiredScope })`. */
-  requiredScope: number | null;
+  requiredScope: bigint | null;
   /** Enum key as written in source, e.g. `AIServicesWrite`. `null` when absent. */
   scopeKey: string | null;
   blockApiKeys: boolean;
@@ -196,8 +196,8 @@ function collect(): ProcedureScope[] {
       }
       const metas = metaObjectsOnSpine(prop.initializer);
       const scopeKey = metas.map(readScopeKey).find((k) => k !== undefined) ?? null;
-      const scopes = TokenScope as unknown as Record<string, number>;
-      if (scopeKey !== null && typeof scopes[scopeKey] !== 'number') {
+      const scopes = TokenScope as unknown as Record<string, bigint>;
+      if (scopeKey !== null && typeof scopes[scopeKey] !== 'bigint') {
         throw new Error(`\`TokenScope.${scopeKey}\` (on ${name}) is not a member of the enum`);
       }
       out.push({
@@ -251,22 +251,22 @@ describe('civitai generate — OAuth scope surface', () => {
 
   it('the union of required scopes is exactly AIServicesRead|AIServicesWrite|BuzzRead', () => {
     const found = collect();
-    const union = found.reduce((acc, p) => acc | (p.requiredScope ?? TokenScope.Full), 0);
+    const union = found.reduce((acc, p) => acc | (p.requiredScope ?? TokenScope.Full), 0n);
     expect(union).toBe(
       TokenScope.AIServicesRead | TokenScope.AIServicesWrite | TokenScope.BuzzRead
     );
-    expect(union).toBe(114688);
+    expect(union).toBe(114688n);
   });
 
   it('the widened civitai-cli grant COVERS that union', () => {
     const found = collect();
-    const union = found.reduce((acc, p) => acc | (p.requiredScope ?? TokenScope.Full), 0);
+    const union = found.reduce((acc, p) => acc | (p.requiredScope ?? TokenScope.Full), 0n);
     const uncovered = union & ~CLI_GRANT;
     expect(
       uncovered,
       `the generate path requires scope bits ${uncovered} that the civitai-cli client ` +
         `(allowedScopes=${CLI_GRANT}) does not grant — \`civitai generate\` would 403.`
-    ).toBe(0);
+    ).toBe(0n);
 
     // The grant literal must agree with the enum, or the check above is about the
     // wrong number.
@@ -282,8 +282,8 @@ describe('civitai generate — OAuth scope surface', () => {
     // Negative control for the coverage assertion: the PRE-fix grant (without bits
     // 14/15/16) must NOT cover the union. Without this, `uncovered === 0` would be
     // consistent with a union of 0 or a grant of ~0.
-    const PRE_FIX_GRANT = 100663297;
-    expect(union & ~PRE_FIX_GRANT).not.toBe(0);
+    const PRE_FIX_GRANT = 100663297n;
+    expect(union & ~PRE_FIX_GRANT).not.toBe(0n);
   });
 
   it('pins each procedure’s individual requiredScope', () => {

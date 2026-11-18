@@ -31,7 +31,7 @@ async function me(user: SessionUser, context: Record<string, unknown> = {}) {
   return JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
 }
 
-const token = (tokenScope: number) => ({
+const token = (tokenScope: bigint) => ({
   tokenScope,
   buzzLimit: null,
   subject: { type: 'oauth', id: 'client-1' },

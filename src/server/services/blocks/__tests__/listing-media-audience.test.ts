@@ -47,6 +47,7 @@ function img(url: string, nsfwLevel: number, over: Partial<ListingMediaImage> = 
     tosViolation: false,
     acceptableMinor: false,
     blockedFor: null,
+    modelRestricted: false,
     ...over,
   } satisfies ListingMediaImage;
 }
@@ -127,6 +128,7 @@ describe('isListingImageVisible — fail-closed on every uncertain state', () =>
     ['flagged for review', img('e.png', PG, { needsReview: 'minor' })],
     ['hard-blocked', img('f.png', PG, { blockedFor: 'tos' })],
     ['a ToS violation', img('g.png', PG, { tosViolation: true })],
+    ['mature and made with a restricted base model', img('h.png', R, { modelRestricted: true })],
   ])('hides an image that is %s', (_label, image) => {
     expect(isListingImageVisible(image, ceiling)).toBe(false);
   });

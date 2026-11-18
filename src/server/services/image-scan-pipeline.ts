@@ -35,7 +35,10 @@ import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 import {
   tagIdsForImagesCache,
   tagCacheByName,
@@ -349,6 +352,7 @@ export async function loadImageForScan(imageId: number) {
       ingestion: true,
       blockedFor: true,
       needsReview: true,
+      minor: true,
     },
   });
 
@@ -1213,7 +1217,14 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
-    await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
+    // The scan writes "minor", which no trigger watches. A changed flag requeues the articles and
+    // comics through minorImageIds; otherwise they are queued here.
+    const minorChanged = !!outcome.audit && !!outcome.audit.minor !== !!image.minor;
+    if (!minorChanged) await queueArticlesAndComicsForImages([image.id]);
+    await queueModelsForImageChildTagChanges({
+      levelImageIds: [image.id],
+      ...(minorChanged && { minorImageIds: [image.id] }),
+    });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
     try {

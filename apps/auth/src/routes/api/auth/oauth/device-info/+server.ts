@@ -1,6 +1,6 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { db } from '$lib/server/db/db';
-import { scopeLabels } from '$lib/server/oauth/scope';
+import { scopeLabels, stringToScope } from '$lib/server/oauth/scope';
 import { resolvePendingDeviceCode } from '$lib/server/oauth/device-codes';
 import { parseBody } from '$lib/server/oauth/http';
 
@@ -11,12 +11,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
   const { user_code } = await parseBody(request);
   if (!user_code) {
-    return json({ error: 'invalid_request', error_description: 'Missing user_code' }, { status: 400 });
+    return json(
+      { error: 'invalid_request', error_description: 'Missing user_code' },
+      { status: 400 }
+    );
   }
 
   const resolved = await resolvePendingDeviceCode(user_code);
   if (!resolved.ok) {
-    return json({ error: resolved.error, error_description: resolved.description }, { status: 400 });
+    return json(
+      { error: resolved.error, error_description: resolved.description },
+      { status: 400 }
+    );
   }
 
   const client = await db
@@ -25,7 +31,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     .where('id', '=', resolved.data.clientId)
     .executeTakeFirst();
   if (!client) {
-    return json({ error: 'invalid_code', error_description: 'Unknown application' }, { status: 400 });
+    return json(
+      { error: 'invalid_code', error_description: 'Unknown application' },
+      { status: 400 }
+    );
   }
 
   return json({
@@ -35,6 +44,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
       logoUrl: client.logoUrl,
       isVerified: client.isVerified,
     },
-    scopes: scopeLabels(parseInt(resolved.data.scope, 10) || 0),
+    scopes: scopeLabels(stringToScope(resolved.data.scope)),
   });
 };

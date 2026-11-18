@@ -39,7 +39,7 @@ const SERVICE = -1;
 type Owner = { id: number; isModerator?: boolean; bannedAt?: Date; meta?: unknown };
 let users: Record<number, Owner> = {};
 
-function keyFor(owner: Owner, tokenScope: number = TokenScope.ModelsRead) {
+function keyFor(owner: Owner, tokenScope: bigint = TokenScope.ModelsRead) {
   users[owner.id] = owner;
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 1,

@@ -27,7 +27,10 @@ const READER = 41;
 const TEXT = 17;
 const POST = 5;
 
-const report = (userId: number, reason: ReportReason = ReportReason.TOSViolation) =>
+const report = (
+  userId: number,
+  reason: Parameters<typeof createReport>[0]['reason'] = ReportReason.TOSViolation
+) =>
   createReport({
     userId,
     id: TEXT,

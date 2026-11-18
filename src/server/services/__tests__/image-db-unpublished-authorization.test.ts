@@ -92,7 +92,9 @@ const baseInput = {
  * rather than at real infra.
  */
 const sqlFor = async (input: FeedInput) => {
-  await getAllImages(input as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+  await getAllImages({ asModerator: true, asOwner: true, ...input } as unknown as Parameters<
+    typeof getAllImages
+  >[0]).catch(() => undefined);
   expect(
     queryWithTimeoutMock,
     'queryWithTimeout was never called — the build no longer reaches this seam'

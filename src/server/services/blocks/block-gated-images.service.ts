@@ -1,13 +1,21 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   contentRatingFromNsfwLevel,
+  sfwBrowsingLevelsFlag,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { isImageNotRestricted } from '~/server/common/image-visibility';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
-import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-image-upload.service';
+import {
+  BLOCK_PUBLISHED_APP_ID_META_KEY,
+  BLOCK_SHARED_UPLOAD_APP_ID_META_KEY,
+} from '~/shared/utils/block-provenance-metadata';
 
 /**
  * App Blocks (Phase-1 seam) — cross-user gated image read for
@@ -15,10 +23,10 @@ import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-
  * ids a benchmark grid stored) + the REQUESTING viewer, returns a per-viewer
  * `BlockGatedImage` for each RESOLVABLE id.
  *
- * SECURITY — the read is scoped to images THIS app published (the
- * `metadata.blockPublishedAppId = <caller appId>` provenance marker stamped at
- * publish), so a block can only read its OWN app's grid — never another app's
- * images nor a post-deletion-orphaned bare row. On top of that, the per-viewer
+ * SECURITY — the read is scoped to bare (`postId IS NULL`) images whose
+ * {@link BLOCK_PUBLISHED_APP_ID_META_KEY} or {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
+ * EQUALS the caller's verified appId. 🔴 NEVER `blockUploadedAppId`: the app's own
+ * bytes uploads carry it with no share and no dialog. On top of that, the per-viewer
  * clamp (mirroring canonical `getAllImages`' non-owner path) applies:
  *   - blocked-users / blocked-tags → EXCLUDED at the query level (omitted),
  *   - above-ceiling / flagged / hard-blocked / scan-refused → `hidden` (NO url),
@@ -27,6 +35,10 @@ import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-
  *   - within-ceiling + scanned + unflagged → the moderated projection.
  * The load-bearing per-row decision is {@link classifyGatedImageForViewer} (pure,
  * unit-tested); an unclamped `getEdgeUrl` is NEVER returned for a hidden image.
+ *
+ * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) is judged at the viewer's
+ * ceiling INTERSECTED WITH SFW, with no `ratingPending` owner branch: `pending` is
+ * `hidden` for everyone, its uploader included.
  */
 
 /** Bound the read — a grid page never needs more, and each id is a row lookup. */
@@ -97,32 +109,39 @@ export type BlockGatedImage =
 // service's database graph. Re-exported here for its existing callers.
 export { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
 
-/** Raw row shape read from Postgres for the clamp decision. */
-type GatedImageRow = {
-  id: number;
-  /** The image's AUTHOR. Read for ONE decision: may this viewer see their own
-   *  not-yet-rated image (see `ratingPending` on {@link BlockGatedImage}). */
-  userId: number;
-  url: string;
-  nsfwLevel: number;
-  ingestion: string;
-  width: number | null;
-  height: number | null;
-  needsReview: string | null;
-  poi: boolean | null;
-  minor: boolean | null;
-  tosViolation: boolean | null;
-  acceptableMinor: boolean | null;
-  blockedFor: string | null;
+/**
+ * Raw row read from Postgres for the clamp decision. `userId` is the image's AUTHOR: the viewer
+ * may see their own not-yet-rated image (see `ratingPending` on {@link BlockGatedImage}) and their
+ * own restricted one.
+ */
+type GatedImageRow = Pick<
+  Selectable<DB['Image']>,
+  | 'id'
+  | 'userId'
+  | 'url'
+  | 'nsfwLevel'
+  | 'ingestion'
+  | 'width'
+  | 'height'
+  | 'needsReview'
+  | 'poi'
+  | 'minor'
+  | 'tosViolation'
+  | 'acceptableMinor'
+  | 'blockedFor'
+  | 'modelRestricted'
+> & {
+  /** The PUBLISHED key matches this app. Otherwise only
+   *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
+  viaPublished: boolean | null;
 };
 
 export async function getBlockGatedImagesByIds(input: {
   imageIds: number[];
   browsingLevel: number;
-  /** OauthClient id of the CALLING app — scopes the read to images IT published. */
+  /** OauthClient id of the CALLING app — scopes the read to images IT published or was allowed to share. */
   appId: string;
-  /** The requesting viewer — sources their blocked-users / blocked-tags sets,
-   *  and decides the one owner branch (`ratingPending`) below. */
+  /** The requesting viewer: sources their blocked-users / blocked-tags sets, and the owner exceptions. */
   userId: number;
 }): Promise<{ images: BlockGatedImage[] }> {
   // Dedupe (preserving first-seen request order) + cap to bound load. Non-finite
@@ -163,17 +182,22 @@ export async function getBlockGatedImagesByIds(input: {
       )`
     : Prisma.empty;
 
-  // Bare rows ONLY (`postId IS NULL`) AND scoped to images THIS app published
-  // (the provenance marker) — so the bridge is never a cross-app / orphaned-row
-  // read oracle. The per-row clamp below is the maturity security boundary.
+  // Bare rows scoped by equality to the verified appId: keeps the bridge from being a
+  // cross-app / orphaned-row read oracle.
   const rows = await dbRead.$queryRaw<GatedImageRow[]>`
     SELECT
       i."id", i."userId", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",
-      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor"
+      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
+      i."modelRestricted",
+      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${input.appId})
+        AS "viaPublished"
     FROM "Image" i
     WHERE i."id" = ANY(${orderedIds}::int[])
       AND i."postId" IS NULL
-      AND i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
+      AND (
+        i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
+        OR i."metadata"->>(${BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}::text) = ${input.appId}
+      )
       ${excludedUserFrag}
       ${excludedTagFrag}
   `;
@@ -185,6 +209,13 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
+    if (!isImageNotRestricted(row, input.userId)) {
+      images.push({ imageId: id, status: 'hidden' });
+      continue;
+    }
+    // Fail closed: only a row the SQL positively marked published keeps the published rules;
+    // anything else is judged as a shared upload, the stricter of the two.
+    const uploadOnly = row.viaPublished !== true;
     const verdict = classifyGatedImageForViewer(
       {
         ingestion: row.ingestion,
@@ -196,14 +227,16 @@ export async function getBlockGatedImagesByIds(input: {
         acceptableMinor: row.acceptableMinor,
         blockedFor: row.blockedFor,
       },
-      input.browsingLevel
+      uploadOnly
+        ? Flags.intersection(input.browsingLevel, sfwBrowsingLevelsFlag)
+        : input.browsingLevel
     );
-    if (verdict.status === 'hidden') {
+    if (verdict.status === 'hidden' || (uploadOnly && verdict.status === 'pending')) {
       images.push({ imageId: id, status: 'hidden' });
       continue;
     }
     if (verdict.status === 'pending') {
-      // 🔴 THE ONE IDENTITY BRANCH, AND IT LIVES HERE RATHER THAN IN THE PURE
+      // 🔴 THE PENDING IDENTITY BRANCH LIVES HERE RATHER THAN IN THE PURE
       // CLAMP. Nothing has rated this image yet. Its AUTHOR may see it — they
       // generated it, they confirmed the publish, and their block already holds
       // the same picture's orchestrator url from `pollWorkflow`, so the gated
