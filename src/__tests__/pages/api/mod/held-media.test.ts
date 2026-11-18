@@ -297,7 +297,7 @@ describe('/api/mod/held-media', () => {
   });
 
   it('refuses bytes with a 503 when the view row cannot be written', async () => {
-    trackModActivity.mockRejectedValue(new Error('db down'));
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
     const res = await call();
     expect(res.statusCode).toBe(503);
     expect(res.headers['cache-control']).toBe('private, no-store');
