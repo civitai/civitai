@@ -198,12 +198,7 @@ export async function createLink(
   // A failure part way leaves a link that cannot be revoked by linkId or by its credential, until
   // it expires; the mint answers an error, so its URL is never handed out.
   await cluster('create.link', () =>
-    redis
-      .multi()
-      .hSet(linkKey(hash), fields)
-      .pExpireAt(linkKey(hash), link.expiresAt)
-      .set(linkIdKey(linkId), hash, { PXAT: link.expiresAt })
-      .exec()
+    redis.multi().hSet(linkKey(hash), fields).pExpireAt(linkKey(hash), link.expiresAt).exec()
   );
   await cluster('create.linkId', () =>
     redis.set(linkIdKey(linkId), hash, { PXAT: link.expiresAt })

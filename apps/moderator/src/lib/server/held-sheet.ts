@@ -96,9 +96,9 @@ const sessionKey = (token: string) =>
 // Both keys of a review session carry its `{sha256(token)}` tag, so they share a cluster slot and
 // one DEL ends both.
 const reviewKey = (token: string) =>
-  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateCache;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}` as RedisKeyTemplateCache;
 const reviewBatchesKey = (token: string) =>
-  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}:batches` as RedisKeyTemplateCache;
+  `${REDIS_KEYS.APP.REVIEW_SHEET_SESSION}:{${sha256(token)}}:batches` as RedisKeyTemplateCache;
 
 /** Slides both keys' TTL; false when the session is gone (expired or signed out). */
 async function slideReviewSession(token: string, createdAt: number, now: number) {

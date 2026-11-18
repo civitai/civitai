@@ -87,7 +87,7 @@ const hostKey = (host: string) => `${SYS_PREFIX}:host:${host}` as const;
 // writes the pointer and the index and reads the cancel mark, runs in one cluster slot.
 const USER_PREFIX = REDIS_KEYS.BLOCKS.DEV_TUNNEL_USER;
 const userBlockKey = (userId: number, blockId: string) =>
-  `${USER_PREFIX}:user:${userId}:${blockId}` as const;
+  `${USER_PREFIX}:user:{${userId}}:${blockId}` as const;
 /**
  * A SET of the blockIds a user currently has a tunnel for.
  *
@@ -103,16 +103,16 @@ const userBlockKey = (userId: number, blockId: string) =>
  * Carries the same hard-TTL as every other key here, refreshed on each add, so a member
  * missed by teardown cannot outlive the session it names by more than that window.
  */
-const userTunnelIndexKey = (userId: number) => `${USER_PREFIX}:user-index:${userId}` as const;
+const userTunnelIndexKey = (userId: number) => `${USER_PREFIX}:user-index:{${userId}}` as const;
 const spendKey = (sessionId: string) => `${SYS_PREFIX}:spend:${sessionId}` as const;
 /**
  * A caller's own key for one start (`StartDevTunnelParams.clientKey`): the session that start
  * opened, so a caller that gave up on its answer can still close it (`cancelDevTunnelStart`).
  */
 const clientStartKey = (userId: number, clientKey: string) =>
-  `${USER_PREFIX}:client-start:${userId}:${clientKey}` as const;
+  `${USER_PREFIX}:client-start:{${userId}}:${clientKey}` as const;
 const clientCancelledKey = (userId: number, clientKey: string) =>
-  `${USER_PREFIX}:client-cancelled:${userId}:${clientKey}` as const;
+  `${USER_PREFIX}:client-cancelled:{${userId}}:${clientKey}` as const;
 /** One bounded cache-cluster call; throws on a failure, a timeout or an open breaker. */
 const cluster = <T>(fn: string, op: () => Promise<T>) => boundedClusterCall(`devTunnel.${fn}`, op);
 /**
