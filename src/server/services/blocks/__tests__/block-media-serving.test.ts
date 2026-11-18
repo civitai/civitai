@@ -694,11 +694,12 @@ describe('🔴 a viewer whose session does not resolve is anonymous downstream',
         viewerBrowsingLevel: R_PLUS,
       });
 
-    it("the owner's own mature private clip is refused, as to anyone signed out", async () => {
-      blobState.mockResolvedValue(rated('r'));
+    it("the owner's own audio is refused as owner-only: no owner status once signed out", async () => {
+      blobState.mockResolvedValue(rated('pg'));
       unresolvable.add(claims.ownerId);
-      expect(await resolveBlockMediaFetch(ownTicket({ privateGen: true }))).toMatchObject({
+      expect(await resolveBlockMediaFetch(ownTicket({ mediaType: 'audio' }))).toEqual({
         state: 'hidden',
+        reason: 'owner_only',
       });
     });
 
@@ -709,8 +710,13 @@ describe('🔴 a viewer whose session does not resolve is anonymous downstream',
     });
 
     it('CONTROL: both are served while the session resolves', async () => {
+      blobState.mockResolvedValue(rated('pg'));
+      expect(await resolveBlockMediaFetch(ownTicket({ mediaType: 'audio' }))).toEqual({
+        state: 'redirect',
+        location: CONTENT,
+      });
       blobState.mockResolvedValue(rated('r'));
-      expect(await resolveBlockMediaFetch(ownTicket({ privateGen: true }))).toEqual({
+      expect(await resolveBlockMediaFetch(ownTicket({}))).toEqual({
         state: 'redirect',
         location: CONTENT,
       });
