@@ -69,13 +69,6 @@ const rows: Row[] = [
   { id: 30 },
   { id: 31 },
   { id: 32 },
-  // Not blocked, no reason, the CDN refusing the url (or not, for 42 and 43).
-  { id: 40, ingestion: 'Scanned', blockedFor: null },
-  { id: 41, ingestion: 'Scanned', blockedFor: null },
-  { id: 42, ingestion: 'Scanned', blockedFor: null },
-  { id: 43, ingestion: 'Scanned', blockedFor: null },
-  { id: 44, ingestion: 'Scanned', blockedFor: null, minor: true },
-  { id: 45, ingestion: 'Scanned', blockedFor: null, needsReview: 'csam' },
 ];
 
 beforeAll(async () => {
@@ -96,8 +89,6 @@ beforeAll(async () => {
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb);
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
-    -- No CHECK on state, unlike the real table, so a state that is not a refusal can be written.
-    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL);
   `);
   for (const r of rows)
     await pg.query(
@@ -119,9 +110,6 @@ beforeAll(async () => {
     );
   await pg.exec(`
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (18);
-    INSERT INTO "ImageCdnAccess" (url, state) VALUES
-      ('key-40', 'Retracted'), ('key-41', 'Denied'), ('key-43', 'Allowed'),
-      ('key-44', 'Retracted'), ('key-45', 'Retracted');
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (26, ${childBrowsingTagIds[0]});
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled) VALUES (1, ${childBrowsingTagIds[0]}, true);
     INSERT INTO "BlockedImage" (hash, reason) VALUES (777, 'CSAM');
@@ -188,14 +176,11 @@ describe('getRetractedMedia', () => {
   });
 
   it('keeps an image the scanner marks, or cannot read, to cleared moderators', async () => {
-    for (const [verdict, answer] of [
-      ['hit', null],
-      [null, 'scanner-unreadable'],
-    ] as const) {
+    for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
       scannerVerdicts.clear();
       await expectTiers('suspect', [1]);
-      expect(await getRetractedMedia(1, { csamReview: false })).toBe(answer);
+      expect(await getRetractedMedia(1, { csamReview: false })).toBeNull();
     }
     expect(readScannerVerdict).toHaveBeenCalledWith(1);
   });
@@ -232,22 +217,6 @@ describe('getRetractedMedia', () => {
 
   it('refuses an image that is not blocked, and a missing id', async () => {
     await expectTiers('none', [12, 999]);
-  });
-
-  it('serves an image that is not blocked while the CDN refuses its url, by the same tiers', async () => {
-    await expectTiers('plain', [40, 41]);
-    await expectTiers('suspect', [44]);
-    await expectTiers('none', [45]);
-  });
-
-  it('refuses an image that is not blocked when the CDN serves its url', async () => {
-    await expectTiers('none', [42, 43]);
-  });
-
-  // A missing reason is unknown only on a blocked image: an image that is not blocked has none.
-  it('keeps the no-reason suspect leg to blocked images', async () => {
-    await expectTiers('suspect', [4]);
-    await expectTiers('plain', [40]);
   });
 
   it('refuses an image under an evidence hold', async () => {

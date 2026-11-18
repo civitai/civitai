@@ -8,21 +8,16 @@ import { blockedForSignal, type BlockedForPatterns } from './review-batch';
  *   a block with no reason or a reason `blockedForSignal` reads as a signal, or an owner named on a
  *   report or held.
  * Held media (`heldImageSql`) and an image under an evidence hold are never served here; the
- * held-media route serves the first. Besides a Blocked image, an image whose url the image CDN refuses
- * (an `ImageCdnAccess` row) is eligible, so a moderator can still see what their queue shows.
+ * held-media route serves the first.
  */
 export type RetractedTier = 'plain' | 'suspect';
 
-/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked or
- *  the CDN refuses its url, it is not held media, and it is not under an evidence hold. */
+/** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked,
+ *  not held media, and not under an evidence hold. */
 export function retractedImageWhereSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   return `(
-    (${image}.ingestion = 'Blocked'
-      OR EXISTS (
-        SELECT 1 FROM "ImageCdnAccess" ca
-        WHERE ca.url = ${image}.url AND ca.state IN ('Denied', 'Retracted')
-      ))
+    ${image}.ingestion = 'Blocked'
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
     AND NOT COALESCE(${heldImageSql(image)}, false)
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${image}.id)
@@ -34,8 +29,7 @@ export function retractedImageWhereSql(image: string): string {
 export function retractedSuspectSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   return `COALESCE((
-    -- A block with no reason. An image that is not Blocked has no reason by construction.
-    (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
+    ${image}."blockedFor" IS NULL
     OR ${reviewSuspectImageSql(image)}
     OR ${heldUserSql(`${image}."userId"`)}
   ), false)`;

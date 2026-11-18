@@ -1,7 +1,7 @@
 <script lang="ts">
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { getInferredMediaType, type MediaType } from '$lib/media/edge-url';
-  import { RETRACTED_REFUSED, retractedMediaUrl, retractedRefusalReason } from '$lib/held-media';
+  import { probeRetractedRefusal, RETRACTED_REFUSED, retractedMediaUrl } from '$lib/held-media';
 
   // The public CDN first. Media it will not serve (a blocked image or video) is tried once more from
   // storage through `/api/retracted-media`, which decides on the server whether this moderator may see
@@ -57,10 +57,9 @@
     const id = item.id;
     fallback = { id, mode: 'failed' };
     reason = RETRACTED_REFUSED;
-    fetch(`${retractedMediaUrl(id)}?probe=1`)
-      .then(async (res) => {
-        if (fallback?.id !== id) return;
-        reason = retractedRefusalReason(res.status, await res.json().catch(() => null));
+    probeRetractedRefusal(id)
+      .then((line) => {
+        if (fallback?.id === id) reason = line;
       })
       .catch(() => null);
   };

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { RETRACTED_REFUSED, retractedRefusalReason } from '../held-media';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { probeRetractedRefusal, RETRACTED_REFUSED, retractedRefusalReason } from '../held-media';
 
 describe('retractedRefusalReason', () => {
   it("shows the route's message on a 403 or a 503, which a moderator can act on", () => {
@@ -22,5 +22,27 @@ describe('retractedRefusalReason', () => {
     expect(retractedRefusalReason(403, null)).toBe(RETRACTED_REFUSED);
     expect(retractedRefusalReason(503, { message: '' })).toBe(RETRACTED_REFUSED);
     expect(retractedRefusalReason(500, { message: 'boom' })).toBe(RETRACTED_REFUSED);
+  });
+});
+
+describe('probeRetractedRefusal', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const answer = (status: number, body: string) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status }))
+    );
+
+  it("probes the image's route and reads the status and message it answers", async () => {
+    answer(503, JSON.stringify({ message: 'Could not check this image; retry.' }));
+    expect(await probeRetractedRefusal(7)).toBe('Could not check this image; retry.');
+    expect(fetch).toHaveBeenCalledWith('/api/retracted-media/7?probe=1');
+  });
+
+  it('shows the generic line for a 404 and for a body that is not JSON', async () => {
+    answer(404, JSON.stringify({ message: 'Not available here.' }));
+    expect(await probeRetractedRefusal(7)).toBe(RETRACTED_REFUSED);
+    answer(403, 'not json');
+    expect(await probeRetractedRefusal(7)).toBe(RETRACTED_REFUSED);
   });
 });

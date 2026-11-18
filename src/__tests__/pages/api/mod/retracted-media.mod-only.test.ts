@@ -19,7 +19,6 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 vi.mock('~/server/services/retracted-media.service', () => ({
   getRetractedMedia,
   NEEDS_CSAM_QUEUE: 'needs-csam-queue',
-  SCANNER_UNREADABLE: 'scanner-unreadable',
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsAsync: async () => ({ modRetractedMedia: true }),

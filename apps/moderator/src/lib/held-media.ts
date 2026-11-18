@@ -8,6 +8,12 @@ export const retractedMediaUrl = (imageId: number) => `/api/retracted-media/${im
 export const RETRACTED_REFUSED =
   'Not viewable here. It may need CSAM-queue access or be unavailable; ask a lead.';
 
+/** Asks the route why it refused an image, without serving it, and returns the tile's line. */
+export async function probeRetractedRefusal(imageId: number): Promise<string> {
+  const res = await fetch(`${retractedMediaUrl(imageId)}?probe=1`);
+  return retractedRefusalReason(res.status, await res.json().catch(() => null));
+}
+
 /** The tile's line for a refused probe: the route's own message on a 403 or 503, which a moderator
  *  can act on, and the one generic line for anything else. */
 export function retractedRefusalReason(status: number, body: unknown): string {
