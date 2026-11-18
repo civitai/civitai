@@ -260,9 +260,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
-  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
-  domainBrowsingCeiling,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -3047,7 +3045,7 @@ const getAllImagesUncaptured = async (
     }
     // An image blocked until its metadata is verified reads Blocked for ingestion and level, which
     // these gates drop. Its rating is gone, so a capped domain can't tell it is safe and lists none.
-    if (!requiringMeta || domainBrowsingCeiling(domain) !== allBrowsingLevelsFlag) {
+    if (!requiringMeta || domain !== 'red') {
       if (browsingLevel)
         AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
       AND.push(imageReviewedSql());
