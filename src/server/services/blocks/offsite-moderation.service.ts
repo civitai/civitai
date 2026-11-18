@@ -35,6 +35,7 @@ import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-noti
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
+import { revokeAppBlockOauthTokens } from '~/server/services/blocks/app-block-token-revoke.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -564,6 +565,8 @@ async function flipBackingBlockStatus(
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
+  // On a 0-count too: the block is suspended either way, and its tokens must not outlive that.
+  if (opts.to === 'suspended') await revokeAppBlockOauthTokens(tx, opts.appBlockId);
   return flip.count > 0;
 }
 

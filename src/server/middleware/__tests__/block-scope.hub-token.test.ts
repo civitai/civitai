@@ -211,6 +211,40 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     expect(claims).toMatchObject({ maxBrowsingLevel: FORCED_SFW_CEILING, viewerBrowsingLevel: 1 });
   });
 
+  it('🔴 refuses a suspended app’s token with 401 instead of passing it on as a sign-in', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 99,
+      subject: { type: 'oauth', id: CLIENT_ID },
+    });
+    // No approved block for the client, but the client is an app's (its block is suspended),
+    // and its owner has no live tunnel.
+    tunnelMock.mockResolvedValue(null);
+    dbMock.dbRead.appBlock.findFirst.mockImplementation(
+      async (args: { where: { status?: unknown } }) =>
+        args.where.status === 'approved' ? null : { id: APP_BLOCK_ID }
+    );
+
+    const { handler, res } = await drive('civ_oauth_access_token');
+
+    expect(res.statusCode).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('passes an ordinary OAuth app’s token on to the route’s own sign-in', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 99,
+      subject: { type: 'oauth', id: 'third-party-client' },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+
+    const { handler, claims } = await drive('civ_oauth_access_token');
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(claims).toBeUndefined();
+  });
+
   it('never binds a dev client to anyone but its author, nor without a live tunnel', async () => {
     sessionMock.mockResolvedValue({
       user: { id: USER_ID },

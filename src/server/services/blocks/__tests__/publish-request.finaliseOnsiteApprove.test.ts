@@ -23,7 +23,12 @@ const SHA = 'a'.repeat(40);
 function fakeTx() {
   return {
     appBlockPublishRequest: { update: vi.fn(async () => ({})) },
-    appBlock: { update: vi.fn(async () => ({})) },
+    appBlock: {
+      update: vi.fn(async () => ({})),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-app-a' })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: { deleteMany: vi.fn(async () => ({ count: 1 })) },
     oauthClient: { update: vi.fn(async () => ({})) },
     appListing: {
       findUnique: vi.fn(async (): Promise<unknown> => null),
@@ -69,6 +74,20 @@ describe('finaliseOnsiteApprove', () => {
     });
     // 🔴 The held request stays pending, so the next version is reviewed against the live one.
     expect(tx.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a late hold revokes the app tokens in the same transaction; no late hold revokes none', async () => {
+    const late = fakeTx();
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    await finaliseOnsiteApprove(late as never, input);
+    expect(late.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-app-a', type: { in: ['Access', 'Refresh'] } },
+    });
+
+    const clean = fakeTx();
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [] });
+    await finaliseOnsiteApprove(clean as never, input);
+    expect(clean.apiKey.deleteMany).not.toHaveBeenCalled();
   });
 
   it('🔴 a late hold puts back the manifest, scopes and tier the app ran under', async () => {

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { revokeAppBlockOauthTokens } from './app-block-token-revoke.service';
 
 /** The fields the app runs under, as they were before this approve wrote the new version's. */
 export type PriorRuntime = {
@@ -118,6 +119,7 @@ export async function finaliseOnsiteApprove(
         },
   });
   if (!late.length) return { lateHoldIds: late };
+  await revokeAppBlockOauthTokens(tx, input.appBlockId);
   // The held version's client ceiling and store copy go back to what they were before step (3).
   if (input.priorVersion) {
     await tx.oauthClient.update({
