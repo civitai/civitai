@@ -9,7 +9,7 @@
   import { splitTags, type Img } from './trainingFlow';
   import { planReplace } from './tagReplace';
 
-  // Dataset-wide add/rename/remove of one tag, plus (behind `findReplace`) a find-and-replace across every tag. `images` is the flow's own state proxy, so mutating a
+  // Dataset-wide add/rename/remove of one tag. `images` is the flow's own state proxy, so mutating a
   // tile's tags here applies live to the grid (the label editor's contract). Exact-string tag
   // identity — the rows come from the stored tags themselves. Every change is undoable once: a
   // dataset-wide edit that lands wrong has no other way back.
