@@ -35,13 +35,15 @@ describe('Knights of New Order Inquisitor queue actions', () => {
 
   it('rules as the acting moderator and shows an already-decided item as a conflict', async () => {
     rule.mockResolvedValueOnce({ ok: true });
-    expect(await actions.rule(formEvent({ itemId: '5', level: '32' }))).toEqual({ success: true });
-    expect(rule).toHaveBeenCalledWith(5, 32, 77);
+    expect(
+      await actions.rule(formEvent({ itemId: '5', level: '32', blockReason: 'Bestiality' }))
+    ).toEqual({ success: true });
+    expect(rule).toHaveBeenCalledWith(5, { level: 32, blockReason: 'Bestiality' }, 77);
 
     rule.mockResolvedValueOnce({ ok: false, error: 'decided' });
     expect(await actions.rule(formEvent({ itemId: '5', level: '4' }))).toMatchObject({
       status: 409,
-      data: { error: 'decided' },
+      data: { error: 'decided', key: 5 },
     });
   });
 
