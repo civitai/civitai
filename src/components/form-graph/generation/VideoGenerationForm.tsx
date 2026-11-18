@@ -32,6 +32,7 @@ import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
 import { FieldCorrectionNote } from './FieldCorrectionNote';
+import { SegmentedEnumField } from './inputs/SegmentedEnumField';
 import {
   ControllerLabel,
   PromptLabel,
@@ -237,6 +238,19 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             onChange={onChange}
             meta={meta}
             targetFps={meta?.sourceFps && value ? value * meta.sourceFps : undefined}
+          />
+        )}
+      />
+      <Controller
+        graph={generationHub}
+        name="videoUpscaler"
+        render={({ value, meta, onChange, note }) => (
+          <SegmentedEnumField
+            label="Upscaler"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+            note={note}
           />
         )}
       />
