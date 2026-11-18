@@ -199,7 +199,6 @@ export default function BlockImageUploadModal({
       const { width, height } = await prepStage('decode', () => readImageDimensions(file));
       const uploaded = await uploadToCF(file);
       if (epoch !== epochRef.current) return;
-      // `shared` is the SERVER's answer: true only when it wrote the share stamp.
       const { imageId, shared } = await persistMutation.mutateAsync({
         url: uploaded.id,
         name: file.name,
@@ -299,7 +298,7 @@ export default function BlockImageUploadModal({
   );
 }
 
-/** What the viewer is told before picking a file the app will share. Exported for the host test. */
+/** What the viewer is told before picking a file the app will share. */
 export function shareNoticeCopy(appName: string) {
   return `This image will be visible to other viewers of ${appName} once Civitai has scanned it.`;
 }

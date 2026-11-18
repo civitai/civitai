@@ -6,7 +6,8 @@
  * Why
  * ---------------------------------------------------------------------------
  * Turbopack's server build emits the same chunk content under many file names: the copies
- * differ only in their trailing `//# sourceMappingURL=<own name>.map` comment. Next preloads
+ * differ at most in a trailing `//# sourceMappingURL=<own name>.map` comment, present only
+ * when maps are emitted. Next preloads
  * every server entry at start, and the Turbopack Node runtime loads each chunk with
  * `require(<absolute chunk path>)`. Node's module cache is keyed by PATH, so every copy is
  * compiled separately and its source text stays on the heap for the life of the process —
@@ -56,8 +57,7 @@
  * ---------------------------------------------------------------------------
  * Where it runs
  * ---------------------------------------------------------------------------
- * In the Docker builder, against `.next/standalone/.next/server` — the tree that ships. The
- * build-output gates and the source-map staging read `.next/server`, which this never touches.
+ * In the Docker builder, against `.next/standalone/.next/server` — the tree that ships.
  *
  * Usage:  node scripts/dedupe-server-chunks.mjs <server-dir> [--dry-run]
  * Exit:   0 = done (or nothing to do) · 1 = a stub does not resolve to a real chunk

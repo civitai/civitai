@@ -54,20 +54,35 @@ const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
     : browsingLevelLabels[rating],
 }));
 
-export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffering }) {
+const COPY_SUFFIX = ' (copy)';
+
+/**
+ * `offering` edits it. `copyOf` starts a NEW offering from another one's wording and terms: not its
+ * cover, rating or affirmation.
+ */
+export function ServiceOfferingFormModal({
+  offering,
+  copyOf,
+}: {
+  offering?: ServiceOffering;
+  copyOf?: ServiceOffering;
+}) {
   const dialog = useDialogContext();
   const { upsert } = useMutateMyServices();
+  const source = offering ?? copyOf;
 
   const form = useForm({
     schema: formSchema,
     defaultValues: {
-      title: offering?.title ?? '',
-      description: offering?.description ?? '',
-      price: offering?.price ?? 1000,
-      deliveryDays: offering?.deliveryDays ?? 5,
-      revisionsIncluded: offering?.revisionsIncluded ?? 2,
-      maxOpenDeals: offering?.maxOpenDeals ?? 3,
-      previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
+      title: copyOf
+        ? copyOf.title.slice(0, SERVICE_TITLE_MAX - COPY_SUFFIX.length) + COPY_SUFFIX
+        : offering?.title ?? '',
+      description: source?.description ?? '',
+      price: source?.price ?? 1000,
+      deliveryDays: source?.deliveryDays ?? 5,
+      revisionsIncluded: source?.revisionsIncluded ?? 2,
+      maxOpenDeals: source?.maxOpenDeals ?? 3,
+      previewKind: source?.previewKind ?? ServicePreviewKind.Image,
       declaredNsfwLevel:
         offering?.declaredNsfwLevel ?? offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
       coverImage: offering?.coverImage
@@ -95,7 +110,11 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
     });
 
   return (
-    <Modal {...dialog} size="lg" title={offering ? 'Edit service' : 'New service'}>
+    <Modal
+      {...dialog}
+      size="lg"
+      title={offering ? 'Edit service' : copyOf ? 'Duplicate service' : 'New service'}
+    >
       <Form form={form}>
         <Stack gap="md">
           <InputText name="title" label="Title" maxLength={SERVICE_TITLE_MAX} withAsterisk />
