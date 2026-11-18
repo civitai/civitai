@@ -216,6 +216,9 @@ const GUARD_CALL_SITE_LEDGER = [
   'listMyWorkflows',
   // PERSIST_GENERATION_SOURCE: the publish preamble, spelled inline.
   'persistGenerationSource',
+  // A picked generation source copied into a scanned row: the same preamble minus the scope,
+  // spelled inline.
+  'persistUploadedGenerationSource',
   'pollWorkflow',
   'publishGenerationOutputs',
   'queryAppWorkflows',
@@ -267,6 +270,8 @@ const BRIDGE_INPUT_LEDGER = [
   // `authorizeQuotedGrantConsentRequest`, above.
   'previewQuoteGrant',
   'consentQuoteGrant',
+  // The step-only standing consent, through the same preamble.
+  'consentQuoteGrantStanding',
   // The two app-reaction procedures (SET_ENTITY_REACTION / GET_ENTITY_REACTIONS), via
   // `authorizeBlockReactionRequest`, above.
   'setReactionFromApp',
@@ -281,6 +286,9 @@ const BRIDGE_INPUT_LEDGER = [
   'unlockOutput',
   // PERSIST_GENERATION_SOURCE (a private generation source); calls the guard directly.
   'persistGenerationSource',
+  // A picked generation source (the upload picker, a single OPEN_MEDIA_UPLOAD image) kept as a
+  // private scanned row; calls the guard directly.
+  'persistUploadedGenerationSource',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

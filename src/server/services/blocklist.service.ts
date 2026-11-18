@@ -127,7 +127,7 @@ async function bustCache(type: string) {
         blocklistType: type,
         error: error instanceof Error ? error.message : String(error),
       },
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -260,7 +260,7 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
         ignoredIds: rows.slice(1).map((row) => row.id),
         ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
       },
-    }).catch(() => undefined);
+    });
   }
 
   // The absent-row fallback deliberately carries NO `id`: `getClientBenignLists` reads that as
@@ -427,7 +427,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
       type: 'warning',
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
-    }).catch(() => undefined);
+    });
     return { prompt: [], profanityWords: null, available: false };
   }
 }
@@ -827,7 +827,7 @@ export async function throwOnBlockedUserContent(
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
         details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
-      }).catch(() => undefined);
+      });
 
       if (enforce) {
         reject('pattern', 'Content blocked by content filter');
@@ -963,7 +963,7 @@ export async function assertEmailAllowed(input: string) {
         blocklistType,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       },
-    }).catch(() => undefined);
+    });
     return [] as string[];
   };
 

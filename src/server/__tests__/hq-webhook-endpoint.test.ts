@@ -91,8 +91,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   processed.clear();
   envMock.set({ HQ_WEBHOOK_SECRET: SECRET });
-  redisMock.sysRedis.exists.mockImplementation(async (key: string) => Number(processed.has(key)));
-  redisMock.sysRedis.set.mockImplementation(async (key: string) => {
+  redisMock.redis.exists.mockImplementation(async (key: string) => Number(processed.has(key)));
+  redisMock.redis.set.mockImplementation(async (key: string) => {
     processed.add(key);
     return 'OK';
   });
@@ -198,6 +198,10 @@ describe('hq webhook endpoint', () => {
     expect(second._status()).toBe(200);
     expect(second._body()).toEqual({ duplicate: true, taskId: TASK_ID });
     expect(resolveBugsByClickupTaskId).toHaveBeenCalledTimes(1);
+    // The delivery marker lives on the cache cluster, not in system Redis.
+    expect([...processed]).toEqual(['webhooks:hq:processed:msg_replayed']);
+    expect(redisMock.sysRedis.exists).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 
   it('processes a new delivery for the same task, as after a reopen and close', async () => {
@@ -242,7 +246,7 @@ describe('hq webhook endpoint', () => {
   });
 
   it('answers 5xx without resolving when the dedupe check fails', async () => {
-    redisMock.sysRedis.exists.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.exists.mockRejectedValueOnce(new Error('redis down'));
     const body = envelope('complete');
 
     const res = await run(body, signedHeaders(body));

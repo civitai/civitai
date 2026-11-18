@@ -6,7 +6,7 @@ const logLoadError = (error: unknown, meta: Record<string, string>) =>
     name: 'profile-picture-cache-refresh',
     message: (error as Error)?.message,
     ...meta,
-  }).catch(() => undefined);
+  });
 
 /**
  * `refreshProfilePicturesForImages`, behind a dynamic import of user.service, for the callers a

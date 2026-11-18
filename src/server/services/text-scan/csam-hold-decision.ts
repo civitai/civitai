@@ -320,6 +320,8 @@ export async function decideCsamHold(args: DecideArgs) {
           meta: {
             ...((hold.meta as Prisma.JsonObject | null) ?? {}),
             decision,
+            // A report counts a confirmed text as reviewed only when decided on its own.
+            reviewedDecision: !batched,
           },
         },
       });
@@ -373,7 +375,7 @@ export async function decideCsamHold(args: DecideArgs) {
         holdId,
         entityId: hold.entityId,
         errorName: error instanceof Error ? error.name : typeof error,
-      }).catch(() => null)
+      })
     );
 
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
@@ -482,7 +484,7 @@ export async function decideCsamHoldBatch({
           holdId: hold.holdId,
           errorName: error instanceof Error ? error.name : typeof error,
           errorCode: (error as { code?: unknown } | null | undefined)?.code,
-        }).catch(() => null);
+        });
       results.push({
         holdId: hold.holdId,
         ok: false,

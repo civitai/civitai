@@ -92,11 +92,11 @@ async function loadEarners(config: LinkDetectionConfig) {
     ['new-order-link-detection-v1-earners', v1Result],
   ] as const) {
     if (result.status === 'rejected') {
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name,
         message: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      }).catch(() => null);
+      });
     }
   }
   const v2 = v2Result.status === 'fulfilled' ? v2Result.value : [];
@@ -104,12 +104,12 @@ async function loadEarners(config: LinkDetectionConfig) {
   const merged = [...new Set([...v2, ...v1])];
   const cap = Math.trunc(config.maxEarners);
   if (merged.length > cap) {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'new-order-link-detection-earner-cap',
       details: { v2: v2.length, v1: v1.length, dropped: merged.length - cap },
       message: 'Earner list reached its cap and dropped v1 earners',
-    }).catch(() => null);
+    });
   }
   return merged.slice(0, cap);
 }
@@ -158,12 +158,12 @@ async function loadTips(earners: number[], config: LinkDetectionConfig): Promise
     LIMIT ${Math.trunc(config.maxTipRows)}
   `);
   if (rows.length >= Math.trunc(config.maxTipRows)) {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'new-order-link-detection-tip-cap',
       details: { rows: rows.length },
       message: 'Tip read reached its row cap',
-    }).catch(() => null);
+    });
   }
   return rows.map((r) => ({
     from: Number(r.fromAccountId),
@@ -260,12 +260,12 @@ export async function persistLinkedClusters(clusters: LinkCluster[]) {
 
     if (autoBlock) {
       counts.blocked++;
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'new-order-link-auto-block',
         details: { fingerprint, userIds: cluster.userIds, buzzMoved: cluster.buzzMoved },
         message: `Payouts held for ${cluster.userIds.length} linked accounts`,
-      }).catch(() => null);
+      });
     } else {
       counts.queued++;
     }
@@ -279,11 +279,11 @@ export async function runLinkDetection() {
   if (!config) return null;
   const clusters = await findLinkedClusters(config);
   const counts = await persistLinkedClusters(clusters);
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'new-order-link-detection',
     details: { clusters: clusters.length, ...counts },
     message: `Link detection found ${clusters.length} cluster(s)`,
-  }).catch(() => null);
+  });
   return counts;
 }

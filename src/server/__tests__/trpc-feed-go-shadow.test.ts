@@ -385,7 +385,14 @@ describe('feed-go shadow, end to end', () => {
       expect(metric, name).toBeDefined();
       const { values } = await metric!.get();
       expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
-        expect.arrayContaining(['as-posts', 'v1-images', 'infinite', 'model-getall'])
+        expect.arrayContaining([
+          'as-posts',
+          'v1-images',
+          'infinite',
+          'model-getall',
+          'v1-models',
+          'v1-models-id',
+        ])
       );
       for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
     }

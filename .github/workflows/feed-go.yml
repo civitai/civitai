@@ -1,6 +1,6 @@
 name: feed-go
 
-# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`, and in
+# apps/feed-go is a Go module (a port of `image.getImagesAsPostsInfinite`, and in
 # shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
@@ -10,8 +10,13 @@ name: feed-go
 # (`bench`). The gate scripts live in apps/feed-go/ci.
 #
 # The integration tier (`-tags integration`, files under that build tag only) runs against a real
-# Redis Cluster (3 masters) and a real Postgres 16 started in this job; the plain unit run never
-# compiles those files, so it stays hermetic.
+# Redis Cluster (3 masters), a real Postgres 16 and a real ClickHouse (the image-metrics populate)
+# started in this job; the plain unit run never compiles those files, so it stays hermetic.
+#
+# Job `flipt-parity` gates a second, test-only Go module, packages/civitai-flipt/parity/go: the Go
+# half of the Node <-> Go Flipt parity check (packages/civitai-flipt/parity/README.md), here because
+# feed-go is the Go service that will adopt go.flipt.io/flipt-client. The Node half runs in lint.yml
+# (`Package unit tests`). The workflow also triggers on packages/civitai-flipt/parity/** for it.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
 # dispatches this workflow when the label is added. A push to `main` is unfiltered.
@@ -21,11 +26,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/feed-go/**'
+      - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   push:
     branches: [main]
     paths:
       - 'apps/feed-go/**'
+      - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   workflow_dispatch:
 
@@ -156,6 +163,27 @@ jobs:
           echo "cluster masters: $masters"
           [ "$masters" -eq 3 ]
 
+      # The image-metrics populate's table (testdata/integration/clickhouse.sql), on the host network
+      # like the cluster. A user with a password, as production has; the read client sends GETs.
+      - name: Start ClickHouse
+        env:
+          # clickhouse/clickhouse-server:25.8 (the 25.8 LTS line), pinned by its multi-arch index digest.
+          CLICKHOUSE_IMAGE: clickhouse/clickhouse-server:25.8@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+        run: |
+          set -euo pipefail
+          docker run -d --name feedgo-clickhouse --network host --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_USER=feedgo -e CLICKHOUSE_PASSWORD=feedgo-integ -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            "$CLICKHOUSE_IMAGE"
+          for i in $(seq 1 90); do
+            if [ "$(curl -s http://127.0.0.1:8123/ping || true)" = "Ok." ]; then break; fi
+            [ "$i" -lt 90 ] || { echo "::error::clickhouse never answered /ping"; docker logs feedgo-clickhouse 2>&1 | tail -n 50; exit 1; }
+            sleep 1
+          done
+          curl -sS --fail-with-body -u feedgo:feedgo-integ --data-binary @testdata/integration/clickhouse.sql http://127.0.0.1:8123/
+          tables=$(curl -sS --fail-with-body -u feedgo:feedgo-integ --data-binary "SELECT count() FROM system.tables WHERE name = 'entityMetricDailyAgg_v2'" http://127.0.0.1:8123/)
+          echo "clickhouse tables: $tables"
+          [ "$tables" -eq 1 ]
+
       - name: Apply the integration schema
         run: |
           set -euo pipefail
@@ -167,6 +195,9 @@ jobs:
         env:
           FEED_GO_TEST_REDIS_CLUSTER: 127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
           FEED_GO_TEST_PG_URL: postgres://feedgo:feedgo-integ@127.0.0.1:5432/feedgo_integ?sslmode=disable
+          FEED_GO_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
+          FEED_GO_TEST_CLICKHOUSE_USER: feedgo
+          FEED_GO_TEST_CLICKHOUSE_PASSWORD: feedgo-integ
         run: |
           status=0
           go test -race -count=1 -tags integration -run 'Integration' -json ./... > integration.json || status=$?
@@ -187,7 +218,7 @@ jobs:
           # Positive control: below these floors (the TestIntegration* functions per package) the tests
           # stopped being discovered — a wrong tag or -run filter runs zero tests and exits 0.
           [ "$failed" -eq 0 ]
-          [ "$hydrate" -ge 18 ]
+          [ "$hydrate" -ge 33 ]
           [ "$feed" -ge 12 ]
           [ "$models" -ge 5 ]
 
@@ -197,6 +228,118 @@ jobs:
       - name: Redis Cluster logs
         if: failure()
         run: for port in 7000 7001 7002; do docker logs "feedgo-redis-$port" 2>&1 | tail -n 50; done
+
+      - name: ClickHouse logs
+        if: failure()
+        run: docker logs feedgo-clickhouse 2>&1 | tail -n 80
+
+  # Node <-> Go Flipt parity (packages/civitai-flipt/parity/README.md). Offline: every client reads
+  # parity/snapshot.json through an in-process fetcher or transport; the network is used only to
+  # download the clients.
+  #   1. the pinned Go client (parity/go/go.mod) must evaluate every case in parity/expected.json to
+  #      exactly the result the pinned Node client recorded there;
+  #   2. the newest Go client and the newest JS client must each differ from expected.json on exactly
+  #      the cases parity/latest-divergences.json lists, with exactly those results, so they also
+  #      agree with each other. Bump FLIPT_LATEST_* and regenerate that file from this job's
+  #      artifact when a newer release ships;
+  #   3. the pinned JS client, installed from npm, must agree with expected.json (the same check the
+  #      Node test makes, from outside the pnpm workspace).
+  flipt-parity:
+    name: Flipt Node/Go parity
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/civitai-flipt/parity/go
+    env:
+      FLIPT_LATEST_GO: v1.6.0
+      FLIPT_LATEST_JS: 0.7.0
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/civitai-flipt/parity/go/go.mod
+          cache-dependency-path: packages/civitai-flipt/parity/go/go.sum
+
+      - name: gofmt + vet + go.mod tidy
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted: $unformatted"
+            exit 1
+          fi
+          go vet ./...
+          if ! go mod tidy -diff; then
+            echo "::error::parity/go go.mod/go.sum are not tidy (run go mod tidy there)"
+            exit 1
+          fi
+          go mod verify
+
+      - name: Pinned Go client agrees with Node
+        run: |
+          status=0
+          go test -race -count=1 -json ./... > "$RUNNER_TEMP/pinned.json" || status=$?
+          jq -j 'select(.Action=="output") | .Output' "$RUNNER_TEMP/pinned.json"
+          exit $status
+
+      # Positive control: both tests ran and passed (a package that compiled to zero tests exits 0).
+      - name: Assert the pinned tests ran
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null) | .Test' "$RUNNER_TEMP/pinned.json" | sort | tr '\n' ' ')
+          echo "passed: $passed"
+          [ "$passed" = "TestParityDetectsASnapshotChange TestParityWithNode " ]
+
+      - name: Newest Go client against the recorded divergences
+        if: ${{ !cancelled() }}
+        env:
+          FLIPT_PARITY_EXPECT: latest
+          FLIPT_PARITY_LATEST_JS: ${{ env.FLIPT_LATEST_JS }}
+        run: |
+          set -euo pipefail
+          go get "go.flipt.io/flipt-client@$FLIPT_LATEST_GO"
+          go mod tidy
+          grep -F "go.flipt.io/flipt-client $FLIPT_LATEST_GO" go.mod
+          status=0
+          FLIPT_PARITY_WRITE_DIVERGENCES="$RUNNER_TEMP/latest-divergences.json" \
+            go test -count=1 -run '^TestParityWithNode$' -json ./... > "$RUNNER_TEMP/latest.json" || status=$?
+          jq -j 'select(.Action=="output") | .Output' "$RUNNER_TEMP/latest.json"
+          passed=$(jq -r 'select(.Action=="pass" and .Test=="TestParityWithNode") | .Test' "$RUNNER_TEMP/latest.json" | wc -l)
+          [ "$status" -eq 0 ] && [ "$passed" -eq 1 ]
+
+      # The divergences the newest Go client computed: commit it as parity/latest-divergences.json
+      # when the recorded list is stale (a newer FLIPT_LATEST_*).
+      - name: Upload the computed divergences
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: flipt-parity-latest-divergences
+          path: ${{ runner.temp }}/latest-divergences.json
+          if-no-files-found: warn
+
+      - uses: actions/setup-node@v7
+        if: ${{ !cancelled() }}
+        with:
+          node-version-file: .nvmrc
+
+      - name: Pinned and newest JS clients against the record
+        if: ${{ !cancelled() }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+          pinned=$(jq -r .clients.js packages/civitai-flipt/parity/expected.json)
+          status=0
+          for v in "$pinned" "$FLIPT_LATEST_JS"; do
+            dir="$RUNNER_TEMP/flipt-client-js-$v"
+            mkdir -p "$dir"
+            npm install --prefix "$dir" --no-save --no-audit --no-fund --ignore-scripts "@flipt-io/flipt-client-js@$v"
+            node packages/civitai-flipt/parity/js-client-check.mjs "$dir/node_modules/@flipt-io/flipt-client-js" || status=1
+          done
+          exit $status
 
   lint:
     name: feed-go golangci-lint
@@ -311,6 +454,8 @@ jobs:
         internal/superjson:FuzzAppendString:570000
         internal/superjson:FuzzSerialize:260000
         internal/trpc:FuzzDecodeEnvelope:210000
+        internal/v1models:FuzzParseList:160000
+        internal/v1models:FuzzResolveFileName:70000
     steps:
       - uses: actions/checkout@v7
 

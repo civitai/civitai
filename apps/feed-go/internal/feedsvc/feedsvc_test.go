@@ -65,6 +65,19 @@ func TestMapQueries(t *testing.T) {
 			want: "levels=1%2C2&tags=77%2C77%2C5&excludedTags=9901&userIds=1001&excludePoi=1&viewerId=1001&sort=newest&limit=50",
 		},
 		{
+			// `tools` after the POI exclusion and before the post ids; the positive ids only, in order,
+			// repeats kept (feed-shadow's `ints`, no dedupe).
+			name: "tools on a post completion",
+			q: Query{BrowsingLevel: 1, ExcludedTagIDs: []int{9901}, ModelVersionID: 9, DisablePoi: true, ViewerID: 1003,
+				PostIDs: []int{7001}, Tools: []int{42, 0, -3, 42, 41}, Sort: "Most Reactions", Limit: 2},
+			want: "levels=1&excludedTags=9901&versionIds=9&excludePoi=1&viewerId=1003&tools=42%2C42%2C41&postIds=7001&sort=reactions&limit=2",
+		},
+		{
+			name: "tools of only non-positive ids send no tools",
+			q:    Query{BrowsingLevel: 1, ModelVersionID: 9, Tools: []int{0, -1}, Sort: "Newest", Limit: 10},
+			want: "levels=1&versionIds=9&sort=newest&limit=10",
+		},
+		{
 			name: "the Blocked bit is a feed level",
 			q:    Query{BrowsingLevel: 32 | 4, ModelVersionID: 2, Sort: "Oldest", Limit: 10, CursorText: "0"},
 			want: "levels=4%2C32&versionIds=2&sort=oldest&limit=10",
@@ -113,6 +126,17 @@ func TestMapRefusals(t *testing.T) {
 		{"completion past one feed page", func(q *Query) { q.PostIDs = []int{1}; q.Limit = 201 }, "postIds:limit>200", false},
 		// The mapper reports the FIRST reason: generation is checked before the cursor.
 		{"first reason wins", func(q *Query) { q.HasGeneration = true; q.CursorText = "abc" }, "input:generation", false},
+		// UNSUPPORTED_KEYS: prioritizedUserIds comes before generation, and before any refusal Node
+		// answers with a 400 (a malformed cursor, an unknown sort).
+		{"prioritizedUserIds", func(q *Query) { q.HasPrioritizedUserIDs = true }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before generation", func(q *Query) { q.HasPrioritizedUserIDs = true; q.HasGeneration = true }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before a bad cursor", func(q *Query) { q.HasPrioritizedUserIDs = true; q.CursorText = "abc" }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before an unknown sort", func(q *Query) { q.HasPrioritizedUserIDs = true; q.Sort = "Random" }, "input:prioritizedUserIds", false},
+		// UNSUPPORTED_FLAGS: pending after requiringMeta, and after every unsupported key.
+		{"pending", func(q *Query) { q.Pending = true }, "flag:pending", false},
+		{"requiringMeta before pending", func(q *Query) { q.RequiringMeta = true; q.Pending = true }, "flag:requiringMeta", false},
+		{"remixOfId before pending", func(q *Query) { q.HasRemixOfID = true; q.Pending = true }, "input:remixOfId", false},
+		{"pending before a bad cursor", func(q *Query) { q.Pending = true; q.CursorText = "abc" }, "flag:pending", false},
 	}
 	for _, c := range cases {
 		q := base()

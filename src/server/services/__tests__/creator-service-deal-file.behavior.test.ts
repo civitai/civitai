@@ -11,6 +11,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as CreatorShop from '~/server/services/creator-shop.service';
+import type * as VideoPreview from '~/server/services/creator-service-deal-video-preview';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -60,6 +61,7 @@ const s3 = vi.hoisted(() => ({
   getGetUrlByKey: vi.fn(),
   uploadImageBufferToStore: vi.fn(),
   send: vi.fn(),
+  imageStoreSend: vi.fn(),
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getBucket: async () => 'bucket',
@@ -69,6 +71,17 @@ vi.mock('~/utils/s3-utils', () => ({
   deleteObject: s3.deleteObject,
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
+  getImageUploadBackend: async () => ({
+    s3: { send: s3.imageStoreSend },
+    bucket: 'image-store',
+    backend: 'b2',
+  }),
+}));
+
+const video = vi.hoisted(() => ({ build: vi.fn() }));
+vi.mock('~/server/services/creator-service-deal-video-preview', async (importOriginal) => ({
+  ...(await importOriginal<typeof VideoPreview>()),
+  buildWatermarkedVideoPreview: video.build,
 }));
 
 const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
@@ -1651,5 +1664,199 @@ describe('recording who took a file', () => {
     expect(await Promise.race([take(target), waited])).toBe(
       'https://get/service-deals/delivered/k'
     );
+  });
+});
+
+describe('video previews', () => {
+  const ORIGINAL = Buffer.from('original video bytes');
+  const MARKED = Buffer.from('marked 480p clip');
+
+  beforeEach(() => {
+    images.createImage.mockReset();
+    images.deleteImageById.mockReset();
+    video.build.mockReset();
+    preview.build.mockClear();
+    preview.scanCopy.mockClear();
+    video.build.mockResolvedValue({ data: MARKED, mimeType: 'video/mp4', width: 480 });
+    s3.uploadImageBufferToStore.mockImplementation(async () => ({ key: randomKey() }));
+    // Only the clip that was scanned may be read back for publishing.
+    s3.imageStoreSend.mockImplementation(async (command: { input: { Key: string } }) => {
+      const [row] = await q<{ id: number }>(
+        `SELECT id FROM "ServiceDealFile" WHERE "scanKey" = $1`,
+        [command.input.Key]
+      );
+      if (!row) throw new Error(`not the scan copy: ${command.input.Key}`);
+      return body(MARKED);
+    });
+    images.createImage.mockImplementation(async ({ url }: { url: string }) => {
+      const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
+        url,
+      ]);
+      return { id: row.id };
+    });
+    images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
+      await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+    });
+  });
+
+  let keys = 0;
+  const randomKey = () => `store-key-${++keys}`;
+
+  const videoPreview = async (previewKind = 'Video') => {
+    const dealId = await accepted(previewKind);
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'clip.mp4',
+      mimeType: 'video/mp4',
+      size: 5_000_000,
+    });
+    s3.send.mockResolvedValue(body(ORIGINAL));
+    return { dealId, fileId };
+  };
+
+  it('is refused on a deal that takes an image preview', async () => {
+    const dealId = await accepted('Image');
+    await expect(
+      upload(dealId, { kind: 'Preview', fileName: 'clip.mp4', mimeType: 'video/mp4', size: 1000 })
+    ).rejects.toThrow('Previews must be JPEG, PNG, WebP or GIF images.');
+  });
+
+  it('is refused over the video byte cap', async () => {
+    const dealId = await accepted('Video');
+    await expect(
+      upload(dealId, {
+        kind: 'Preview',
+        fileName: 'clip.mp4',
+        mimeType: 'video/mp4',
+        size: 64 * 1024 * 1024 + 1,
+      })
+    ).rejects.toThrow('Preview is too large (max 64 MB).');
+  });
+
+  it('scans the marked clip as a hidden video, and the buyer sees only that clip once it passes', async () => {
+    const { dealId, fileId } = await videoPreview();
+
+    expect(await files.startPreviewScans()).toBe(1);
+    expect(video.build).toHaveBeenCalledWith(ORIGINAL, 'video/mp4', SELLER);
+    expect(preview.scanCopy).not.toHaveBeenCalled();
+    const scanned = await fileRow(fileId);
+    // The bytes scanned are the marked clip, not the original.
+    expect(s3.uploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    expect(s3.uploadImageBufferToStore.mock.calls[0][0]).toBe(MARKED);
+    expect(images.createImage.mock.calls[0][0]).toMatchObject({
+      url: scanned.scanKey,
+      type: 'video',
+      mimeType: 'video/mp4',
+      userId: SELLER,
+    });
+    expect(images.createImage.mock.calls[0][0]).not.toHaveProperty('skipIngestion');
+
+    // Nothing reaches the buyer while the scan is pending.
+    expect(await list(dealId, BUYER)).toEqual([]);
+
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    expect(await files.publishPreviews()).toBe(1);
+
+    const published = await fileRow(fileId);
+    expect(published.status).toBe('Ready');
+    // Its own copy: step 4 deletes the scan copy's object with its Image row.
+    expect(published.watermarkedKey).not.toBe(published.scanKey);
+    expect(s3.uploadImageBufferToStore).toHaveBeenLastCalledWith(MARKED, {
+      contentType: 'video/mp4',
+    });
+    expect(preview.build).not.toHaveBeenCalled();
+
+    await uploaded(dealId, { fileName: 'result.zip' });
+    await files.deliverServiceDeal({ dealId, userId: SELLER });
+    const seen = (await list(dealId, BUYER)).find((file) => file.id === fileId)!;
+    expect(seen.mimeType).toBe('video/mp4');
+    expect(seen.previewUrl).toContain(published.watermarkedKey);
+    expect(seen.previewUrl).toMatch(/\.mp4/);
+    expect(seen.previewUrl).not.toContain(published.s3Key);
+
+    await files.deleteScanCopies();
+    expect((await fileRow(fileId)).watermarkedKey).toBe(published.watermarkedKey);
+  });
+
+  it('keeps a passed clip until it is published, so publishing never loses what was scanned', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await files.publishPreviews()).toBe(1);
+    expect(await files.deleteScanCopies()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', scanKey: null });
+  });
+
+  it('retries, never falls back to the image path, if the scanned clip is gone', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET "scanKey" = NULL WHERE id = $1`, [fileId]);
+
+    expect(await files.publishPreviews()).toBe(0);
+    expect(preview.build).not.toHaveBeenCalled();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Processing', watermarkedKey: null });
+  });
+
+  it('gives up on a video still not transcoded after 45 minutes, before the image give-up', async () => {
+    const transcoded = await videoPreview();
+    await files.startPreviewScans();
+    const { fileId } = await videoPreview();
+    await q(
+      `UPDATE "ServiceDealFile" SET "uploadedAt" = now() - interval '46 minutes' WHERE id IN ($1, $2)`,
+      [fileId, transcoded.fileId]
+    );
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: 'This video could not be prepared. Upload a shorter or smaller one.',
+    });
+    // One already transcoded is only waiting on its scan, and keeps the long give-up.
+    expect((await fileRow(transcoded.fileId)).status).toBe('Processing');
+  });
+
+  it('deletes the clip of a passed video that then failed, since it will never be published', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET status = 'Failed' WHERE id = $1`, [fileId]);
+    expect(await files.deleteScanCopies()).toBe(1);
+  });
+
+  it('takes one video per run, beside the images', async () => {
+    const first = await videoPreview();
+    const second = await videoPreview();
+    expect(await files.startPreviewScans({ limit: 3 })).toBe(1);
+    expect(video.build).toHaveBeenCalledTimes(1);
+    const rows = [await fileRow(first.fileId), await fileRow(second.fileId)];
+    expect(rows.filter((row) => row.imageId !== null)).toHaveLength(1);
+  });
+
+  it('fails the file with the reason when the video cannot be transcoded', async () => {
+    const { fileId } = await videoPreview();
+    video.build.mockRejectedValue(
+      new PreviewRejectedError('This video could not be turned into a preview.')
+    );
+    await files.startPreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: 'This video could not be turned into a preview.',
+    });
+  });
+
+  it('a rejected video is never published', async () => {
+    const { dealId, fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 8`);
+    await files.settlePreviewScans();
+    expect(await files.publishPreviews()).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', watermarkedKey: null });
+    expect(await list(dealId, BUYER)).toEqual([]);
   });
 });

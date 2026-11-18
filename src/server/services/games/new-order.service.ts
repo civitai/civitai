@@ -2,6 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import type { NewOrderDamnedReason } from '~/server/common/enums';
 import {
   NewOrderImageRatingStatus,
@@ -486,7 +487,7 @@ async function processImageRating({
             cooldownUntil: rateLimitResult.cooldownUntil,
           },
           message: `Player ${playerId} hit rate limit cooldown`,
-        }).catch(() => null);
+        });
       }
 
       const waitSeconds = rateLimitResult.cooldownUntil
@@ -581,7 +582,7 @@ async function processImageRating({
         name: 'new-order-duplicate-vote',
         details: { playerId, imageId },
         message: `Player ${playerId} voted again on image ${imageId}`,
-      }).catch(() => null);
+      });
       return { stats: player.stats };
     }
   } catch (e) {
@@ -648,7 +649,7 @@ async function processImageRating({
             name: 'new-order-escalation-skipped',
             details: { imageId, userId: playerId },
             message: `Image ${imageId} was not escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
         } else
           logToAxiom({
             type: 'info',
@@ -666,7 +667,7 @@ async function processImageRating({
               image.nsfwLevel,
               consensus
             )}) escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
       } else {
         // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
         if (consensus) {
@@ -784,7 +785,7 @@ async function processImageRating({
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 
@@ -837,7 +838,7 @@ async function processImageRating({
           error: (error as Error).message,
         },
         message: `Failed to create report for image ${imageId}`,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1108,7 +1109,7 @@ export async function processFinalRatings() {
         message: `Processed correct ratings from ${updateStart.toISOString()} to ${updateEnd.toISOString()}`,
       },
       'clickhouse'
-    ).catch();
+    );
 
     return {
       status: 'processed',
@@ -1132,7 +1133,7 @@ export async function processFinalRatings() {
         cause: error.cause,
       },
       'clickhouse'
-    ).catch();
+    );
     return { status: 'error', error: error.message };
   } finally {
     // Clear lock
@@ -1353,7 +1354,7 @@ export async function handleSanityCheckFailure({
     }
 
     // Log for analytics
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'new-order-sanity-check-failure',
       details: { playerId, imageId, failureCount },
@@ -1636,10 +1637,19 @@ export async function addImageToQueue({
   const images = (
     await dbRead.image.findMany({
       where: { id: { in: imageIds } },
-      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+      select: {
+        id: true,
+        url: true,
+        nsfwLevel: true,
+        metadata: true,
+        needsReview: true,
+        ingestion: true,
+        blockedFor: true,
+      },
     })
   ).filter((image) => {
-    if (!isHeldForReview(image)) return true;
+    // A blocked image is refused whatever the caller saw: no sample may carry one.
+    if (!isHeldForReview(image) && !hasBlockMarker(image)) return true;
     heldIds.push(image.id);
     return false;
   });

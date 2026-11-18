@@ -1,8 +1,17 @@
 import { rankIndex } from './ranks';
 import { REDIS_TIMEOUT_MS, within } from './redis-timeout';
 
-/** What the player has been shown: the rank and level they were last told about, and whether they dismissed the rating guide and the launch's "What's new". */
-export type Seen = { rank: string; level: number; guide: boolean; whatsNew: boolean };
+/**
+ * What the player has been shown: the rank and level they were last told about, whether they dismissed the rating guide and the
+ * launch's "What's new", and whether they accepted the mature content warning in v2 (v1 players arrive without it).
+ */
+export type Seen = {
+  rank: string;
+  level: number;
+  guide: boolean;
+  whatsNew: boolean;
+  consent: boolean;
+};
 export type Standing = { rank: string; level: number };
 
 export type SeenStore = {
@@ -41,6 +50,7 @@ function parse(raw: string | null): Seen | null {
         level: value.level as number,
         guide: value.guide,
         whatsNew: value.whatsNew === true,
+        consent: value.consent === true,
       };
     }
   } catch {
@@ -56,8 +66,8 @@ export function redisSeenStore(client: () => RedisClient): SeenStore {
       return parse(await client().get(keyOf(userId)));
     },
     async set(userId, seen) {
-      const { rank, level, guide, whatsNew } = seen;
-      await client().set(keyOf(userId), JSON.stringify({ rank, level, guide, whatsNew }));
+      const { rank, level, guide, whatsNew, consent } = seen;
+      await client().set(keyOf(userId), JSON.stringify({ rank, level, guide, whatsNew, consent }));
     },
   };
 }
@@ -93,7 +103,10 @@ export async function readNotices(
   try {
     const seen = await within(store.get(userId), timeoutMs);
     if (!seen) {
-      await within(store.set(userId, { ...now, guide: false, whatsNew: false }), timeoutMs);
+      await within(
+        store.set(userId, { ...now, guide: false, whatsNew: false, consent: false }),
+        timeoutMs
+      );
       return { whatsNew: true, guide: false, progress: null };
     }
     if (!ahead(now, seen)) {
@@ -145,7 +158,7 @@ export const dismissGuide = (
   update(
     store,
     userId,
-    (seen) => ({ ...(seen ?? { ...now, whatsNew: false }), guide: true }),
+    (seen) => ({ ...(seen ?? { ...now, whatsNew: false, consent: false }), guide: true }),
     timeoutMs
   );
 
@@ -159,7 +172,7 @@ export const dismissWhatsNew = (
   update(
     store,
     userId,
-    (seen) => ({ ...(seen ?? { ...now, guide: false }), whatsNew: true }),
+    (seen) => ({ ...(seen ?? { ...now, guide: false, consent: false }), whatsNew: true }),
     timeoutMs
   );
 
@@ -173,6 +186,42 @@ export const dismissProgress = (
   update(
     store,
     userId,
-    (seen) => ({ ...now, guide: seen?.guide ?? false, whatsNew: seen?.whatsNew ?? false }),
+    (seen) => ({
+      ...now,
+      guide: seen?.guide ?? false,
+      whatsNew: seen?.whatsNew ?? false,
+      consent: seen?.consent ?? false,
+    }),
+    timeoutMs
+  );
+
+/**
+ * Whether the player accepted the mature content warning. Null when the store could not be read: the caller lets them play rather
+ * than lock every player out while Redis is down, since the warning is asked again on the next read that succeeds.
+ */
+export async function hasConsented(
+  store: SeenStore,
+  userId: number,
+  timeoutMs = REDIS_TIMEOUT_MS
+): Promise<boolean | null> {
+  try {
+    return (await within(store.get(userId), timeoutMs))?.consent === true;
+  } catch (error) {
+    console.error('knights: could not read the content warning consent', { userId, error });
+    return null;
+  }
+}
+
+/** Records that the player accepted the mature content warning. False when it could not be stored. */
+export const recordConsent = (
+  store: SeenStore,
+  userId: number,
+  now: Standing,
+  timeoutMs = REDIS_TIMEOUT_MS
+) =>
+  update(
+    store,
+    userId,
+    (seen) => ({ ...(seen ?? { ...now, guide: false, whatsNew: false }), consent: true }),
     timeoutMs
   );

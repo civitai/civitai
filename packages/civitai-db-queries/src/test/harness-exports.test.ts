@@ -74,6 +74,8 @@ const PACKAGE_EXPORTS = {
   './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
   './evidence-hold': './src/evidence-hold.db.ts',
   './csam-queue': './src/csam-queue.db.ts',
+  './evidence-archive-queue': './src/evidence-archive-queue.db.ts',
+  './profile-picture-clear': './src/profile-picture-clear.db.ts',
   './test-harness': './src/test/compile-harness.ts',
 };
 

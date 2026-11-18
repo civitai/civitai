@@ -124,7 +124,7 @@ async function reversePayout(buzzTransactionId: string, transactionId: string, t
 }
 
 const logPayout = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ level, name: 'creator-box-payout', message, data }).catch(() => undefined);
+  logToAxiom({ level, name: 'creator-box-payout', message, data });
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

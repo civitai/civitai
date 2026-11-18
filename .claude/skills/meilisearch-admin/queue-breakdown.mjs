@@ -6,7 +6,7 @@
  * Categorizes enqueued tasks by type and shows what's clogging the queue.
  *
  * Usage:
- *   node .claude/skills/meilisearch-admin/queue-breakdown.mjs [--feed] [--json]
+ *   node .claude/skills/meilisearch-admin/queue-breakdown.mjs [--json]
  */
 
 import { readFileSync } from 'fs';
@@ -30,11 +30,10 @@ for (const p of [resolve(__dirname, '.env'), resolve(projectRoot, '.env')]) {
 }
 
 const args = process.argv.slice(2);
-const useFeed = args.includes('--feed');
 const jsonOutput = args.includes('--json');
 
-const host = useFeed ? process.env.METRICS_SEARCH_HOST : process.env.SEARCH_HOST;
-const apiKey = useFeed ? process.env.METRICS_SEARCH_API_KEY : process.env.SEARCH_API_KEY;
+const host = process.env.SEARCH_HOST;
+const apiKey = process.env.SEARCH_API_KEY;
 
 async function req(path) {
   const res = await fetch(`${host}${path}`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
@@ -73,7 +72,7 @@ function categorize(t) {
 }
 
 async function main() {
-  const label = useFeed ? 'Feed/Metrics' : 'Main';
+  const label = 'Main';
   console.log(`Using: ${label} Search (${host})\n`);
 
   const tasks = await fetchAll();

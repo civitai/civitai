@@ -114,7 +114,7 @@ async function withLastGood<T>(
             type: 'sidebar-count-fill-failed',
             part,
             message: error instanceof Error ? error.message : String(error),
-          }).catch(() => undefined)
+          })
       )
       .catch(() => undefined);
     fresh = await bounded(() => fill, ms);

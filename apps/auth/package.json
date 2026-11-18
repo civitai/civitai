@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.67",
+  "version": "0.1.70",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,9 +19,11 @@
     "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",
     "@civitai/db": "workspace:*",
+    "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/email": "workspace:*",
     "@civitai/redis": "workspace:*",
+    "@civitai/shared": "workspace:*",
     "@node-oauth/oauth2-server": "^5.3.0",
     "@tabler/icons-svelte": "^3.28.1",
     "jose": "^6.0.11",

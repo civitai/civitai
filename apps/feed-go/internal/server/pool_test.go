@@ -89,6 +89,7 @@ func TestServeHTTPConcurrentPooledPayloads(t *testing.T) {
 		return pooledAnswer(n, strings.Repeat("q", (n*41)%3000)), nil
 	}, &proxyRecorder{})
 	const requests = 64
+	s.MaxInFlight = requests // this test is about pooled payloads, not the bulkhead: admit every request
 	bodies := make([]string, requests)
 	var wg sync.WaitGroup
 	for n := range requests {

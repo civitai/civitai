@@ -45,7 +45,7 @@ const SUPERSEDING_STATUSES = ['active', 'trialing'];
 const storedIso = (d: Date | null) => d?.toISOString() ?? null;
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'mod-membership-resync', ...data }, 'webhooks');
 
 type RowView = {
   id: string;

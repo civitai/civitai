@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HeartsRow from '$lib/HeartsRow.svelte';
+
   let {
     level,
     levelFraction,
@@ -6,6 +8,8 @@
     bar,
     knightLevel,
     answerWindow,
+    hearts = null,
+    maxHearts = 0,
   }: {
     level: number;
     /** How far through the current level the player is, 0 to 1. */
@@ -15,6 +19,9 @@
     bar: number;
     knightLevel: number;
     answerWindow: number;
+    /** Lives left; wrong answers cost them. Null hides the row. */
+    hearts?: number | null;
+    maxHearts?: number;
   } = $props();
 
   let accuracyPercent = $derived(accuracy === null ? null : Math.floor(accuracy * 100));
@@ -25,10 +32,12 @@
 
 <!-- Standing only: a meter never shows whether the last answer was right. -->
 <section class="meter" aria-label="Apprenticeship progress">
+  <div class="box">
   <div class="row">
-    <span class="label">Level {level} of {knightLevel}<span class="long">&nbsp;·&nbsp;Acolyte</span></span>
+    <span class="cell label">Level {level} of {knightLevel}<span class="long">&nbsp;·&nbsp;Acolyte</span></span>
+    {#if hearts !== null}<span class="cell"><HeartsRow {hearts} {maxHearts} /></span>{/if}
     <span
-      class="accuracy"
+      class="cell accuracy"
       class:good={onBar}
       class:low={accuracy !== null && !onBar}
       title={`Your last ${answerWindow} answers`}
@@ -46,24 +55,40 @@
   >
     <span class="fill" style:width="{filled * 100}%"></span>
   </div>
+  </div>
 </section>
 
 <style>
   .meter {
-    display: flex;
     flex: none;
-    flex-direction: column;
-    gap: 10px;
-    padding: 16px 28px 8px;
+    padding: 8px 28px;
     font: 400 13px/1.2 var(--io-font-ui);
   }
-  .row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
+  /* One grouped strip, like the Watch bar Knights get: equal cells split by hairlines, the level track on its bottom edge. */
+  .box {
     width: 100%;
     max-width: 1056px;
     margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .row {
+    display: flex;
+  }
+  .cell {
+    display: flex;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 7px 8px;
+    text-align: center;
+  }
+  .cell + .cell {
+    border-left: 1px solid var(--border);
   }
   .label {
     color: var(--io-parchment);
@@ -80,13 +105,8 @@
     color: #e0a94a;
   }
   .track {
-    width: 100%;
-    max-width: 1056px;
-    height: 4px;
-    margin: 0 auto;
-    border-radius: 2px;
-    background: var(--io-surface);
-    overflow: hidden;
+    height: 3px;
+    background: var(--io-bg);
   }
   .fill {
     display: block;
@@ -96,9 +116,8 @@
   }
   @media (max-width: 40rem) {
     .meter {
-      gap: 8px;
-      padding: 12px 16px 4px;
-      font-size: 14px;
+      padding: 12px 16px 8px;
+      font-size: 12px;
     }
     .long {
       display: none;

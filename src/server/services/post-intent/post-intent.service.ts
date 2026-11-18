@@ -149,7 +149,7 @@ export async function resolveIntentItem(
       type: 'error',
       message: 'failed to resolve item',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return null;
   }
 }
@@ -224,7 +224,7 @@ async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]): Pr
       type: 'error',
       message: 'failed to delete staged objects',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return false;
   }
 }
@@ -604,7 +604,7 @@ export async function publishIntent({
         message: 'publish effects failed',
         postId: post.id,
         error: err instanceof Error ? err.message : String(err),
-      }).catch(() => null)
+      })
     );
   }
 

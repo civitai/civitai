@@ -39,5 +39,5 @@ export async function settleSkippedScan(
     message: `${entityType.toLowerCase()} scan skipped; ingestion left Pending`,
     ...logContext,
     reason,
-  }).catch(() => null);
+  });
 }

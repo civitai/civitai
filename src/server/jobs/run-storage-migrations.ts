@@ -21,9 +21,7 @@ export const runStorageMigrationsJob = createJob(
         checkIfCanceled: () => jobContext.checkIfCanceled(),
       });
       if (result.advanced > 0 || result.held > 0) {
-        logToAxiom({ name: 'run-storage-migrations', type: 'info', ...result }, 'app-blocks').catch(
-          () => undefined
-        );
+        logToAxiom({ name: 'run-storage-migrations', type: 'info', ...result }, 'app-blocks');
       }
       return result;
     } catch (error) {
@@ -35,7 +33,7 @@ export const runStorageMigrationsJob = createJob(
           stack: (error as Error)?.stack,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
       return { error: true as const };
     }
   }

@@ -66,8 +66,9 @@ describe('API key generation hints', () => {
   });
 
   test('Creator mask is the Creator preset (fixture guard)', () => {
-    expect(CREATOR_MASK).toBe(TokenScopePresets.Creator);
-    expect(CREATOR_MASK & TokenScope.AIServicesWrite).toBe(0);
+    // The fixture is a tRPC value (a JSON number); the preset is a bigint.
+    expect(BigInt(CREATOR_MASK)).toBe(TokenScopePresets.Creator);
+    expect(BigInt(CREATOR_MASK) & TokenScope.AIServicesWrite).toBe(0n);
   });
 
   test('key rows: Creator can’t generate; AI Services and legacy (null) can', async () => {

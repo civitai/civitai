@@ -684,10 +684,13 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reports a retired target and an undeclared attribute when handed one', () => {
     expect(
-      // The images index (`images_v6`) was the example until its processor was deleted.
+      // The images index (`images_v6`) was the example until its processor was deleted. The
+      // metrics-images processor is now a no-op stub that declares no attributes, so both halves
+      // of the rule fire for it.
       violations([synthetic({ constName: 'METRICS_IMAGES_SEARCH_INDEX', filter: 'id IN [x]' })])
     ).toEqual([
       'METRICS_IMAGES_SEARCH_INDEX: the index is retired, so a filtered delete cannot succeed',
+      'METRICS_IMAGES_SEARCH_INDEX: no declared filterable attributes found',
     ]);
     expect(
       violations([synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'nope IN [x]' })])

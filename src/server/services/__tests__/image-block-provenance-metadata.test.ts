@@ -28,6 +28,7 @@ const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
   blockUploadedAppId: 'client-app-2',
   blockGenerationSourceAppId: 'client-app-3',
+  blockSharedUploadAppId: 'client-app-4',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
@@ -50,15 +51,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: 4242 } as never);
   // The fixture key was issued to user 1, who saves every image here.
-  redisMock.sysRedis.mGet.mockResolvedValue(['1'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['1'] as never);
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published, the uploaded and the private generation-source key', () => {
+  it('lists the published, the uploaded, the private generation-source and the shared-upload key', () => {
     expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual([
       'blockPublishedAppId',
       'blockUploadedAppId',
       'blockGenerationSourceAppId',
+      'blockSharedUploadAppId',
     ]);
   });
 
@@ -66,6 +68,7 @@ describe('block provenance metadata keys', () => {
     ['blockPublishedAppId', true],
     ['blockUploadedAppId', true],
     ['blockGenerationSourceAppId', true],
+    ['blockSharedUploadAppId', true],
     ['blockGenerationSourceRef', false],
     ['blockUploadedAppIds', false],
     ['blockedAppId', false],

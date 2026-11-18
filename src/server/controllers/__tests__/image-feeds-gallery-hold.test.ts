@@ -384,7 +384,7 @@ describe('image.getInfinite by image id', () => {
     expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, ctx(false, true)))).toEqual([1, 2, 3, 4]);
   });
 
-  const key = (tokenScope: number) => ({
+  const key = (tokenScope: bigint) => ({
     apiKeyId: 1,
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 1 },
@@ -408,5 +408,40 @@ describe('image.getInfinite by image id', () => {
   it('leaves a feed that does not pick images by id as it was', async () => {
     expect(idsOf(await run({ username: 'someone' }, false))).toEqual([1, 2, 3, 4]);
     expect(heldByPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('a narrow-scope key reads the feeds as a plain signed-in viewer', () => {
+  const credential = (tokenScope: bigint) => ({
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope,
+  });
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(false, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({ input: { postId: 100, include: [] } as never, ctx: viewer });
+    await getPostsInfiniteHandler({ input: { username: 'someone' } as never, ctx: viewer });
+
+    const view = { asModerator: elevated, asOwner: elevated };
+    expect(getAllImages).toHaveBeenCalledWith(expect.objectContaining(view));
+    expect(getPostsInfinite).toHaveBeenCalledWith(expect.objectContaining(view));
+  });
+
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s on the index feed: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(true, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({
+      input: { modelVersionId: 10, include: [] } as never,
+      ctx: viewer,
+    });
+    expect(getAllImagesIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: elevated, asOwner: elevated })
+    );
   });
 });

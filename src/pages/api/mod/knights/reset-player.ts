@@ -40,13 +40,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         // best effort. A retry would see `not-due` and never redo it, so answer reset and leave a trace instead.
         if ((await activeSmites(playerId)) >= limit) throw error;
         const e = error as Error;
-        await logToAxiom({
+        logToAxiom({
           type: 'error',
           name: 'knights-reset-side-effects-failed',
           details: { playerId },
           message: e.message,
           stack: e.stack,
-        }).catch(() => undefined);
+        });
       }
       return 'reset';
     }

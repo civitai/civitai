@@ -3,6 +3,7 @@ import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account'
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
+import { apiKeyScopeInsert } from './scope';
 import { OAUTH_TOKEN_PREFIX, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from './constants';
 
 interface TokenPair {
@@ -18,7 +19,7 @@ export const CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX = 'oauth-cc:';
 async function insertToken(opts: {
   userId: number;
   clientId: string;
-  scope: number;
+  scope: bigint;
   type: 'Access' | 'Refresh';
   expiresAt: Date;
   clientCredentials?: boolean;
@@ -32,7 +33,7 @@ async function insertToken(opts: {
     .values({
       key: generateSecretHash(token),
       name: `${prefix}${opts.clientId}`,
-      tokenScope: opts.scope,
+      ...apiKeyScopeInsert(opts.scope),
       userId: opts.userId,
       type: opts.type,
       expiresAt: opts.expiresAt,
@@ -47,15 +48,15 @@ const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrit
 /** Whether `user` (undefined: not found) may not hold `scope`: a restricted account gets no AI Services scope. */
 export function accountRefusesScope(
   user: { muted: boolean; bannedAt: Date | null } | undefined,
-  scope: number
+  scope: bigint
 ): boolean {
-  if ((scope & AI_SERVICES_SCOPES) === 0) return false;
+  if ((scope & AI_SERVICES_SCOPES) === 0n) return false;
   return !user || user.muted || !!user.bannedAt;
 }
 
 /** A restricted account gets no AI Services token from any grant, issue or refresh; other scopes still issue. */
-async function assertScopeAllowedForAccount(userId: number, scope: number) {
-  if ((scope & AI_SERVICES_SCOPES) === 0) return;
+async function assertScopeAllowedForAccount(userId: number, scope: bigint) {
+  if ((scope & AI_SERVICES_SCOPES) === 0n) return;
   const user = await db
     .selectFrom('User')
     .select(['muted', 'bannedAt'])
@@ -76,7 +77,7 @@ async function assertScopeAllowedForAccount(userId: number, scope: number) {
 export async function createOAuthTokenPair(
   userId: number,
   clientId: string,
-  scope: number
+  scope: bigint
 ): Promise<TokenPair> {
   if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
     error(403, 'This account cannot sign in.');
@@ -116,7 +117,7 @@ export async function createOAuthTokenPair(
 export async function createAppAccessToken(
   userId: number,
   clientId: string,
-  scope: number,
+  scope: bigint,
   ttlSeconds: number,
   opts: { clientCredentials?: boolean } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {

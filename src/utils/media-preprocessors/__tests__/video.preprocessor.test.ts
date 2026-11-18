@@ -21,6 +21,8 @@ function fakeVideo(seek: 'fires' | 'never' | 'errors' = 'fires') {
     onloadeddata: null as null | (() => void),
     onloadedmetadata: null as null | (() => void),
     onseeked: null as null | (() => void),
+    removeAttribute: vi.fn(),
+    load: vi.fn(),
     set src(_: string) {
       queueMicrotask(() => video.onloadeddata?.());
     },
@@ -58,6 +60,53 @@ describe('preprocessVideo', () => {
       type: 'video/mp4',
     });
     expect((await preprocessVideo(file)).meta).toBeUndefined();
+  });
+
+  it('decodes a large pick two videos at a time', async () => {
+    // Five videos started together made the last ones wait on the first in the browser's media
+    // pipeline while their load and seek limits ran out, and a video that timed out was dropped.
+    let active = 0;
+    let maxActive = 0;
+    const loads: (() => void)[] = [];
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      if (tag !== 'video') return create(tag);
+      const video = fakeVideo();
+      Object.defineProperty(video, 'src', {
+        set: () => {
+          maxActive = Math.max(maxActive, ++active);
+          loads.push(() => video.onloadeddata?.());
+        },
+      });
+      video.removeAttribute = vi.fn(() => active--);
+      return video;
+    }) as typeof document.createElement);
+    const file = () =>
+      new File([readFileSync(join(FIXTURES, 'plain.mp4'))], 'clip.mp4', { type: 'video/mp4' });
+
+    let done = false;
+    const all = Promise.all(Array.from({ length: 5 }, () => preprocessVideo(file()))).finally(
+      () => (done = true)
+    );
+    for (let i = 0; i < 100 && !done; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      loads.splice(0).forEach((load) => load());
+    }
+    expect(await all).toHaveLength(5);
+    expect(maxActive).toBe(2);
+  });
+
+  it('frees the decoder of a video that fails to load', async () => {
+    const video = fakeVideo();
+    Object.defineProperty(video, 'src', { set: () => queueMicrotask(() => video.onerror?.()) });
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) =>
+      tag === 'video' ? video : create(tag)) as typeof document.createElement);
+    const file = new File([readFileSync(join(FIXTURES, 'plain.mp4'))], 'clip.mp4', {
+      type: 'video/mp4',
+    });
+    await expect(preprocessVideo(file)).rejects.toBeDefined();
+    expect(video.removeAttribute).toHaveBeenCalledWith('src');
   });
 
   describe('a seek that cannot finish', () => {

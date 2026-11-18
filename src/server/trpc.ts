@@ -67,7 +67,7 @@ onDevalueWriteFallback((error) => {
       type: 'warning',
       path,
       message,
-    }).catch(() => undefined);
+    });
   }
 });
 
@@ -79,13 +79,13 @@ onDevalueWriteFallback((error) => {
 type TRPCScopeMeta =
   | {
       /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-      requiredScope?: number;
+      requiredScope?: bigint;
       anyOfScopes?: never;
     }
   | {
       requiredScope?: never;
       /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
-      anyOfScopes: readonly number[];
+      anyOfScopes: readonly bigint[];
     };
 
 export type TRPCMeta = TRPCScopeMeta & {

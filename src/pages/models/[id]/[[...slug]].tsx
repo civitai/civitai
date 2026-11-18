@@ -21,7 +21,6 @@ import {
   IconBolt,
   IconBookmark,
   IconBrush,
-  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
@@ -151,6 +150,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -475,6 +475,7 @@ export default function ModelDetailsV2({
   const colorScheme = useComputedColorScheme('dark');
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
+  const deferredShell = useSsrDeferredShell(deferredSsr);
   const features = useFeatureFlags();
   const ds = !!features.modelPageDesignSystemMarkup;
   const { activeTour, running, runTour } = useTourContext();
@@ -997,7 +998,7 @@ export default function ModelDetailsV2({
   // gate and `<head>` with a loader in place of the content. The hydrating render must
   // match it, so it waits for the client mount too; the content then renders as it does after a
   // client-side navigation, with the queries the server skipped loading in place.
-  if (deferredSsr && !isClient) {
+  if (deferredShell) {
     return (
       <Gated {...gatedProps}>
         <PageLoader />
@@ -1458,20 +1459,12 @@ export default function ModelDetailsV2({
                                     key="toggle-searchable-menu-item"
                                   />
                                   {!model.mode ? (
-                                    <>
-                                      <Menu.Item
-                                        leftSection={<IconArchive size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                      >
-                                        Archive
-                                      </Menu.Item>
-                                      <Menu.Item
-                                        leftSection={<IconCircleMinus size={14} stroke={1.5} />}
-                                        onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                      >
-                                        Take Down
-                                      </Menu.Item>
-                                    </>
+                                    <Menu.Item
+                                      leftSection={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
                                   ) : (
                                     <Menu.Item
                                       leftSection={<IconReload size={14} stroke={1.5} />}

@@ -121,10 +121,17 @@ export const addApiKeyInputSchema = z.object({
   // Server-authoritative bound matching the UI input's maxLength (the name can be
   // seeded via the account deeplink, which bypasses the input's keystroke limit).
   name: z.string().trim().max(64),
-  tokenScope: z.number().int().min(0).max(TokenScope.Full).default(TokenScope.Full),
+  // A number on the wire (JSON has no bigint), a bigint once parsed. Every bit is below 2^53.
+  tokenScope: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number(TokenScope.Full))
+    .default(Number(TokenScope.Full))
+    .transform((v) => BigInt(v)),
   buzzLimit: buzzLimitSchema.nullable().optional(),
 });
-export type AddAPIKeyInput = z.input<typeof addApiKeyInputSchema>;
+export type AddAPIKeyInput = z.output<typeof addApiKeyInputSchema>;
 
 export const setBuzzLimitInputSchema = z.object({
   id: z.number(),

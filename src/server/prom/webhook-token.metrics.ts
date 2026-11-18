@@ -96,7 +96,7 @@ export function recordWebhookTokenMatch(
       slot,
       route,
       userAgent: req.headers?.['user-agent'],
-    }).catch(() => undefined);
+    });
   } catch {
     /* never throw from telemetry */
   }

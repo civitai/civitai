@@ -94,7 +94,7 @@ export async function processComFaceIntentDisputes() {
         message: error instanceof Error ? error.message : String(error),
         appealId: row.id,
         modelId: row.modelId,
-      }).catch(() => undefined);
+      });
     }
   }
   return counts;
@@ -172,7 +172,7 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
       appealId: row.id,
       modelId: row.modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return markJudged(row, 'needs-moderator');
   }
   logSample(row, 'overturned', verdict.promptId);
@@ -215,5 +215,5 @@ function logSample(
     firstReason: first?.reason,
     secondPromptId: promptId,
     secondReason: reason,
-  }).catch(() => undefined);
+  });
 }

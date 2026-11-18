@@ -70,7 +70,7 @@ export const reapDevTunnelsJob = createJob('reap-dev-tunnels', '*/5 * * * *', as
           status: result.status,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return result;
     }
 
@@ -85,7 +85,7 @@ export const reapDevTunnelsJob = createJob('reap-dev-tunnels', '*/5 * * * *', as
           skipped: result.skipped,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
     }
     return result;
   } catch (error) {
@@ -99,7 +99,7 @@ export const reapDevTunnelsJob = createJob('reap-dev-tunnels', '*/5 * * * *', as
         stack: (error as Error)?.stack,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
     return { swept: 0, reaped: 0, skipped: 0, listOk: false, error: true as const };
   }
 });

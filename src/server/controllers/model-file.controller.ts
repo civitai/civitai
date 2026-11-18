@@ -182,7 +182,7 @@ async function submitInlineScan({
         stack: err instanceof Error ? err.stack : undefined,
       },
       'webhooks'
-    ).catch();
+    );
   });
 }
 

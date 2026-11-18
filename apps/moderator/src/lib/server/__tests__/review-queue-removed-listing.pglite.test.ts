@@ -43,6 +43,7 @@ CREATE TABLE "Image" (
   "needsReview" TEXT,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT FALSE,
   "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',

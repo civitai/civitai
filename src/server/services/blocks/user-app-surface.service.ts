@@ -1537,8 +1537,6 @@ export async function recordScopeInvocation(opts: {
         error: err instanceof Error ? err.message : String(err),
       },
       'civitai-prod'
-    ).catch(() => {
-      /* axiom unreachable — give up */
-    });
+    );
   }
 }

@@ -41,6 +41,8 @@ export function rulesFacts() {
       window: APPRENTICE.window,
       checkpointEvery: APPRENTICE.checkpointEvery,
       levelGold: PROGRESSION.acolyteLevelGold,
+      heartWrong: APPRENTICE.smiteWrong,
+      heartWindow: APPRENTICE.smiteWindow,
     },
     ranks: rankTable().map((r) => ({
       rank: r.rank,
@@ -72,7 +74,11 @@ export function rulesFacts() {
       windowDays: PROGRESSION.fervorWindowDays,
       accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
     },
-    hearts: { max: SMITES.max, returnAfterDays: SMITES.expireAfterDays },
+    hearts: {
+      max: SMITES.max,
+      returnAfterDays: SMITES.expireAfterDays,
+      rightVerdictsBack: SMITES.size,
+    },
     ratingGuide: ratingGuide(),
   };
 }

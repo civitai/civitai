@@ -47,10 +47,12 @@ function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
 }
 
 /**
- * The `ssrSignedInSkipPrefetch` A/B (`~/server/utils/ssr-skip-prefetch`): the same render-phase CPU
- * as `ssr_cpu_seconds_total`, for only the requests in the trial's population (signed-in full page
- * loads of an adopting route), split by arm. Kept off the main metric so its `kind="html"` series
- * mean what they meant before. Per-render CPU = rate(cpu) / rate(renders), per route and cohort.
+ * The `ssrSignedInSkipPrefetch*` A/Bs (`~/server/utils/ssr-skip-prefetch`): the same render-phase
+ * CPU as `ssr_cpu_seconds_total`, for only the requests in the trials' population (signed-in full
+ * page loads of an adopting route), split by arm. Each route has its own flag
+ * (`SSR_SKIP_PREFETCH_FLAGS`), so `route` also names the trial. Kept off the main metric so its
+ * `kind="html"` series mean what they meant before. Per-render CPU = rate(cpu) / rate(renders), per
+ * route and cohort.
  */
 function cohortCpuCounter(): Counter<'route' | 'cohort'> {
   return registerInstrumentationMetric(
@@ -60,8 +62,8 @@ function cohortCpuCounter(): Counter<'route' | 'cohort'> {
         name: SSR_PREFETCH_COHORT_CPU_METRIC,
         help:
           'Main-thread CPU seconds spent rendering a page (phase=render, as ssr_cpu_seconds_total) ' +
-          'for requests in the ssrSignedInSkipPrefetch trial population, by page route and arm ' +
-          '(cohort=skip: loading-shell render; cohort=full: the flag is off)',
+          'for requests in the ssrSignedInSkipPrefetch* trial population, by page route and arm ' +
+          "(cohort=skip: loading-shell render; cohort=full: the route's flag is off)",
         labelNames: ['route', 'cohort'] as const,
         registers: [instrumentationRegistry],
       })
@@ -76,7 +78,7 @@ function cohortRendersCounter(): Counter<'route' | 'cohort'> {
         name: SSR_PREFETCH_COHORT_RENDERS_METRIC,
         help:
           'Page renders counted into ssr_prefetch_cohort_render_cpu_seconds_total, by page route ' +
-          'and ssrSignedInSkipPrefetch arm',
+          'and ssrSignedInSkipPrefetch* arm',
         labelNames: ['route', 'cohort'] as const,
         registers: [instrumentationRegistry],
       })
@@ -92,7 +94,7 @@ function cohortGsspCpuCounter(): Counter<'route' | 'cohort'> {
         help:
           'Process CPU seconds (user + system, all threads) spent in createServerSideProps from the ' +
           "page's resolver (its prefetches) through dehydrate, for requests in the " +
-          'ssrSignedInSkipPrefetch trial population, by page route and arm. Diagnostic only: ' +
+          'ssrSignedInSkipPrefetch* trial population, by page route and arm. Diagnostic only: ' +
           'wall-interval, so it includes CPU of requests interleaved on the process',
         labelNames: ['route', 'cohort'] as const,
         registers: [instrumentationRegistry],
@@ -108,7 +110,7 @@ function cohortGsspCounter(): Counter<'route' | 'cohort'> {
         name: SSR_PREFETCH_COHORT_GSSP_METRIC,
         help:
           'getServerSideProps runs counted into ssr_prefetch_cohort_gssp_cpu_seconds_total, by page ' +
-          'route and ssrSignedInSkipPrefetch arm',
+          'route and ssrSignedInSkipPrefetch* arm',
         labelNames: ['route', 'cohort'] as const,
         registers: [instrumentationRegistry],
       })

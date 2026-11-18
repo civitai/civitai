@@ -56,6 +56,18 @@ type ImagesQuery struct {
 	// ThrowOnStatementTimeout makes a statement timeout an error instead of an empty page (the
 	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
 	ThrowOnStatementTimeout bool
+	// PrioritizedUserIDs is getAllImages' prioritizeUser branch with the version cache off (image.getInfinite's
+	// `prioritizedUserIds`, never the system user alone: that sub-case falls back): no
+	// ImageResourceNew join for the model scope; `p."modelVersionId" = <version>` when there is one;
+	// only these creators' images; ordered oldest post first, then by index and id. The cursor
+	// column stays the one the sort chose (the cursor itself is refused by the caller). Never cached.
+	PrioritizedUserIDs []int
+	// Pending is the input's `pending`: no published-before-now clause, and for a moderator or a
+	// signed-in viewer the pending visibility in place of the reviewed one (then never cached).
+	Pending bool
+	// Tools is the input's `tools`: only images whose ImageTool rows hold every one of these tool ids
+	// (an image with no tool row never matches). Not personalized: the query keeps its cache policy.
+	Tools []int
 }
 
 // Built is the SQL for one page plus its caching policy.
@@ -110,8 +122,11 @@ func (q *ImagesQuery) Build() Built {
 	if q.FromPlatform {
 		and = append(and, `(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`)
 	}
-	// Not pending: strict published-only (the scheduled carve-out is a fallback shape).
-	and = append(and, `(p."publishedAt" < now())`)
+	// Not pending: strict published-only (the scheduled carve-out is a fallback shape). Pending: no
+	// publish clause at all (the per-image transform still drops another creator's unpublished image).
+	if !q.Pending {
+		and = append(and, `(p."publishedAt" < now())`)
+	}
 
 	if !q.IsModerator {
 		and = append(and, `((p."availability" != 'Private' AND i."ingestion" != 'Blocked') OR p."userId" = `+q.viewerArg(a)+`)`)
@@ -147,7 +162,9 @@ func (q *ImagesQuery) Build() Built {
 
 	from := `FROM "Image" i`
 	var joins []string
-	if q.ModelID != 0 || q.ModelVersionID != 0 {
+	prioritized := len(q.PrioritizedUserIDs) > 0
+	// `!prioritizeUser && (modelId || modelVersionId)`: a prioritized request does not join the model.
+	if !prioritized && (q.ModelID != 0 || q.ModelVersionID != 0) {
 		from = `FROM "ImageResourceNew" irr`
 		joins = append(joins, `JOIN "Image" i ON i.id = irr."imageId"`)
 		if q.ModelVersionID != 0 {
@@ -189,8 +206,12 @@ func (q *ImagesQuery) Build() Built {
 		and = append(and, `i."userId" != ALL(`+a.add(q.ExcludedUsers)+`::int[])`)
 	}
 
-	if q.TargetUserID != 0 || len(q.TagIDs) > 0 {
-		// isPersonalized (the user-gallery path, a tag combination): never cached.
+	// The pending view of a moderator or a signed-in viewer (`effectivePending && (isModerator ||
+	// ownerId)`).
+	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
+	if q.TargetUserID != 0 || len(q.TagIDs) > 0 || prioritized || pendingView {
+		// isPersonalized (the user-gallery path, a tag combination, prioritizedUserIds, the pending
+		// view): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
@@ -222,10 +243,43 @@ func (q *ImagesQuery) Build() Built {
 		// A post's images can share an index.
 		orderBy += `, i."id"`
 	}
+	if prioritized {
+		// After getCursor, so the cursor column is still the sort's. The system user alone (an IIF
+		// order over every creator when it has no post on the version) is a fallback upstream.
+		if q.ModelVersionID != 0 {
+			and = append(and, `p."modelVersionId" = `+a.add(q.ModelVersionID))
+		}
+		and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
+		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+	}
+	if len(q.Tools) > 0 {
+		// getAllImagesUncaptured's `tools` clause, after the prioritizeUser branch as there. The list
+		// is bound as sent (Node joins it into ARRAY[…]::integer[]); `@>` ignores order and repeats.
+		and = append(and, `EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> `+a.add(q.Tools)+`::integer[]
+    )`)
+	}
 
-	and = append(and, `i."needsReview" IS NULL`, `i."acceptableMinor" = FALSE`)
-	and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
-	and = append(and, hydrate.ImageReviewedSQL("i"))
+	if pendingView {
+		if q.IsModerator {
+			and = append(and, `((i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 OR i."nsfwLevel" = 0)`)
+		} else {
+			and = append(and, pendingViewerSQL(a, q.ViewerID, browsingLevel))
+		}
+	} else {
+		and = append(and, `i."needsReview" IS NULL`, `i."acceptableMinor" = FALSE`)
+		and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
+		and = append(and, hydrate.ImageReviewedSQL("i"))
+	}
+
+	restrictedOwnerSQL := ""
+	if q.ViewerID != 0 {
+		restrictedOwnerSQL = ` OR i."userId" = ` + a.add(q.ViewerID)
+	}
 
 	offset := ""
 	if q.Skip > 0 {
@@ -281,15 +335,17 @@ func (q *ImagesQuery) Build() Built {
       i.minor,
       i.poi,
       i."acceptableMinor",
+      -- No viewer exception: true for the uploader too (the owner's notice reads it).
+      ((i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0 OR NOT i."modelRestricted") IS NOT TRUE "restricted",
       ` + cursorCol + ` "cursorId"
     ` + from + `
     ` + strings.Join(joins, "\n    ") + `
     JOIN "Post" p ON p.id = i."postId"
     WHERE ` + strings.Join(and, " AND ") + `
-      -- Images with an R+ level may not use a license-restricted base model.
+      -- An R+ image on a license-restricted base model is its uploader's alone.
       AND (
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
-        OR NOT i."modelRestricted"
+        OR NOT i."modelRestricted"` + restrictedOwnerSQL + `
       )
     ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
@@ -297,7 +353,22 @@ func (q *ImagesQuery) Build() Built {
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}
 }
 
-// imageOnSiteSQL is imageOnSiteSql('i.meta') (src/server/utils/image-onsite.ts).
-const imageOnSiteSQL = `(i.meta->>'civitaiResources' IS NOT NULL
- AND NOT (i.meta ? 'Version')
- AND (NOT (i.meta ? 'Model') OR (i.meta->>'Model') LIKE 'urn:air:%'))`
+// nsfwLevelBlocked is NsfwLevel.Blocked (src/server/common/enums.ts).
+const nsfwLevelBlocked = 32
+
+// pendingViewerSQL is pendingViewerImageSql({ userId, browsingLevel }) (collection-review.sql.ts,
+// with pendingOthersImageConditions from common/image-visibility.ts), without a reviewCollectionId
+// (server-set, never on image.getInfinite): another creator's image must not await review, not be
+// acceptableMinor, and be reviewed if rated; the viewer's own are exempt, and shown unrated; a rated,
+// reviewed image of a post in a collection the viewer MANAGEs shows above browsingLevel.
+func pendingViewerSQL(a *sqlArgs, viewerID, browsingLevel int) string {
+	own := func() string { return `i."userId" = ` + a.add(viewerID) }
+	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `)) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
+		` OR i."nsfwLevel" = 0 OR ` + hydrate.ImageReviewedSQL("i") + `)
+    AND ((i."nsfwLevel" & ` + a.add(browsingLevel) + `) != 0 OR (i."nsfwLevel" = 0 AND ` + own() +
+		`) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ` + a.add(nsfwLevelBlocked) + `) AND (i."acceptableMinor" = FALSE OR ` + own() +
+		`) AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ` + a.add(viewerID) + `))))`
+}
+
+// imageOnSiteSQL is imageOnSiteSql('i.meta'), shared with the version showcase lookup.
+const imageOnSiteSQL = hydrate.ImageOnSiteSQL

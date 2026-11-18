@@ -49,6 +49,14 @@ type PageQuery struct {
 	OnSale                bool
 	ExcludedUserIDs       []int
 	FileFormats           []string
+	// CollectionID is the collection filter (0 = none), applied only once the viewer may read the
+	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
+	CollectionID    int
+	CollectionTagID int
+	// OnlyModelIDs / ExcludeModelIDs are getModelsRaw's onlyModelIds / excludeModelIds: the browse
+	// feed's official-checkpoint pin (Serve). Neither relaxes the private-model filter.
+	OnlyModelIDs    []int
+	ExcludeModelIDs []int
 }
 
 // SQL is one statement and its arguments.
@@ -137,27 +145,14 @@ func cursorProp(fields []sortField) string {
 
 var numericToken = regexp.MustCompile(`^-?\d+$`)
 
-var cursorFraction = regexp.MustCompile(`\.(\d+)$`)
-
 // cursorTimestamp reads a timestamp token as the instant it names: what Postgres writes for a
 // `timestamp(3)` in CONCAT ("2006-01-02 15:04:05[.fff]", trailing zeros of the fraction trimmed),
-// the fraction read as a decimal fraction of a second and kept to the millisecond. Any other
+// the fraction read as a decimal fraction of a second and kept to the millisecond, so ".25" is
+// 250 ms and ".5" 500 ms, as Node reads it (the fraction padded to three digits). Any other
 // date-like token falls back as model-cursor.
-//
-// Node's dayjs.utc does NOT read every such token this way: it takes the fraction's digits as a
-// count of milliseconds, so ".25" (250 ms, as Postgres writes it) binds as 25 ms and ".5" as 5 ms,
-// and the next page starts at the wrong row. That is a Node bug, fixed on main by #9075 (the
-// fraction padded to three digits) but not yet deployed; a fraction of three digits reads the same
-// on both. Until the fix is deployed, a token with a 1- or 2-digit fraction is the
-// short-fraction-cursor fallback: serving it correctly would not match the deployed Node.
-//
-// TODO(short-fraction-cursor): remove this fallback once the Node cursor fix is deployed.
 func cursorTimestamp(tok string) (time.Time, error) {
 	for _, layout := range []string{"2006-01-02 15:04:05.999999999", "2006-01-02T15:04:05.999999999"} {
 		if t, err := time.Parse(layout, tok); err == nil {
-			if m := cursorFraction.FindStringSubmatch(tok); m != nil && len(m[1]) < 3 {
-				return time.Time{}, fallback.Newf("short-fraction-cursor", "%q", tok)
-			}
 			return t.Truncate(time.Millisecond), nil
 		}
 	}
@@ -199,12 +194,11 @@ const (
 // parseCursor is parseCursor for a string cursor: one token per sort field, each a timestamp (a
 // token with `-` that is not a plain integer) or an integer (parseInt) within [CURSOR_MIN, INT4_MAX].
 // Anything Node answers with a 400 — a wrong arity, an empty token (a NULL column in the CONCAT), an
-// unparseable date or number, a number out of range — falls back as model-cursor; a date Node
-// misreads (cursorTimestamp) is the short-fraction-cursor fallback.
+// unparseable date or number, a number out of range — falls back as model-cursor.
 func parseCursor(fields []sortField, cursor string) ([]any, error) {
 	toks := strings.Split(cursor, "|")
 	if len(toks) != len(fields) {
-		return nil, fallback.Newf("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
+		return nil, fallback.Safef("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
 	}
 	out := make([]any, len(toks))
 	for i, tok := range toks {
@@ -383,6 +377,13 @@ func (q *PageQuery) Build() (SQL, error) {
 	if q.AllowNoCredit != nil {
 		and = append(and, `m."allowNoCredit" = `+b.arg(*q.AllowNoCredit))
 	}
+	// `ids` falls back; then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	if len(q.OnlyModelIDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.OnlyModelIDs)+`::int[])`)
+	}
+	if len(q.ExcludeModelIDs) > 0 {
+		and = append(and, `mm."modelId" != ALL(`+b.arg(q.ExcludeModelIDs)+`::int[])`)
+	}
 	if q.CheckpointType != "" && (len(q.Types) == 0 || contains(q.Types, "Checkpoint")) {
 		or := []string{`m."checkpointType" = ` + b.arg(q.CheckpointType) + `::text::"CheckpointType"`}
 		var other []string
@@ -439,6 +440,27 @@ func (q *PageQuery) Build() (SQL, error) {
 	// No availability filter is ported: a non-moderator's feed never holds Private models.
 	if !q.IsModerator {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
+	}
+	if q.CollectionID != 0 {
+		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
+		// items, and for a signed-in viewer also the items they added that are still in review.
+		clause := `EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ` + b.arg(q.CollectionID) + `
+        AND `
+		if q.ViewerID != 0 {
+			clause += `(ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = ` + b.arg(q.ViewerID) + `))`
+		} else {
+			clause += `ci."status" = 'ACCEPTED'::"CollectionItemStatus"`
+		}
+		if q.CollectionTagID != 0 {
+			clause += `
+        AND ci."tagId" = ` + b.arg(q.CollectionTagID)
+		}
+		and = append(and, clause+`
+      )`)
 	}
 	if len(q.ExcludedUserIDs) > 0 {
 		and = append(and, `mm."userId" != ALL(`+b.arg(q.ExcludedUserIDs)+`::int[])`)

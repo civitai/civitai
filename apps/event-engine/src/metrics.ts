@@ -131,40 +131,6 @@ export const metricBatcherMetrics = {
   }),
 };
 
-// Index Update Queue Metrics
-export const indexQueueMetrics = {
-  batchesFlushed: new Counter({
-    name: 'mew_index_batches_flushed_total',
-    help: 'Total number of index update batches flushed',
-    labelNames: ['entity_type'],
-    registers: [register],
-  }),
-  batchesFailed: new Counter({
-    name: 'mew_index_batches_failed_total',
-    help: 'Total number of failed index update batches',
-    registers: [register],
-  }),
-  updatesProcessed: new Counter({
-    name: 'mew_index_updates_processed_total',
-    help: 'Total number of index updates processed',
-    labelNames: ['entity_type'],
-    registers: [register],
-  }),
-  queueSize: new Gauge({
-    name: 'mew_index_queue_size',
-    help: 'Current number of entities in index update queue',
-    labelNames: ['entity_type'],
-    registers: [register],
-  }),
-  batchFlushDuration: new Histogram({
-    name: 'mew_index_batch_flush_duration_seconds',
-    help: 'Duration of index batch flush operations',
-    labelNames: ['entity_type'],
-    buckets: [0.1, 0.5, 1, 2, 5, 10],
-    registers: [register],
-  }),
-};
-
 // Metric Signals Metrics
 export const signalsMetrics = {
   signalsSent: new Counter({

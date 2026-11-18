@@ -269,6 +269,7 @@ async function blockUserImages(
       const touched: TouchedImage[] = [];
 
       if (hide.length) {
+        // An existing CSAM reason is kept, and the reason is recorded so a restore puts it back.
         // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it. The
         // `ingestion <> 'Blocked'` guard is what preserves the real prior ingestion in metadata —
         // re-running over an already-blocked row would record 'Blocked' as its own predecessor.
@@ -277,9 +278,11 @@ async function blockUserImages(
             UPDATE "Image"
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
-                "blockedFor" = ${BlockedReason.Moderated},
+                "blockedFor" = CASE WHEN "blockedFor" = ${
+                  BlockedReason.CSAM
+                } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}
@@ -385,13 +388,13 @@ async function drainPage(
     canceled = result.canceled;
 
     if (result.error)
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'remove-deleted-user-images',
         message: (result.error as Error).message,
         error: safeError(result.error),
         userId: user.id,
-      }).catch(() => undefined);
+      });
 
     if (result.drained) {
       deletedUsers += 1;
@@ -428,11 +431,11 @@ export const removeDeletedUserImages = createJob(
     // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
     // the delete path reads the marker's other objects too, after its DELETE has committed.
     if (!markerView) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'remove-deleted-user-images',
         message: 'hold marker view missing: nothing drained this run',
-      }).catch(() => undefined);
+      });
       return {
         skipped: 'hold-marker-view-missing',
         deletedImages: 0,
@@ -540,7 +543,7 @@ export const removeDeletedUserImages = createJob(
       }
     }
 
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'remove-deleted-user-images',
       deletedImages,
@@ -550,7 +553,7 @@ export const removeDeletedUserImages = createJob(
       freshDeletedUsers: freshRun.deletedUsers,
       candidates,
       budget,
-    }).catch(() => undefined);
+    });
 
     return { deletedImages, blockedImages, deletedUsers, wrapped };
   },

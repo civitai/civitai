@@ -13,6 +13,7 @@ import {
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
+  winnerImageFields,
 } from './challenge-visibility';
 
 describe('getEffectiveBrowsingLevel', () => {
@@ -110,10 +111,16 @@ describe('isChallengeHiddenByPoiCover', () => {
 
   it('never hides trusted System/Mod challenges even with a POI cover', () => {
     expect(
-      isChallengeHiddenByPoiCover({ source: ChallengeSource.System, createdById: 10, coverPoi: true }, 20)
+      isChallengeHiddenByPoiCover(
+        { source: ChallengeSource.System, createdById: 10, coverPoi: true },
+        20
+      )
     ).toBe(false);
     expect(
-      isChallengeHiddenByPoiCover({ source: ChallengeSource.Mod, createdById: 10, coverPoi: true }, 20)
+      isChallengeHiddenByPoiCover(
+        { source: ChallengeSource.Mod, createdById: 10, coverPoi: true },
+        20
+      )
     ).toBe(false);
   });
 });
@@ -134,9 +141,65 @@ describe('isChallengeCoverScanned', () => {
   it('false when there is no cover image', () => {
     expect(isChallengeCoverScanned({ coverImage: null } as any)).toBe(false);
   });
+
+  it('false when the scanned cover has no rating', () => {
+    expect(
+      isChallengeCoverScanned({ coverImage: { ingestion: 'Scanned', nsfwLevel: 0 } } as any)
+    ).toBe(false);
+  });
+});
+
+describe('winnerImageFields', () => {
+  const winner = (imageNsfwLevel: number) => ({
+    imageId: 7,
+    imageUrl: 'winner',
+    imageNsfwLevel,
+    imageHash: 'h',
+    imageIngestion: 'Scanned' as const,
+    imageBlockedFor: null,
+    imageReviewed: true,
+    imageNotRestricted: true,
+  });
+
+  it('serves a rated winner image', () => {
+    expect(winnerImageFields(winner(1)).imageUrl).toBe('winner');
+  });
+
+  it('withholds an unrated winner image, every field of it', () => {
+    expect(winnerImageFields(winner(0))).toEqual({
+      imageId: null,
+      imageUrl: null,
+      imageNsfwLevel: null,
+      imageHash: null,
+    });
+  });
 });
 
 describe('isChallengeHiddenByCoverScan', () => {
+  it('hides a user challenge with an unrated cover from a non-creator, not from its creator', () => {
+    const challenge = {
+      source: ChallengeSource.User,
+      createdById: 10,
+      coverImage: { ingestion: 'Scanned', nsfwLevel: 0 } as any,
+    };
+    expect(isChallengeHiddenByCoverScan(challenge, 20)).toBe(true);
+    expect(isChallengeHiddenByCoverScan(challenge)).toBe(true);
+    expect(isChallengeHiddenByCoverScan(challenge, 10)).toBe(false);
+  });
+
+  it('never hides a System challenge for an unrated cover', () => {
+    expect(
+      isChallengeHiddenByCoverScan(
+        {
+          source: ChallengeSource.System,
+          createdById: 10,
+          coverImage: { ingestion: 'Scanned', nsfwLevel: 0 } as any,
+        },
+        20
+      )
+    ).toBe(false);
+  });
+
   it('hides a user challenge with an unscanned cover from a non-creator viewer', () => {
     expect(
       isChallengeHiddenByCoverScan(
@@ -189,7 +252,11 @@ describe('isChallengeHiddenByCoverScan', () => {
     ).toBe(false);
     expect(
       isChallengeHiddenByCoverScan(
-        { source: ChallengeSource.Mod, createdById: 10, coverImage: { ingestion: 'Pending' } as any },
+        {
+          source: ChallengeSource.Mod,
+          createdById: 10,
+          coverImage: { ingestion: 'Pending' } as any,
+        },
         20
       )
     ).toBe(false);

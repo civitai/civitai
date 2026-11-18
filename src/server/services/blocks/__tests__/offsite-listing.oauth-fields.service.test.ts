@@ -97,7 +97,7 @@ const baseInput: SubmitExternalListingInput = {
 };
 
 function ownedClient(
-  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+  overrides: Partial<{ id: string; userId: number; allowedScopes: bigint }> = {}
 ) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
@@ -145,7 +145,8 @@ describe('submitExternalListing', () => {
       connectClientId: CLIENT_ID,
       // SERVER-DERIVED from the client's allowedScopes (= CEILING), NOT the form's
       // requestedScopes (ModelsRead in baseInput).
-      connectRequestedScopes: CEILING,
+      // The int4 column holds the mask as a number.
+      connectRequestedScopes: Number(CEILING),
       connectScopeJustifications: { ModelsRead: 'We download models to run them.' },
       appBlockId: null,
       userId: CALLER,
@@ -219,7 +220,7 @@ describe('submitExternalListing', () => {
       string,
       unknown
     >;
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('never snapshots a client_credentials-only bit into the disclosed connect scopes', async () => {
@@ -234,7 +235,7 @@ describe('submitExternalListing', () => {
       string,
       unknown
     >;
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('a justification for a scope OUTSIDE the client allowedScopes → BAD_REQUEST, no write', async () => {
@@ -320,7 +321,7 @@ describe('buildListingPatchData (connect scope edit)', () => {
       },
       { connectAllowedScopes: CEILING }
     );
-    expect(data.connectRequestedScopes).toBe(TokenScope.ModelsRead);
+    expect(data.connectRequestedScopes).toBe(Number(TokenScope.ModelsRead));
     expect(data.connectScopeJustifications).toEqual({ ModelsRead: 'reason' });
   });
 
@@ -403,7 +404,7 @@ describe('updateListing (connect scope edit re-validation)', () => {
       },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data.connectRequestedScopes).toBe(CEILING);
+    expect(data.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('never re-snapshots a client_credentials-only bit on a scope edit', async () => {
@@ -420,7 +421,7 @@ describe('updateListing (connect scope edit re-validation)', () => {
       patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data.connectRequestedScopes).toBe(CEILING);
+    expect(data.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('re-asserts client OWNERSHIP on edit: a client transferred to another user → FORBIDDEN, no shadow write', async () => {
@@ -528,7 +529,7 @@ describe('submitExternalListing (moderator foreign client)', () => {
     };
     expect(listingData.userId).toBe(CALLER);
     expect(listingData.connectClientId).toBe(CLIENT_ID);
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('a NON-MOD with a FOREIGN client → FORBIDDEN, no write (restriction preserved)', async () => {

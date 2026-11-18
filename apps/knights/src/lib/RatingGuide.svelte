@@ -1,7 +1,12 @@
 <script lang="ts">
-  import { levelName } from './rating-guide';
+  import { page } from '$app/state';
+  import { levelName, prohibitedContentUrl } from './rating-guide';
 
-  let { guide }: { guide: { level: number; label: string; description: string }[] } = $props();
+  type Example = { id: number; src: string; width: number | null; height: number | null };
+
+  let {
+    guide,
+  }: { guide: { level: number; label: string; description: string; examples?: Example[] }[] } = $props();
 </script>
 
 <ul class="guide">
@@ -13,7 +18,28 @@
       <div class="meaning">
         {#if name}<p class="name">{name}</p>{/if}
         <p class="description">{entry.description}</p>
+        {#if blocked && page.data.civitaiUrl}
+          <a class="rules" href={prohibitedContentUrl(page.data.civitaiUrl)} target="_blank" rel="noopener noreferrer"
+            >See the full list of prohibited content</a
+          >
+        {/if}
       </div>
+      {#if entry.examples?.length}
+        <ul class="examples" aria-label={`${entry.label} examples`}>
+          {#each entry.examples as example (example.id)}
+            <li>
+              <img
+                src={example.src}
+                alt={`An image rated ${entry.label}`}
+                width={example.width ?? undefined}
+                height={example.height ?? undefined}
+                loading="lazy"
+                decoding="async"
+              />
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </li>
   {/each}
 </ul>
@@ -29,6 +55,7 @@
   }
   .row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 18px;
   }
@@ -51,10 +78,43 @@
     font-variant: small-caps;
   }
   .meaning {
+    flex: 1 1 0;
     min-width: 0;
+  }
+  /* A swipeable strip of examples under the meaning, as the original game's guide had. */
+  .examples {
+    display: flex;
+    flex-basis: 100%;
+    gap: 8px;
+    margin: -6px 0 0;
+    padding: 0 0 6px;
+    overflow-x: auto;
+    list-style: none;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+  }
+  .examples li {
+    flex: none;
+    scroll-snap-align: start;
+  }
+  .examples img {
+    display: block;
+    width: auto;
+    height: 160px;
+    max-width: 240px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 4px;
+    background: var(--io-bg);
+    object-fit: cover;
   }
   .meaning p {
     margin: 0;
+  }
+  .rules {
+    display: inline-block;
+    margin-top: 4px;
+    color: var(--io-crimson-text);
+    font: 600 14px/1.4 var(--io-font-ui);
   }
   .name {
     color: var(--io-gold);
@@ -92,6 +152,10 @@
     .description {
       font-size: 17px;
       line-height: 1.3;
+    }
+    .examples img {
+      height: 132px;
+      max-width: 180px;
     }
   }
 </style>

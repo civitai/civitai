@@ -8,6 +8,13 @@ vi.mock('~/server/services/text-scan/rated-entities', async (importOriginal) => 
   recomputeRatedEntityNsfwLevel: recompute,
 }));
 
+// The refusal statements run on the table in post-text-moderation.pglite.test.ts.
+const scanRefusal = vi.hoisted(() => ({
+  scanRefusePostText: vi.fn(async () => undefined),
+  scanLiftPostText: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/post-text-scan-refusal', () => scanRefusal);
+
 const { applyPostTextTextScan } = await import('~/server/services/text-scan/actions/image-caption');
 const { postTextTextScanSubject } = await import(
   '~/server/services/text-scan/profiles/post-text.profile'
@@ -72,15 +79,14 @@ describe('applyPostTextTextScan', () => {
 
   it('refuses a real person, and a later clean verdict of the current text lets it back', async () => {
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
-    expect(dataWith('refused')).toEqual([
-      { where: { id: ID, refused: false }, data: { refused: true } },
-    ]);
+    expect(scanRefusal.scanRefusePostText).toHaveBeenCalled();
+    expect(scanRefusal.scanLiftPostText).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
-    expect(dataWith('refused')).toEqual([
-      { where: { id: ID, content: TEXT.content, refused: true }, data: { refused: false } },
-    ]);
+    expect(scanRefusal.scanLiftPostText).toHaveBeenCalled();
+    expect(scanRefusal.scanRefusePostText).not.toHaveBeenCalled();
+    expect(dataWith('refused')).toEqual([]);
   });
 
   it('holds on a csam verdict, and no clean verdict ever clears the hold', async () => {

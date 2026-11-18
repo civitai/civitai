@@ -66,21 +66,33 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2', async () => {
+  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, servable images only', async () => {
     configured({ enabled: true });
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.99);
     await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0.29);
 
-    expect(enqueue).toHaveBeenNthCalledWith(1, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 1, priority: 1 }],
-    });
-    expect(enqueue).toHaveBeenNthCalledWith(2, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 2, priority: 2 }],
-    });
+    expect(enqueue).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 1, priority: 1 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
+    expect(enqueue).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 2, priority: 2 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
   });
 
   it('samples each pool by its configured rate', async () => {
@@ -159,11 +171,16 @@ describe('queueOwnerRatingForKnights', () => {
     clearKnightsSourcesConfigCache();
     configured({ enabled: true, sfwRate: 0, nsfwRate: 0 });
     await queueOwnerRatingForKnights(7);
-    expect(enqueue).toHaveBeenCalledWith(expect.anything(), {
-      source: 'owner-rating',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 7, priority: 1 }],
-    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        source: 'owner-rating',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 7, priority: 1 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
   });
 
   it('swallows a failure', async () => {
@@ -174,7 +191,7 @@ describe('queueOwnerRatingForKnights', () => {
 });
 
 describe('intake backpressure', () => {
-  it('skips scan samples while more Knight-stage items are open than maxOpen, and still queues owner ratings', async () => {
+  it('skips scan samples while more Knight-stage rating items are open than maxOpen, and still queues owner ratings', async () => {
     configured({ enabled: true, maxOpen: 10 });
     openItems(11);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
@@ -182,7 +199,10 @@ describe('intake backpressure', () => {
     await queueOwnerRatingForKnights(3);
 
     expect(queuedIds()).toEqual([3]);
-    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 11]);
+    // Only rating items count: open yes/no questions never hold image intake back.
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(11);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -197,7 +217,10 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 5001]);
+    // The servable filter's values sit between the item filter and the limit (the pglite test covers the filter).
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(5001);
 
     clearKnightsSourcesConfigCache();
     openItems(5000);

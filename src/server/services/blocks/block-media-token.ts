@@ -18,7 +18,11 @@ export const BLOCK_MEDIA_REF_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MAX_CLOCK_SKEW_SECONDS = 30;
 
 const DOMAIN = 'block-media:v1';
-const PREFIX = 'bm1';
+/** The sealed-token wire prefix: `<prefix>.<iv>.<ciphertext>.<tag>`. */
+export const BLOCK_MEDIA_TOKEN_PREFIX = 'bm1';
+const PREFIX = BLOCK_MEDIA_TOKEN_PREFIX;
+/** Where the media route serves a ticket. */
+export const BLOCK_MEDIA_PATH = '/api/v1/blocks/media';
 
 export type BlockMediaClaims = {
   blobId: string;
@@ -37,6 +41,11 @@ export type BlockMediaTicket = BlockMediaClaims & {
   viewerId: number | null;
   /** Browsing level the fetch is judged against: the minting viewer's. */
   viewerBrowsingLevel: number;
+  /**
+   * Minted for a viewer whose session did not resolve: judged as a signed-out viewer (never the
+   * owner), at the anonymous level.
+   */
+  anonymous?: true;
   exp: number;
 };
 
@@ -96,7 +105,11 @@ export function openBlockMediaRef(token: unknown): BlockMediaRef | null {
 }
 
 export function sealBlockMediaTicket(
-  claims: BlockMediaClaims & { viewerId: number | null; viewerBrowsingLevel: number }
+  claims: BlockMediaClaims & {
+    viewerId: number | null;
+    viewerBrowsingLevel: number;
+    anonymous?: true;
+  }
 ): string | undefined {
   const ticket: BlockMediaTicket = {
     ...claims,
@@ -110,7 +123,8 @@ export function openBlockMediaTicket(token: unknown): BlockMediaTicket | null {
   if (!raw) return null;
   const claims = readBlockMediaClaims(raw);
   if (!claims || !expiryHolds(raw.exp, BLOCK_MEDIA_TICKET_TTL_SECONDS)) return null;
-  const { viewerId, viewerBrowsingLevel } = raw;
+  const { viewerId, viewerBrowsingLevel, anonymous } = raw;
+  if (anonymous !== undefined && anonymous !== true) return null;
   if (viewerId !== null && (typeof viewerId !== 'number' || !Number.isInteger(viewerId)))
     return null;
   if (
@@ -119,9 +133,15 @@ export function openBlockMediaTicket(token: unknown): BlockMediaTicket | null {
     viewerBrowsingLevel < 0
   )
     return null;
-  return { ...claims, viewerId, viewerBrowsingLevel, exp: raw.exp as number };
+  return {
+    ...claims,
+    viewerId,
+    viewerBrowsingLevel,
+    ...(anonymous ? { anonymous: true as const } : {}),
+    exp: raw.exp as number,
+  };
 }
 
 export function blockMediaUrl(ticket: string) {
-  return `/api/v1/blocks/media/${ticket}`;
+  return `${BLOCK_MEDIA_PATH}/${ticket}`;
 }

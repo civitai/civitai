@@ -41,14 +41,17 @@ import {
 // The site reads its region lists when its module loads, so they are set before any import: one
 // country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). Every
 // other case is sent from `DE` (`UNRESTRICTED_ORIGIN`), which neither list names, so only the
-// production-rule cases below see them.
+// production-rule cases below see them. `meta` is believed here, as it is once the gateway sets it
+// (`metaTrusted`); request-origin.test.ts covers the adapter with it off.
 const regionEnvBefore = vi.hoisted(() => {
   const before = {
     REGION_RESTRICTION_CONFIG: process.env.REGION_RESTRICTION_CONFIG,
     REGION_BLOCK_CONFIG: process.env.REGION_BLOCK_CONFIG,
+    REGISTRY_ADAPTER_TRUST_META: process.env.REGISTRY_ADAPTER_TRUST_META,
   };
   process.env.REGION_RESTRICTION_CONFIG = 'ZY:2025-01-01';
   process.env.REGION_BLOCK_CONFIG = 'GB:2025-07-24';
+  process.env.REGISTRY_ADAPTER_TRUST_META = '1';
   return before;
 });
 // The environment is the worker's, so it is put back for the files that run after this one.
@@ -150,7 +153,7 @@ function source(world: { rating: string | null; blockRating?: string }) {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(() => cat),
-    resolve: resolveFromCatalog(readApps, SWITCH_ON),
+    resolve: resolveFromCatalog(readApps, SWITCH_ON, { requireDocLevels: false }),
     store,
     pollMs: 5,
     sleep: abortableSleep,
@@ -741,6 +744,8 @@ async function viaGrpc(
   until: (events: StreamEvent[]) => boolean = (e) => e.some((x) => x.type === 'live'),
   extra: Pick<ServeOptions, 'regionRestricted'> & {
     metadata?: Record<string, string | undefined>;
+    /** `SubscribeRequest.meta`, as its bytes. */
+    meta?: Uint8Array;
   } = {}
 ): Promise<Outcome> {
   const server = createGrpcServer(a, {
@@ -760,7 +765,8 @@ async function viaGrpc(
   return new Promise<Outcome>((resolve) => {
     const out: StreamEvent[] = [];
     let cancelled = false;
-    const call = subscribe.call(client, { schema, cursor: '', urns: [], filter: '' }, metadata);
+    const request = { schema, cursor: '', urns: [], filter: '', meta: extra.meta };
+    const call = subscribe.call(client, request, metadata);
     const finish = (outcome: Outcome) => {
       clearTimeout(timer);
       client.close();
@@ -1436,5 +1442,91 @@ describe('🔴 the production region rule: a request with no region is held to S
       metadata: NO_REGION,
     });
     expect(shapes(res.events)).toEqual(['live']);
+  });
+});
+
+/**
+ * The request's `meta` (the registry spec's rule 10), as the registry gateway sets it from the
+ * edge's headers, which then never reach the adapter: a `meta` country is judged as the header
+ * is, wins over a header, and malformed `meta` is none. Each server is built WITHOUT a rule, and
+ * every case is the X token and the x app, so what it is sent is the region decision.
+ */
+describe('🔴 the production region rule reads the request’s meta', () => {
+  const meta = (json: string) => `&meta=${encodeURIComponent(json)}`;
+  const sent = async (query: string, headers: Record<string, string | undefined>) => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const res = await get(port, q(NOTES, query), { ...bearer('x-token'), ...headers });
+    expect(res.status).toBe(200);
+    return events(res.text);
+  };
+
+  it.each([
+    ['meta GB, no header: held by the UK block', meta('{"country":"GB"}'), NO_REGION, ['live']],
+    [
+      'meta isuk is not read: meta DE with isuk is sent the x app',
+      meta('{"country":"DE","isuk":"true"}'),
+      NO_REGION,
+      ['upsert', 'live'],
+    ],
+    ['meta ZY, no header: held by the restriction', meta('{"country":"ZY"}'), NO_REGION, ['live']],
+    [
+      'positive control: meta DE, no header, is sent the x app',
+      meta('{"country":"DE"}'),
+      NO_REGION,
+      ['upsert', 'live'],
+    ],
+    [
+      'meta DE wins over the header GB',
+      meta('{"country":"DE"}'),
+      { 'cf-ipcountry': 'GB' },
+      ['upsert', 'live'],
+    ],
+    [
+      'meta GB wins over the header DE',
+      meta('{"country":"GB"}'),
+      { 'cf-ipcountry': 'DE' },
+      ['live'],
+    ],
+    [
+      'meta without the key: the header GB decides',
+      meta('{"locale":"en"}'),
+      { 'cf-ipcountry': 'GB' },
+      ['live'],
+    ],
+    ['no meta: the header GB decides', '', { 'cf-ipcountry': 'GB' }, ['live']],
+    ['no meta: the header DE decides', '', { 'cf-ipcountry': 'DE' }, ['upsert', 'live']],
+  ])('HTTP: %s', async (_n, query, headers, expected) => {
+    expect(await sent(query, headers)).toEqual(expected);
+  });
+
+  it.each([
+    ['not JSON', '{"country":"DE"'],
+    ['an array', '["DE"]'],
+    ['a string', '"DE"'],
+    ['null', 'null'],
+    ['a country that is not a string', '{"country":["DE"]}'],
+  ])('HTTP: malformed meta (%s) is none', async (_n, json) => {
+    expect(await sent(meta(json), NO_REGION)).toEqual(['live']);
+    expect(await sent(meta(json), { 'cf-ipcountry': 'DE' })).toEqual(['upsert', 'live']);
+  });
+
+  const bytes = (json: string) => Buffer.from(json, 'utf8');
+  it.each([
+    ['meta GB wins over the metadata DE', bytes('{"country":"GB"}'), {}, ['live']],
+    [
+      'meta DE, no region metadata, is sent the x app',
+      bytes('{"country":"DE"}'),
+      NO_REGION,
+      [`upsert ${DOC}`, 'live'],
+    ],
+    ['malformed meta, no region metadata: held', bytes('["DE"]'), NO_REGION, ['live']],
+    ['malformed meta, metadata DE decides', bytes('{"country":7}'), {}, [`upsert ${DOC}`, 'live']],
+    ['no meta: the metadata GB decides', undefined, { 'cf-ipcountry': 'GB' }, ['live']],
+  ])('gRPC: %s', async (_n, m, metadata, expected) => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata,
+      meta: m,
+    });
+    expect(shapes(res.events)).toEqual(expected);
   });
 });

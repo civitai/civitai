@@ -1165,7 +1165,7 @@ const startWithdrawnRefund = (shopItemId: number) =>
       name: 'creator-shop-withdrawn-refund',
       message: 'Withdrawn refund failed; the job retries it',
       data: { shopItemId, error: error instanceof Error ? error.message : String(error) },
-    }).catch(() => undefined)
+    })
   );
 
 export const archiveCreatorShopItem = async ({
@@ -2290,12 +2290,12 @@ export const reviewCreatorShopItem = async ({
     });
   }
   if (reviewedVersion === undefined)
-    await logToAxiom({
+    logToAxiom({
       level: 'warn',
       name: 'creator-shop-verdict-unpinned',
       message: 'Shop verdict sent without the version it reviewed',
       data: { shopItemId: id, reviewerId, action },
-    }).catch(() => undefined);
+    });
 
   const now = new Date();
   const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
@@ -2533,7 +2533,7 @@ async function unreversedPayoutLegs(buzzTransactionId: string, meta: Prisma.Json
 }
 
 const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
-  logToAxiom({ level, name: 'cosmetic-takedown', message, data }).catch(() => undefined);
+  logToAxiom({ level, name: 'cosmetic-takedown', message, data });
 
 /**
  * Pull a cosmetic that can't stay on sale (IP infringement / TOS) in one
@@ -2763,7 +2763,7 @@ export const takedownCosmeticShopItem = async ({
             userId: purchase.userId,
             transactionId: purchase.buzzTransactionId,
           },
-        }).catch(() => undefined);
+        });
         await dbWrite.userCosmeticShopPurchases.update({
           where: { buzzTransactionId: purchase.buzzTransactionId },
           data: { refunded: true },

@@ -536,6 +536,7 @@ describe('removeAllContent', () => {
     expect(deleteImages).toHaveBeenCalledTimes(1);
     expect(deleteImages).toHaveBeenCalledWith([CLEAN * 100, CLEAN * 100 + 1], true, {
       onlyWhere: expect.anything(),
+      moderatorDelete: true,
     });
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
       expect.objectContaining({ targetUserId: CLEAN })

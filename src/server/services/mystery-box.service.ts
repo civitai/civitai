@@ -1427,7 +1427,7 @@ export async function openMysteryBox({
     cosmeticId: result.cosmeticId,
     guaranteed: result.guaranteed,
     ...draw,
-  }).catch();
+  });
 
   // The box is already opened: a cache miss here must not read as a failed open.
   if (grantedSticker) await refreshOwnedStickerCache([userId]).catch(() => undefined);

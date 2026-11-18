@@ -164,7 +164,7 @@ export async function assessDepositCredit(
 }
 
 const audit = (data: MixedObject) =>
-  logToAxiom({ name: 'nowpayments-credit', type: 'info', ...data }).catch(() => null);
+  logToAxiom({ name: 'nowpayments-credit', type: 'info', ...data });
 
 /** Dry run: what `creditDeposit` would do, changing nothing. */
 export async function previewDepositCredit({

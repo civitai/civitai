@@ -75,7 +75,7 @@ export default AuthedEndpoint(
           data: { modelVersionId, epochNumber, userId: user.id, host: logHostOf(epochUrl) },
         },
         'webhooks'
-      ).catch();
+      );
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
 

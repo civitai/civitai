@@ -104,7 +104,7 @@ export async function notifyServiceDeal({
       dealId,
       notice,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
   }
 }
 

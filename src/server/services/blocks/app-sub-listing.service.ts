@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
+import { blockClaimsAppLabel } from '~/server/metrics/app-block-runtime.metrics';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
@@ -32,6 +34,7 @@ import {
   APP_SUB_LISTING_ITEM_KEY_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
+  effectiveSubListingRating,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
   isValidSubListingExternalId,
@@ -40,6 +43,10 @@ import {
   type AppSubListingStatus,
 } from '~/shared/constants/app-sub-listing.constants';
 import type { SessionUser } from '~/types/session';
+import { NsfwLevel } from '~/server/common/enums';
+import type { DocRating } from '~/server/services/apps/doc-store.types';
+import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
+import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
   ModerateSubListingInput,
@@ -65,6 +72,7 @@ export type SubListingErrorCode =
   | 'not_enabled'
   | 'untrusted'
   | 'item_not_found'
+  | 'item_not_rated'
   | 'not_your_item'
   | 'text_rejected'
   | 'image_not_yours'
@@ -82,6 +90,104 @@ export type SubListingErrorCode =
   | 'creator_not_linked'
   | 'creator_not_found'
   | 'author_mismatch';
+
+/**
+ * Content levels (`doc-levels.ts`): a card inherits its item's effective level (the moderator's
+ * override first), as the card's content rating, which the store already filters per viewer
+ * (`subListingMatureFilter`). The author may still choose a stricter rating; never a looser one.
+ * An item not yet rated cannot be published; a Blocked one is not found.
+ */
+function cardRatingFromItem(rating: DocRating, chosen: string | null): string | null {
+  if (rating.status !== 'rated' && rating.status !== 'overridden') {
+    throw new SubListingError(
+      409,
+      'item_not_rated',
+      'This item has not been rated yet. Publish it once it has a content rating.'
+    );
+  }
+  if (rating.level == null || rating.level & NsfwLevel.Blocked) {
+    throw new SubListingError(404, 'item_not_found', 'Item not found');
+  }
+  return effectiveSubListingRating(contentRatingFromNsfwLevel(rating.level), chosen);
+}
+
+/**
+ * A re-rate or a moderator override of a published item: its card follows, live and staged
+ * rating alike, never below a stricter rating the card already carries. A Blocked item's card is
+ * hidden. For the rater
+ * and the override (builds 3 and 5) to call; best-effort like `syncSubListingForSharedRow`.
+ */
+export async function syncSubListingRatingFromDoc(args: {
+  appBlockId: string;
+  itemKey: string;
+  /** The item's effective level (override first). */
+  level: number;
+}): Promise<void> {
+  try {
+    const parent = await dbRead.appListing.findFirst({
+      where: { appBlockId: args.appBlockId, revisionOfId: null },
+      select: { id: true },
+    });
+    if (!parent) return;
+    const where = { parentListingId: parent.id, itemKey: args.itemKey };
+    if (args.level & NsfwLevel.Blocked) {
+      await transitionActive({
+        where,
+        data: {
+          status: 'hidden',
+          statusReason: 'The item was rated Blocked',
+          moderatedAt: new Date(),
+          ...CLEAR_PENDING,
+        },
+      });
+      return;
+    }
+    const rating = contentRatingFromNsfwLevel(args.level);
+    // Through `effectiveSubListingRating`, as publishing is: a card the author rated stricter
+    // than its item keeps that rating (picked `x`, re-rated `r`: stays `x`).
+    const rows = await dbWrite.appSubListing.findMany({
+      where,
+      select: { id: true, contentRating: true, pendingContentRating: true },
+    });
+    for (const row of rows) {
+      await dbWrite.appSubListing.update({
+        where: { id: row.id },
+        data: {
+          contentRating: effectiveSubListingRating(rating, row.contentRating),
+          pendingContentRating:
+            row.pendingContentRating == null
+              ? null
+              : effectiveSubListingRating(rating, row.pendingContentRating),
+        },
+      });
+    }
+    await bustCatalog();
+  } catch (err) {
+    if (isMissingTableError(err)) return;
+    logToAxiom({
+      name: 'app-sub-listing-rating-sync-failed',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+      appBlockId: args.appBlockId,
+    });
+  }
+}
+
+/**
+ * A card's title/tagline refusal, naming the field the belt refused in the card's own words
+ * (`body` is the tagline). Never the term or the text.
+ */
+function cardTextRejected(err: SharedContentBlockedError): SubListingError {
+  const message =
+    err.field === 'title'
+      ? 'The title was not accepted'
+      : err.field === 'body'
+      ? 'The tagline was not accepted'
+      : err.field === 'title and body'
+      ? 'The title and tagline were not accepted'
+      : 'The title or tagline was not accepted';
+  return new SubListingError(400, 'text_rejected', message);
+}
 
 export class SubListingError extends Error {
   constructor(
@@ -271,7 +377,12 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
   }
 }
 
-export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
+export type SharedItemRead = {
+  authorUserId: number | null;
+  hidden: boolean;
+  /** The item's content rating, while content levels are on for the app (`doc-levels.ts`). */
+  rating?: DocRating;
+} | null;
 
 /**
  * The app's shared item stored under `key`, hidden included, from the document store when the
@@ -303,16 +414,22 @@ export async function readSharedItemForSubListing(
         name: 'app-sub-listing-shared-key-ambiguous',
         type: 'warning',
         appBlockId,
-      }).catch(() => null);
+      });
     }
-    return item.kind === 'found' ? { authorUserId: item.authorUid, hidden: item.hidden } : null;
+    return item.kind === 'found'
+      ? {
+          authorUserId: item.authorUid,
+          hidden: item.hidden,
+          ...(item.rating ? { rating: item.rating } : {}),
+        }
+      : null;
   } catch (err) {
     // A store we cannot read cannot prove the item is missing.
     logToAxiom({
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
 }
@@ -373,6 +490,8 @@ export type UpsertSubListingResult = {
 
 export async function upsertSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   subjectUser: SessionUser | null;
   hasLinkedOAuth: boolean;
   body: unknown;
@@ -406,6 +525,15 @@ export async function upsertSubListing(args: {
 
   const rate = await checkSubListingWriteRateLimit(user.id, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'upsertSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: user.id,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -419,6 +547,7 @@ export async function upsertSubListing(args: {
   if (item.authorUserId !== user.id) {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
   }
+  if (item.rating) content.contentRating = cardRatingFromItem(item.rating, content.contentRating);
 
   await assertCardImage(content.imageId, user.id);
 
@@ -432,9 +561,7 @@ export async function upsertSubListing(args: {
     content.title = safe.title;
     content.tagline = safe.body ?? null;
   } catch (err) {
-    if (err instanceof SharedContentBlockedError) {
-      throw new SubListingError(400, 'text_rejected', 'The title or tagline was not accepted');
-    }
+    if (err instanceof SharedContentBlockedError) throw cardTextRejected(err);
     throw err;
   }
 
@@ -591,7 +718,7 @@ async function writeSubListing(
       parentListingId: parent.id,
       fromImageId: existing.imageId,
       toImageId: content.imageId,
-    }).catch(() => null);
+    });
     return { id: existing.id, status, pendingEdit: false, catalogAffected: true };
   }
   const written = await casUpdate({
@@ -632,6 +759,8 @@ async function transitionActive(args: {
 
 export async function withdrawSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   userId: number | null;
   body: unknown;
 }): Promise<{ ok: true; withdrawn: boolean }> {
@@ -644,6 +773,15 @@ export async function withdrawSubListing(args: {
   if (!parent) return { ok: true, withdrawn: false };
   const rate = await checkSubListingWriteRateLimit(args.userId, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'withdrawSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: args.userId,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -937,9 +1075,7 @@ export async function upsertCatalogSubListing(args: {
     content.title = safe.title;
     content.tagline = safe.body ?? null;
   } catch (err) {
-    if (err instanceof SharedContentBlockedError) {
-      throw new SubListingError(400, 'text_rejected', 'The title or tagline was not accepted');
-    }
+    if (err instanceof SharedContentBlockedError) throw cardTextRejected(err);
     throw err;
   }
 
@@ -1317,7 +1453,8 @@ export async function listCatalogSubListings(args: {
 
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
-  itemKey: string;
+  /** One item key, or several (a publish's prune or an unpublish): one lookup, batched updates. */
+  itemKey: string | readonly string[];
   change: 'withdrawn' | 'hidden';
   /**
    * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
@@ -1344,9 +1481,10 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
+    if (typeof args.itemKey !== 'string' && args.itemKey.length === 0) return;
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
-      itemKey: args.itemKey,
+      itemKey: typeof args.itemKey === 'string' ? args.itemKey : { in: [...args.itemKey] },
       ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
@@ -1361,7 +1499,7 @@ export async function syncSubListingForSharedRow(
           message: err instanceof Error ? err.message : String(err),
           appBlockId: args.appBlockId,
           change: args.change,
-        }).catch(() => null);
+        });
       });
     await transitionActive({
       where,
@@ -1385,7 +1523,7 @@ export async function syncSubListingForSharedRow(
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
       change: args.change,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -1528,21 +1666,49 @@ export async function countSubListingQueue(): Promise<number> {
   }
 }
 
-async function isSharedItemLive(row: {
+/**
+ * Whether the card's item is still live in the app, and its rating while content levels are on
+ * (`undefined` otherwise, or for an off-site parent). A Blocked item is not live.
+ */
+async function sharedItemState(row: {
   parentListingId: string;
   itemKey: string;
   authorUserId: number;
-}): Promise<boolean> {
+}): Promise<{ live: boolean; rating?: DocRating }> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
     select: { kind: true, appBlockId: true },
   });
   // An off-site parent's items have no shared row: its platform withdraws them instead.
-  if (parent?.kind === 'offsite') return true;
-  if (!parent?.appBlockId) return false;
+  if (parent?.kind === 'offsite') return { live: true };
+  if (!parent?.appBlockId) return { live: false };
   const item = await readSharedItemForSubListing(parent.appBlockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.
-  return item != null && !item.hidden && item.authorUserId === row.authorUserId;
+  const live = item != null && !item.hidden && item.authorUserId === row.authorUserId;
+  if (!item || !live || !item.rating) return { live };
+  if (item.rating.level != null && item.rating.level & NsfwLevel.Blocked) return { live: false };
+  return { live, rating: item.rating };
+}
+
+/**
+ * Content levels: a card goes live (approve, approve-edit, restore) only for an item rated for
+ * its current version (`cardRatingFromItem` refuses anything else). Read only while the app's
+ * levels flag is on, so with it off a decision reads nothing it did not read before.
+ */
+async function assertCardItemRated(row: {
+  parentListingId: string;
+  itemKey: string;
+  authorUserId: number;
+}): Promise<void> {
+  const parent = await dbRead.appListing.findUnique({
+    where: { id: row.parentListingId },
+    select: { kind: true, appBlockId: true },
+  });
+  if (parent?.kind === 'offsite' || !parent?.appBlockId) return;
+  if (!(await isSharedDocLevelsOn(parent.appBlockId))) return;
+  const { live, rating } = await sharedItemState(row);
+  if (!live) throw new SubListingError(404, 'item_not_found', 'Item not found');
+  if (rating) cardRatingFromItem(rating, null);
 }
 
 /**
@@ -1581,6 +1747,7 @@ export async function moderateSubListing(args: {
     switch (action) {
       case 'approve':
         if (status !== 'pending') throw invalid();
+        await assertCardItemRated(row);
         await assertStillPublic(row.imageId, 'hide the item');
         data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
@@ -1594,13 +1761,15 @@ export async function moderateSubListing(args: {
         if (status !== 'hidden') throw invalid();
         // The in-app moderation sync hides the item when its shared row is hidden or deleted;
         // don't restore a card for an item the app no longer shows.
-        if (!(await isSharedItemLive(row))) {
+        const item = await sharedItemState(row);
+        if (!item.live) {
           throw new SubListingError(
             409,
             'invalid_transition',
             'This item is hidden or removed in the app; it cannot be restored here'
           );
         }
+        if (item.rating) cardRatingFromItem(item.rating, null);
         // An item hidden before it was ever approved goes back to review, not into the store.
         data = row.approvedAt
           ? { status: 'approved', statusReason: null, ...stamp }
@@ -1610,6 +1779,7 @@ export async function moderateSubListing(args: {
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
           throw invalid();
         }
+        await assertCardItemRated(row);
         await assertStillPublic(row.pendingImageId, 'reject the edit');
         data = {
           title: row.pendingTitle,

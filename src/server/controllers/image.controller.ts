@@ -95,7 +95,10 @@ import {
   allBrowsingLevelsFlag,
   getNsfwLevelDeprecatedReverseMapping,
 } from '~/shared/constants/browsingLevel.constants';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
@@ -192,7 +195,11 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
+    const image = await deleteImageById({
+      ...input,
+      deletedById: ctx.user.id,
+      moderatorDelete: !!ctx.user.isModerator,
+    });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -335,16 +342,19 @@ export const setTosViolationHandler = async ({
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
-    if (image.pHash)
-      await addBlockedImage({
-        hash: image.pHash,
-        reason: held || written.underReview.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-      });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     // Re-queue the parent comic project (if any) so the search index
     // re-evaluates visibility against the new (Blocked) Image state.
     await queueComicsForPanelImage(id);
     if (image.postId) await bustCachesForPosts(image.postId);
+    // After the steps that hide the image: a blocklist write that throws must not skip them.
+    if (image.pHash)
+      await addBlockedImage({
+        hash: image.pHash,
+        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+        context: { step: 'block', imageIds: [id], actorUserId: user.id },
+      });
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);
@@ -378,7 +388,7 @@ export const setTosViolationHandler = async ({
  * A held gallery is shown whole to a moderator, signed in or on a full-access key: the same
  * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
  */
-const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+const moderatorView = (ctx: Context) => credentialViews(ctx).asModerator;
 
 /** The owner a taken-down model's gallery is shown to, on the same credentials as `moderatorView`. */
 const galleryOwnerId = (ctx: Context) =>
@@ -568,6 +578,7 @@ export const getInfiniteImagesHandler = async ({
     }
     const dbInput = {
       user,
+      ...credentialViews(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...scopedInput.include, 'tagIds' as const],
@@ -639,6 +650,7 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        ...credentialViews(ctx),
         holdExempt: moderatorView(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
@@ -659,6 +671,7 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImages({
         ...scopedInput,
         user,
+        ...credentialViews(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -766,11 +779,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const fetchHidden = hidden && input.modelId;
     // Only the model's owner and moderators may list the images it hides from its gallery.
     if (hidden && input.modelId && !moderatorView(ctx)) {
+      const ownerId = galleryOwnerId(ctx);
       const model = await dbRead.model.findUnique({
         where: { id: input.modelId },
         select: { userId: true },
       });
-      if (!user || model?.userId !== user.id) return { nextCursor: undefined, items: [] };
+      if (!ownerId || model?.userId !== ownerId) return { nextCursor: undefined, items: [] };
     }
     // A minor or SFW-only model's gallery serves only its held level, whatever level is asked for:
     // the page, the pinned posts and the sponsored post alike. Moderators see it whole.
@@ -808,6 +822,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        ...credentialViews(ctx),
         // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
         // below. The ImageResourceNew join that modelVersionId triggers is an
         // inner join, so filtering it here drops media with no resource-detection
@@ -860,6 +875,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        ...credentialViews(ctx),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
@@ -893,6 +909,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
+      ...credentialViews(ctx),
       eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
@@ -1179,7 +1196,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
           name: 'image-get-event-decoration',
           message: (error as Error).message,
           imageId: input.id,
-        }).catch(() => undefined);
+        });
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
@@ -1202,7 +1219,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         name: 'image-get-held-level',
         message: (error as Error).message,
         imageId: input.id,
-      }).catch(() => undefined);
+      });
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;

@@ -228,18 +228,6 @@ describe('privateInput: the text never reaches the line, whatever the env says',
 });
 
 describe('best-effort: instrumentation never throws into the caller', () => {
-  it('a logToAxiom rejection does not throw', async () => {
-    process.env.AUDIT_SLOW_LOG_MS = '100';
-    logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
-    const seq = [0, 0, 200, 250];
-    let i = 0;
-    vi.spyOn(performance, 'now').mockImplementation(() => seq[Math.min(i++, seq.length - 1)]);
-    const timer = new AuditTimer();
-    timer.time('c', () => null);
-    expect(() => timer.finish('p')).not.toThrow();
-    await flush(); // the rejected promise is swallowed inside emitSlowLog
-  });
-
   it('time() rethrows the sub-check error but still records elapsed', () => {
     const timer = new AuditTimer();
     // The audit must observe the real sub-check throw (behavior unchanged);

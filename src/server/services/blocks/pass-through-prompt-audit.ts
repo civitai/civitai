@@ -428,7 +428,7 @@ export async function shadowPassThroughPromptAudit(
       collected.tooLarge ||
       (verdict !== null && verdict.outcome !== 'pass') ||
       checkUnavailable;
-    await logToAxiom({
+    logToAxiom({
       ...base,
       outcome,
       source: verdict?.source ?? null,
@@ -438,12 +438,12 @@ export async function shadowPassThroughPromptAudit(
       durationMs: Math.round(performance.now() - started),
     });
   } catch (e) {
-    await logToAxiom({
+    logToAxiom({
       ...base,
       type: 'error',
       message: (e as Error).message,
       durationMs: Math.round(performance.now() - started),
-    }).catch(() => undefined);
+    });
   }
 }
 

@@ -1,10 +1,12 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
- * Redis storage for download links (sysRedis: single node or Sentinel, so MULTI spans keys).
+ * Redis storage for download links. Link records are on sysRedis (single node or Sentinel, so
+ * MULTI spans keys); the mint-rate counters are on the cache cluster.
  *
  * A link's URL carries an `id`; Redis holds only `sha256(id)`. The id is derived from the link's
  * public `linkId` with `DOWNLOAD_LINK_SECRET`, which is what lets a repeat mint return the same URL
@@ -320,7 +322,7 @@ export async function revokeLinksOfRevokedCredentials(credentials: DownloadLinkC
         credentialKind: credential.kind,
         credentialId: credential.id,
         error: (error as Error).message,
-      }).catch(() => undefined);
+      });
     }
   }
 }
@@ -336,14 +338,13 @@ export async function takeMintBudget(
   now: number
 ): Promise<{ allowed: boolean; granted: number; retryAfterSeconds: number }> {
   const windowStart = Math.floor(now / 60_000) * 60_000;
-  const key = `${REDIS_SYS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
-  const [used] = (await sysRedis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
-    number
-  ];
-  // One atomic INCRBY per take, so concurrent takes never grant past the limit between them.
-  const before = Number(used) - count;
+  const key = `${REDIS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
+  // One atomic INCRBY per take, so concurrent takes never grant past the limit between them. A
+  // failure or timeout throws, refusing the mint.
+  const used = await takeClusterWindowCount('takeMintBudget', key, 120, { by: count });
+  const before = used - count;
   return {
-    allowed: Number(used) <= limit,
+    allowed: used <= limit,
     granted: Math.min(count, Math.max(0, limit - before)),
     retryAfterSeconds: Math.max(1, Math.ceil((windowStart + 60_000 - now) / 1000)),
   };

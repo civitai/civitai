@@ -17,6 +17,7 @@ import {
 } from '~/shared/utils/model-sfw-face';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const createCaller = createCallerFactory(appRouter);
 
@@ -163,5 +164,6 @@ export default AuthedEndpoint(
       );
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.ModelsWrite } }
 );

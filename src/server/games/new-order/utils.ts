@@ -965,7 +965,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-client-unavailable' },
       message: `Rate limiter denied vote for user ${userId}: Redis client unavailable`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 
@@ -983,7 +983,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-config-missing',
       details: { userId, reason: 'config-not-set-using-defaults' },
       message: `new-order:config missing — rate limiter using built-in defaults for user ${userId}; re-seed the Redis config`,
-    }).catch(() => null);
+    });
   }
 
   const now = Date.now();
@@ -1077,7 +1077,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-operation-failed', error: (error as Error).message },
       message: `Rate limiter denied vote for user ${userId}: Redis operation failed`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 }

@@ -19,12 +19,12 @@ vi.mock('~/server/services/platform-feedback.service', async (importOriginal) =>
 const { platformFeedbackRouter } = await import('~/server/routers/platform-feedback.router');
 
 // Literals, so a renumbered enum fails the sanity test instead of moving every arm with it.
-const FULL = 33554431;
-const SUBMIT = 1 << 25;
+const FULL = 33554431n;
+const SUBMIT = 1n << 25n;
 const SCOPED = [
-  ['UserRead|AppBlocksSubmit (the agent token the other procedures take)', 1 | SUBMIT],
+  ['UserRead|AppBlocksSubmit (the agent token the other procedures take)', 1n | SUBMIT],
   ['Full|AppBlocksSubmit', FULL | SUBMIT],
-  ['Full minus UserWrite', FULL & ~2],
+  ['Full minus UserWrite', FULL & ~2n],
   ['Read Only preset', TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead],
 ] as const;
 
@@ -44,7 +44,7 @@ const sessionCtx = (user: User) =>
     res: { setHeader: () => undefined },
   } as never);
 
-const personalKeyCtx = (user: User, tokenScope: number) =>
+const personalKeyCtx = (user: User, tokenScope: bigint) =>
   ({
     ...(sessionCtx(user) as object),
     apiKeyId: 999,
@@ -53,7 +53,7 @@ const personalKeyCtx = (user: User, tokenScope: number) =>
     tokenScope,
   } as never);
 
-const oauthCtx = (user: User, tokenScope: number) =>
+const oauthCtx = (user: User, tokenScope: bigint) =>
   ({
     ...(sessionCtx(user) as object),
     apiKeyId: 999,
@@ -116,7 +116,7 @@ describe('platformFeedback.listChanges access', () => {
 
   it('refuses a moderator on an OAuth token, even a full-scope one', async () => {
     await expect(listChanges(oauthCtx(moderator, FULL))).rejects.toMatchObject(NOT_A_FULL_KEY);
-    await expect(listChanges(oauthCtx(moderator, 1 | SUBMIT))).rejects.toMatchObject({
+    await expect(listChanges(oauthCtx(moderator, 1n | SUBMIT))).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(svc.listPlatformFeedbackChanges).not.toHaveBeenCalled();

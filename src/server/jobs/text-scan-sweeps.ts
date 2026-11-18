@@ -49,14 +49,14 @@ async function scanAll(entityType: TextScanEntityType, entityIds: number[]) {
         const result = await scanEntity({ entityType, entityId });
         if (result.status === 'submitted') submitted++;
       } catch (error) {
-        await logToAxiom({
+        logToAxiom({
           name: 'text-scan',
           type: 'error',
           message: 'sweep scan threw',
           entityType,
           entityId,
           error: (error as Error).message,
-        }).catch(() => undefined);
+        });
       }
     }),
     SCAN_CONCURRENCY
@@ -144,14 +144,13 @@ async function sweep<T extends { id: number; createdAt: Date }>({
 
   if (!result.caughtUp) {
     result.lagMs = lastCreatedAt ? now.getTime() - lastCreatedAt.getTime() : 0;
-    await logToAxiom({
+    logToAxiom({
       name: 'text-scan',
       type: 'warning',
       message: 'sweep behind',
-      job,
-      lagMs: result.lagMs,
       rows: result.rows,
-    }).catch(() => undefined);
+      payload: { job, lagMs: result.lagMs },
+    });
   }
   return result;
 }

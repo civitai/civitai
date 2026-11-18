@@ -51,6 +51,7 @@ type RawImage struct {
 	Minor             bool            `json:"minor"`
 	Poi               bool            `json:"poi"`
 	AcceptableMinor   bool            `json:"acceptableMinor"`
+	Restricted        bool            `json:"restricted"`
 	CursorID          int             `json:"cursorId"`
 	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
 	// can be: `i."index"` is nullable).
@@ -149,7 +150,7 @@ func scanRows(rows pgx.Rows) ([]RawImage, error) {
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
-			&r.Minor, &r.Poi, &r.AcceptableMinor, &cursorID,
+			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.Restricted, &cursorID,
 		); err != nil {
 			return nil, err
 		}
@@ -220,18 +221,21 @@ type Hydrated struct {
 // profilePictures] (what the gallery handler always passes): every lookup of the page in one
 // Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
-	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true)
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true, true)
 }
 
 // hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
-// (without it every creator's profilePicture is null, and its cache is not read).
-func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures bool) (*Hydrated, error) {
+// (without it every creator's profilePicture is null, and its cache is not read), cosmetics whether
+// it holds 'cosmetics' (without it every creator's cosmetics are [] and every image's frame null, and
+// neither cache is read).
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures, cosmetics bool) (*Hydrated, error) {
 	req := hydrate.PageRequest{
 		UserIDs:           make([]int, 0, len(rows)),
 		ImageIDs:          make([]int, 0, len(rows)),
 		VisibleEvents:     visibleEvents,
 		ViewerID:          viewer.ID,
 		NoProfilePictures: !profilePictures,
+		NoCosmetics:       !cosmetics,
 	}
 	var model3dIDs []int
 	for _, r := range rows {
@@ -399,6 +403,7 @@ func buildImage(r RawImage, hy *Hydrated) Image {
 		{Key: "model3dId", Val: model3d},
 		{Key: "minor", Val: r.Minor},
 		{Key: "poi", Val: r.Poi},
+		{Key: "restricted", Val: r.Restricted},
 		{Key: "modelVersionIds", Val: []any{}},
 		{Key: "modelVersionIdsManual", Val: []any{}},
 		{Key: "user", Val: user},

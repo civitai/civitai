@@ -8,7 +8,9 @@ import { PROGRESSION } from '../progression/config';
 import { castVote, ensureVotePartitions, getFeed, enqueueItem } from '../queue/queue.service';
 import {
   answerHiddenCheck,
+  dismissHiddenNotices,
   hiddenItemId,
+  parseNoticeKeys,
   pickHiddenCheck,
   readHiddenNotices,
 } from './hidden.service';
@@ -70,6 +72,18 @@ describe('serving a hidden check', () => {
 
     expect(next?.referenceId).toBe(ids.find((id) => id !== first));
     expect(await pick(1, 'Knight', 1, Q, ids)).toBeNull();
+  });
+
+  it('offers no check, never a repeat, once the player has answered every one in the pool', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    for (const imageId of [10, 11]) {
+      const id = await reference(imageId);
+      await answer(1, id, '4');
+    }
+
+    expect(await pick(1)).toBeNull();
+    expect(await pick(2)).not.toBeNull();
   });
 
   it('only offers a check for the question the feed is showing', async () => {
@@ -343,5 +357,57 @@ describe('answering a hidden check', () => {
     await answer(1, ref, '2');
     expect((await pg.query(`SELECT 1 FROM "NewOrderSmite"`)).rows).toHaveLength(0);
     expect(await readHiddenNotices(db, 1)).toEqual([]);
+  });
+});
+
+describe('dismissing the ruling notices', () => {
+  const at = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
+  async function graded(itemId: number, createdAt: Date, consequence = 'warning') {
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","consequence")
+       VALUES ($1,1,$2,$3,10,'Knight','4',1,$4)`,
+      [itemId, createdAt.toISOString(), Q, consequence]
+    );
+  }
+  const shownKeys = async () => (await readHiddenNotices(db, 1)).map((notice) => notice.key);
+
+  beforeEach(async () => {
+    await seedPlayer(pg, 1);
+    await seedImage(pg, 10, { nsfwLevel: 4 });
+  });
+
+  it('marks seen only the notices that were shown; one graded since stays for the next toast', async () => {
+    await graded(-1, at(1), 'smite');
+    await graded(-2, at(2), 'close');
+    const shown = await shownKeys();
+    await graded(-3, at(3));
+
+    await dismissHiddenNotices(db, 1, at(10), parseNoticeKeys(shown));
+
+    expect(await shownKeys()).toEqual([`-3:${at(3).getTime()}`]);
+  });
+
+  it('marks every notice seen when the request names none, as an older page sends it', async () => {
+    await graded(-1, at(1));
+    await graded(-2, at(2));
+    await dismissHiddenNotices(db, 1, at(10));
+    expect(await shownKeys()).toEqual([]);
+  });
+
+  it('marks nothing when every key it names is malformed', async () => {
+    await graded(-1, at(1));
+    await dismissHiddenNotices(db, 1, at(10), parseNoticeKeys(['nope', '1:', ':5', '1:2:3']));
+    expect(await shownKeys()).toHaveLength(1);
+  });
+});
+
+describe('parseNoticeKeys', () => {
+  it('reads item id and time from each key, skipping malformed ones and capping the count', () => {
+    expect(parseNoticeKeys(['-7:1765800001000', 'x', '12:abc', '3:4'])).toEqual([
+      { itemId: -7, createdAt: new Date(1765800001000) },
+      { itemId: 3, createdAt: new Date(4) },
+    ]);
+    expect(parseNoticeKeys(Array.from({ length: 50 }, (_, i) => `${i}:1`))).toHaveLength(20);
+    expect(parseNoticeKeys([`${Number.MAX_SAFE_INTEGER}0:1`])).toEqual([]);
   });
 });

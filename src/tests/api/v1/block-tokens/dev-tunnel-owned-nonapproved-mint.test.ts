@@ -121,7 +121,11 @@ const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  dbWrite: mockDbWrite,
+  // The minter's own level narrows the dev token; an all-levels author leaves the ceiling as is.
+  dbRead: { user: { findUnique: async () => ({ showNsfw: true, browsingLevel: 31 }) } },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -520,7 +524,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
         currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
         manifest: { scopes: ['models:read:self'], page: { path: '/', title: 'My App' } },
         approvedScopes: ['models:read:self'],
-        app: { allowedScopes: 4 /* ModelsRead */ },
+        app: { allowedScopes: 4n /* ModelsRead */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({

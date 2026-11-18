@@ -1,5 +1,7 @@
 import { articleDomain } from '../articles/domain';
+import { bountyDomain } from '../bounties/domain';
 import { challengeDomain } from '../challenges/domain';
+import { collectionDomain } from '../collections/domain';
 import { comicDomain } from '../comics/domain';
 import { crucibleDomain } from '../crucibles/domain';
 import type { Domain } from '../domain/sync';
@@ -14,4 +16,6 @@ export const CONTENT_DOMAINS: Domain<any>[] = [
   challengeDomain,
   storylineDomain,
   model3dDomain,
+  collectionDomain,
+  bountyDomain,
 ];

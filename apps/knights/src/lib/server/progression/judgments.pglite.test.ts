@@ -187,9 +187,12 @@ describe('listJudgments', () => {
 
       for (const filter of JUDGMENT_FILTERS) {
         const rows = (await listJudgments(db, 1, { page: 1, filter })).judgments;
-        const expected = all.filter((j) => filter === 'all' || j.status === filter);
+        const expected = all.filter((j) =>
+          filter === 'all' ? true : filter === 'smites' ? j.smite : j.status === filter
+        );
         expect(rows.map((j) => j.itemId)).toEqual(expected.map((j) => j.itemId));
-        for (const row of rows) if (filter !== 'all') expect(row.status).toBe(filter);
+        for (const row of rows)
+          if (filter !== 'all' && filter !== 'smites') expect(row.status).toBe(filter);
       }
     });
 
@@ -254,8 +257,12 @@ describe('listJudgments', () => {
       expect(byItem.get(open)?.verdictLabel).toBeNull();
     });
 
-    it('says nothing about a hidden check, which has no queue item', async () => {
+    it('names the known answer on a wrong skill check', async () => {
       await seedImage(pg, 40);
+      await pg.exec(
+        `INSERT INTO "KnightsReferenceImage" ("id","imageId","pool","answer","source","questionKey")
+         VALUES (7,40,'hiddenCheck','8','harvested','knights.image.nsfwLevel')`
+      );
       await pg.exec(
         `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp","verdict","settledAt")
          VALUES (-7,1,now(),'knights.image.nsfwLevel',40,'Knight','4',1,100,10,'failed',now())`
@@ -263,7 +270,69 @@ describe('listJudgments', () => {
 
       const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
 
-      expect(row).toMatchObject({ status: 'wrong', verdictLabel: null });
+      expect(row.status).toBe('wrong');
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
+    });
+
+    it('says a skill check one level off was close and names the known answer', async () => {
+      await seedImage(pg, 41);
+      await pg.exec(
+        `INSERT INTO "KnightsReferenceImage" ("id","imageId","pool","answer","source","questionKey")
+         VALUES (8,41,'hiddenCheck','8','harvested','knights.image.nsfwLevel')`
+      );
+      await pg.exec(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp","verdict","settledAt","consequence")
+         VALUES (-8,1,now(),'knights.image.nsfwLevel',41,'Knight','4',1,100,10,'inconclusive',now(),'close')`
+      );
+
+      const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
+
+      expect(row).toMatchObject({ status: 'inconclusive', close: true });
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
+    });
+
+    it('marks a failed skill check that cost a smite, and the Smites filter lists only those', async () => {
+      await seedImage(pg, 42);
+      await pg.exec(
+        `INSERT INTO "KnightsReferenceImage" ("id","imageId","pool","answer","source","questionKey")
+         VALUES (9,42,'hiddenCheck','8','harvested','knights.image.nsfwLevel')`
+      );
+      // One smite, one warning (failed without a smite), one close call, and an ordinary vote.
+      await pg.exec(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp","verdict","settledAt","consequence") VALUES
+         (-9,1,'2026-12-15T10:00:00Z','knights.image.nsfwLevel',42,'Knight','1',1,0,0,'failed',now(),'smite'),
+         (-9,1,'2026-12-15T09:00:00Z','knights.image.nsfwLevel',42,'Knight','1',1,0,0,'failed',now(),'warning'),
+         (-9,1,'2026-12-15T08:00:00Z','knights.image.nsfwLevel',42,'Knight','4',1,0,0,'inconclusive',now(),'close')`
+      );
+      await judge(43, new Date('2026-12-15T07:00:00Z'));
+
+      const all = (await listJudgments(db, 1, { page: 1 })).judgments;
+      expect(all.map((j) => j.smite)).toEqual([true, false, false, false]);
+
+      const smites = (await listJudgments(db, 1, { page: 1, filter: 'smites' })).judgments;
+      expect(smites).toHaveLength(1);
+      expect(smites[0]).toMatchObject({
+        smite: true,
+        status: 'wrong',
+        answerLabel: all[0].answerLabel,
+      });
+    });
+
+    it('names the level a moderator ruled on a closed item', async () => {
+      const id = await judge(13, new Date('2026-12-15T09:00:00Z'));
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='failed', "settledAt"=now() WHERE "itemId"=${id}`
+      );
+      await pg.exec(
+        `UPDATE "KnightsQueueItem" SET status='Closed', reason='moderator-ruled', "resolvedValue"='2' WHERE id=${id}`
+      );
+
+      const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
+
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
     });
   });
 

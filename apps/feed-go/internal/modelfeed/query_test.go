@@ -221,6 +221,10 @@ func TestParseCursor(t *testing.T) {
 		{"2026-06-15 10:00:00.123456|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 123_000_000, time.UTC), int64(3)}},
 		{"2026-06-15 10:00:00.125|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 125_000_000, time.UTC), int64(3)}},
 		{"2026-06-15T10:00:00.040|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 40_000_000, time.UTC), int64(3)}},
+		// A 1- or 2-digit fraction is fractional seconds (".25" is 250 ms), as Node reads it since #9075.
+		{"2026-06-15 10:00:00.25|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 250_000_000, time.UTC), int64(3)}},
+		{"2026-06-15 10:00:00.5|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 500_000_000, time.UTC), int64(3)}},
+		{"2026-06-15T10:00:00.07|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 70_000_000, time.UTC), int64(3)}},
 	}
 	for _, c := range ok {
 		got, err := parseCursor(two, c.cursor)
@@ -231,12 +235,6 @@ func TestParseCursor(t *testing.T) {
 	for _, bad := range []string{"12", "1|2|3", "|5", "abc|5", "-5|1", "2147483648|1", "2026-13-45 00:00:00|1", "1-2|3"} {
 		if _, err := parseCursor(two, bad); fallback.Reason(err) != "model-cursor" {
 			t.Errorf("parseCursor(%q): %v, want the model-cursor fallback", bad, err)
-		}
-	}
-	// A 1- or 2-digit fraction is one Node's dayjs misreads (".25" as 25 ms): its own fallback.
-	for _, short := range []string{"2026-06-15 10:00:00.25|3", "2026-06-15 10:00:00.5|3", "2026-06-15T10:00:00.07|3"} {
-		if _, err := parseCursor(two, short); fallback.Reason(err) != "short-fraction-cursor" {
-			t.Errorf("parseCursor(%q): %v, want the short-fraction-cursor fallback", short, err)
 		}
 	}
 }
@@ -267,6 +265,108 @@ func TestDecreaseDate(t *testing.T) {
 	} {
 		if got := decreaseDate(c.now, c.period); !got.Equal(c.want) {
 			t.Errorf("decreaseDate(%s, %s) = %s, want %s", c.now, c.period, got, c.want)
+		}
+	}
+}
+
+// The collection semi-join, transcribed from getModelsRaw's non-Recently-Added branch with
+// getAvailableCollectionItemsFilterForUser's item filter (no statuses): pushed after the availability
+// clause and before the excluded users, the collection bound first, then the viewer kept for their
+// in-review items, then the collection tag.
+func TestBuildCollection(t *testing.T) {
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, CollectionID: 42, CollectionTagID: 88, ExcludedUserIDs: []int{9}})
+	wantWhere := `WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND mm."status" = 'Published'::"ModelStatus"
+		AND mm."availability" != 'Private'::"Availability"
+		AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1
+		  AND (ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = $2))
+		  AND ci."tagId" = $3)
+		AND mm."userId" != ALL($4::int[])
+		AND (mm."nsfwLevel" & $5) != 0
+		ORDER BY`
+	if got := norm(stmt.Text); !strings.Contains(got, norm(wantWhere)) {
+		t.Fatalf("SQL:\n got  %s\n want …%s…", got, norm(wantWhere))
+	}
+	if want := []any{42, 7, 88, []int{9}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	// Signed out: accepted items only, nothing bound for a viewer; no tag clause without a tag.
+	stmt = build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, CollectionID: 42})
+	want := `AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1 AND ci."status" = 'ACCEPTED'::"CollectionItemStatus") AND (mm."nsfwLevel" & $2) != 0`
+	if got := norm(stmt.Text); !strings.Contains(got, want) {
+		t.Fatalf("signed out:\n got  %s\n want …%s…", got, want)
+	}
+	if want := []any{42, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("signed-out args %#v, want %#v", stmt.Args, want)
+	}
+	// The per-base-model paths keep ModelMetric joined as mm, which the semi-join reads.
+	for _, bm := range [][]string{{"Pony"}, {"Pony", "SDXL 1.0"}} {
+		got := norm(build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, BaseModels: bm, CollectionID: 42}).Text)
+		if !strings.Contains(got, `JOIN "ModelMetric" mm ON mm."modelId" =`) || !strings.Contains(got, `WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $`) {
+			t.Fatalf("base models %v: %s", bm, got)
+		}
+	}
+	// No collection, no semi-join.
+	if got := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7}).Text; strings.Contains(got, "CollectionItem") {
+		t.Fatalf("no collection: %s", norm(got))
+	}
+}
+
+// The read decision of getUserCollectionPermissionsByIds without the moderator branch.
+func TestReadGranted(t *testing.T) {
+	for _, c := range []struct {
+		read   string
+		owner  int
+		perms  []string
+		viewer int
+		want   bool
+	}{
+		{"Public", 5, nil, 0, true},
+		{"Unlisted", 5, nil, 0, true},
+		{"Private", 5, nil, 0, false},
+		{"Private", 5, nil, 5, true},
+		{"Private", 5, []string{"VIEW"}, 6, true},
+		{"Private", 5, []string{"ADD", "ADD_REVIEW", "MANAGE"}, 6, false},
+		{"Private", 5, []string{}, 6, false},
+		{"Private", 0, []string{"VIEW"}, 0, false}, // signed out never matches an owner or a row
+	} {
+		if got := readGranted(c.read, c.owner, c.perms, c.viewer); got != c.want {
+			t.Errorf("read %s owner %d perms %v viewer %d: %v, want %v", c.read, c.owner, c.perms, c.viewer, got, c.want)
+		}
+	}
+}
+
+// The official pin's id filters (getModelsRaw's onlyModelIds / excludeModelIds, `mm."modelId" IN (…)`
+// and `NOT IN (…)`): placed after the licensing filters as Node pushes them, the ids bound as one array
+// each in the order given; neither is emitted for an empty list. On a single base model the filters
+// still read mm, which every path joins.
+func TestBuildOfficialPinFilters(t *testing.T) {
+	no := false
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, AllowNoCredit: &no,
+		OnlyModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND m."allowNoCredit" = $2 AND mm."modelId" = ANY($3::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("onlyModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `!= ALL(`) {
+		t.Fatal("an exclusion with no excludeModelIds")
+	}
+	if want := []any{"Pony", false, []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	stmt = build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND mm."modelId" != ALL($2::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("excludeModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `= ANY($`) && strings.Contains(stmt.Text, `mm."modelId" = ANY(`) {
+		t.Fatal("a restriction with no onlyModelIds")
+	}
+	if want := []any{"Pony", []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	for _, q := range []PageQuery{{Take: 2, Sort: SortHot, BrowsingLevel: 1}, {Take: 2, Sort: SortHot, BrowsingLevel: 1,
+		OnlyModelIDs: []int{}, ExcludeModelIDs: []int{}}} {
+		if s := build(t, q).Text; strings.Contains(s, `mm."modelId" = ANY(`) || strings.Contains(s, `mm."modelId" != ALL(`) {
+			t.Fatalf("an id filter for no ids:\n%s", s)
 		}
 	}
 }

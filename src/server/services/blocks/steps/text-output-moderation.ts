@@ -1091,10 +1091,7 @@ export function __clearTextOutputVerdictCacheForTests(): void {
 
 function logScan(fields: Record<string, unknown>): void {
   const { texts: _texts, ...rest } = fields;
-  logToAxiom({ name: 'block-step-text-output-moderation', type: 'warning', ...rest }, 'webhooks')
-    // A telemetry failure must never turn a decided verdict into a thrown error
-    // on a read path.
-    .catch(() => null);
+  logToAxiom({ name: 'block-step-text-output-moderation', type: 'warning', ...rest }, 'webhooks');
 }
 
 /**

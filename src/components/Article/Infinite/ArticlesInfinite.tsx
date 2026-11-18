@@ -1,7 +1,15 @@
 import { Button, Center, Loader, LoadingOverlay } from '@mantine/core';
 import { isEqual } from 'lodash-es';
 import { useRef } from 'react';
-import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
+import {
+  useArticleFilters,
+  useQueryArticles,
+  useSemanticArticleFeed,
+} from '~/components/Article/article.utils';
+import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -10,30 +18,76 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ArticlesInfinite({
-  filters: filterOverrides = {},
-  showEof = false,
-  showEmptyCta,
-  disableStoreFilters,
-}: Props) {
+export function ArticlesInfinite({ searchable, ...props }: Props) {
+  const features = useFeatureFlags();
+  // Only a searchable feed with the flag reads the page's `?query=` and pays for the query checks.
+  return searchable && features.articleFeedSearch ? (
+    <SearchableArticlesFeed {...props} />
+  ) : (
+    <ArticlesFeed {...props} />
+  );
+}
+
+/** The feed's filters: the saved ones under the caller's, stable while their content is. */
+function useInfiniteArticleFilters({ filters: filterOverrides = {}, disableStoreFilters }: Props) {
   const articlesFilters = useArticleFilters();
-
   const computedFilters = disableStoreFilters
     ? filterOverrides
     : removeEmpty({ ...articlesFilters, ...filterOverrides });
   // Stabilize identity so query keys only update on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
-  const filters = filtersRef.current;
+  return filtersRef.current;
+}
 
-  const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryArticles(
-    filters,
-    { keepPreviousData: true }
+function SearchableArticlesFeed(props: Props) {
+  const filters = useInfiniteArticleFilters(props);
+  const searchText = useFeedSearchQuery();
+  // A ?query= can arrive by link or redirect, past the search bar's own checks.
+  const { refusal, profanityMatches } = useSearchRefusal(searchText, 'articles_semantic');
+  const search = useSemanticArticleFeed(filters, refusal ? undefined : searchText);
+  useScrollToTopOnChange(search.searchKey);
+  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  return searchText ? (
+    <ArticlesFeed {...props} search={{ text: searchText, ...search }} />
+  ) : (
+    <ArticlesFeed {...props} />
   );
+}
+
+type FeedSearch = ReturnType<typeof useSemanticArticleFeed> & { text: string };
+
+function ArticlesFeed({
+  showEof = false,
+  showEmptyCta,
+  search,
+  ...props
+}: Props & { search?: FeedSearch }) {
+  const filters = useInfiniteArticleFilters(props);
+  const searchFailed = !!search?.isError;
+  const searching = !!search && !searchFailed;
+  const feed = useQueryArticles(
+    // The feed's own query is a title match, used only as the fallback.
+    { ...filters, query: search?.text },
+    { keepPreviousData: true, enabled: !searching }
+  );
+  const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    search && searching ? search : feed;
 
   return (
     <>
+      {search && (
+        <FeedSearchSummary
+          noun="Articles"
+          query={search.text}
+          correctedQuery={searching ? search.correctedQuery : undefined}
+          failed={searchFailed}
+          onRetry={() => search.refetch()}
+        />
+      )}
       {!articles.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />
@@ -78,4 +132,6 @@ type Props = {
   showEof?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
+  /** The feed answers the page's `?query=` with the semantic search, under articleFeedSearch. */
+  searchable?: boolean;
 };

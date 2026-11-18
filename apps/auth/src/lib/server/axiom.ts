@@ -18,9 +18,9 @@ export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-
 // survives, and safeError's name/message/stack land last. The serialized JSON line (→ Alloy → Loki) MUST
 // keep those literal substrings — the datapacket-talos alerts
 // `{namespace="civitai-auth"} |~ "(?i)(unhandled server error|handler error|action failed|…)" != "invalid_grant"`
-// key off them. Swallows its own failure so logging can never break the request.
+// key off them.
 export function logAxiomError(error: unknown, extra?: Record<string, unknown>) {
-  return logToAxiom({ type: 'error', ...extra, ...safeError(error) }).catch(() => {});
+  return logToAxiom({ type: 'error', ...extra, ...safeError(error) });
 }
 
 export { safeError };

@@ -83,11 +83,12 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     why: 'updatedAt only, which is not cached',
   },
   'src/server/events/turf/flag-day.ts': {
-    writes: 2,
+    writes: 3,
     busts: 0,
     why:
-      "the Flag Race swap replaces the home block's Collection, which is plain mode, not a contest, " +
-      'so its rows are not in the cached value; it busts the home block cache instead',
+      "the Flag Race swap replaces the home block's Collection and adds to the all-time flags " +
+      'Collection, both plain mode, not contests, so their rows are not in the cached value; it ' +
+      'busts the home block cache instead',
   },
   'src/server/games/daily-challenge/challenge-rewards.ts': {
     writes: 2,

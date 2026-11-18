@@ -17,6 +17,8 @@ export type DailyLimitRaiseDialogProps = {
   appName?: string | null;
   limit: number;
   spentToday: number;
+  /** The highest job price the viewer lets this app run without asking, if they opted in. */
+  confirmWithinLimitMaxJob?: number | null;
   /** Called once the server has confirmed the raise, before the dialog closes. */
   onRaised?: () => void;
 };
@@ -36,6 +38,7 @@ export default function DailyLimitRaiseDialog({
   appName,
   limit,
   spentToday,
+  confirmWithinLimitMaxJob,
   onRaised,
 }: DailyLimitRaiseDialogProps) {
   const dialog = useDialogContext();
@@ -68,6 +71,12 @@ export default function DailyLimitRaiseDialog({
           You set a limit of {numberWithCommas(limit)} Buzz a day for {who}, and{' '}
           {numberWithCommas(spentToday)} has been spent today.
         </Text>
+        {confirmWithinLimitMaxJob != null && !atMax && (
+          <Text size="sm" data-testid="block-daily-limit-raise-standing">
+            Jobs up to {numberWithCommas(confirmWithinLimitMaxJob)} Buzz that fit within the new
+            limit will run without asking.
+          </Text>
+        )}
         {atMax ? (
           <Text size="sm" c="dimmed">
             This is already the highest daily limit an app can have.

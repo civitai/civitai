@@ -782,7 +782,7 @@ export const createBid = async ({
       details: { auctionId, entityId, userId },
       stack: err.stack,
       cause: err.cause,
-    }).catch();
+    });
   }
 
   if (auctionData.bids?.length > 0) {
@@ -835,7 +835,7 @@ export const createBid = async ({
         message: err.message,
         stack: err.stack,
         cause: err.cause,
-      }).catch();
+      });
       await withRetries(() =>
         refundMultiAccountTransaction({
           externalTransactionIdPrefix: transactionPrefix,
@@ -917,7 +917,7 @@ export const createBid = async ({
       details: { auctionId, entityId, userId },
       stack: err.stack,
       cause: err.cause,
-    }).catch();
+    });
   }
 
   return {
@@ -1067,7 +1067,7 @@ export const refundBidsForVersions = async ({
             stack: error.stack,
             cause: error.cause,
             data: { transactionId, message: error.message },
-          }).catch();
+          });
         }
       }
     }

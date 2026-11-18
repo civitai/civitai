@@ -127,7 +127,7 @@ let clock = 1_700_000_000_000;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(USER)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(USER)] as never);
   mocks.keyValueFindUnique.mockResolvedValue(null);
   mocks.sharpMetadata.mockResolvedValue({
     width: 144,

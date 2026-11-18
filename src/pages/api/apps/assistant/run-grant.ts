@@ -73,7 +73,7 @@ export default AuthedEndpoint(async (req, res, user) => {
       type: 'app-assistant.run-grant.failed',
       message: `App Assistant run grant failed for user ${user.id}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not start an App Assistant reply right now' });
   }
 });

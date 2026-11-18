@@ -834,9 +834,7 @@ function getEngine() {
     now: () => new Date(),
     logError: (kind, fn, error, extra) => {
       if (kind === 'redis') return logSysRedisFailOpen('write-degraded', fn, error, { ...extra });
-      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
     },
     onGrant: markEventPointsDirty,
     selfHeal: healDetached,
@@ -851,9 +849,7 @@ function healDetached(event: string, reason: SelfHealReason) {
   void import('~/server/events/points/self-heal')
     .then(({ healEventPoints }) => healEventPoints(event, reason))
     .catch((error) =>
-      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error }).catch(
-        () => undefined
-      )
+      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error })
     );
 }
 

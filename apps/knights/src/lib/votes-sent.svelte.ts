@@ -1,13 +1,14 @@
 import { getContext, setContext } from 'svelte';
+import type { PendingVotes } from './chrome';
 
 /** Votes posted in the background that the page's data does not hold yet; /play writes it, the header reads it. */
-export type VotesSent = { count: number };
+export type VotesSent = PendingVotes;
 
 const KEY = Symbol('votes-sent');
 
 /** Created by the root layout, so each request on the server and each tab in the browser has its own count. */
 export function provideVotesSent(): VotesSent {
-  const sent = $state<VotesSent>({ count: 0 });
+  const sent = $state<VotesSent>({ count: 0, landed: 0, landedOn: null, goldless: 0 });
   return setContext(KEY, sent);
 }
 

@@ -230,6 +230,12 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIp',
     why: 'Rate-limit bucket key for the off-site visit redirect (/apps/go) — a limiter, not the control.',
   },
+  'pages/api/internal/activity.ts': {
+    symbol: 'resolveClientIpOrNull',
+    why:
+      'Rate-limit bucket key for the click-activity beacon — a limiter, not the control. Null ' +
+      'skips the limit rather than putting every unresolved caller in one bucket.',
+  },
   'server/registry-adapter/request-origin.ts': {
     symbol: 'resolveClientIp',
     why: 'Per-address cap on the registry adapter’s open subscriptions — a limiter, not the control.',

@@ -5,10 +5,10 @@ import { sql } from 'kysely';
  * touches the image or its owner. Run against the main database, at build time and again each time
  * an item is served, since a report can arrive after the item was sampled.
  *
- * Every signal is used, because none is complete on its own: a user's CSAM report blocks the
- * image with `blockedFor = 'CSAM'` but files no `CsamReport` until a moderator sends one; a later
- * moderator removal overwrites `blockedFor`; and an unsent `CsamReport` can have its image list
- * replaced. The owner checks are deliberately broader than the ticket's "CSAM-reported images".
+ * Every signal is used, because none is complete on its own: a later moderator removal
+ * overwrites `blockedFor`, and an unsent `CsamReport` can have its image list replaced. The
+ * `Report` arms match only rows written before `report.create` stopped taking the CSAM reason.
+ * The owner checks are deliberately broader than the ticket's "CSAM-reported images".
  */
 export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
   WITH candidate AS (SELECT DISTINCT unnest(${imageIds}::int[]) AS id),

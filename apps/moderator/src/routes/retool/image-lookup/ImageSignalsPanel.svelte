@@ -9,7 +9,11 @@
 
   // `deleted` flips the emphasis: on that path the lifecycle log IS the answer, so it leads and the
   // clustering half — which cannot run without the image's createdAt as a bound — steps aside.
-  let { imageId, deleted = false }: { imageId: number; deleted?: boolean } = $props();
+  let {
+    imageId,
+    deleted = false,
+    remixSource = false,
+  }: { imageId: number; deleted?: boolean; remixSource?: boolean } = $props();
 
   const SHOWN = 10;
   let expandedEvents = $state(false);
@@ -177,6 +181,46 @@
           {/if}
         </div>
       </div>
+
+      {@const remixes = result.flaggedRemixes}
+      {#if remixes && (remixes.status === 'unavailable' || remixes.rows.length || remixSource)}
+        <div class="mt-5">
+          <h4 class="mb-1 text-xs tracking-wide text-dark-2 uppercase">
+            Flagged remix attempts{remixes.status === 'unavailable'
+              ? ''
+              : ` (${remixes.rows.length}${remixes.truncated ? '+' : ''})`}
+          </h4>
+          {#if remixes.status === 'unavailable'}
+            <p class="text-sm text-red-300">Could not load flagged remix attempts.</p>
+          {:else}
+            <p class="mb-2 text-xs text-dark-2">
+              Generation requests that named this image as their remix source and were refused or
+              soft-flagged by the prompt audit, including soft flags the user proceeded past. Hard
+              blocks on civitai.com are not recorded.
+            </p>
+            {#if remixes.rows.length === 0}
+              <p class="text-sm text-dark-2">None recorded since the image was uploaded.</p>
+            {:else}
+              <ul class="space-y-1 text-sm">
+                {#each remixes.rows as r (r.key)}
+                  <li class="flex flex-wrap items-baseline gap-x-2">
+                    <Badge variant="secondary">{r.source}</Badge>
+                    <span class="text-xs text-dark-2">{dateTime(r.time)}</span>
+                    <a href={userLookupUrl(r.userId)} class="text-xs {LINK_CLASS}">
+                      {r.username ?? `#${r.userId}`}
+                    </a>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if remixes.truncated}
+              <p class="mt-2 text-xs text-amber-300">
+                Capped — older attempts exist and are not shown.
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
     {/if}
   {:catch}
     <p class="text-sm text-red-300">Could not load the lifecycle log.</p>

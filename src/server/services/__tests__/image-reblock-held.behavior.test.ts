@@ -251,7 +251,7 @@ describe('setTosViolationHandler on an image under the review flag', () => {
     expect(await reportStatus(report(id))).toBe('Pending');
     expect(rewardedReports()).toEqual([]);
     expect(await deferred()).toEqual([{ imageId: id, violationType: 'realPerson', blockedBy: 2 }]);
-    expect(blocklistReasons()).toEqual({ [String(id + 130)]: 'CSAM' });
+    expect(blocklistReasons()).toEqual({ [String(id + 130)]: 'TOS' });
   });
 
   it('defers a block with no violation chosen as reason-less', async () => {
@@ -316,7 +316,9 @@ describe('setTosViolationHandler on an image removed with its block reason kept'
 });
 
 describe('blocking an image under the review flag again', () => {
-  it('never replaces its CSAM blocklist entry with a TOS one', async () => {
+  // Only a confirmed CSAM removal writes a CSAM entry; the review flag alone writes TOS, every
+  // time it is blocked.
+  it('writes a TOS blocklist entry each time it is blocked under the flag alone', async () => {
     await tosBlock(FLAGGED_LIVE);
     await tosBlock(FLAGGED_LIVE);
     await handleBlockImages({ ids: [FLAGGED_LIVE], include: ['phash-block'] });
@@ -328,7 +330,7 @@ describe('blocking an image under the review flag again', () => {
         a.values.filter((v) => String(v.hash) === '202').map((v) => String(v.reason))
       );
     expect(reasons).toHaveLength(3);
-    expect(new Set(reasons)).toEqual(new Set(['CSAM']));
+    expect(new Set(reasons)).toEqual(new Set(['TOS']));
   });
 });
 
@@ -381,15 +383,15 @@ describe('handleBlockImages over held and other images', () => {
     expect(await deferred()).toEqual([]);
   });
 
-  it('adds a CSAM blocklist entry for the held and flagged images only', async () => {
+  it('adds a CSAM blocklist entry for the confirmed CSAM image only', async () => {
     await handleBlockImages({ ids: all, include: ['phash-block'] });
 
     expect(blocklistReasons()).toEqual({
       '201': 'CSAM',
-      '202': 'CSAM',
-      '203': 'CSAM',
+      '202': 'TOS',
+      '203': 'TOS',
       '204': 'TOS',
-      '205': 'CSAM',
+      '205': 'TOS',
     });
   });
 });

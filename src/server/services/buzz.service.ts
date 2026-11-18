@@ -496,7 +496,7 @@ async function queryTransactions(query: string) {
       type: 'error',
       message: (error as Error).message,
       stack: (error as Error).stack,
-    }).catch(() => undefined);
+    });
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Could not load transactions right now. Please try again shortly.',
@@ -513,7 +513,7 @@ async function queryCounts(query: string) {
       type: 'error',
       message: (error as Error).message,
       stack: (error as Error).stack,
-    }).catch(() => undefined);
+    });
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Could not load transactions right now. Please try again shortly.',
@@ -1007,7 +1007,7 @@ export async function createBuzzTransactionMany(
         toAccountId: t.toAccountId,
         amount: t.amount,
       })),
-    }).catch(() => {});
+    });
   }
 
   return result;
@@ -1071,7 +1071,7 @@ export async function completeStripeBuzzTransaction({
           requestedAmount: amount,
         },
         'webhooks'
-      ).catch(() => null);
+      );
       throw throwBadRequestError('Unable to complete this purchase');
     }
     const purchaseDetails = { ...parsed.data, stripePaymentIntentId };
@@ -1185,7 +1185,7 @@ export async function completeStripeBuzzTransaction({
         stack: err?.stack,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     if (willRetry) {
       return completeStripeBuzzTransaction({
@@ -1995,7 +1995,7 @@ async function queryTransactionsReport(query: string) {
       type: 'error',
       message: (error as Error).message,
       stack: (error as Error).stack,
-    }).catch(() => undefined);
+    });
 
     return undefined;
   }

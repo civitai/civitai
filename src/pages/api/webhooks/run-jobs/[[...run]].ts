@@ -19,6 +19,7 @@ import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
+import { feedbackHqSyncJob } from '~/server/jobs/feedback-hq-sync';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
@@ -98,6 +99,7 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -225,6 +227,7 @@ export const jobs: Job[] = [
   removeBlockedImages,
   cdnAccessSync,
   cdnAccessReconcile,
+  missedNotificationDigest,
   removeReplacedImages,
   purgeFeedbackCaptures,
   retryImageStorageDeletes,
@@ -294,6 +297,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   linkedAccountReview,
   relabelBuildBatchJob,
+  feedbackHqSyncJob,
   reactionWithdrawalDetection,
   bluePaidAccessDetection,
   creatorProgramCounterpartyReview,

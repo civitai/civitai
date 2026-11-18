@@ -59,6 +59,10 @@ const h = vi.hoisted(() => ({
    * moderation cases describe ENFORCE, so that is every test's default (reset in `beforeEach`).
    */
   moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
+  /** `app-blocks-shared-doc-levels` for every app; off unless a case turns it on. */
+  docLevels: false,
+  /** The app ids `app-blocks-storage-unchanged-writes-free` is on for; none unless a case sets it. */
+  unchangedWritesApps: new Set<string>(),
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -68,11 +72,15 @@ const h = vi.hoisted(() => ({
 
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+const DOC_LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const UNCHANGED_WRITES_FLAG = 'app-blocks-storage-unchanged-writes-free';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
+    if (flag === DOC_LEVELS_FLAG) return h.docLevels;
+    if (flag === UNCHANGED_WRITES_FLAG) return h.unchangedWritesApps.has(entityId ?? '');
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -117,29 +125,47 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
     if (cardSync.fail) throw new Error('store card sync unavailable');
   }),
 }));
-// The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
+// The scanner's VERDICT is replaced; the leaf walk (`collectSharedDataLeaves`, so every hit carries
+// its real path) and `enforcedBlockingHit` (which hit refuses) stay real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
+  const { collectSharedDataLeaves } = await import('~/server/services/apps/shared-data-leaves');
   // Distinctive, so a response that leaked either would be visible.
   const SECRET_MATCH = 'scanner-matched-text-zq81';
   const SECRET_LABEL = 'scanner-label-zq82';
-  const verdict = (text: string): SharedTextScan => {
-    if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
-    // The leaf is the scanned text, so a shadow record's `leafText` can be checked.
-    const leaf = { raw: text, path: 't', segments: ['t'], kind: 'value' as const };
-    const hit = (category: 'audit_regex' | 'link') => ({
-      leafCount: 1,
-      overflow: null,
-      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }],
+  // A `minor` hit outranks the others (`CATEGORY_PRIORITY`), so a case can choose WHICH leaf
+  // refuses a write that holds two hits. Its `matched` is the term itself, as a real detector's is.
+  const MINOR_TERM = 'contract-minor-term';
+  type Leaf = Moderation.SharedTextInput;
+  const verdict = (leaves: Leaf[]): SharedTextScan => {
+    if (leaves.some((l) => l.raw.includes('contract-scanner-down'))) {
+      throw new Error('scanner outage');
+    }
+    const hits = leaves.flatMap((leaf): SharedTextScan['hits'] => {
+      const category = leaf.raw.includes('https://contract-blocked.example')
+        ? ('link' as const)
+        : leaf.raw.includes('contract-blocked-term')
+        ? ('audit_regex' as const)
+        : leaf.raw.includes(MINOR_TERM)
+        ? ('minor' as const)
+        : null;
+      if (!category) return [];
+      return category === 'minor'
+        ? [{ category, matched: MINOR_TERM, label: 'minor', leaf }]
+        : [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }];
     });
-    if (text.includes('https://contract-blocked.example')) return hit('link');
-    if (text.includes('contract-blocked-term')) return hit('audit_regex');
-    return { leafCount: 1, overflow: null, hits: [] };
+    return { leafCount: leaves.length, overflow: null, hits };
   };
   return {
     ...real,
-    scanSharedData: vi.fn(async (data: unknown) => verdict(JSON.stringify(data))),
-    scanCounterKey: vi.fn(async (key: string) => verdict(key)),
+    scanSharedData: vi.fn(async (data: unknown) => {
+      const walked = collectSharedDataLeaves(data);
+      if ('overflow' in walked) return { leafCount: 0, overflow: null, hits: [] };
+      return verdict(walked.leaves);
+    }),
+    scanCounterKey: vi.fn(async (key: string) =>
+      verdict([{ raw: key, path: '', segments: [], kind: 'key' }])
+    ),
     recordSharedDataScan: vi.fn(async () => undefined),
   };
 });
@@ -173,6 +199,7 @@ import {
 } from '~/shared/constants/block-storage.constants';
 import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import promClient from 'prom-client';
 import {
   blockRequestResult,
   type AppBlockRequestResult,
@@ -376,6 +403,8 @@ async function mint(opts: {
   reviewRunForReal?: boolean;
   /** The token's maturity ceiling; SFW (1) unless a test mints a red-host token. */
   maxBrowsingLevel?: number;
+  /** The viewer's own browsing level claim; absent unless a test sets it. */
+  viewerBrowsingLevel?: number;
 }): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.uid,
@@ -386,6 +415,9 @@ async function mint(opts: {
     scopes: opts.scopes,
     ctx: {},
     maxBrowsingLevel: opts.maxBrowsingLevel ?? 1,
+    ...(opts.viewerBrowsingLevel !== undefined
+      ? { viewerBrowsingLevel: opts.viewerBrowsingLevel }
+      : {}),
     domain: 'green',
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
@@ -645,7 +677,7 @@ async function runCase(c: Case) {
 async function mintDevReal(app: AppRow, uid: number, scopeSource: string[]): Promise<string> {
   const granted = clampDevScopes({
     scopeSource,
-    oauthAllowed: 0,
+    oauthAllowed: 0n,
     spendEntitled: false,
     spendRequested: false,
     allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
@@ -672,7 +704,7 @@ let liveStore: DocStore;
 beforeAll(async () => {
   // With the manual `schema_major` migration applied, so the route's stamping is observable (the
   // column-absent path is `doc-store.schema-major.pglite.test.ts`).
-  harness = await createPgliteHarness({ rls: true, schemaMajor: true });
+  harness = await createPgliteHarness({ rls: true, schemaMajor: true, docLevels: true });
   liveStore = createDocStore({
     db: harness.db,
     limits: { ...DEFAULT_DOC_STORE_LIMITS, userDocs: contract.limits.viewerDocs },
@@ -690,6 +722,7 @@ beforeEach(() => {
   h.runEnabled = true;
   h.authorEnabled = true;
   h.moderationMode = 'enforce';
+  h.docLevels = false;
   h.ch.capture = false;
   h.ch.inserts = [];
   h.users.clear();
@@ -1486,7 +1519,7 @@ describe('route faults and CORS', () => {
 });
 
 describe('review findings: refusal detail, usage, budget refunds, review gates, CORS', () => {
-  it('a moderation refusal carries only the coarse category — never the matched text or label', async () => {
+  it('a moderation refusal carries the coarse category and the field — never the matched text or label', async () => {
     const { A } = freshApps();
     const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const r = await call({
@@ -1496,8 +1529,78 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       body: { data: { t: 'contract-blocked-term' } },
     });
     expect(r.status).toBe(422);
-    expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked' });
+    expect((r.body as { details: unknown }).details).toEqual({
+      category: 'blocked',
+      field: 'data.t',
+      fieldKind: 'value',
+    });
     expect(JSON.stringify(r.body)).not.toMatch(/scanner-matched-text-zq81|scanner-label-zq82/);
+  });
+
+  describe('🔴 REGRESSION: a content_rejected refusal names the field as a JSON path', () => {
+    // Every case: the refused text sits somewhere other than a top-level value, and the refusal
+    // must say where — without the term, and without the text it sat in.
+    const TERM = 'contract-minor-term';
+    const FULL_TEXT = `the wizard says ${TERM} twice`;
+    it.each([
+      [
+        'a nested string',
+        { actions: [{ text: 'hello' }, { text: 'still fine' }, { text: FULL_TEXT }] },
+        { field: 'data.actions[2].text', fieldKind: 'value' },
+      ],
+      [
+        'an array element',
+        { tags: ['calm', 'lake', FULL_TEXT] },
+        { field: 'data.tags[2]', fieldKind: 'value' },
+      ],
+      [
+        // The key IS the refused text: the refusal names the object that holds it.
+        'an object key',
+        { meta: { [FULL_TEXT]: 1, other: 2 } },
+        { field: 'data.meta', fieldKind: 'key' },
+      ],
+      [
+        // A key on the path that is itself refused text (a lower-priority hit, so the value below
+        // it is the one the write is refused for) is replaced, not echoed.
+        'a value under a refused key',
+        { outer: { 'contract-blocked-term parent': { note: FULL_TEXT } } },
+        { field: 'data.outer[*].note', fieldKind: 'value' },
+      ],
+      [
+        'a key that is not a plain identifier',
+        { 'my list': [FULL_TEXT] },
+        { field: 'data["my list"][0]', fieldKind: 'value' },
+      ],
+    ])('%s', async (_name, data, named) => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({ token: t, method: 'PUT', path: '/posts/p1', body: { data } });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked', ...named });
+      const body = JSON.stringify(r.body);
+      expect(body).not.toContain(TERM);
+      expect(body).not.toContain(FULL_TEXT);
+      expect(body).not.toContain('contract-blocked-term');
+    });
+
+    it('the document key → `key`, and the key text is not echoed', async () => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({
+        token: t,
+        method: 'PUT',
+        path: `/posts/a-${TERM}-b`,
+        body: { data: { note: 'clean' } },
+      });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'blocked',
+        field: 'key',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain(TERM);
+    });
   });
 
   it("info: the viewer's usage is their own, distinct from the app's and another viewer's", async () => {
@@ -2459,7 +2562,7 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
           blocked: 0,
           category: 'audit_regex',
           matched: 'scanner-matched-text-zq81',
-          leafText: JSON.stringify({ t: 'contract-blocked-term' }),
+          leafText: 'contract-blocked-term',
         }),
       ]);
       // One denominator row per scan: the data blob, and the app-chosen key.
@@ -2859,6 +2962,44 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       data: { title: 'hello' },
       author: { kind: 'user', isViewer: false },
     });
+  });
+
+  it("the unchanged-writes flag is the REQUESTING app's: an identical put through an import follows the consumer's flag, not the source's", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = (key: string) =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: `/board/${key}`,
+        query: { from: S.blockId },
+        body: { data: { title: 'same' } },
+      });
+    const evaluated = () =>
+      h.isFlipt.mock.calls.filter(([flag]) => flag === UNCHANGED_WRITES_FLAG).map(([, e]) => e);
+    try {
+      // On for the consumer only: the second identical put is answered without writing.
+      h.unchangedWritesApps = new Set([C.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u1')).status).toBe(200);
+      const free = await put('u1');
+      expect(free.status).toBe(200);
+      expect((free.body as { version: number }).version).toBe(1);
+      expect(evaluated()).toEqual([C.id, C.id]);
+
+      // On for the source only: the consumer's flag is off, so the identical put writes.
+      h.unchangedWritesApps = new Set([S.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u2')).status).toBe(200);
+      const written = await put('u2');
+      expect(written.status).toBe(200);
+      expect((written.body as { version: number }).version).toBe(2);
+      expect(evaluated()).toEqual([C.id, C.id]);
+    } finally {
+      h.unchangedWritesApps = new Set();
+    }
   });
 
   it('without a grant: 403 consent_required naming the scope and the source', async () => {
@@ -3833,5 +3974,456 @@ describe('collection schemas: a violating write is refused before anything is sp
     });
     expect(gated.status).toBe(403);
     expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+});
+
+describe('content levels (app-blocks-shared-doc-levels): read gate and read-only metadata', () => {
+  /** Set a document's rating directly: the rater (build 3) does not exist yet. */
+  async function rate(appId: string, key: string, level: number, status: string) {
+    await harness.raw(
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now(),
+         rated_version = d.version
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key, level, status]
+    );
+  }
+  async function stored(appId: string, key: string) {
+    const [row] = await harness.raw(
+      `SELECT d.level, d.rating_status FROM appdata.doc d
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key]
+    );
+    return row;
+  }
+  const scopes = contract.defaultScopes;
+
+  it('INVARIANT GUARD: flag off, a document read has exactly the fields it had before', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: { t: 1 } } })).status
+    ).toBe(200);
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes });
+    const got = await call({ token: v2, method: 'GET', path: '/posts/p1' });
+    expect(got.status).toBe(200);
+    expect(Object.keys(got.body as object).sort()).toEqual([
+      'author',
+      'counters',
+      'createdAt',
+      'data',
+      'key',
+      'marks',
+      'updatedAt',
+      'version',
+      'viewer',
+    ]);
+    expect(await stored(A.id, 'p1')).toEqual({ level: null, rating_status: null });
+  });
+
+  it('🔴 flag on: a write is pending, hidden from another viewer and shown to its author with read-only metadata', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/p1',
+      body: { data: { t: 1 } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({ key: 'p1', version: 1, level: null, ratingStatus: 'pending' });
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/p1' })).status).toBe(404);
+    expect((await call({ token: v2, method: 'GET', path: '/posts' })).body).toMatchObject({
+      items: [],
+    });
+    const own = await call({ token: v1, method: 'GET', path: '/posts/p1' });
+    expect(own.body).toMatchObject({ key: 'p1', level: null, ratingStatus: 'pending' });
+  });
+
+  it('🔴 flag on: the reader’s level is the token’s domain ceiling AND the viewer’s own level', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    await call({ token: v1, method: 'PUT', path: '/posts/p13', body: { data: { t: 1 } } });
+    await rate(A.id, 'p13', 2, 'rated'); // PG-13
+    const read = async (maxBrowsingLevel: number, viewerBrowsingLevel?: number) =>
+      call({
+        token: await mint({
+          app: A,
+          uid: VIEWER_IDS.v2,
+          scopes,
+          maxBrowsingLevel,
+          ...(viewerBrowsingLevel !== undefined ? { viewerBrowsingLevel } : {}),
+        }),
+        method: 'GET',
+        path: '/posts/p13',
+      });
+    // A ceiling that admits PG-13 but a viewer who browses PG only: hidden.
+    expect((await read(31, 1)).status).toBe(404);
+    // No viewer claim: fails closed to PG.
+    expect((await read(31)).status).toBe(404);
+    // Both admit PG-13.
+    const shown = await read(7, 3);
+    expect(shown.status).toBe(200);
+    expect(shown.body).toMatchObject({ level: 2, ratingStatus: 'rated' });
+  });
+
+  it('🔴 flag on: an author’s own rated document is capped by the token’s domain, not their setting', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const author = (maxBrowsingLevel: number, viewerBrowsingLevel: number) =>
+      mint({ app: A, uid: VIEWER_IDS.v1, scopes, maxBrowsingLevel, viewerBrowsingLevel });
+    await call({
+      token: await author(31, 1),
+      method: 'PUT',
+      path: '/posts/mine-r',
+      body: { data: { t: 1 } },
+    });
+    await rate(A.id, 'mine-r', 4, 'rated'); // R
+    const read = async (max: number, own: number) =>
+      (await call({ token: await author(max, own), method: 'GET', path: '/posts/mine-r' })).status;
+    // Red domain, own setting PG only: shown.
+    expect(await read(31, 1)).toBe(200);
+    // SFW domain, own setting everything: hidden.
+    expect(await read(3, 31)).toBe(404);
+  });
+
+  it('🔴 flag on: an app cannot write level or ratingStatus', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    // Inside `data` they are the app's own fields: stored as data, never read as the rating.
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/m1',
+      body: { data: { level: 1, ratingStatus: 'rated' } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({
+      data: { level: 1, ratingStatus: 'rated' },
+      level: null,
+      ratingStatus: 'pending',
+    });
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // Beside `data` they are refused.
+    for (const extra of [{ level: 1 }, { ratingStatus: 'rated' }]) {
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/m1',
+        body: { data: {}, ...extra },
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ code: 'invalid_request' });
+    }
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // And another viewer does not see it as rated.
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/m1' })).status).toBe(404);
+  });
+});
+
+describe('per-app refusal attribution: which limit, for which app', () => {
+  type Series = { labels: Record<string, string>; value: number };
+  async function series(name: string): Promise<Series[]> {
+    const metric = promClient.register.getSingleMetric(name) as
+      | { get(): Promise<{ values: Series[] }> }
+      | undefined;
+    return metric ? (await metric.get()).values : [];
+  }
+  async function refusals(app: string, bucket: string): Promise<number> {
+    const values = await series('civitai_app_block_rate_limit_refusals_total');
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === app &&
+          v.labels.surface === 'doc_store' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
+    );
+  }
+  async function conflicts(app: string): Promise<number> {
+    // Folded into the refusal counter: {surface="doc_store", bucket="version_conflict"}.
+    return refusals(app, 'version_conflict');
+  }
+  function refusalLogs() {
+    return loggingMock.logToAxiom.mock.calls
+      .map(([data]) => data as Record<string, unknown>)
+      .filter((d) => d.name === 'app-blocks-rate-limit-refusal');
+  }
+
+  // Every case mints fresh app ids (`freshApps`), so no case shares a log-throttle key with
+  // another and no reset is needed.
+  beforeEach(() => {
+    loggingMock.logToAxiom.mockClear();
+  });
+
+  it('a read refusal is counted under {app, doc_store, read}, and only for that app', async () => {
+    const { A, B } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const beforeA = await refusals(A.id, 'read');
+    const beforeB = await refusals(B.id, 'read');
+    for (let i = 0; i < DOC_STORE_READ_RATE_LIMIT_MAX; i++) {
+      await call({ token: v1, method: 'GET', path: '/posts/x' });
+    }
+    expect(await refusals(A.id, 'read')).toBe(beforeA);
+    expect((await call({ token: v1, method: 'GET', path: '/posts/x' })).status).toBe(429);
+    expect((await call({ token: v1, method: 'GET', path: '/posts/x' })).status).toBe(429);
+
+    expect((await refusals(A.id, 'read')) - beforeA).toBe(2);
+    expect((await refusals(B.id, 'read')) - beforeB).toBe(0);
+    // ONE log line for the two refusals (the throttle), naming app, bucket, viewer and status.
+    const logs = refusalLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      appBlockId: A.id,
+      surface: 'doc_store',
+      bucket: 'read',
+      endpoint: 'storage_read',
+      status: 429,
+      retryAfter: 60,
+      userId: VIEWER_IDS.v1,
+      suppressed: 0,
+    });
+  });
+
+  it('a private write refusal is {doc_store, write}; a shared-write burst refusal is {doc_store, shared-write}', async () => {
+    const { A } = freshApps();
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    const before = {
+      write: await refusals(A.id, 'write'),
+      shared: await refusals(A.id, 'shared-write'),
+    };
+    for (let i = 0; i < 30; i++) {
+      await call({ token: v1, method: 'PUT', path: `/posts/s${i}`, body: { data: {} } });
+    }
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/s30', body: { data: {} } })).status
+    ).toBe(429);
+    for (let i = 0; i < 120; i++) {
+      await call({ token: v2, method: 'PUT', path: '/prefs/same', body: { data: { i } } });
+    }
+    expect(
+      (await call({ token: v2, method: 'PUT', path: '/prefs/same', body: { data: {} } })).status
+    ).toBe(429);
+
+    expect((await refusals(A.id, 'shared-write')) - before.shared).toBe(1);
+    expect((await refusals(A.id, 'write')) - before.write).toBe(1);
+  });
+
+  it('a shared write refused by the rejection allowance is labelled with the bucket the app is told: shared-write', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/owned', body: { data: {} } })).status
+    ).toBe(200);
+    // not_author lands after the reservation: each is charged to the rejection allowance (10).
+    for (let i = 0; i < 10; i++) {
+      await call({ token: v2, method: 'PUT', path: '/posts/owned', body: { data: {} } });
+    }
+    const before = await refusals(A.id, 'shared-write');
+    const refused = await call({
+      token: v2,
+      method: 'PUT',
+      path: '/posts/other',
+      body: { data: {} },
+    });
+    expect(refused.body).toMatchObject({
+      code: 'rate_limited',
+      details: { bucket: 'shared-write' },
+    });
+    expect((await refusals(A.id, 'shared-write')) - before).toBe(1);
+  });
+
+  it('a 409 version_conflict is one {app, doc_store, version_conflict} refusal, with its log line', async () => {
+    const { A, B } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const beforeA = await conflicts(A.id);
+    const beforeB = await conflicts(B.id);
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/prefs/v', body: { data: {} } })).status
+    ).toBe(200);
+    const stale = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/prefs/v',
+      body: { data: {}, ifVersion: 7 },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: 'version_conflict' });
+
+    expect((await conflicts(A.id)) - beforeA).toBe(1);
+    expect((await conflicts(B.id)) - beforeB).toBe(0);
+    const logs = refusalLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      appBlockId: A.id,
+      surface: 'doc_store',
+      bucket: 'version_conflict',
+      endpoint: 'storage_write',
+      status: 409,
+      userId: VIEWER_IDS.v1,
+    });
+  });
+});
+
+describe('orchestrator media links in shared data are refused in every moderation mode', () => {
+  const BLOB =
+    'https://orchestration.civitai.com/v2/consumer/blobs/ABC123DEF.png?sig=s1&exp=2099-01-01';
+  const PUBLIC = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc-123/width=450/1.jpeg';
+
+  const CONTENT_REDIRECT = 'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk9x2Q';
+
+  async function put(data: Record<string, unknown>, key = 'p1') {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    return call({ token: t, method: 'PUT', path: `/posts/${key}`, body: { data } });
+  }
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a consumer-blob url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ caption: 'mine', img: BLOB });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'link',
+        field: 'data.img',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain('ABC123DEF');
+    }
+  );
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a resolved blob content redirect url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ img: CONTENT_REDIRECT });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toMatchObject({
+        category: 'link',
+        field: 'data.img',
+      });
+    }
+  );
+
+  it('a percent-encoded orchestrator link is refused', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ img: encodeURIComponent(BLOB) });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'content_rejected' });
+  });
+
+  it('a create carrying a consumer-blob url is refused', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'POST',
+      path: '/posts',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'data.img',
+    });
+  });
+
+  it.each([
+    ['a document key', 'PUT', '/posts/orchestration.civitai.com', { data: { caption: 'fine' } }],
+    [
+      'a counter key that creates a document',
+      'POST',
+      '/plays/orchestration.civitai.com/counters/plays',
+      undefined,
+    ],
+  ] as const)('an orchestrator host as %s is refused', async (_label, method, path, body) => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({ token: t, method, path, ...(body ? { body } : {}) });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'key',
+    });
+  });
+
+  it('a refused write stores nothing', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'PUT',
+      path: '/posts/p9',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((await call({ token: t, method: 'GET', path: '/posts/p9' })).status).toBe(404);
+  });
+
+  it.each([
+    ['tab', 'https://orches\ttration.civitai.com/x'],
+    ['newline', 'https://orchestration.civitai\n.com/x'],
+    ['carriage return', 'https://orchestration.civi\rtai.com/x'],
+  ])('a host split by a %s is refused', async (_label, url) => {
+    h.moderationMode = 'off';
+    const r = await put({ img: url });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('a link in a document too large for the leaf walk is still refused', async () => {
+    h.moderationMode = 'off';
+    const pad = Array.from({ length: 1200 }, (_, i) => `p${i}`);
+    const r = await put({ pad, img: 'https://orchestration.civitai\n.com/x' });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('names the nested field that holds the link', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ a: 'ok', b: { c: BLOB } });
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.b.c' });
+  });
+
+  it('enforce: a minor hit in the same write still takes precedence over the link', async () => {
+    h.moderationMode = 'enforce';
+    const r = await put({ t: 'contract-minor-term', img: BLOB });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.t' });
+    expect((r.body as { details: { category: string } }).details.category).not.toBe('link');
+  });
+
+  it('a public image url saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ img: PUBLIC })).status).toBe(200);
+  });
+
+  it('plain text saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ caption: 'a cat on a windowsill' })).status).toBe(200);
   });
 });

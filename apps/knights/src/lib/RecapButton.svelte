@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import Icon from './Icon.svelte';
+  import { closeDismiss, dismissShowing, settleDismiss, syncDismiss, type DismissState } from './optimistic-dismiss';
   import RecapDialog from './RecapDialog.svelte';
   import type { Recap } from './server/daily/daily.service';
 
@@ -11,14 +12,25 @@
   type Loaded = { recap: Recap | null };
   let loaded = $state<Loaded | null>(null);
   let loading = $state(false);
-  let submitting = $state(false);
+  // Closed at once; `loaded` is kept until the day is recorded, so a refused post brings the same recap back.
+  const dismiss = $state<DismissState>({ closed: null, failed: null });
+  // Bumped on every open and post, so a late answer to an earlier post cannot close or fault a recap opened since.
+  let request = 0;
   let message = $state<string | null>(null);
   let failed = $state(false);
+  // The dot goes with the click, not with the reload that clears `unseen`; once the server agrees it is reset, so the next day's recap shows its dot.
+  let seenLocally = $state(false);
+  $effect(() => {
+    if (!unseen) seenLocally = false;
+  });
+  let showDot = $derived(unseen && !seenLocally);
 
   // The recap is read when the button is clicked, not with every page, so it is always today's figures.
   async function show() {
     if (loading) return;
     loading = true;
+    request += 1;
+    syncDismiss(dismiss, null);
     message = null;
     failed = false;
     try {
@@ -44,39 +56,41 @@
       if (begin && page.url.pathname !== '/play') void goto('/play');
       return;
     }
-    submitting = true;
+    closeDismiss(dismiss, 'recap');
+    seenLocally = true;
+    const mine = ++request;
     fetch('/recap', { method: 'POST', body: formData })
       .then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
+        if (mine !== request) return;
+        settleDismiss(dismiss, 'recap', true);
         loaded = null;
         await invalidate('app:recap');
         if (begin && page.url.pathname !== '/play') await goto('/play');
       })
-      .catch(() => (message = 'Could not save that. Try again.'))
-      .finally(() => (submitting = false));
+      .catch(() => {
+        if (mine !== request) return;
+        settleDismiss(dismiss, 'recap', false);
+        seenLocally = false;
+        message = 'Could not save that. Try again.';
+      });
   };
 </script>
 
 <button
   type="button"
   class="recap-button"
-  aria-label={unseen ? 'Daily recap, not yet seen' : 'Daily recap'}
+  aria-label={showDot ? 'Daily recap, not yet seen' : 'Daily recap'}
   title="Daily recap"
   aria-busy={loading}
   onclick={show}
 >
   <Icon name="scroll-text" size={18} />
-  {#if unseen}<span class="dot" aria-hidden="true"></span>{/if}
+  {#if showDot}<span class="dot" aria-hidden="true"></span>{/if}
 </button>
 
-{#if loaded}
-  <RecapDialog
-    recap={loaded.recap}
-    action="/recap"
-    {message}
-    {submitting}
-    {submit}
-  />
+{#if loaded && dismissShowing('recap', dismiss)}
+  <RecapDialog recap={loaded.recap} action="/recap" {message} {submit} />
 {/if}
 
 <style>
@@ -85,8 +99,9 @@
     display: grid;
     flex: none;
     place-items: center;
-    width: 32px;
-    min-height: 32px;
+    width: 36px;
+    height: 36px;
+    min-height: 0;
     padding: 0;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;

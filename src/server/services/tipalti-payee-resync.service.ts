@@ -24,7 +24,7 @@ function logResyncError(actorId: number, userId: number, step: string, error: un
       details: { actorId, userId, step, message: (error as Error)?.message },
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }
 
 export type TipaltiResyncRow = {
@@ -210,7 +210,7 @@ export async function resyncTipaltiPayees({
           },
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 
@@ -221,7 +221,7 @@ export async function resyncTipaltiPayees({
       details: { actorId, dryRun, rows },
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return rows;
 }

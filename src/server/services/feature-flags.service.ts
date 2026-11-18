@@ -104,6 +104,10 @@ const featureFlags = createFeatureFlags({
   // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
   // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
+  // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
+  // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
+  // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -221,6 +225,21 @@ const featureFlags = createFeatureFlags({
   ssrSignedInSkipPrefetch: {
     availability: [],
     fliptKey: 'ssr-signed-in-skip-prefetch',
+  },
+  // The same trial for `/images/[imageId]`, `/posts/[postId]` and `/user/[username]`, one flag per
+  // page (`SSR_SKIP_PREFETCH_FLAGS` in `~/server/utils/ssr-skip-prefetch` maps each route to its
+  // flag), so each page is rolled out and rolled back on its own. Dark and fail CLOSED, as above.
+  ssrSignedInSkipPrefetchImages: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-images',
+  },
+  ssrSignedInSkipPrefetchPosts: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-posts',
+  },
+  ssrSignedInSkipPrefetchUser: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-user',
   },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
@@ -388,6 +407,11 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -408,6 +432,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -466,11 +492,21 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // Semantic search on the challenges feed. Dark: Flipt is its only switch.
@@ -482,6 +518,12 @@ const featureFlags = createFeatureFlags({
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.
   semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
+  // The semantic collection and bounty search endpoints. Dark: Flipt is their only switch.
+  semanticCollectionSearch: { availability: [], fliptKey: 'semantic-collection-search' },
+  semanticBountySearch: { availability: [], fliptKey: 'semantic-bounty-search' },
+  // The crucibles feed's search box, answered from the semantic search. Off, the feed has no
+  // search box. Dark: Flipt is its only switch.
+  semanticCrucibleSearch: { availability: [], fliptKey: 'semantic-crucible-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -496,6 +538,10 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -523,6 +569,11 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -761,7 +812,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['mod'] },
+  generationAirResources: { availability: ['user'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -788,6 +839,7 @@ const featureFlags = createFeatureFlags({
   // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
   knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
@@ -998,7 +1050,11 @@ const featureFlags = createFeatureFlags({
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
   // Storylines: text items between a chapter's images (PostText), their slides and threads.
-  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
+  storylineText: {
+    availability: ['mod', 'granted'],
+    fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
@@ -1126,6 +1182,10 @@ type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
+/** Flipt has a client to answer with. Not live: it is down, or a stub module leaves the accessor out. */
+const fliptIsLive = (mod: FliptModule) =>
+  'getFliptClientSync' in mod && mod.getFliptClientSync() !== null;
+
 function loadFliptModule(): Promise<FliptModule | null> {
   if (_fliptModule) return Promise.resolve(_fliptModule);
   if (typeof window !== 'undefined') return Promise.resolve(null);
@@ -1220,6 +1280,8 @@ const hasFeature = (
       }
       return fliptResult;
     }
+    // A live client that cannot answer has no such key: a flag that requires one is off.
+    if (feature.fliptKeyRequired && fliptIsLive(_fliptModule)) return false;
     // Flipt unavailable — fall through to static evaluation below
   }
 
@@ -1679,9 +1741,11 @@ export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser)
   if (flipt) await flipt.ensureFliptInitialized();
   const context = buildFliptContext(user);
   return keys.every((key) => {
-    const fliptKey = featureFlags[key].fliptKey;
+    const { fliptKey, fliptKeyRequired } = featureFlags[key];
     if (!fliptKey || envOverriddenFlags.has(key)) return true;
-    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+    if (!_fliptModule) return false;
+    if (_fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null) return true;
+    return !!fliptKeyRequired && fliptIsLive(_fliptModule);
   });
 }
 
@@ -1795,6 +1859,10 @@ export function computeUserFeatureFlagsOverlay(
     }
   }
 
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
+
   return result;
 }
 
@@ -1816,6 +1884,11 @@ type FeatureFlag = {
   badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
+  /**
+   * The flag is off while Flipt is up and has no `fliptKey` flag. Without it a missing key falls back
+   * to `availability`, as an outage does; an outage still does.
+   */
+  fliptKeyRequired?: boolean;
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties

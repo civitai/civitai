@@ -764,7 +764,7 @@ export async function runAbuseDetectionScan() {
 
   if (suspects.length > 0) {
     log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'new-order-abuse-detection-scan',
       // AGGREGATE ONLY. This used to carry a per-account array, which neither precedent does — both
@@ -778,7 +778,7 @@ export async function runAbuseDetectionScan() {
         ratings: suspects.reduce((sum, s) => sum + s.totalRatings, 0),
       },
       message: `Abuse detection scan found ${suspects.length} suspicious users in the last ${ABUSE_SCAN_WINDOW_HOURS} hours`,
-    }).catch(() => null);
+    });
 
     // Auto-smite branch: gated by Redis config flag (off by default). Smite
     // filter applies the tighter `smite*` thresholds against the broader
@@ -823,12 +823,12 @@ export async function runAbuseDetectionScan() {
               smitedUserIds.add(s.userId);
             },
           });
-          await logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'new-order-auto-smite',
             details: { playerId: s.userId, source: 'detection-job', reason },
             message: `Auto-smite issued for player ${s.userId}`,
-          }).catch(() => null);
+          });
         } catch (e) {
           // 🔴 A STABLE KEY, WITH THE ID IN THE DETAILS. `handleLogError`'s second argument becomes
           // the Axiom `name`: an alert can match a key and cannot match a sentence, and an

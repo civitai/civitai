@@ -2,7 +2,7 @@
   import type { ReportActionGrants } from '$lib/report-queue';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { getBrowsingLevelLabel } from '@civitai/shared';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageEvidence from '$lib/components/report-queue/ImageEvidence.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -43,7 +43,7 @@
       rel="noreferrer"
       class="block max-w-md overflow-hidden rounded-md bg-muted"
     >
-      <EdgeMedia src={img.url} type={img.type} width={450} class="max-h-112 max-w-full object-contain" />
+      <CdnOrRetractedMedia item={img} class="max-h-112 max-w-full object-contain" />
     </a>
     <figcaption class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <Badge variant="secondary">rated {getBrowsingLevelLabel(img.nsfwLevel)}</Badge>

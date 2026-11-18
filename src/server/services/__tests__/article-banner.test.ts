@@ -285,6 +285,14 @@ describe('getArticleById banner visibility', () => {
       id: BANNER,
     });
   });
+
+  it('gives a moderator, not a reader, a mature banner restricted by its base model', async () => {
+    const restricted = { ...bannerRow('Scanned'), nsfwLevel: NsfwLevel.R, modelRestricted: true };
+    expect(await readBanner(restricted, { userId: READER, isModerator: true })).toMatchObject({
+      id: BANNER,
+    });
+    expect(await readBanner(restricted, { userId: READER })).toBeUndefined();
+  });
 });
 
 describe('getArticleById and a banner its model withholds', () => {

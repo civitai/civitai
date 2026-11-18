@@ -25,6 +25,10 @@ export async function streamStoredMedia(input: {
   request: Request;
   audit: () => Promise<unknown>;
   setCookie?: string;
+  /** Audit every response carrying bytes, mid-file ranges included, not just those from byte 0. */
+  auditEveryRange?: boolean;
+  /** Refuse, ranges included, an object larger than this, or of an unknown or encoded size. */
+  maxBytes?: number;
 }): Promise<Response> {
   const { media, imageId, request } = input;
   if (!isProbeableMediaKey(media.url)) error(404, 'Not available here.');
@@ -57,6 +61,23 @@ export async function streamStoredMedia(input: {
     error(502, `Storage would not serve this file (${upstream.status}).`);
   }
 
+  if (input.maxBytes !== undefined) {
+    const length = Number(upstream.headers.get('content-length') ?? NaN);
+    const total =
+      upstream.status === 206
+        ? Number(upstream.headers.get('content-range')?.match(/\/(\d+)$/)?.[1] ?? NaN)
+        : length;
+    if (
+      upstream.headers.get('content-encoding') ||
+      !Number.isFinite(length) ||
+      !Number.isFinite(total) ||
+      total > input.maxBytes
+    ) {
+      void upstream.body.cancel();
+      error(413, 'This file is too large to serve here.');
+    }
+  }
+
   const contentType = heldMediaContentType(media.type, [
     upstream.headers.get('content-type'),
     media.mimeType,
@@ -80,7 +101,7 @@ export async function streamStoredMedia(input: {
     })
   );
   // Awaited, so the row is there before the page that loads these bytes reports them shown.
-  if (request.method !== 'HEAD' && isAuditedServe(upstream)) {
+  if (request.method !== 'HEAD' && (input.auditEveryRange || isAuditedServe(upstream))) {
     const written = await input.audit().then(
       () => true,
       (e) => {

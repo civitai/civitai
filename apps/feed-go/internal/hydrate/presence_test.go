@@ -236,25 +236,53 @@ func TestPresenceReadFailures(t *testing.T) {
 }
 
 // MissReason is the table's Reason without a miss computation, and "" for the caches it answers
-// (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs.
+// (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs. The
+// model frames and decorations are not page caches: their reasons are the computation's own.
 func TestMissReason(t *testing.T) {
 	plain, computed := &Sources{}, &Sources{Compute: &MissCompute{}}
+	r := testkit.NewRedis()
+	withCH := &Sources{Cache: r, Compute: &MissCompute{ClickHouse: &fakeCH{}}}
 	for _, c := range PageCaches {
 		if got := plain.MissReason(c.Name); got != c.Reason {
 			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
 		}
 	}
+	// Not page caches: the model frames', decorations' and version showcases' reasons are their lookup
+	// specs'; the image meta (not probed) has no spec, so none.
+	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissModelDecorations: "model-decoration-miss",
+		MissVersionImages: "model-images-miss", MissImageMeta: "", "model-data": "model-data-miss", "model-tags": "model-tags-miss",
+		"official-models": "official-models-miss"} {
+		if got := plain.MissReason(name); got != w {
+			t.Errorf("no computation: %s = %q, want %q", name, got, w)
+		}
+	}
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
-		CacheTagIDs: "tag-ids-miss", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+		CacheTagIDs: "", MissModelFrames: "", MissModelDecorations: "", MissVersionImages: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+		"model-data": "", "model-tags": "", "official-models": "",
 	}
 	for name, w := range want {
 		if got := computed.MissReason(name); got != w {
 			t.Errorf("computed: %s = %q, want %q", name, got, w)
 		}
 	}
-	if plain.MissReason("nope") != "" {
-		t.Error("an unknown cache has a reason")
+	// The metric hashes are computed only with a ClickHouse reader (and the cache it reads them from).
+	if got := withCH.MissReason(CacheMetrics); got != "" {
+		t.Errorf("with a ClickHouse reader: metrics = %q, want \"\"", got)
+	}
+	if got := (&Sources{Compute: &MissCompute{ClickHouse: &fakeCH{}}}).MissReason(CacheMetrics); got != "metrics-miss" {
+		t.Errorf("a reader but no cache client: metrics = %q, want metrics-miss", got)
+	}
+	if got := (&Sources{Cache: r, Compute: &MissCompute{}}).MissReason(CacheMetrics); got != "metrics-miss" {
+		t.Errorf("no reader: metrics = %q, want metrics-miss", got)
+	}
+	if got := withCH.MissReason(CacheTagIDs); got != "" {
+		t.Errorf("with a ClickHouse reader: tag-ids = %q, want \"\"", got)
+	}
+	for _, s := range []*Sources{plain, computed, withCH} {
+		if s.MissReason("nope") != "" {
+			t.Error("an unknown cache has a reason")
+		}
 	}
 }
 
@@ -397,9 +425,10 @@ func TestPresenceProbe(t *testing.T) {
 	if got, want := p.Raced(), map[string]int{CacheCosmetics: 3, CacheBasicUsers: 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("raced %v, want %v", got, want)
 	}
-	// One database read per page and cache Go answers itself (metrics and basic users here; tag ids
-	// fall back, so no read): basic users on pages 1 and 3, metrics on page 3.
-	if got, want := p.DBReads(), map[string]int{CacheBasicUsers: 2, CacheMetrics: 1}; !reflect.DeepEqual(got, want) {
+	// One database read per page and cache Go answers itself with a missed or raced entry (tag ids
+	// fall back, so no read): basic users on pages 1 and 3 (page 3 both missed and raced: once),
+	// metrics on page 3, cosmetics (raced) on pages 1 and 3.
+	if got, want := p.DBReads(), map[string]int{CacheBasicUsers: 2, CacheMetrics: 1, CacheCosmetics: 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("db reads %v, want %v", got, want)
 	}
 	for i, got := range fc.since {
@@ -432,6 +461,43 @@ func TestPresenceProbe(t *testing.T) {
 	r[CacheCosmetics] = 99
 	if p.Raced()[CacheCosmetics] != 3 {
 		t.Fatal("Raced returned the probe's own map")
+	}
+}
+
+// A raced entry on a cache Go answers itself costs the lookup a Go-first serve would have made for it
+// had it been missing: one database read per page and such cache, as a cold miss there does, and a
+// page whose cache both missed and raced counts that read once. A race on a cache Go falls back on
+// (tag ids, for fakeChecker) costs no read.
+func TestPresenceProbeCountsRacedReads(t *testing.T) {
+	fc := &fakeChecker{
+		answers: []map[string]int{
+			{},                    // page 1: raced only
+			{CacheImageFrames: 1}, // page 2: missed and raced
+			{},                    // page 3: raced on a fallback cache
+			{CacheTagIDs: 1},      // page 4: a fallback miss, a race on a cache Go answers
+		},
+		raced: []map[string]int{
+			{CacheImageFrames: 3},
+			{CacheImageFrames: 2},
+			{CacheTagIDs: 1},
+			{CacheBasicUsers: 1},
+		},
+	}
+	p := &PresenceProbe{Checker: fc, RacedSince: time.Now().Add(-time.Minute)}
+	for i := 0; i < 4; i++ {
+		if _, err := p.Page(context.Background(), PageRequest{ImageIDs: []int{i + 1}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := p.DBReads(), map[string]int{CacheImageFrames: 2, CacheBasicUsers: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("db reads %v, want %v", got, want)
+	}
+	// The race counts themselves are unchanged: every raced entry, whatever its cache.
+	if got, want := p.Raced(), map[string]int{CacheImageFrames: 5, CacheTagIDs: 1, CacheBasicUsers: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("raced %v, want %v", got, want)
+	}
+	if got, want := p.Misses(), map[string]int{CacheImageFrames: 1, CacheTagIDs: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("misses %v, want %v", got, want)
 	}
 }
 

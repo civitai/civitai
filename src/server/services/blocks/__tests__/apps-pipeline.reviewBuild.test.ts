@@ -201,6 +201,19 @@ describe('triggerReviewBuild: directPublish', () => {
     expect(Object.keys(parsed)).toEqual([...legacyKeys.slice(0, -1), 'directPublish', 'ts']);
   });
 
+  it('a build-only environment never asks for a direct publish, even with both flags on', async () => {
+    // A direct publish writes the shared PRODUCTION static server; PR previews are build-only.
+    Object.assign(mockFlags, { direct: true, shared: true });
+    mockEnv.APPS_REVIEW_BUILD_ONLY = true;
+    try {
+      await triggerReviewBuild(args);
+    } finally {
+      delete mockEnv.APPS_REVIEW_BUILD_ONLY;
+    }
+    const parsed = JSON.parse(sentBody);
+    expect(Object.keys(parsed)).toEqual(legacyKeys);
+  });
+
   // INVARIANT GUARDS (green before the change too): OFF is the old body, byte for byte.
   it.each([
     ['both off', { direct: false, shared: false }],
@@ -213,5 +226,48 @@ describe('triggerReviewBuild: directPublish', () => {
     const parsed = JSON.parse(sentBody);
     expect(Object.keys(parsed)).toEqual(legacyKeys);
     expect(sentBody).toBe(JSON.stringify({ mode: 'review', ...args, ts: parsed.ts }));
+  });
+});
+
+describe('build-only environment: nothing in the apps namespace', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    mockEnv.APPS_REVIEW_BUILD_ONLY = true;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    delete mockEnv.APPS_REVIEW_BUILD_ONLY;
+    vi.unstubAllGlobals();
+  });
+
+  it('the review apply Job is refused before any request', async () => {
+    const { triggerApplyReview } = await import('~/server/services/blocks/apps-pipeline.service');
+    await expect(
+      triggerApplyReview({
+        slug: 'my-app',
+        sha: 'a'.repeat(40),
+        publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+        imageRef: `ghcr.io/civitai/app-block-review-my-app:${'a'.repeat(40)}`,
+        sharedServer: false,
+      })
+    ).rejects.toThrow(
+      'review apply Job refused: this environment is build-only (APPS_REVIEW_BUILD_ONLY) and creates nothing in the apps namespace'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a review teardown lists and deletes nothing', async () => {
+    const { deleteReviewResources } = await import(
+      '~/server/services/blocks/apps-pipeline.service'
+    );
+    await expect(
+      deleteReviewResources({
+        slug: 'my-app',
+        sha: 'a'.repeat(40),
+        publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+      })
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

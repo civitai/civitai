@@ -7,6 +7,8 @@ import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { expForLevel } from '../progression/levels';
+import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE } from '../smites/config';
+import { playersDueForReset } from '../smites/smites.service';
 import {
   acknowledgeCheckpoint,
   answerApprentice,
@@ -25,7 +27,14 @@ let pg: PGlite;
 let db: Kysely<DB>;
 let now = T0;
 const mirrorXp = vi.fn(async () => undefined);
-const deps = (): ApprenticeDeps => ({ now: () => now, mirrorXp });
+const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
+let smitesSwitch: { smites: boolean } | undefined;
+const deps = (): ApprenticeDeps => ({
+  now: () => now,
+  mirrorXp,
+  resetPlayer,
+  ...(smitesSwitch ? { settings: () => smitesSwitch! } : {}),
+});
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -41,7 +50,9 @@ beforeEach(async () => {
     [YESNO_Q]
   );
   now = T0;
+  smitesSwitch = undefined;
   mirrorXp.mockClear();
+  resetPlayer.mockClear();
 });
 
 async function player(userId: number, o: { rank?: string; exp?: number; startAt?: string } = {}) {
@@ -176,39 +187,68 @@ const rankOf = async (userId: number) =>
     )
   ).rows[0].rankType;
 
+const sourceOf = async (item: ApprenticeItem) => {
+  if (item.kind === 'yesno') return 'yesno';
+  const { rows } = await pg.query<{ source: string }>(
+    `SELECT "source" FROM "KnightsReferenceImage" WHERE "id"=$1`,
+    [item.referenceId]
+  );
+  return rows[0].source === 'core' ? 'core' : 'harvested';
+};
+
 describe('the stream', () => {
-  it('serves the curated core first, then mixes yes/no with harvested images, and never repeats an item', async () => {
+  it('mixes core and yes/no from the first item, turns to harvested once core runs out, and never repeats an item', async () => {
     await player(1);
-    const core = [
-      await rating(1, { source: 'core', explanation: 'x' }),
-      await rating(2, { source: 'core', explanation: 'x' }),
-    ];
+    for (let i = 0; i < 4; i++) await rating(1 + i, { source: 'core', explanation: 'x' });
     for (let i = 0; i < 4; i++) await rating(10 + i);
     for (let i = 0; i < 2; i++) await yesNo(20 + i);
 
-    const served = await play(1, 8);
+    const served = await play(1, 10);
+    const sources = await Promise.all(served.map(sourceOf));
 
-    expect(
-      served
-        .slice(0, 2)
-        .map((s) => s.referenceId)
-        .sort()
-    ).toEqual([...core].sort());
-    expect(served.slice(0, 2).every((s) => s.kind === 'rating')).toBe(true);
-    const rest = served.slice(2);
-    // The rhythm follows the player's answer count, so it carries on from the two core answers.
-    expect(rest.map((s) => s.kind)).toEqual([
+    expect(sources).toEqual([
+      'core',
+      'core',
       'yesno',
-      'rating',
-      'rating',
+      'core',
+      'core',
       'yesno',
-      'rating',
-      'rating',
+      // Core and yes/no are used up: harvested fills in rather than the stream running dry.
+      'harvested',
+      'harvested',
+      'harvested',
+      'harvested',
     ]);
     const keys = served.map((s) => `${s.kind}:${s.referenceId}`);
-    expect(new Set(keys).size).toBe(8);
-    // 8 answered, nothing left: the recap is not due yet, so the stream simply has no more items.
+    expect(new Set(keys).size).toBe(10);
+    // 10 answered, nothing left: the recap is not due yet, so the stream simply has no more items.
     expect((await getApprentice(db, 1)).kind).toBe('exhausted');
+  });
+
+  it('serves only core rating references while any are left, however many harvested ones there are', async () => {
+    await player(1);
+    for (let i = 0; i < 3; i++) await rating(1 + i, { source: 'core' });
+    for (let i = 0; i < 12; i++) await rating(10 + i);
+
+    const served = await play(1, 3);
+
+    expect(await Promise.all(served.map(sourceOf))).toEqual(['core', 'core', 'core']);
+    expect(await sourceOf(question(await getApprentice(db, 1)).item)).toBe('harvested');
+  });
+
+  it('deals a fresh order after every answer, not one fixed order per player', async () => {
+    await player(1);
+    for (let i = 0; i < 30; i++) await rating(100 + i);
+    // The order a fixed per-player shuffle would give.
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT "id" FROM "KnightsReferenceImage" ORDER BY md5("id"::text || '1')`
+    );
+    const fixed = rows.map((r) => r.id);
+
+    const served = (await play(1, 6)).map((s) => s.referenceId);
+
+    expect(served).not.toEqual(fixed.slice(0, 6));
+    expect(new Set(served).size).toBe(6);
   });
 
   it('shows a friendly out-of-items state, not an error, once everything has been answered', async () => {
@@ -367,14 +407,23 @@ describe('grading and XP', () => {
     expect(result).toEqual({ status: 'rejected', reason: 'not-current' });
   });
 
-  it('never smites an Acolyte for wrong answers', async () => {
+  it('refuses an answer from an Acolyte whose career reset is due, writing nothing', async () => {
     await player(1);
-    for (let i = 0; i < 6; i++) await rating(i + 1);
-    await play(1, 6, false);
-    const smites = await pg.query(`SELECT 1 FROM "NewOrderSmite"`);
-    expect(smites.rows).toHaveLength(0);
-    expect(await expOf(1)).toBe(0);
-    expect(await rankOf(1)).toBe('Acolyte');
+    await rating(1);
+    for (let i = 0; i < 3; i++) {
+      await pg.query(
+        `INSERT INTO "NewOrderSmite" ("targetPlayerId","givenById","reason","size","remaining","createdAt") VALUES (1,-1,'x',100,100,$1)`,
+        [T0]
+      );
+    }
+    const { item } = question(await getApprentice(db, 1));
+    const result = await answerApprentice(
+      db,
+      { userId: 1, kind: item.kind, referenceId: item.referenceId, answer: '4' },
+      deps()
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'reset-pending' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsApprenticeAnswer"`)).rows).toHaveLength(0);
   });
 
   it('refuses an item that is not the current one, an answer that is not on offer, and a Knight, writing nothing', async () => {
@@ -417,6 +466,141 @@ describe('grading and XP', () => {
     expect(stranger).toEqual({ status: 'rejected', reason: 'no-player' });
     expect((await pg.query(`SELECT 1 FROM "KnightsApprenticeAnswer"`)).rows).toHaveLength(0);
     expect(await expOf(1)).toBe(0);
+  });
+});
+
+describe('smites', () => {
+  const smitesOf = async (userId: number) =>
+    (
+      await pg.query<{
+        cleansedAt: Date | null;
+        cleansedReason: string | null;
+        givenById: number;
+        size: number;
+        reason: string;
+      }>(
+        `SELECT "cleansedAt","cleansedReason","givenById","size","reason" FROM "NewOrderSmite" WHERE "targetPlayerId"=$1 ORDER BY "id"`,
+        [userId]
+      )
+    ).rows;
+  const activeOf = async (userId: number) =>
+    (await smitesOf(userId)).filter((s) => s.cleansedAt === null).length;
+
+  it('smites once on the 6th wrong answer in the last 20, then starts counting again', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+
+    await play(1, 5, false);
+    expect(await smitesOf(1)).toHaveLength(0);
+    await play(1, 1, false);
+    expect(await smitesOf(1)).toMatchObject([
+      {
+        givenById: -1,
+        cleansedAt: null,
+        size: BASE_SMITE_SIZE,
+        reason: ACOLYTE_WRONG_ANSWER_SMITE,
+      },
+    ]);
+    // The window restarts after a smite: five more wrong answers are not a second one, the sixth is.
+    await play(1, 5, false);
+    expect(await activeOf(1)).toBe(1);
+    await play(1, 1, false);
+    expect(await activeOf(1)).toBe(2);
+    expect(await expOf(1)).toBe(0);
+  });
+
+  it('issues no wrong-answer smite while smites are switched off, and does when the switch is unset', async () => {
+    await player(1);
+    await player(2);
+    for (let i = 0; i < 40; i++) await rating(i + 1);
+
+    smitesSwitch = { smites: false };
+    await play(1, 20, (n) => n >= 6);
+    expect(await smitesOf(1)).toHaveLength(0);
+
+    smitesSwitch = undefined;
+    await play(2, 20, (n) => n >= 6);
+    expect(await smitesOf(2)).toMatchObject([{ reason: ACOLYTE_WRONG_ANSWER_SMITE }]);
+  });
+
+  it('starts no career reset while smites are switched off, however many answers are wrong', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    smitesSwitch = { smites: false };
+
+    await play(1, 18, false);
+
+    expect(await smitesOf(1)).toHaveLength(0);
+    expect(resetPlayer).not.toHaveBeenCalled();
+    expect(await playersDueForReset(db)).toEqual([]);
+  });
+
+  it('counts only the last 20 answers', async () => {
+    await player(1, { exp: expForLevel(20) * 10 });
+    for (let i = 0; i < 30; i++) await rating(i + 1);
+    // 5 wrong, 16 right, 2 wrong: the last 20 hold 4 wrong.
+    await play(1, 23, (n) => n >= 5 && n < 21);
+    expect(await smitesOf(1)).toHaveLength(0);
+  });
+
+  it('clears active smites when the Acolyte levels up', async () => {
+    await player(1, { exp: expForLevel(2) - 100 });
+    for (let i = 0; i < 10; i++) await rating(i + 1);
+    await play(1, 6, false);
+    expect(await activeOf(1)).toBe(1);
+
+    await play(1, 1, true);
+
+    expect(await activeOf(1)).toBe(0);
+    expect((await smitesOf(1))[0].cleansedReason).toMatch(/level up/i);
+  });
+
+  it('clears active smites when the Acolyte is knighted without gaining a level', async () => {
+    await player(1, { exp: expForLevel(20) });
+    await history(1, rows(99, 80));
+    await rating(1);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","givenById","reason","size","remaining","createdAt") VALUES (1,-1,$1,10,10,$2)`,
+      [ACOLYTE_WRONG_ANSWER_SMITE, new Date(T0.getTime() - 1000)]
+    );
+
+    const { result } = await answerNext(1, true);
+
+    expect(result).toMatchObject({ status: 'recorded', promoted: true });
+    expect(await activeOf(1)).toBe(0);
+  });
+
+  it('starts the career reset on the answer that issues the third smite, without waiting for the tick', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    await play(1, 17, false);
+    expect(resetPlayer).not.toHaveBeenCalled();
+    await play(1, 1, false);
+    expect(resetPlayer).toHaveBeenCalledTimes(1);
+    expect(resetPlayer).toHaveBeenCalledWith(1);
+  });
+
+  it('three smites make the career reset due, and the Acolyte can answer no more until it lands', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    await play(1, 18, false);
+    expect(await activeOf(1)).toBe(3);
+    expect(await playersDueForReset(db)).toEqual([1]);
+    const { item } = question(await getApprentice(db, 1));
+    const result = await answerApprentice(
+      db,
+      { userId: 1, kind: item.kind, referenceId: item.referenceId, answer: '4' },
+      deps()
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'reset-pending' });
+  });
+
+  it('ignores wrong answers from before a career reset', async () => {
+    await player(1, { startAt: T0.toISOString() });
+    await history(1, rows(5, 0));
+    for (let i = 0; i < 3; i++) await rating(i + 1);
+    await play(1, 1, false);
+    expect(await smitesOf(1)).toHaveLength(0);
   });
 });
 
@@ -570,20 +754,22 @@ describe('checkpoints', () => {
   it('shows only the latest 20 at the next checkpoint', async () => {
     await player(1);
     for (let i = 0; i < 45; i++) await rating(i + 1, { answer: '2' });
-    await play(1, 20, false);
+    // Five misses in the first 20 stay under the smite count.
+    await play(1, 20, (n) => n >= 5);
     await play(1, 20, true);
     const view = await getApprentice(db, 1);
     if (view.kind !== 'checkpoint') throw new Error('expected a checkpoint');
     expect(view.checkpoint).toMatchObject({ total: 20, right: 20, missed: [] });
     expect(view.progress.answered).toBe(40);
-    expect(view.progress.accuracy).toBe(0.5);
+    expect(view.progress.accuracy).toBe(0.875);
   });
 
   it('lists a missed yes/no answer with its curated explanation', async () => {
     await player(1);
     await yesNo(1, { answer: true, explanation: 'A weapon is raised' });
     for (let i = 0; i < 19; i++) await rating(100 + i);
-    await play(1, 20, false);
+    // The pair is the third item (the yes/no slot); only it is missed.
+    await play(1, 20, (n) => n !== 2);
     const view = await getApprentice(db, 1);
     if (view.kind !== 'checkpoint') throw new Error('expected a checkpoint');
     const yn = view.checkpoint.missed.find((m) => m.kind === 'yesno');

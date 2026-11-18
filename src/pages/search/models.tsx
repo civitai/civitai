@@ -20,6 +20,7 @@ import { SearchLayout } from '~/components/Search/SearchLayout';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { modelFeedUrlFromLegacySearch } from '~/components/Model/Infinite/model-feed-search';
+import { feedSearchPathname } from '~/components/Search/search-target';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
@@ -293,7 +294,7 @@ ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    if (features?.modelFeedSearch)
+    if (features && feedSearchPathname(features, 'models'))
       return {
         redirect: { destination: modelFeedUrlFromLegacySearch(ctx.query), permanent: false },
       };

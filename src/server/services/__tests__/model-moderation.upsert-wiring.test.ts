@@ -103,7 +103,10 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { upsertModel } from '~/server/services/model.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
-import { saveItemInCollections } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  saveItemInCollections,
+} from '~/server/services/collection.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -151,6 +154,7 @@ beforeEach(() => {
   mockDbWrite.model.findUnique.mockResolvedValue(storedModel);
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  vi.mocked(getUserCollectionPermissionsById).mockResolvedValue({ write: true } as never);
 });
 
 // The update branch must submit what was PERSISTED, not what the caller sent. `description` is
@@ -265,6 +269,95 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     };
     expect(mockDbWrite.model.update.mock.calls.length).toBeGreaterThan(1);
     expect(lastMeta.showcaseCollectionId).toBeNull();
+  });
+
+  describe('create branch with a showcase collection', () => {
+    beforeEach(() => {
+      mockDbWrite.collectionItem.findFirst.mockResolvedValue(null);
+      mockDbWrite.model.create.mockResolvedValue({
+        id: 555,
+        nsfwLevel: 1,
+        meta: { showcaseCollectionId: 9 },
+        availability: 'Public',
+      });
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        ...storedModel,
+        meta: { showcaseCollectionId: 9 },
+      });
+      mockDbWrite.model.update.mockImplementation((async ({
+        data,
+      }: {
+        data: Record<string, unknown>;
+      }) => ({ id: 555, userId: OWNER_ID, meta: data.meta })) as never);
+    });
+
+    const create = () =>
+      upsert({ userId: OWNER_ID, name: 'New Model', meta: { showcaseCollectionId: 9 } } as never);
+
+    it('a refused showcase add still creates the model, with no showcase', async () => {
+      vi.mocked(saveItemInCollections).mockRejectedValueOnce(
+        new Error('You do not have permission to add to this collection')
+      );
+
+      const result = await create();
+
+      expect(result).toMatchObject({ id: 555 });
+      expect(saveItemInCollections).toHaveBeenCalledTimes(1);
+      const writes = mockDbWrite.model.update.mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(
+        (writes[0][0].data.meta as { showcaseCollectionId?: number | null }).showcaseCollectionId
+      ).toBeNull();
+      expect(result?.meta).toMatchObject({ showcaseCollectionId: null });
+    });
+
+    it('a refused add leaves a showcase set since then alone', async () => {
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        ...storedModel,
+        meta: { showcaseCollectionId: 12 },
+      });
+      vi.mocked(saveItemInCollections).mockRejectedValueOnce(
+        new Error('You do not have permission to add to this collection')
+      );
+
+      await create();
+
+      const writes = mockDbWrite.model.update.mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(writes[0][0].data.meta).toMatchObject({ showcaseCollectionId: 12 });
+    });
+
+    it.each([
+      // Past the first check, refused only because the model is already listed.
+      ['a collection the model is already in, with review-only access', { id: 1 }, true],
+      ['a private collection the caller is not a member of', null, false],
+    ])('keeps no showcase on %s', async (_, listed, writeReview) => {
+      vi.mocked(getUserCollectionPermissionsById).mockResolvedValue({
+        write: false,
+        manage: false,
+        writeReview,
+      } as never);
+      mockDbWrite.collectionItem.findFirst.mockResolvedValue(listed as never);
+
+      const result = await create();
+
+      expect(result).toMatchObject({ id: 555 });
+      expect(saveItemInCollections).not.toHaveBeenCalled();
+      const writes = mockDbWrite.model.update.mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(writes[0][0].data.meta).toMatchObject({ showcaseCollectionId: null });
+      expect(result?.meta).toMatchObject({ showcaseCollectionId: null });
+    });
+
+    it('keeps a showcase the add accepted (control)', async () => {
+      vi.mocked(saveItemInCollections).mockResolvedValueOnce('added' as never);
+
+      const result = await create();
+
+      expect(saveItemInCollections).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      expect(result?.meta).toMatchObject({ showcaseCollectionId: 9 });
+    });
   });
 
   it('update branch: submits the POST-update name/description, not the stored pre-update ones', async () => {

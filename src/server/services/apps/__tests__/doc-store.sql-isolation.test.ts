@@ -382,8 +382,12 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
+    // The publish suite reads back the copies, seqs, usage and tombstones a publish wrote.
+    'server/services/apps/__tests__/doc-store-api.publish.test.ts',
     // The tally-operator suite compares the rows the old routes and the PATCH operators write.
     'server/services/apps/__tests__/doc-store-api.tally-operators.test.ts',
+    // The unchanged-writes suite reads back the row, seq and rating an unchanged put must not move.
+    'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
@@ -391,8 +395,13 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Counts an app's rows in every table, to prove an app purge left none and touched no other app.
     'server/services/apps/__tests__/doc-store.app-purge.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
+    // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
+    'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Reads back the rating columns a publish under content levels left on each copy.
+    'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
+    'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
@@ -412,6 +421,11 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The nullable schema_major column on doc, and its rollback (DDL only).
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.down.sql',
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.sql',
+    // The content-level columns on doc, and their rollback (DDL only).
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.down.sql',
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.sql',
+    // Sets an item's rating columns directly (no rater yet) for the card-path cases.
+    'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;

@@ -110,7 +110,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 const mockLogToAxiom = loggingMock.logToAxiom;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1048,21 +1048,6 @@ describe('textOutput — the trigger log', () => {
       model: CHAT_TYPE,
     });
     expect(mockLogToAxiom).not.toHaveBeenCalled();
-  });
-
-  it('a logging failure does not turn a decided verdict into a throw', async () => {
-    mockLogToAxiom.mockRejectedValue(new Error('axiom down'));
-    scannerReturns(scanOutput(['Young']));
-    await expect(
-      screenGeneratedText({
-        texts: [GENERATED_TEXT],
-        userId: 42,
-        isGreen: false,
-        appId: 'app-1',
-        stepId: 'fixture-chat',
-        model: CHAT_TYPE,
-      })
-    ).resolves.toMatchObject({ released: false });
   });
 });
 

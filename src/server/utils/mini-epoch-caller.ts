@@ -105,13 +105,13 @@ export async function evaluateMiniEpochCaller({
     name: 'mini-epoch-caller',
     mode,
     modelVersionId,
-    pick,
+    payload: { pick },
     authHeader: !!req.headers?.authorization,
     resolvedAs,
     callerClass,
     wouldRefuse,
     enforced: withhold,
-  }).catch(() => undefined);
+  });
 
   return { callerClass, withhold };
 }

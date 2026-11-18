@@ -55,9 +55,7 @@ export const sweepHibernationObjectsJob = createJob(
       heldAccounts: result.accountsHeld.length,
       errors: result.accountsFailed.length,
     };
-    logToAxiom({ name: 'sweep-hibernation-objects', type: 'info', ...summary }, 'webhooks').catch(
-      () => undefined
-    );
+    logToAxiom({ name: 'sweep-hibernation-objects', type: 'info', ...summary }, 'webhooks');
     return summary;
   },
   // A full listing of the archives prefix can outlast the 5-minute default; overlapping runs

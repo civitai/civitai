@@ -104,7 +104,7 @@ export async function sweepReviewStorage(
             message: err instanceof Error ? err.message : String(err),
           },
           'webhooks'
-        ).catch(() => undefined);
+        );
       }
     }
     if (ids.length < page) break;
@@ -126,9 +126,7 @@ export const sweepReviewStorageJob = createJob(
     try {
       const result = await sweepReviewStorage({ jobContext });
       if (result.scanned > 0) {
-        logToAxiom({ name: 'sweep-review-storage', type: 'info', ...result }, 'webhooks').catch(
-          () => undefined
-        );
+        logToAxiom({ name: 'sweep-review-storage', type: 'info', ...result }, 'webhooks');
       }
       return result;
     } catch (error) {
@@ -141,7 +139,7 @@ export const sweepReviewStorageJob = createJob(
           stack: (error as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return { error: true as const };
     }
   }

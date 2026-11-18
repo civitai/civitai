@@ -10,6 +10,7 @@ describe('rulesFacts', () => {
     const facts = rulesFacts();
     expect(facts.apprenticeship.knightLevel).toBe(APPRENTICE.knightLevel);
     expect(facts.apprenticeship.accuracyPercent).toBe(APPRENTICE.accuracyBar * 100);
+    expect(facts.apprenticeship).toMatchObject({ heartWrong: 6, heartWindow: 20 });
     expect(facts.watch.size).toBe(DAILY.watchSize);
     expect(facts.ranks.map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
   });
@@ -30,6 +31,7 @@ describe('rulesFacts', () => {
     expect(rulesFacts().hearts).toEqual({
       max: SMITES.max,
       returnAfterDays: SMITES.expireAfterDays,
+      rightVerdictsBack: SMITES.size,
     });
   });
 

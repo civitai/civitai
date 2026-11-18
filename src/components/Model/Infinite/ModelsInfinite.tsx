@@ -6,6 +6,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { HidePaidNotice } from '~/components/Model/Infinite/HidePaidNotice';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import type { ModelQueryParams } from '~/components/Model/model.utils';
@@ -15,7 +16,7 @@ import {
   useSemanticModelFeed,
 } from '~/components/Model/model.utils';
 import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
-import { ModelFeedSearchSummary } from '~/components/Model/Infinite/ModelFeedSearchSummary';
+import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
@@ -100,13 +101,16 @@ function ModelsFeed({
 
   return (
     <ModelCardContextProvider
-      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
+      // Under Hide Paid the card shows a free version; the link has to open that one, not the newest.
+      useModelVersionRedirect={(filters?.baseModels ?? []).length > 0 || !!filters.hidePaid}
       activeBaseModels={filters?.baseModels}
       salesByModelId={salesByModelId}
       hasSaleProvider
     >
+      {filters.hidePaid && !props.disableStoreFilters && <HidePaidNotice />}
       {feedSearch && (
-        <ModelFeedSearchSummary
+        <FeedSearchSummary
+          noun="Models"
           query={feedSearch.text}
           correctedQuery={searching ? feedSearch.search.correctedQuery : undefined}
           failed={searchFailed}

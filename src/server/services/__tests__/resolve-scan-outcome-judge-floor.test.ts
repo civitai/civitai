@@ -346,6 +346,43 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(row.nsfwLevel).toBe(PG13);
   });
 
+  it('rates an image locked with no rating, and drops that lock', async () => {
+    scanTagLevel = X;
+    const lockedUnrated = { ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true };
+    const { row } = await scan(await arrange(lockedUnrated));
+
+    expect(row.nsfwLevel).toBe(X);
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(false);
+  });
+
+  it('keeps a rating a moderator locked after the scan loaded the image', async () => {
+    scanTagLevel = X;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET "nsfwLevel" = $1, "nsfwLevelLocked" = true WHERE id = $2`, [
+        PG13,
+        ID,
+      ]);
+    const { row } = await scan(
+      await arrange({ ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true })
+    );
+
+    expect(row.nsfwLevel).toBe(PG13);
+  });
+
+  it('keeps the lock on a moderator rating it respects', async () => {
+    scanTagLevel = X;
+    await scan(await arrange({ nsfwLevel: PG13, nsfwLevelLocked: true }));
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(true);
+  });
+
   it('blocks on an audit block, whatever the judge rated', async () => {
     vi.mocked(auditPostImageMeta).mockReturnValueOnce({
       success: false,

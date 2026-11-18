@@ -3,7 +3,12 @@ import { sql } from '@civitai/db/kysely';
 import type { RequestHandler } from './$types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { dbRead } from '$lib/server/db';
-import { getImageEvents, getReactionSignals } from '$lib/server/image-signals.service';
+import {
+  getFlaggedRemixes,
+  getImageEvents,
+  getReactionSignals,
+} from '$lib/server/image-signals.service';
+import { section } from '$lib/server/section';
 
 // The ClickHouse half of Image Lookup, off the page load: ~200-400ms each even bounded, against tables
 // of 825M and 8.2M rows.
@@ -25,10 +30,15 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   // the deletion — so the events still load. Reaction clustering does not: without `createdAt` there is
   // no lower bound, and an unbounded scan of the 825M-row reactions table is not worth it for an image
   // that no longer exists.
-  const [events, reactions] = await Promise.all([
+  const [events, reactions, flaggedRemixes] = await Promise.all([
     getImageEvents(imageId),
     image ? getReactionSignals(imageId, image.createdAt) : null,
+    image
+      ? section(`image-signals ${imageId}`, 'flagged remixes', () =>
+          getFlaggedRemixes(imageId, image.createdAt)
+        )
+      : null,
   ]);
 
-  return json({ events, reactions });
+  return json({ events, reactions, flaggedRemixes });
 };

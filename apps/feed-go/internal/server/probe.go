@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -31,8 +33,8 @@ const ProbePathPrefix = "/internal/probe/"
 
 // Probe results (`result` on feed_go_gofirst_total).
 const (
-	// ProbeWouldServe: every cache a page needs answered, or missed only where Go answers the miss
-	// itself (hydrate.PageCache.Reason ""); a Go-first serve would have answered.
+	// ProbeWouldServe: every cache a page needs answered, or missed (or raced) only where Go answers
+	// the miss itself (hydrate.PageCache.Reason ""); a Go-first serve would have answered.
 	ProbeWouldServe = "would_serve"
 	// ProbeWouldMiss: a cache Go falls back on missed (feed_go_gofirst_miss_total says which).
 	ProbeWouldMiss = "would_miss"
@@ -41,17 +43,21 @@ const (
 	ProbeUnsupported = "unsupported"
 	// ProbeError: the probe failed (a store error, a panic, a malformed probe).
 	ProbeError = "error"
-	// ProbeRaced: every cache answered (or missed only where Go answers the miss itself), but some
-	// entry was filled at or after the request began (RaceSkewMargin before its start): most likely by
-	// the Node request this probe races, so a Go-first serve would have found it missing. Not
-	// would_serve; feed_go_gofirst_raced_total says which cache.
+	// ProbeRaced: every cache answered (or missed only where Go answers the miss itself), but an entry
+	// of a cache Go falls back on was filled at or after the request began (RaceSkewMargin before its
+	// start): most likely by the Node request this probe races, so a Go-first serve would have found
+	// it missing and fallen back. A raced entry on a cache Go answers itself does not make it raced
+	// (a miss there is served too; its lookup is costed instead). Not would_serve;
+	// feed_go_gofirst_raced_total says which cache, for every raced cache.
 	ProbeRaced = "raced"
 )
 
 // RaceSkewMargin widens the race threshold below the request's start: an entry filled from then on
 // counts as raced. It covers the clock difference between the Node pod that stamped `startedAt` and
 // the one that stamped the entry, and a fill by a concurrent request for the same ids just before
-// (which a Go-first serve could have missed too). Wider is more conservative (more raced).
+// (which a Go-first serve could have missed too). Wider is more conservative: more raced entries, so
+// more database reads counted for the caches Go answers itself, and more `raced` results (on the
+// caches Go falls back on only).
 const RaceSkewMargin = 100 * time.Millisecond
 
 // Caches checked before hydration: the fallback reasons a request raises on a miss there, by the
@@ -63,14 +69,17 @@ const (
 	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
 )
 
-// model.getAll's caches (internal/hydrate/models.go). Every miss on them falls back, so its probe
-// runs the serving path itself and reports the cache its fallback names.
+// model.getAll's caches (internal/hydrate/models.go, official.go). Its probe runs the serving path
+// itself and reports the cache its fallback names; a miss Go computes (the model data and tags, the
+// model frames and decorations, the version showcases, the official models: hydrate.MissCaches) is
+// recorded instead (hydrate.WithPresence).
 const (
-	CacheModelData          = "model-data"
-	CacheModelTags          = "model-tags"
-	CacheModelFrames        = "model-frames"
-	CacheModelDecorations   = "model-decorations"
-	CacheVersionImages      = "version-images"
+	CacheModelData          = hydrate.MissModelData
+	CacheModelTags          = hydrate.MissModelTags
+	CacheModelFrames        = hydrate.MissModelFrames
+	CacheModelDecorations   = hydrate.MissModelDecorations
+	CacheVersionImages      = hydrate.MissVersionImages
+	CacheOfficialModels     = hydrate.MissOfficialModels
 	CacheCreatorMemberships = "creator-memberships"
 )
 
@@ -81,7 +90,9 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
-	// model.getAll's hydration falls back on each of its cache misses.
+	// model.getAll's hydration falls back on each of these cache misses (on a model data, model tags,
+	// frame, decoration, showcase or official-models miss only without the miss computation).
+	"official-models-miss":  CacheOfficialModels,
 	"model-data-miss":       CacheModelData,
 	"model-tags-miss":       CacheModelTags,
 	"model-frame-miss":      CacheModelFrames,
@@ -110,13 +121,13 @@ func fallbackMissCache(reason string) string {
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 9+len(hydrate.PageCaches))
+	out := make([]string, 0, 10+len(hydrate.PageCaches))
 	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
 	return append(out, CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations,
-		CacheVersionImages, CacheCreatorMemberships)
+		CacheVersionImages, CacheOfficialModels, CacheCreatorMemberships)
 }
 
 // ProbeRequest is what the Node app posts at the start of a sampled request.
@@ -177,7 +188,7 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	if err != nil {
 		return err
 	}
-	ireq, err := s.prepareInfinite(ctx, r)
+	ireq, _, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -187,18 +198,17 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	return err
 }
 
-// probeModelGetAll resolves a model.getAll page by running its serving path (prepareModelGetAll,
-// modelfeed.Serve) over the deployment's own deps. That path writes no cache (its hydration has no
-// write-back and no page-query cache) and falls back on every cache miss, so its fallback reason is
-// the presence answer: the first cache it found cold. It does query the replica as serving does
-// (the page query, the basic users and profile pictures on a miss), and records no raced entries and
-// no DB reads: rec is not consulted.
-func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, _ *hydrate.PresenceProbe) error {
+// probeModelGetAll runs model.getAll's serving path under hydrate.WithPresence(rec): misses Go
+// computes are recorded on rec and never looked up, except the version showcases (read on the
+// replica: a model without images is dropped); any other cache miss falls back, and its reason is the
+// presence answer. Replica reads are not counted.
+func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+	ctx = hydrate.WithPresence(ctx, rec)
 	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
 	if err != nil {
 		return err
 	}
-	mreq, err := s.prepareModelGetAll(ctx, r)
+	mreq, _, err := s.prepareModelGetAll(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -238,6 +248,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	// The probe's span (as the shadow sample's): ends with the probe, or here when it is not run.
+	_, span := s.startSpan(r.Context(), r.Header, "probe", spec.endpoint)
+	spanHandedOff := false
+	defer func() {
+		if !spanHandedOff {
+			span.End()
+		}
+	}()
 	s.shadowMu.Lock()
 	if s.closing {
 		s.shadowMu.Unlock()
@@ -275,6 +293,7 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 	started = true
+	spanHandedOff = true
 	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		defer s.shadows.Done()
 		defer func() { <-s.ProbeQueue }()
@@ -283,10 +302,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 				s.panicked("probe", p, debug.Stack())
 			}
 		}()
+		defer span.End()
 		// Marked as shadow: its feed-service calls carry the shadow headers (feedsvc.WithShadow), so the
 		// probe's load stays out of the feed service's live series.
 		ctx, cancel := context.WithTimeout(feedsvc.WithShadow(s.background()), shadowSampleTimeout)
 		defer cancel()
+		if s.Tracer != nil {
+			ctx = trace.ContextWithSpan(ctx, span)
+		}
 		s.probe(ctx, spec, req)
 	}()
 }
@@ -306,7 +329,7 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)
 	}
 	raced := rec.Raced()
-	result, missed := classifyProbe(err, rec.Misses(), len(raced) > 0, checker.MissReason)
+	result, missed := classifyProbe(err, rec.Misses(), raced, checker.MissReason)
 	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result).Inc()
 	for _, c := range missed {
 		s.Metrics.GoFirstMiss.WithLabelValues(spec.endpoint, c).Inc()
@@ -315,17 +338,20 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		s.Metrics.GoFirstRaced.WithLabelValues(spec.endpoint, c).Inc()
 	}
 	if result == ProbeWouldServe || result == ProbeRaced {
-		// The cost gate: database reads a Go-first serve of this request would have made, over its
-		// pages. Served probes only, so the ratio reads per served page.
+		// The cost gate: database reads a Go-first serve of this request would have made (its misses
+		// and raced entries on caches Go answers itself), over its pages. Served probes only, so the
+		// ratio reads per served page.
 		for c, n := range rec.DBReads() {
 			s.Metrics.GoFirstDBReads.WithLabelValues(spec.endpoint, c).Add(float64(n))
 		}
 		s.Metrics.GoFirstPages.WithLabelValues(spec.endpoint).Add(float64(pages))
 	}
+	setOutcome(trace.SpanFromContext(ctx), result)
 	if reason := fallback.Reason(err); reason != "" {
 		s.Metrics.Fallbacks.WithLabelValues(spec.endpoint, "probe", reason).Inc()
+		s.noteFallback(ctx, "probe", spec.endpoint, err)
 	} else if err != nil {
-		s.Log.Warn("go-first probe failed", "endpoint", spec.endpoint, "err", err)
+		s.noteError(ctx, slog.LevelWarn, "go-first probe failed", "probe", spec.endpoint, err)
 	}
 }
 
@@ -333,12 +359,21 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 // and the caches it saw miss (each once, in probeCaches order). missReason is the deployment's
 // fallback reason for a miss on a page cache (hydrate.Sources.MissReason: "" where Go answers the
 // miss itself, from the replica or by computing it). A cache Go answers is listed when it missed, but
-// only a cache Go falls back on makes the result would_miss. raced (an entry filled after the
-// request began) turns would_serve into raced; would_miss wins over it (a miss was seen anyway). The
-// misses are listed whatever the result: a fallback for another reason can come after a page was
+// only a cache Go falls back on makes the result would_miss. raced is the raced-entry count per cache
+// (entries filled after the request began); the same rule holds for it: only a raced entry on a cache
+// Go falls back on turns would_serve into raced, as a Go-first serve would have missed it and fallen
+// back, while a raced entry on a cache Go answers itself would have been answered (and is costed as a
+// database read: hydrate.PresenceProbe.DBReads). would_miss wins over raced (a miss was seen anyway).
+// The misses are listed whatever the result: a fallback for another reason can come after a page was
 // checked.
-func classifyProbe(err error, misses map[string]int, raced bool, missReason func(string) string) (string, []string) {
+func classifyProbe(err error, misses, raced map[string]int, missReason func(string) string) (string, []string) {
 	reason := fallback.Reason(err)
+	wouldRace := false
+	for name, n := range raced {
+		if n > 0 && missReason(name) != "" {
+			wouldRace = true
+		}
+	}
 	pre := fallbackMissCache(reason)
 	var missed []string
 	wouldMiss := pre != ""
@@ -358,7 +393,7 @@ func classifyProbe(err error, misses map[string]int, raced bool, missReason func
 	switch {
 	case err == nil && wouldMiss, pre != "":
 		return ProbeWouldMiss, missed
-	case err == nil && raced:
+	case err == nil && wouldRace:
 		return ProbeRaced, missed
 	case err == nil:
 		return ProbeWouldServe, missed

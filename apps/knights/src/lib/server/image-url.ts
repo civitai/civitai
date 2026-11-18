@@ -1,11 +1,11 @@
 import { env } from '$env/dynamic/private';
+import { civitaiSiteUrl } from './site-url';
 
 const WIDTH = 1200;
 
 /** The image's page on the main site. */
 export function imagePageUrl(imageId: number): string {
-  const base = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
-  return `${base}/images/${imageId}`;
+  return `${civitaiSiteUrl()}/images/${imageId}`;
 }
 
 export const THUMBNAIL_WIDTH = 192;

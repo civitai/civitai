@@ -41,7 +41,8 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -388,13 +389,10 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
  */
 async function consumeForkStart(userId: number): Promise<void> {
   for (const { windowSeconds, max } of FORK_START_LIMITS) {
-    const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
+    const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysReadDeadline(
-        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-      );
-      count = Number((result as unknown[] | null)?.[1]);
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds);
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
@@ -624,7 +622,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       name: 'app-fork-start-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
 }
@@ -700,7 +698,7 @@ export async function applyForkSessionToFirstPublishRequest(args: {
         name: 'app-fork-session-provenance-failed',
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }).catch(() => null);
+      });
     }
     return false;
   }

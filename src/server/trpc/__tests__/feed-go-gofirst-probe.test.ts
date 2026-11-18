@@ -23,6 +23,8 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     v1ImagesUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/images',
     infiniteUrl: 'http://feed-go.test:9090/internal/shadow/image.getInfinite',
     modelGetAllUrl: 'http://feed-go.test:9090/internal/shadow/model.getAll',
+    v1ModelsUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models',
+    v1ModelsIdUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models/id',
     rate: 1,
     timeoutMs: 500,
     maxInFlight: 4,

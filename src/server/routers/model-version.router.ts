@@ -44,6 +44,7 @@ import {
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
+  revokeUserEarlyAccessSchema,
 } from '~/server/schema/model-version.schema';
 import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model.schema';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -63,6 +64,7 @@ import {
   getUserEarlyAccessModelVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
+import { moderatorRevokeEarlyAccess } from '~/server/services/model-version-access-revoke.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -308,6 +310,12 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .mutation(publishPrivateModelVersionHandler),
   bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
+  /** Refunds nothing: see moderatorRevokeEarlyAccess. */
+  revokeUserEarlyAccess: moderatorProcedure
+    .input(revokeUserEarlyAccessSchema)
+    .mutation(({ input: { userId, modelVersionId, reason }, ctx }) =>
+      moderatorRevokeEarlyAccess({ userId, modelVersionId, reason, moderatorId: ctx.user.id })
+    ),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {

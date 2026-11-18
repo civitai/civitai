@@ -172,7 +172,7 @@ async function respond(
       message: `App Assistant runner ${what} failed for user ${userId}`,
       userId,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res
       .status(503)
       .json({ error: 'Could not read your apps right now', code: 'unavailable' });

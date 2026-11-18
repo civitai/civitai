@@ -5,7 +5,11 @@ import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as RegionBlocking from '~/server/utils/region-blocking';
 import { NsfwLevel } from '~/server/common/enums';
-import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 
 const {
   mockGetServerAuthSession,
@@ -340,13 +344,13 @@ describe('other paths', () => {
 
 describe('passthrough (site-search-passthrough)', () => {
   // Spacing a parse and re-serialize would rewrite, so only the upstream bytes equal it.
-  const upstream = '{ "results" : [ { "indexUid" : "users_v3", "hits" : [ { "id" : 1 } ] } ] }';
+  const upstream = '{ "results" : [ { "indexUid" : "tools_v2", "hits" : [ { "id" : 1 } ] } ] }';
 
   it('on: an unshaped response is sent as the upstream bytes, as JSON, still uncacheable', async () => {
     mockPassthroughOn.mockReturnValue(true);
     fetchMock.mockImplementation(async () => new Response(upstream));
     const res = await post(['multi-search'], {
-      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.status).toBe(200);
     expect(res.sent).toBeUndefined();
@@ -381,18 +385,18 @@ describe('passthrough (site-search-passthrough)', () => {
   it('off: the same unshaped response goes through res.json, as before', async () => {
     fetchMock.mockImplementation(async () => new Response(upstream));
     const res = await post(['multi-search'], {
-      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.sent).toBeUndefined();
     expect(res.ended).toBeUndefined();
-    expect(res.body).toEqual({ results: [{ indexUid: USERS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
+    expect(res.body).toEqual({ results: [{ indexUid: TOOLS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
   });
 
   it('on: the request body is still validated, so unknown params never reach the backend', async () => {
     mockPassthroughOn.mockReturnValue(true);
     fetchMock.mockImplementation(async () => new Response(upstream));
     await post(['multi-search'], {
-      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
+      queries: [{ indexUid: TOOLS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
     });
     expect(sentQueries()[0]).not.toHaveProperty('hybrid');
   });

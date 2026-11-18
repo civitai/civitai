@@ -575,12 +575,16 @@ describe('post actor outputCeiling is the viewer-clamped token ceiling', () => {
       await caller().createPostFromApp(INPUT);
       expect(mockPreviewBlockPost).toHaveBeenCalledWith(
         expect.objectContaining({
-          actor: expect.objectContaining({ outputCeiling: { maxBrowsingLevel: level } }),
+          actor: expect.objectContaining({
+            outputCeiling: { maxBrowsingLevel: level, serving: false },
+          }),
         })
       );
       expect(mockResolveBlockPostSources).toHaveBeenCalledWith(
         expect.objectContaining({
-          actor: expect.objectContaining({ outputCeiling: { maxBrowsingLevel: level } }),
+          actor: expect.objectContaining({
+            outputCeiling: { maxBrowsingLevel: level, serving: false },
+          }),
         })
       );
     }

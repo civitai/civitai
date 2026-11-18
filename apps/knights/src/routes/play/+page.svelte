@@ -5,34 +5,28 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
+  import RailSheet from './RailSheet.svelte';
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
   import LevelToast from './LevelToast.svelte';
+  import RulingToast from './RulingToast.svelte';
   import QueueClear from './QueueClear.svelte';
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
-  import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
-  import {
-    DISMISS_FAILED,
-    closeNotice,
-    dismissFailedOn,
-    noticeKey,
-    noticeShowing,
-    settleNotice,
-    syncNotice,
-    type NoticeState,
-  } from './level-notice';
+  import { dismissible } from '$lib/optimistic-dismiss.svelte';
+  import { noticeKey } from './level-notice';
+  import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -40,6 +34,8 @@
     createVoteTracker,
     postVote,
     refillCount,
+    refusalNote,
+    skillCheckCue,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -65,8 +61,8 @@
       : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
-  let guideReopened = $state(false);
-  let guideOpen = $derived(data.showGuide || guideReopened);
+  const guide = $state<GuideState>({ reopened: false, dismissed: false });
+  let guideOpen = $derived(guideShowing(data.showGuide, guide));
   // A title shows on hover and focus only; touch players get the same text from the Guide button.
   let levelHint = $derived(
     new Map(data.ratingGuide.map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`]))
@@ -78,6 +74,12 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
+  // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
+  const rulingNotice = dismissible(
+    () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
+    { noticeFailed: true }
+  );
+  const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
@@ -87,18 +89,15 @@
   onDestroy(() => {
     alive = false;
     inFlight.count = 0;
+    inFlight.landed = 0;
+    inFlight.landedOn = null;
+    inFlight.goldless = 0;
   });
-  let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
+  // The level card and the rank-up dialog; `showing` decides whether one is drawn, while the `noticeShown` fields keep
+  // following `levelNotice`, the server's notice, so an answer given right after "Onward" still records the card it appeared with.
+  const progress = dismissible(() => (data.progress ? noticeKey(data.progress) : null), { progressFailed: true });
+  let dialogOpen = $derived(whatsNew.showing || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
-  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
-  // given right after "Onward" still records the card it appeared with.
-  const notice = $state<NoticeState>({ closed: null, failed: null });
-  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
-  $effect(() => {
-    const key = sentNotice;
-    untrack(() => syncNotice(notice, key));
-  });
-  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -148,6 +147,8 @@
   onMount(() => {
     void tick().then(() => (soundMuted = sound.muted));
   });
+  let railSheetOpen = $state(false);
+
   function toggleSound() {
     soundMuted = !soundMuted;
     sound.setMuted(soundMuted);
@@ -187,15 +188,13 @@
     };
   };
 
+  // "I understand" closes the guide at once; the dismissal is recorded in the background, and only a refused one reloads.
   const submitGuide: SubmitFunction = () => {
-    submitting = true;
+    const before = closeGuide(guide);
     return async ({ result, update }) => {
-      try {
-        await update();
-        if (result.type === 'success') guideReopened = false;
-      } finally {
-        submitting = false;
-      }
+      const stored = result.type === 'success';
+      settleGuide(guide, stored, before);
+      if (!stored) await update();
     };
   };
 
@@ -216,22 +215,6 @@
       } finally {
         submitting = false;
         picked = null;
-      }
-    };
-  };
-
-  // Not through `submitting`: the answers stay live while the dismissal is in flight.
-  const submitDismissProgress: SubmitFunction = () => {
-    const key = sentNotice;
-    if (key) closeNotice(notice, key);
-    return async ({ result, update }) => {
-      const stored = result.type === 'success' || result.type === 'redirect';
-      if (key) settleNotice(notice, key, stored);
-      // An unanswered post would otherwise render the error page over the round.
-      if (result.type === 'error') {
-        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
-      } else {
-        await update();
       }
     };
   };
@@ -392,10 +375,46 @@
     }
   });
 
+  // A right hidden-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
+  let cue = $state<string | null>(null);
+  let cueTimer: ReturnType<typeof setTimeout> | undefined;
+  const CUE_MS = 2500;
+  function cheer(result: Record<string, unknown> | undefined, smitesBefore: number) {
+    const next = skillCheckCue(result, smitesBefore);
+    if (!next) return;
+    cue = next;
+    clearTimeout(cueTimer);
+    cueTimer = setTimeout(() => (cue = null), CUE_MS);
+  }
+  function clearCue() {
+    cue = null;
+    clearTimeout(cueTimer);
+  }
+  onDestroy(() => {
+    clearTimeout(noteTimer);
+    clearTimeout(cueTimer);
+  });
+
+  // A refused background vote's note stays until the next judgment or until dismissed: the player has moved on by the time
+  // it arrives, and a note that vanished after five seconds let a press pass for a counted vote.
+  let sticky = $state(false);
   function tell(message: string) {
+    clearCue();
     note = message;
+    sticky = false;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+  function stick(message: string) {
+    clearCue();
+    note = message;
+    sticky = true;
+    clearTimeout(noteTimer);
+  }
+  function unstick() {
+    if (!sticky) return;
+    sticky = false;
+    note = null;
   }
 
   // Background votes go one at a time, in the order they were answered: this page posts one vote at a time.
@@ -403,10 +422,14 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
+    const smitesBefore = data.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
     };
+    // Set when the server counted a stale judgment toward the Watch: it lands on the Watch but adds no gold.
+    let paysGold = true;
     return postVote(key, {
       queue: votes,
       tracker,
@@ -428,8 +451,10 @@
         }
       },
       onFailure: (outcome) => {
-        uncount();
-        tell(outcome.message);
+        if (outcome.watchCounted) paysGold = false;
+        else uncount();
+        const message = refusalNote(outcome);
+        if (message) stick(message);
         dropBuffered(key);
         if (outcome.resync) {
           local = null;
@@ -437,11 +462,16 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+      // The page's own data (status, rewards, level notices) is read again once the last vote in flight has landed; each vote
+      // stays counted against the data on screen until the refreshed data, which holds it, replaces it.
+      onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
+        if (counted && alive) landVote(inFlight, data.daily, { paysGold });
+        counted = false;
+        // Votes post one at a time, so a vote still unlanded settles after this one and reads the page then. Reading it now
+        // as well would only be discarded when that read starts, and while reads kept replacing each other the status froze.
+        if (inFlight.count > 0) return;
         await invalidate('app:play').catch(() => {});
-        // The page's data now holds the vote, so it stops being counted on top.
-        uncount();
       },
     });
   }
@@ -479,6 +509,7 @@
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
+    unstick();
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -493,7 +524,7 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, pendingVotes(inFlight, data.daily))) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -502,6 +533,20 @@
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
   let hearts = $derived(heartsLeft(data.status));
+  // Which body the page shows: the template branches on it, and the ruling sits directly above the stage when there is one.
+  let screen = $derived.by(() => {
+    if (data.mode === 'apprentice') {
+      const apprentice = data.apprentice;
+      if (apprentice.kind === 'question') return { kind: 'apprentice-question' as const, apprentice };
+      if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
+      return { kind: 'no-practice' as const };
+    }
+    if (data.muted) return { kind: 'muted' as const };
+    if (data.lockoutSeconds) return { kind: 'lockout' as const, seconds: data.lockoutSeconds };
+    if (view) return { kind: 'queue-stage' as const, view };
+    return { kind: data.resetPending ? ('none' as const) : ('clear' as const), daily: data.daily };
+  });
+  let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -561,13 +606,36 @@
   </button>
 {/snippet}
 
+{#snippet questionTools()}
+  <div class="qtools">
+    {#if !yesNo}
+      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+        <Icon name="book-open" size={16} />Guide
+      </button>
+    {/if}
+    {@render soundToggle()}
+  </div>
+{/snippet}
+
+{#snippet ruling(anchored: boolean)}
+  <!-- Not drawn under a dialog, so its auto-hide never runs unseen. -->
+  {#if rulingNotice.showing && !dialogOpen}
+    <RulingToast
+      notices={data.notices}
+      message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
+      submit={rulingNotice.submit}
+      {anchored}
+    />
+  {/if}
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice && levelToastShowing}
+  {#if levelNotice && progress.showing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
-      submit={submitDismissProgress}
+      message={form?.progressFailed && progress.failed ? form.message : null}
+      submit={progress.submit}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}
@@ -576,12 +644,11 @@
 {/snippet}
 
 <div class="play">
-  {#if data.resetNotice}
+  {#if careerReset.showing}
     <ResetNotice
       smites={data.status.maxSmites}
-      message={form?.resetNoticeFailed ? form.message : null}
-      {submitting}
-      {submit}
+      message={form?.resetNoticeFailed && careerReset.failed ? form.message : null}
+      submit={careerReset.submit}
     />
   {:else}
   {#if data.mode === 'queue' && data.apprenticeMeter}
@@ -594,14 +661,16 @@
       answerWindow={data.apprenticeMeter.window}
     />
   {:else if strip && data.mode === 'queue'}
-    <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
     <WatchMeta
       value={strip.value}
       max={strip.max}
+      watch={data.daily.watch}
       done={strip.done}
-      streak={withVotesSent(data.daily, inFlight.count).streak}
+      streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      heartBack={data.status.heartBack}
+      onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
     <ApprenticeMeter
@@ -611,156 +680,161 @@
       bar={data.apprentice.progress.bar}
       knightLevel={data.apprentice.progress.knightLevel}
       answerWindow={data.apprentice.progress.window}
+      {hearts}
+      maxHearts={data.status.maxSmites}
     />
   {/if}
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0}
-    <section class="toast" role="status" aria-label="Skill check">
-      <Icon name="triangle-alert" size={18} />
-      <div class="toast-body">
-        {#each data.notices as notice (notice.title)}
-          <p><strong>{notice.title}</strong> {notice.message}</p>
-        {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
-      </form>
-    </section>
-  {/if}
+  {#if !rulingInStage}{@render ruling(false)}{/if}
 
   {#if data.mode === 'queue' && data.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
-  {#if data.mode === 'apprentice'}
-    {#if data.apprentice.kind === 'question'}
-      <div class="column">
-        <p class="question" title={data.apprentice.prompt}>
-          <span class="eyebrow">Question ·</span>
-          <span class="text">{data.apprentice.prompt}</span>
+  {#if screen.kind === 'apprentice-question'}
+    {@const apprentice = screen.apprentice}
+    <div class="column">
+      <div class="qrow">
+        <p class="question" title={apprentice.prompt}>
+          <span class="eyebrow">Question</span>
+          <span class="text">{apprentice.prompt}</span>
         </p>
-        <div class="stagewrap">
-          {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
-            <ImageStage
-              src={data.apprentice.item.src}
-              width={data.apprentice.item.width}
-              height={data.apprentice.item.height}
-              alt="The subject of this question"
-            />
-          {/key}
-          {@render levelToast(true)}
-        </div>
-        <div class="controls" class:yesno={yesNo}>
-          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-            <input type="hidden" name="kind" value={data.apprentice.item.kind} />
-            <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
-            <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
-            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
-            {#each data.apprentice.options as option, index (option.value)}
-              {@render pill(option, index, false, false)}
-            {/each}
-          </form>
-          {#if !yesNo}
-            <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
-          {/if}
-          {@render soundToggle()}
-        </div>
-        {#if formMessage}
-          <p class="notice flat" role="alert">{formMessage}</p>
+        {@render questionTools()}
+      </div>
+      <div class="stagewrap">
+        {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
+          <ImageStage
+            src={apprentice.item.src}
+            width={apprentice.item.width}
+            height={apprentice.item.height}
+            alt="The subject of this question"
+          />
+        {/key}
+        {@render levelToast(true)}
+        {@render ruling(true)}
+      </div>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+          <input type="hidden" name="kind" value={apprentice.item.kind} />
+          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
+          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
+          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {#each apprentice.options as option, index (option.value)}
+            {@render pill(option, index, false, false)}
+          {/each}
+        </form>
+        {#if !yesNo}
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
+        <span class="rowtool">{@render soundToggle()}</span>
       </div>
-    {:else if data.apprentice.kind === 'checkpoint'}
+      {#if formMessage}
+        <p class="notice flat" role="alert">{formMessage}</p>
+      {/if}
+    </div>
+  {:else if screen.kind === 'checkpoint'}
+    {@render levelToast(false)}
+    <CheckpointRecap
+      recap={screen.apprentice}
+      noticeShown={!!levelNotice}
+      message={formMessage}
+      {submitting}
+      submit={submitCheckpoint}
+      onguide={() => openGuide(guide)}
+    />
+  {:else if screen.kind === 'no-practice'}
+    <div class="panel">
       {@render levelToast(false)}
-      <CheckpointRecap
-        recap={data.apprentice}
-        noticeShown={!!levelNotice}
-        message={formMessage}
-        {submitting}
-        submit={submitCheckpoint}
-        onguide={() => (guideReopened = true)}
-      />
-    {:else}
-      <div class="panel">
-        {@render levelToast(false)}
-        <section class="lockout" role="status" aria-label="No more practice items">
-          <h2>No more practice items right now</h2>
-          <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
-        </section>
-      </div>
-    {/if}
-  {:else if data.mode === 'queue' && data.muted}
+      <section class="lockout" role="status" aria-label="No more practice items">
+        <h2>No more practice items right now</h2>
+        <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+      </section>
+    </div>
+  {:else if screen.kind === 'muted'}
     <div class="panel">
       <section class="lockout" role="status" aria-label="Judging unavailable">
         <h2>Judging is closed to you</h2>
         <p>Your account is muted, so you can't judge right now. You can still view your record and your gold.</p>
       </section>
     </div>
-  {:else if data.mode === 'queue' && data.lockoutSeconds}
+  {:else if screen.kind === 'lockout'}
     <div class="panel">
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
         <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
-        <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+        <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if view}
+  {:else if screen.kind === 'queue-stage'}
+    {@const shown = screen.view}
     <div class="column">
-      <p class="question" title={view.question.prompt}>
-        <span class="eyebrow">Question ·</span>
-        {#if view.category}
-          <!-- A new chip (and its one-time glow) only when the category changes; the text is part of the question for screen readers. -->
-          {#key view.category.heading}
-            <span class="chip" class:glow={view.banner !== null}>
-              <span class="vh">Category: </span>{view.category.heading}
-            </span>
-          {/key}
-        {/if}
-        <span class="text">{view.question.prompt}</span>
+      <div class="qrow">
+      <p class="question" title={shown.question.prompt}>
+        <span class="eyebrow">
+          Question
+          {#if shown.category}
+            <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
+            {#key shown.category.heading}
+              <span class="category" class:glow={shown.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
+              </span>
+            {/key}
+          {/if}
+        </span>
+        <span class="text">{shown.question.prompt}</span>
       </p>
+      {@render questionTools()}
+      </div>
       <span class="vh" role="status" aria-live="polite"
-        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
       <div class="stagewrap">
-        {#key view.item.key}
-          {@const itemKey = view.item.key}
+        {#key shown.item.key}
+          {@const itemKey = shown.item.key}
           <ImageStage
-            src={view.item.src}
-            width={view.item.width}
-            height={view.item.height}
+            src={shown.item.src}
+            width={shown.item.width}
+            height={shown.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
             onfail={() => (failedItem = itemKey)}
           />
         {/key}
         {@render levelToast(true)}
+        {@render ruling(true)}
         {#if note}
-          <p class="nudge" role="status">{note}</p>
+          <p class="nudge" class:sticky>
+            <span role="status">{note}</span>
+            {#if sticky}
+              <button type="button" class="nudge-close" aria-label="Dismiss" onclick={unstick}>×</button>
+            {/if}
+          </p>
+        {:else if cue}
+          <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
-          <input type="hidden" name="item" value={view.item.id} />
-          {#each view.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
+          <input type="hidden" name="item" value={shown.item.id} />
+          {#each shown.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
-          <input type="hidden" name="item" value={view.item.id} />
-          <button type="submit" class="quiet" disabled={submitting}>
-            <Icon name="skip-forward" size={14} />Skip<span class="space">&nbsp;·&nbsp;Space</span>
+          <input type="hidden" name="item" value={shown.item.id} />
+          <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
+            <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        {#if !yesNo}
-          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
-        {/if}
-        {@render soundToggle()}
+        <!-- Hidden, not removed, on yes/no: its slot keeps Skip from shifting. -->
+        <span class="rowtool" class:held={yesNo}>
+          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+        </span>
+        <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -769,17 +843,27 @@
         <p class="notice flat" role="alert">{formMessage}</p>
       {/if}
     </div>
-  {:else if !data.resetPending}
+  {:else if screen.kind === 'clear'}
     {@render levelToast(false)}
-    <QueueClear daily={data.daily} />
+    <QueueClear daily={screen.daily} />
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, inFlight.count)} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}
 </div>
+
+{#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
+  <RailSheet
+    status={data.status}
+    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))}
+    rail={data.rail}
+    ladder={data.ladder}
+    onclose={() => (railSheetOpen = false)}
+  />
+{/if}
 
 {#if guideOpen}
   <GuideDialog
@@ -789,7 +873,7 @@
     {submitting}
     submit={submitGuide}
   />
-{:else if data.progress?.kind === 'rank'}
+{:else if data.progress?.kind === 'rank' && progress.showing}
   <RankUpDialog
     rank={data.progress.rank}
     level={data.progress.level}
@@ -797,9 +881,8 @@
     goldMultiplier={data.progress.goldMultiplier}
     previous={data.progress.previous}
     badge={data.badges.large[data.progress.rank]}
-    message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
+    message={form?.progressFailed && progress.failed ? form.message : null}
+    submit={progress.submit}
   />
 {/if}
 
@@ -824,42 +907,6 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
-  }
-
-  /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
-  .toast {
-    position: absolute;
-    top: 4.5rem;
-    left: 50%;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: min(34rem, calc(100% - 2rem));
-    padding: 12px 16px;
-    transform: translateX(-50%);
-    border: 1px solid var(--io-crimson);
-    border-radius: 12px;
-    background: #14110dee;
-    color: var(--io-crimson-text);
-    font: 400 13px/1.4 var(--io-font-ui);
-  }
-  .toast-body {
-    flex: 1;
-  }
-  .toast-body p {
-    margin: 0;
-    color: var(--io-parchment);
-  }
-  .toast-body strong {
-    display: block;
-    color: var(--io-crimson-text);
-  }
-  .toast button {
-    min-height: 0;
-    padding: 6px 12px;
-    border-color: var(--io-crimson);
-    font-size: 12px;
   }
 
   /* The stage and whatever floats over it (the level-up toast). */
@@ -887,6 +934,29 @@
     color: var(--io-parchment);
     font: 400 13px/1.3 var(--io-font-ui);
     text-align: center;
+  }
+  .nudge.sticky {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+  }
+  .nudge-close {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--io-parchment);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .nudge.cheer {
+    border-color: var(--io-gold);
   }
 
   .column {
@@ -918,20 +988,45 @@
     text-align: center;
   }
 
+  /* Phones carry the guide and sound toggle beside the question, so the answers keep one row. */
+  .qrow {
+    display: flex;
+    flex: none;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .qrow .question {
+    flex: 1 1 0;
+  }
+  .qtools {
+    display: none;
+  }
+  .rowtool {
+    display: contents;
+  }
+
+  /* The eyebrow (and category) sits on its own line so the question keeps the full width. */
   .question {
     display: flex;
     flex: none;
-    align-items: baseline;
-    gap: 10px;
+    flex-direction: column;
+    gap: 6px;
     min-width: 0;
     margin: 0;
   }
   .eyebrow {
-    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 8px;
     color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
+    font: 600 11px/1.4 var(--io-font-ui);
     letter-spacing: 2px;
     text-transform: uppercase;
+  }
+  .category {
+    display: inline-flex;
+    gap: 8px;
+    color: var(--io-parchment-muted);
   }
   .text {
     min-width: 0;
@@ -940,28 +1035,20 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .chip {
-    flex: none;
-    padding: 3px 8px;
-    border: 1px solid color-mix(in srgb, var(--io-gold) 45%, transparent);
-    border-radius: 999px;
-    color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
-    letter-spacing: 2px;
-    text-transform: uppercase;
+  .category.glow {
+    animation: category-glow 1.8s ease-out 1;
   }
-  .chip.glow {
-    animation: chip-glow 1.8s ease-out 1;
-  }
-  @keyframes chip-glow {
+  @keyframes category-glow {
     0% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--io-gold) 70%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 0 transparent;
     }
     40% {
-      box-shadow: 0 0 12px 3px color-mix(in srgb, var(--io-gold) 55%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 10px color-mix(in srgb, var(--io-gold) 70%, transparent);
     }
     100% {
-      box-shadow: 0 0 0 0 transparent;
+      text-shadow: 0 0 0 transparent;
     }
   }
   .vh {
@@ -994,10 +1081,10 @@
     flex: 1 1 0;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
     height: 40px;
-    padding: 0 10px;
+    padding: 0 8px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 6px;
     background: var(--io-bg);
@@ -1028,7 +1115,7 @@
       0 0 14px rgb(224 138 130 / 0.35);
   }
   @media (prefers-reduced-motion: reduce) {
-    .chip.glow {
+    .category.glow {
       animation: none;
     }
     .pill,
@@ -1066,6 +1153,10 @@
   }
   .pill :global(svg) {
     flex: none;
+  }
+  /* A label never wraps: at mid widths the key chip gives way first (see below). */
+  .level {
+    white-space: nowrap;
   }
   .key {
     display: grid;
@@ -1111,6 +1202,9 @@
     align-items: center;
     gap: 6px;
   }
+  .rowtool.held {
+    visibility: hidden;
+  }
   .quiet.guide {
     color: var(--io-gold);
   }
@@ -1138,7 +1232,14 @@
     opacity: 0.4;
   }
 
-  /* Touch and narrow screens: no key chips, 44px targets, the two quiet links on their own row. */
+  /* Up to 80rem the six pills share the row with Skip, the guide, sound (and from 64rem the rail): the chips go so every
+     label fits. */
+  @media (max-width: 80rem) {
+    .controls:not(.yesno) .key {
+      display: none;
+    }
+  }
+  /* Touch and narrow screens: no key chips. */
   @media (max-width: 40rem), (hover: none) {
     .key {
       display: none;
@@ -1150,9 +1251,6 @@
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
     }
-    .toast {
-      top: 3.5rem;
-    }
     .eyebrow {
       font-size: 12px;
       letter-spacing: 1.2px;
@@ -1160,17 +1258,45 @@
     .text {
       font-size: 14px;
     }
+    /* Pinned beside the eyebrow line only, so the question text keeps the full width below it. */
+    .qrow {
+      position: relative;
+    }
+    .qtools {
+      position: absolute;
+      top: -10px;
+      right: 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .qrow .eyebrow {
+      padding-right: 8rem;
+    }
+    .qtools .quiet {
+      gap: 6px;
+      min-width: 0;
+      min-height: 36px;
+      font-size: 13px;
+    }
+    .qtools .quiet.sound {
+      justify-content: center;
+      min-width: 36px;
+    }
+    .controls .rowtool {
+      display: none;
+    }
     .controls {
-      flex-wrap: wrap;
-      gap: 0 16px;
+      gap: 6px;
     }
     .answers {
-      flex-basis: 100%;
+      gap: 6px;
     }
     .pill {
-      height: 44px;
-      padding: 0 4px;
-      font-size: 13px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 2px;
+      font-size: 12px;
     }
     .pill.blocked .level {
       display: none;
@@ -1183,22 +1309,38 @@
     }
     .skip {
       display: block;
+      flex: none;
     }
     .quiet {
       display: flex;
       align-items: center;
-      min-width: 56px;
-      min-height: 44px;
     }
-    .quiet.guide,
-    .controls.yesno .quiet.sound {
-      margin-left: auto;
+    /* Skip ends the answer row as a quiet bordered button: an icon beside the ratings, labelled beside yes/no. */
+    .skip .quiet {
+      justify-content: center;
+      min-width: 44px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .skiplabel {
+      display: none;
+    }
+    .controls.yesno .skiplabel {
+      display: inline;
     }
     .space {
       display: none;
     }
     .panel {
       padding: 0.5rem 1rem 1.5rem;
+    }
+  }
+  @media (max-width: 22rem) {
+    .pill {
+      font-size: 11px;
     }
   }
 </style>

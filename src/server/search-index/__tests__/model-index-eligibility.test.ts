@@ -30,7 +30,6 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 // to read a predicate.
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: null,
-  metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
 

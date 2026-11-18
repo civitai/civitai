@@ -11,7 +11,7 @@ export const YESNO_ANSWERS = [
   { value: 'no', label: 'No' },
 ] as const;
 
-/** Answers it takes for a question to have a consensus, and the most it is ever asked before it is given up on. */
+/** Written on each axis question row; `votesToResolve` is the label store's `minHuman`. The game decides by the rating `STAGE_RULES`, not these. */
 export const YESNO_CONSENSUS_VOTES = 5;
 export const YESNO_MAX_VOTES = 10;
 

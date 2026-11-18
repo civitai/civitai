@@ -101,7 +101,8 @@ tabs are ported — search/transcript, reports queue, insights (top chatters/cha
 messages), and Newest. Message bodies outside an opened transcript sit behind a "Show message text" toggle.
 
 **1.7 Image Lookup.** Shipped at `/retool/image-lookup`. Audited complete against the export: 10/10 queries,
-4/4 tabs.
+4/4 tabs. Three panels have no Retool counterpart: a "Why it's in review" note, flagged prompt terms, and
+flagged remix attempts (ClickHouse `prohibitedRequests`).
 
 **1.8 Article Lookup.** Full Article row by ID.
 

@@ -187,7 +187,10 @@ describe('sweepChatWindows', () => {
         name: 'text-scan',
         type: 'warning',
         message: 'sweep behind',
-        job: 'text-scan-chat-windows',
+        payload: {
+          job: 'text-scan-chat-windows',
+          lagMs: NOW.getTime() - SETTLED.getTime(),
+        },
       })
     );
   });

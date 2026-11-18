@@ -15,7 +15,7 @@ import {
 
 export interface OauthConsentMirror {
   clientId: string;
-  scope: number;
+  scope: bigint;
 }
 
 /**
@@ -45,11 +45,11 @@ export interface OauthConsentMirror {
  * Module-private on purpose: the only legitimate consumers are in this file. Export
  * it again and the seed becomes someone else's invariant to break.
  */
-function blockScopesToOauthScope(scopes: Iterable<string>): number {
-  let scope = 0;
+function blockScopesToOauthScope(scopes: Iterable<string>): bigint {
+  let scope = 0n;
   for (const s of scopes) {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[s];
-    if (typeof bit === 'number') scope |= bit;
+    if (typeof bit === 'bigint') scope |= bit;
   }
   return scope;
 }
@@ -166,7 +166,7 @@ export async function syncOauthConsentFromGrant(opts: {
 export async function writeOauthConsent(opts: {
   userId: number;
   clientId: string;
-  scope: number;
+  scope: bigint;
   buzzLimit: BuzzLimit | null;
 }): Promise<void> {
   const { userId, clientId, scope, buzzLimit } = opts;
@@ -189,7 +189,7 @@ export async function writeOauthConsent(opts: {
         type: 'oauth.bust-cache.failed',
         message: `bust-cache failed for oauth client ${clientId} user ${userId}`,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
     }
   }
 }
@@ -218,7 +218,7 @@ export async function withdrawCatalogItemsOnConsentRevoke(opts: {
       type: 'oauth.withdraw-catalog-items.failed',
       message: `catalog item withdraw failed for oauth client ${opts.clientId} user ${opts.userId}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return null;
   }
 }
@@ -247,7 +247,7 @@ export async function withdrawCatalogItemsOnClientDelete(opts: {
       clientId: opts.clientId,
       parentListingIds: opts.parentListingIds,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return null;
   }
 }
@@ -276,7 +276,7 @@ export async function revokeOauthConsentForBlock(opts: {
       type: 'oauth.delete-subject.failed',
       message: `delete-subject failed for oauth client ${clientId} user ${userId}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
   });
   await revokeCivitaiUserTokens({ userId });
 }

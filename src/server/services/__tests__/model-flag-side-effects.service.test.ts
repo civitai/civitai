@@ -16,7 +16,9 @@ const {
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
   mockPurgeShowcaseEdge,
+  mockQueueImageDocuments,
 } = vi.hoisted(() => ({
+  mockQueueImageDocuments: vi.fn(async () => undefined),
   mockPurgeShowcaseEdge: vi.fn(),
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
@@ -89,6 +91,9 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(),
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
+}));
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueModelsForImageChildTagChanges: mockQueueImageDocuments,
 }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
@@ -241,6 +246,16 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     mockArticlesReindex.mockClear();
     await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter } });
     expect(mockArticlesReindex).not.toHaveBeenCalled();
+  });
+
+  it('🔴 requeues the documents showing the images it flagged minor', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
+    expect(mockQueueImageDocuments).toHaveBeenCalledWith({ minorImageIds: [900] });
+  });
+
+  it('does not requeue them for a poi-only change (control)', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(mockQueueImageDocuments).not.toHaveBeenCalled();
   });
 
   it('skips image propagation entirely when neither minor nor poi changed', async () => {

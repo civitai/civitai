@@ -21,6 +21,11 @@ type PageRequest struct {
 	// NoProfilePictures: the include list has no 'profilePictures' (image.getInfinite adds only
 	// 'tagIds'), so the profile-picture cache is not read and every creator's is absent (Node: null).
 	NoProfilePictures bool
+	// NoCosmetics: the include list has no 'cosmetics' (image.getInfinite's `include: []`), so
+	// getCosmeticsForUsers and getCosmeticsForEntity are not called: neither the user-cosmetics nor the
+	// frames cache is read (nor the cosmetic records they name), and both maps are empty (Node:
+	// `cosmetics: []` per creator, `cosmetic: null` per image).
+	NoCosmetics bool
 }
 
 // Page is a page's hydration, each map as the lookup of the same name answers it.
@@ -50,8 +55,8 @@ type Page struct {
 // Everything that is not a cache read is as in the per-lookup reads, which share these halves:
 // each lookup's misses, markers and staleness (decodeEntry), its fallback reasons, and its replica
 // queries, which run after the pipeline, concurrently, one per lookup that has misses. With
-// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, event decorations)
-// are computed the same way: one batched lookup per cache that has misses, after the pipeline,
+// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, tag ids, event
+// decorations) are computed the same way: one batched lookup per cache that has misses, after the pipeline,
 // concurrently (misses.go). The reactions query reads no cache and starts with
 // stage 1. A lookup's error (the first, as with errgroup) is the page's error.
 func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
@@ -62,14 +67,19 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 
 	stage1 := NewBatch()
 	basic := s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)
-	userCosmetics := s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)
+	var userCosmetics, frames *PackedRead
+	if !req.NoCosmetics {
+		userCosmetics = s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)
+	}
 	var profilePics *PackedRead
 	if !req.NoProfilePictures {
 		profilePics = s.Packed.Queue(stage1, KeyProfilePictures, users, 0)
 	}
-	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
+	if !req.NoCosmetics {
+		frames = s.Packed.Queue(stage1, KeyImageFrames, images, 0)
+	}
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
-	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
+	tags := s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)
 	// No visible event: no decoration read at all (decorationsForEvents returns before its fetch).
 	readEvents := len(images) > 0 && len(req.VisibleEvents) > 0
 	var events *PackedRead
@@ -96,8 +106,15 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 		out.Thumbs, err = s.thumbnailsFrom(gctx, videos, thumbs.Entries())
 		return
 	}))
-	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(); return }))
-	g.Go(safe.Go(func() (err error) { out.TagIDs, err = tagIDsFrom(images, tags.Entries()); return }))
+	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(gctx, s); return }))
+	g.Go(safe.Go(func() (err error) {
+		got, writable := tags.read()
+		if err := s.fillTagIDs(gctx, images, got, writable); err != nil {
+			return err
+		}
+		out.TagIDs, err = tagIDsFrom(images, got)
+		return
+	}))
 	g.Go(safe.Go(func() (err error) {
 		if !readEvents {
 			out.Decorations = map[int]superjson.Object{}
@@ -111,6 +128,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 		return
 	}))
 	g.Go(safe.Go(func() error {
+		if req.NoCosmetics {
+			out.UserCosmetics, out.Frames = map[int][]any{}, map[int]superjson.Object{}
+			return nil
+		}
 		var err error
 		out.UserCosmetics, out.Frames, err = s.pageCosmetics(gctx, users, images, userCosmetics, frames)
 		return err

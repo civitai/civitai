@@ -104,8 +104,13 @@ const verdicts = async (itemId: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Image" (
-    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image'
+  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+  CREATE TABLE "Image" (
+    "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
+    "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT,
+    "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER,
+    "poi" BOOLEAN NOT NULL DEFAULT false,
+    "minor" BOOLEAN NOT NULL DEFAULT false
   );`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261210120000_knights_v2_tables', 'migration.sql'), 'utf8')
@@ -119,9 +124,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.exec(
-    `DELETE FROM "KnightsVote"; DELETE FROM "KnightsQueueItem"; DELETE FROM "KnightsQuestion"; DELETE FROM "Image";
+    `DELETE FROM "KnightsVote"; DELETE FROM "KnightsQueueItem"; DELETE FROM "KnightsQuestion"; DELETE FROM "Image"; DELETE FROM "Post";
      SELECT setval(pg_get_serial_sequence('"KnightsQueueItem"', 'id'), 1000);
-     INSERT INTO "Image" ("id","url","name") VALUES (1,'k1','a.png'), (2,'k2',NULL), (3,'k3',NULL);
+     INSERT INTO "Post" ("id","publishedAt") VALUES (1,'2020-01-01'), (2,'2020-01-01'), (3,'2020-01-01');
+     INSERT INTO "Image" ("id","url","name","postId") VALUES (1,'k1','a.png',1), (2,'k2',NULL,2), (3,'k3',NULL,3);
      INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES
        ('${AXIS}','bool','Violence?','[]'), ('${OTHER_AXIS}','bool','Profanity?','[]');`
   );
@@ -287,6 +293,40 @@ describe('unretireYesNoQuestion', () => {
     expect(await unretireYesNoQuestion({ id: 2, by: MOD })).toMatchObject({ ok: false });
     expect(await unretireYesNoQuestion({ id: 3, by: MOD })).toMatchObject({ ok: false });
     expect((await row(3)).status).toBe('Closed');
+  });
+});
+
+describe('an image that can no longer be served', () => {
+  const hold = () => db.query(`UPDATE "Image" SET "needsReview" = 'poi' WHERE "id" = 1`);
+
+  it('keeps a retired question retired', async () => {
+    await seedItem(1);
+    await retireYesNoQuestion({ id: 1, by: MOD, note: 'oops', now: NOW });
+    await hold();
+
+    expect(await unretireYesNoQuestion({ id: 1, by: MOD, now: NOW })).toEqual({
+      ok: false,
+      error: expect.any(String),
+    });
+    expect(await row(1)).toMatchObject({ status: 'Closed', reason: 'moderator-retired' });
+  });
+
+  it('refuses a reword and opens no copy, while one on a servable image still goes through', async () => {
+    await seedItem(1, { externalId: 'held' });
+    await seedItem(2, { externalId: 'clean', imageId: 2 });
+    await hold();
+
+    expect(
+      await rewordYesNoQuestion({ id: 1, prompt: 'New words?', by: MOD, note: 'x', now: NOW })
+    ).toEqual({ ok: false, error: expect.any(String) });
+    expect(await row(1)).toMatchObject({ status: 'Open' });
+    expect(
+      await rewordYesNoQuestion({ id: 2, prompt: 'New words?', by: MOD, note: 'x', now: NOW })
+    ).toEqual({ ok: true });
+    const copies = await db.query<{ externalId: string }>(
+      `SELECT "externalId" FROM "KnightsQueueItem" WHERE "externalId" LIKE '%:r%' ORDER BY 1`
+    );
+    expect(copies.rows.map((r) => r.externalId)).toEqual(['clean:r1']);
   });
 });
 

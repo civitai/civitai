@@ -258,6 +258,23 @@ export const usageLimitDefs = [
     base: 1500,
   },
   {
+    // One per image the Training Studio rates on the system token.
+    id: 'dataset-rating.submit',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per minute',
+    window: rolling(60),
+    base: 60,
+  },
+  {
+    id: 'dataset-rating.daily',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per day',
+    window: rolling(DAY),
+    base: 1000,
+  },
+  {
     // Counted by the gift claim itself (a calendar window), not by rateLimit().
     id: 'gifts.monthly',
     area: 'gifts',

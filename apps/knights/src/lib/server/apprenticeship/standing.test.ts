@@ -53,18 +53,22 @@ describe('needsCoaching', () => {
 describe('chooseSource', () => {
   const all = { core: true, rating: true, yesNo: true };
 
-  it('serves the curated core first, whatever else is available', () => {
-    expect(chooseSource({ position: 7, ...all })).toBe('core');
+  it('mixes core, harvested and yes/no from the first item: one core to one harvested, yes/no every third', () => {
+    const kinds = Array.from({ length: 6 }, (_, position) => chooseSource({ position, ...all }));
+    expect(kinds).toEqual(['core', 'rating', 'yesno', 'core', 'rating', 'yesno']);
   });
 
-  it('mixes yes/no into the rest on a fixed rhythm', () => {
-    const kinds = Array.from({ length: 6 }, (_, position) =>
-      chooseSource({ position, core: false, rating: true, yesNo: true })
+  it('alternates core and harvested when there are no yes/no pairs', () => {
+    const kinds = Array.from({ length: 4 }, (_, position) =>
+      chooseSource({ position, core: true, rating: true, yesNo: false })
     );
-    expect(kinds).toEqual(['rating', 'rating', 'yesno', 'rating', 'rating', 'yesno']);
+    expect(kinds).toEqual(['core', 'rating', 'core', 'rating']);
   });
 
   it('falls back to whichever kind still has items', () => {
+    expect(chooseSource({ position: 0, core: false, rating: true, yesNo: true })).toBe('rating');
+    expect(chooseSource({ position: 1, core: true, rating: false, yesNo: true })).toBe('core');
+    expect(chooseSource({ position: 2, core: true, rating: true, yesNo: false })).not.toBe('yesno');
     expect(chooseSource({ position: 2, core: false, rating: true, yesNo: false })).toBe('rating');
     expect(chooseSource({ position: 0, core: false, rating: false, yesNo: true })).toBe('yesno');
   });

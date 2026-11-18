@@ -94,6 +94,7 @@ describe('AppFooter server render, shellDesignSystemMarkup ON', () => {
     expect(links).toEqual([
       { text: 'Terms of Service', href: '/content/tos', ...local, ...ds },
       { text: 'Privacy', href: '/content/privacy', ...local, ...ds },
+      { text: 'Remove Intimate Images', href: '/content/take-it-down', ...local, ...ds },
       { text: 'Safety', href: '/safety', ...local, ...ds },
       { text: 'API', href: 'https://developer.civitai.com/', ...blank, ...ds },
       { text: 'Status', href: 'https://status.civitai.com', ...blank, ...ds },
@@ -173,7 +174,7 @@ describe('AppFooter server render, shellDesignSystemMarkup ON', () => {
     for (const cls of [...MANTINE_BUTTON_CLASSES, 'mantine-Text-root'])
       expect(doc.getElementsByClassName(cls), cls).toHaveLength(0);
     // Control: the selector machinery sees the design-system buttons it is replacing them with.
-    expect(doc.querySelectorAll('[data-civitai-ui="button"]')).toHaveLength(18);
+    expect(doc.querySelectorAll('[data-civitai-ui="button"]')).toHaveLength(19);
     const copyright = doc.querySelector('footer p');
     expect(copyright?.textContent).toBe(`© Civitai ${new Date().getFullYear()}`);
   });
@@ -183,7 +184,7 @@ describe('AppFooter server render, shellDesignSystemMarkup OFF', () => {
   it('still renders the Mantine footer, with the same links', () => {
     const doc = renderFooter();
     expect(doc.querySelectorAll('[data-civitai-ui]')).toHaveLength(0);
-    expect(doc.getElementsByClassName('mantine-Button-root')).toHaveLength(10);
+    expect(doc.getElementsByClassName('mantine-Button-root')).toHaveLength(11);
     expect(doc.getElementsByClassName('mantine-ActionIcon-root')).toHaveLength(8);
     expect(doc.getElementsByClassName('mantine-Text-root')).toHaveLength(1);
     const tos = doc.querySelector('footer a[href="/content/tos"]');
@@ -198,7 +199,7 @@ describe('AppFooter server render, shellDesignSystemMarkup OFF', () => {
     const off = controls(renderFooter());
     state.ds = true;
     const on = controls(renderFooter());
-    expect(off).toHaveLength(18);
+    expect(off).toHaveLength(19);
     expect(on).toEqual(off);
   });
 });

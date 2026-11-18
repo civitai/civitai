@@ -5,8 +5,8 @@ import { joinOrder } from '$lib/server/join.service';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { railFor } from '$lib/server/rail-runtime';
-import { requireMember } from '$lib/server/membership';
-import { dismissWhatsNew, readNotices } from '$lib/server/seen';
+import { consented, requireMember } from '$lib/server/membership';
+import { dismissWhatsNew, readNotices, recordConsent } from '$lib/server/seen';
 import { seenStore } from '$lib/server/seen-runtime';
 import { isReturningPlayer, whatsNewCopy } from '$lib/whats-new';
 import type { Actions, PageServerLoad } from './$types';
@@ -34,14 +34,17 @@ export const load: PageServerLoad = async ({ locals }) => {
   // The recap card replaces the daily popup: yesterday's verdicts, read whether or not they were already seen. The page marks
   // today's recap seen once it shows (a load that only prefetched must not).
   // Only "What's new" is read here; /play shows the guide and progress notices, which stay unrecorded until it does.
-  const [daily, recap, rail, seen] = status
+  const [daily, recap, rail, seen, accepted] = status
     ? await Promise.all([
         getDailyStatus(db, { playerId, rank: status.rank, level: status.level, now }),
         optional('recap', () => findRecap(db, { playerId, now })),
         optional('rail', () => railFor(playerId, now, status.fervor)),
         readNotices(seenStore, playerId, status),
+        consented(playerId),
       ])
-    : [null, null, null, null];
+    : [null, null, null, null, null];
+  // A v1 player has a row but has not accepted v2's mature content warning: the page asks for it before anything else.
+  const needsConsent = !!status && accepted === false;
 
   return {
     username: locals.user.username ?? null,
@@ -50,7 +53,9 @@ export const load: PageServerLoad = async ({ locals }) => {
     daily,
     recap,
     fervorPosition: rail?.standing?.position ?? null,
-    whatsNew: status && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
+    whatsNew:
+      status && !needsConsent && seen?.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
+    needsConsent,
   };
 };
 
@@ -66,6 +71,23 @@ export const actions = {
     } catch (error) {
       console.error('knights: join failed', { error });
       return fail(500, { message: 'You could not be sworn in. Try again in a moment.' });
+    }
+    const status = await requireMember(db, locals.user.id);
+    if (!(await recordConsent(seenStore, locals.user.id, status))) {
+      return fail(500, { message: 'Your oath could not be recorded. Try again in a moment.' });
+    }
+    redirect(303, '/play');
+  },
+
+  // A v1 player renewing the oath in v2: the same warning a new member accepts in `join`.
+  consent: async ({ request, locals }) => {
+    const form = await request.formData();
+    if (form.get('accepted') !== 'yes') {
+      return fail(400, { message: 'You must accept the content warning to continue.' });
+    }
+    const status = await requireMember(db, locals.user.id);
+    if (!(await recordConsent(seenStore, locals.user.id, status))) {
+      return fail(500, { message: 'Your oath could not be recorded. Try again in a moment.' });
     }
     redirect(303, '/play');
   },

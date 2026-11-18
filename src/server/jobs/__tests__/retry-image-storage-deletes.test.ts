@@ -155,6 +155,16 @@ describe('retry-image-storage-deletes', () => {
     );
   });
 
+  it('retries a queued all-versions purge as one', async () => {
+    queue = [{ id: DELETES_ID, data: { url: 'key-deletes', allVersions: true } }];
+    await runJob();
+    expect(mockDeleteImageFromS3.mock.calls[0][0]).toMatchObject({
+      id: DELETES_ID,
+      url: 'key-deletes',
+      allVersions: true,
+    });
+  });
+
   it('dequeues deleted, skipped and malformed rows of its own type only', async () => {
     const result = await runJob();
 

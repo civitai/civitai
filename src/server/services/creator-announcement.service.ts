@@ -26,6 +26,7 @@ import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { isImageNotRestricted } from '~/server/common/image-visibility';
 
 // Two-arg classed form, as free-placement uses: the one-arg form shares an int4 keyspace
 // with `article.service.ts`, which locks on a bare articleId, so a hashed key could collide
@@ -59,6 +60,8 @@ const creatorAnnouncementSelect = {
       // MediaHash renders this while a cover is blurred; without it a blurred cover is an
       // empty box rather than a placeholder.
       hash: true,
+      userId: true,
+      modelRestricted: true,
     },
   },
   user: { select: { id: true, username: true, image: true, deletedAt: true } },
@@ -69,7 +72,7 @@ const creatorAnnouncementSelect = {
 
 type RawCreatorAnnouncement = {
   metadata: unknown;
-  cover: { nsfwLevel: number } | null;
+  cover: { nsfwLevel: number; userId: number; modelRestricted: boolean } | null;
 };
 
 /**
@@ -77,15 +80,22 @@ type RawCreatorAnnouncement = {
  * text carries no rating here. Surfaced as a top-level field anyway so callers gate on one
  * number and cannot forget the cover, which is the only thing that can be mature.
  */
-function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement: T) {
-  return {
-    ...announcement,
-    // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
-    // without a cast rather than being trusted to know the shape.
-    metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
-    nsfwLevel: announcement.cover?.nsfwLevel ?? 0,
+const toCreatorAnnouncementDTO =
+  (viewerId: number | undefined) =>
+  <T extends RawCreatorAnnouncement>(announcement: T) => {
+    const cover =
+      announcement.cover && isImageNotRestricted(announcement.cover, viewerId)
+        ? announcement.cover
+        : null;
+    return {
+      ...announcement,
+      cover,
+      // Parsed here, as the sitewide DTO does, so the client reads metadata.actions
+      // without a cast rather than being trusted to know the shape.
+      metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
+      nsfwLevel: cover?.nsfwLevel ?? 0,
+    };
   };
-}
 
 /**
  * Cosmetics and the profile-picture row are not columns on `User`, so the select cannot
@@ -166,7 +176,9 @@ export async function getCreatorAnnouncements({
   // fan-outs and several KB per row, duplicated across rows that all share one author, for
   // fields nothing reads. The FIELDS are still present so both queries have one DTO shape.
   // If a byline is ever added to the profile, flip this — do not remove the argument.
-  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
+  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO(viewerId)), {
+    hydrate: false,
+  });
 }
 
 /*
@@ -295,7 +307,7 @@ async function resolveFollowedLiveAuthors({
         error: error instanceof Error ? error.message : String(error),
         domain: domain ?? ANY_DOMAIN,
       },
-    }).catch(() => undefined);
+    });
     return undefined;
   }
 }
@@ -384,7 +396,7 @@ export async function getFollowedAnnouncements({
   });
 
   const items = await withAuthorIdentity(
-    announcements.slice(0, limit).map(toCreatorAnnouncementDTO),
+    announcements.slice(0, limit).map(toCreatorAnnouncementDTO(userId)),
     { hydrate: true }
   );
 

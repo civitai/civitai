@@ -287,7 +287,7 @@ export const processCompleteBuzzTransaction = async (
           stack: (attrErr as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 };

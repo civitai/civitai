@@ -1,7 +1,8 @@
 // The one-time "What's new" dialog shown to members after the v2 launch (`WhatsNewDialog.svelte`). All its copy is here.
 
 /** Filled at launch with the announcement article's URL; the dialog's link shows only once it is set. */
-export const ANNOUNCEMENT_URL = '';
+export const ANNOUNCEMENT_URL =
+  'https://civitai.com/articles/38647/knights-v2-judge-the-image-rise-in-the-order';
 
 /** `link` turns that part of the lead-in into a link. */
 export type WhatsNewItem = { lead: string; body: string; link?: { text: string; href: string } };

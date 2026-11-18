@@ -81,6 +81,10 @@ vi.mock('~/components/Search/CustomSearchComponents', () => ({
 }));
 vi.mock('~/components/Search/SearchHeader', () => ({ SearchHeader: () => null }));
 vi.mock('~/components/Search/SearchLayout', () => ({ SearchLayout: () => null }));
+// /search/models' getServerSideProps pulls server modules into the browser bundle under test.
+vi.mock('~/server/utils/server-side-helpers', () => ({
+  createServerSideProps: () => async () => ({ props: {} }),
+}));
 vi.mock('~/components/Search/TimeoutLoader', () => ({ TimeoutLoader: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({

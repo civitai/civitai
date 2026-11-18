@@ -78,11 +78,17 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  describeSharedRefusalField,
+  sharedRefusalField,
   type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
 import {
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
@@ -374,17 +380,6 @@ export async function resolveSharedContext(
   // them. Do not re-enumerate that set here — it is four ops today and adding a
   // fifth must not silently make this comment wrong. Mechanism + the measurement
   // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
-  //
-  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
-  // so line numbers do not matter, and the message text is free to change because the
-  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
-  // or rewriting that condition, fails the production Docker build at
-  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
-  // same commit.
   if (userId != null && !subjectUser) {
     throw tagSharedStorageOutcome(
       new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' }),
@@ -1439,7 +1434,7 @@ async function reportSharedRowUnmetered(
       key,
     },
     'block-audit'
-  ).catch(() => {});
+  );
 
   return { ok: true as const };
 }
@@ -1658,6 +1653,15 @@ async function incrementSharedCounterUnmetered(
     }
   };
 
+  if (moderationMode !== 'enforce' && containsPrivateMediaUrl(key)) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Content contains a blocked link (counterKey)',
+      }),
+      'moderation_blocked'
+    );
+  }
   let outcome = await runIncrement(moderationMode === 'enforce');
   if (!outcome) {
     // Enforce, and this increment would create the key: scan it now, with no transaction open.
@@ -1910,7 +1914,9 @@ async function assertSharedValueSafeAndSerialize(params: {
         { schema, slug, appBlockId, uid },
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
-      const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // The field the belt refused (never the term or the text), when it could be placed.
+      const message = e.field ? `${e.message} (field: ${e.field})` : e.message;
+      const refusal = new TRPCError({ code: 'BAD_REQUEST', message, cause: e });
       // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
       const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
       // An outage the belt refused on (its blocklist read failing, or its prompt audit unable to
@@ -1951,6 +1957,13 @@ async function assertSharedValueSafeAndSerialize(params: {
   // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
   const readStoredData = () =>
     value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
+  // Refused in every mode; under `enforce` the scan below records it.
+  if (mode !== 'enforce' && valueContainsPrivateMediaUrl(JSON.parse(serialized))) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Content contains a blocked link (data)' }),
+      'moderation_blocked'
+    );
+  }
   if (mode === 'enforce') {
     const scan = await enforceScan(
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
@@ -2040,7 +2053,7 @@ async function enforceScan(
         error: error instanceof Error ? error.name : typeof error,
       },
       'block-audit'
-    ).catch(() => undefined);
+    );
     throw tagSharedStorageOutcome(
       escalateToServerFault(
         new TRPCError({
@@ -2057,7 +2070,8 @@ async function enforceScan(
  * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
  * when `hit` is set, reject it with the SAME consequences a title/body hit has
  * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
- * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * BAD_REQUEST carrying a generic message plus the field the hit sits in (`sharedRefusalField`,
+ * e.g. `(field: data.actions[2].text)`) — never the matched term or text. An overflow (a blob too
  * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
  * past a cap. With `hit` null it only records.
  *
@@ -2094,12 +2108,16 @@ async function refuseSharedTextHit(
     field,
   });
 
-  const message =
+  const reason =
     hit.category === 'link'
       ? 'Content contains a blocked link'
       : hit.category === 'overflow'
       ? 'Data is too large or too deeply nested to review'
       : 'Content flagged for review';
+  const named = describeSharedRefusalField(
+    sharedRefusalField(scan, hit, ctx.surface === 'counter' ? 'key' : 'data')
+  );
+  const message = `${reason} (${named})`;
   throw tagSharedStorageOutcome(
     new TRPCError({ code: 'BAD_REQUEST', message }),
     'moderation_blocked'

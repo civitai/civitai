@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { toggleModelVersionOnVault } from '~/server/services/vault.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   modelVersionId: z.coerce.number(),
@@ -33,5 +34,6 @@ export default AuthedEndpoint(
       return handleEndpointError(res, error);
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.VaultWrite } }
 );

@@ -181,6 +181,6 @@ export const defaultMarkWatchDeps = (
       message: 'interest set at its cap, topics refused',
       refused,
       set,
-    }).catch(() => undefined),
+    }),
   ...deps,
 });

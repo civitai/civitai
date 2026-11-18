@@ -62,7 +62,7 @@ async function getExcludedUserIdsOrUnfiltered() {
       type: 'error',
       name: 'leaderboard-metric-exclusion-unavailable',
       message: (e as Error).message,
-    }).catch();
+    });
     return [];
   }
 }
@@ -116,7 +116,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           logToAxiom({
             type: 'leaderboard-start',
             id,
-          }).catch();
+          });
 
           const populated = await populateLeaderboard(context, async () => {
             if (!imageRange) imageRange = await getImageRange();
@@ -129,7 +129,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             type: 'leaderboard-done',
             id,
             duration: Date.now() - start,
-          }).catch();
+          });
         }, 3)
   );
   try {
@@ -143,7 +143,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', message: error.message });
     throw error;
   }
 });
@@ -170,7 +170,7 @@ export async function populateLeaderboard(
     }
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', id, message: error.message });
     throw e;
   }
 
@@ -178,7 +178,7 @@ export async function populateLeaderboard(
   // cosmetic revocation strip every holder.
   if (skipped) {
     log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
-    logToAxiom({ type: 'leaderboard-skipped', id }).catch();
+    logToAxiom({ type: 'leaderboard-skipped', id });
     return false;
   }
 
@@ -315,7 +315,7 @@ export async function rebuildUserRanks() {
       name: 'user-rank-partially-populated',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: { unpopulated: unmarked },
-    }).catch();
+    });
 
   await updateLeaderboardRank({
     carriedBoardIds: unmarked,
@@ -558,7 +558,7 @@ export async function setCoverImageNsfwLevelOrLog() {
       type: 'error',
       name: 'leaderboard-cover-nsfw-level-failed',
       message: (e as Error).message,
-    }).catch();
+    });
   }
 }
 
@@ -576,7 +576,7 @@ function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersi
       name: 'leaderboard-malformed-meta',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: { table, count: malformed.length, ids: malformed.slice(0, 100).map((row) => row.id) },
-    }).catch();
+    });
   return rows.filter(isWritable);
 }
 

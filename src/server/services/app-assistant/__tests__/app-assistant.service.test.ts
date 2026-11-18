@@ -390,7 +390,7 @@ describe('enableAppAssistant', () => {
   );
 
   it("keeps bits the consent already carries beyond the assistant's own", async () => {
-    const EXTRA = 1 << 30;
+    const EXTRA = 1n << 30n;
     dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue({
       scope: TokenScope.UserRead | EXTRA,
       buzzLimit: null,

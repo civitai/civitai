@@ -23,7 +23,7 @@ export async function registerFileLocation(params: {
       name: 'register-file-location-skipped',
       reason: 'storage-resolver-not-configured',
       ...params,
-    }).catch(() => undefined);
+    });
     return;
   }
 
@@ -74,7 +74,7 @@ export async function deregisterFileLocations(
       name: 'deregister-file-locations-skipped',
       reason: 'storage-resolver-not-configured',
       modelVersionId,
-    }).catch(() => undefined);
+    });
     return null;
   }
 
@@ -102,7 +102,7 @@ export async function deregisterFileLocations(
         modelVersionId,
         status: response.status,
         message: text,
-      }).catch(() => undefined);
+      });
       return null;
     }
 
@@ -116,7 +116,7 @@ export async function deregisterFileLocations(
       name: 'deregister-file-locations-error',
       modelVersionId,
       error,
-    }).catch(() => undefined);
+    });
     return null;
   }
 }
@@ -151,7 +151,7 @@ export async function deregisterFileLocationsBatch(
       name: 'deregister-file-locations-skipped',
       reason: 'storage-resolver-not-configured',
       count: modelVersionIds.length,
-    }).catch(() => undefined);
+    });
     return null;
   }
 
@@ -184,7 +184,7 @@ export async function deregisterFileLocationsBatch(
           count: chunkIds.length,
           status: response.status,
           message: text,
-        }).catch(() => undefined);
+        });
         // Best-effort: skip this chunk, keep going with the rest.
         continue;
       }
@@ -199,7 +199,7 @@ export async function deregisterFileLocationsBatch(
         name: 'deregister-file-locations-error',
         count: chunkIds.length,
         error,
-      }).catch(() => undefined);
+      });
       // Best-effort: a failed chunk is logged and skipped, never aborts the loop.
     }
   }
@@ -250,7 +250,7 @@ export async function deregisterFileLocationsByFile(
       key: 'file',
       reason: 'storage-resolver-not-configured',
       count: fileIds.length,
-    }).catch(() => undefined);
+    });
     return null;
   }
 
@@ -285,7 +285,7 @@ export async function deregisterFileLocationsByFile(
           count: chunkIds.length,
           status: response.status,
           message: text,
-        }).catch(() => undefined);
+        });
         // Best-effort: skip this chunk, keep going with the rest.
         continue;
       }
@@ -302,7 +302,7 @@ export async function deregisterFileLocationsByFile(
         key: 'file',
         count: chunkIds.length,
         error,
-      }).catch(() => undefined);
+      });
       // Best-effort: a failed chunk is logged and skipped, never aborts the loop.
     }
   }

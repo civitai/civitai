@@ -67,6 +67,7 @@ const PUBLISHED_HANDLES = [
   'redisRoutingRetryCounter',
   'redisSelfHealDeadlineHitsWindow',
   'redisSelfHealReconnectCounter',
+  'redisSysReadonlyRetryCounter',
   'sysredisSentinelClientErrorsCounter',
   'sysredisSentinelTopologyChangesCounter',
 ] as const;
@@ -160,5 +161,23 @@ describe('the redis metrics bridge this app publishes on globalThis', () => {
     expect(after).toContain(
       `civitai_app_redis_command_duration_seconds_bucket{le="0.025",client="${probe}"} 1`
     );
+  });
+
+  it('the published redisSysReadonlyRetryCounter handle writes to the scraped counter', async () => {
+    const bridge = (await loadBridge()) as Record<string, unknown>;
+    const counter = bridge.redisSysReadonlyRetryCounter as {
+      inc: (labels: { result: 'recovered' | 'exhausted' }) => void;
+    };
+    const metric = 'civitai_app_redis_sys_readonly_retry_total';
+    const before = await client.register.metrics();
+    expect(before, 'NEGATIVE CONTROL: no sample yet').not.toMatch(new RegExp(`^${metric}\\{`, 'm'));
+
+    counter.inc({ result: 'recovered' });
+    counter.inc({ result: 'recovered' });
+    counter.inc({ result: 'exhausted' });
+
+    const after = await client.register.metrics();
+    expect(after).toContain(`${metric}{result="recovered"} 2`);
+    expect(after).toContain(`${metric}{result="exhausted"} 1`);
   });
 });

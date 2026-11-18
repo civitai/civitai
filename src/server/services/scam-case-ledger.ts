@@ -169,12 +169,12 @@ export async function restoreScamCases(userId: number, userRestrictionIds: numbe
     try {
       await restoreScamCase(id);
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'scam-restore-failed',
         type: 'error',
         message: (error as Error).message,
         details: { userRestrictionId: id, userId },
-      }).catch(() => undefined);
+      });
     }
   }
 }

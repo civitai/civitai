@@ -51,6 +51,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSubmitVersion,
+  mockIsFlipt,
   mockRedis,
   mockMultiIncr,
   mockWithSysReadDeadline,
@@ -105,6 +106,7 @@ const {
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSubmitVersion: vi.fn(),
+    mockIsFlipt: vi.fn(),
     mockRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
     mockMultiIncr,
     mockWithSysReadDeadline,
@@ -137,10 +139,20 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
+// The GitHub Actions OIDC verifier module is loaded by the route only when a token is sent; its
+// flag read and segment context are the two seams it needs here.
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { APP_BLOCKS_OIDC_VERIFIED_SUBMIT: 'app-blocks-oidc-verified-submit' },
+  isFlipt: mockIsFlipt,
+}));
+vi.mock('~/server/services/feature-flags.service', () => ({
+  buildFliptContext: () => ({}),
+}));
 // The schema module is real (we want its actual validation), but it pulls only
 // zod — safe to load.
 
 import handler from '~/pages/api/v1/blocks/submit-version';
+import { GithubActionsOidcRefusal } from '~/server/services/blocks/github-actions-oidc-refusal';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Personal-access (user-type) key: `getSessionFromBearerToken` sets
@@ -690,5 +702,64 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ message: 'Invalid bundle payload' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // GitHub Actions OIDC token (flag app-blocks-oidc-verified-submit)
+  // ---------------------------------------------------------------------------
+  const OIDC_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.eyJyZXBvIjoicm91dGUtdGVzdCJ9.c2lnLXJvdXRlLTkwMTI';
+
+  it('flag OFF: a sent token is dropped at the route, so the service verifies and writes nothing', async () => {
+    mockIsFlipt.mockResolvedValue(false);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockIsFlipt.mock.calls[0][0]).toBe('app-blocks-oidc-verified-submit');
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    expect(mockSubmitVersion.mock.calls[0][0].githubOidcToken).toBeUndefined();
+    expect(res._getJSONData()).not.toHaveProperty('actionsRunSourceRecorded');
+  });
+
+  it('flag ON: the token reaches the service, and its recorded answer reaches the client', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_oidc',
+      slug: 'my-block',
+      version: '1.2.3',
+      actionsRunSourceRecorded: true,
+    });
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion.mock.calls[0][0].githubOidcToken).toBe(OIDC_TOKEN);
+    expect(res._getJSONData()).toMatchObject({ actionsRunSourceRecorded: true });
+  });
+
+  it('a token refusal answers with its own status, code and reason, never the token', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockSubmitVersion.mockRejectedValueOnce(
+      new GithubActionsOidcRefusal('repository-mismatch', 'expected acme/route-app', 409)
+    );
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: { ...goodBody, githubOidcToken: OIDC_TOKEN },
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(409);
+    expect(res._getJSONData()).toEqual({
+      message: 'GitHub Actions OIDC token rejected: expected acme/route-app',
+      code: 'github_oidc_token_rejected',
+      reason: 'repository-mismatch',
+    });
+    expect(JSON.stringify(res._getJSONData())).not.toContain(OIDC_TOKEN);
   });
 });

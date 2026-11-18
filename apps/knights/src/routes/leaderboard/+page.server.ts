@@ -1,5 +1,5 @@
-import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
+import { civitaiSiteUrl } from '$lib/server/site-url';
 import { imageUrl } from '$lib/server/image-url';
 import {
   LEADERBOARD_SIZE,
@@ -18,7 +18,7 @@ import type { PageServerLoad } from './$types';
 const BADGE_PX = 48;
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
-  const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
+  const civitaiUrl = civitaiSiteUrl();
   const now = new Date();
   const [status, board] = await Promise.all([
     requireMember(db, locals.user.id),

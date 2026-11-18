@@ -346,7 +346,7 @@ describe('a bundle pack edited while it is being reviewed', () => {
     rows(loaded, loaded);
     const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
-    redisMock.sysRedis.mGet.mockResolvedValueOnce([issuedTo] as never);
+    redisMock.redis.mGet.mockResolvedValueOnce([issuedTo] as never);
     const swap = updateCreatorShopPack({
       id: 42,
       userId: 99,

@@ -88,18 +88,23 @@ perf reviewer owns the cost. Generic machinery lives in `src/server/utils/cache-
 instead of picking the right rung is a reuse finding. `src/server/middleware.trpc.ts` supplies
 `cacheIt`, `edgeCacheIt`, `noEdgeCache`, `purgeOnSuccess`, `rateLimit`, `applyUserPreferences`.
 
-**Server utilities.** `withDistributedLock` (`src/server/utils/distributed-lock.ts`),
-`limitConcurrency`/`Limiter` (`concurrency-helpers.ts`), `dbRead`/`dbWrite`
-(`src/server/db/client.ts`), `pgDbRead`/`pgDbReadLong`/`pgDbWrite` (`db/pgDb.ts`), `kyselyDb`
-(`db/kyselyDb.ts`). A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
+**Server utilities.** The "Use X for Y" table in `.claude/rules/server.md` names the one helper for
+each recurring need (outbound HTTP, rate limit, lock, cache, DB client, REST error, retry, logging, env,
+feature flag, pagination, moderator route, client IP); a diff that does one of those another way is a
+reuse finding, even when the nearest existing code does it that way too. Also `limitConcurrency`/`Limiter`
+(`concurrency-helpers.ts`). The DB clients are not equally valid: follow the table's DB read and New query
+rows (`dbRead`/`kyselyRead`, `getDbWithoutLag`/`getKyselyWithoutLag`, `kyselyWrite`, `@civitai/db-queries`).
+A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
 
 **Components** (`src/components/`). The ones most often reimplemented:
 
 - `EdgeMedia/` — **CLAUDE.md requires it over `next/image`.** A raw `<img>` or `next/image` in the diff
   is a finding every time.
 - `MasonryGrid/`, `MasonryColumns/`, `InView/`, `IntersectionObserver/`, `EndOfFeed/` — infinite feeds.
-- `Dialog/` — the dialog registry (`dialog-registry2.ts`, and `routed-dialog/registry.ts` for
-  URL-routed ones). A bare `<Modal>` with local `opened` state bypasses it.
+- `Dialog/` — `dialogStore.trigger({ component, props })` (`dialogStore.ts`), with the dialog calling
+  `useDialogContext()`; confirms use `Dialog/Common/ConfirmDialog`; URL-routed dialogs go in
+  `routed-dialog/registry.ts`. A bare `<Modal>` with local `opened` state, or a new `@mantine/modals`
+  call, bypasses it.
 - `ImageGuard/`, `BrowsingLevel/`, `HiddenPreferences/` — NSFW/blur gating. Never re-derive this.
 - `UserAvatar/`, `CreatorCard/`, `Cards/`, `CardTemplates/`, `IconBadge/`, `UserStatBadges/`.
 - `LoginRedirect/`, `LoginPopover/`, `JoinPopover/`, `RequireMembership/`, `Gated/` — gating an action

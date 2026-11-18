@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 
 // Any non-null blockedFor hides an image from the DB feed for everyone but the image's owner,
 // matching the Meilisearch feeds. The owner arm must bind the VIEWER, never the profile being
@@ -18,10 +17,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof DbHelpers>();
   return { ...actual, queryWithTimeout: queryWithTimeoutMock };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return { ...actual, metricsSearchClient: {}, getMetricsSearchClient: () => ({}) };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -47,6 +42,9 @@ async function blockedForClauses(
   profileUserId?: number
 ) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',

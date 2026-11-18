@@ -209,7 +209,7 @@ const logRefund = (
   message: string,
   data: Record<string, unknown>,
   name = 'creator-shop-withdrawn-refund'
-) => logToAxiom({ level, name, message, data }).catch(() => undefined);
+) => logToAxiom({ level, name, message, data });
 
 type RefundTerms = NonNullable<CosmeticPurchaseMeta['withdrawnRefund']>;
 type OwedPurchase = {

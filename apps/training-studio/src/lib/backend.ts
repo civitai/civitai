@@ -1,3 +1,4 @@
+import type { TrainingQuote } from './orchestrator-core';
 // The data half of the host seam ($lib/host): every read/write the flow UI performs, so the same
 // components run against the SvelteKit shell (relative /api routes — $lib/shell-backend) or the
 // web-component host (direct @civitai/orchestration-client calls — $lib/element/backend).
@@ -102,20 +103,21 @@ export interface StudioBackend {
     addEpochs: number,
     currencies: string[]
   ): Promise<{ cost: number | null; steps?: number; matureCount: number }>;
-  /** Refused, charging nothing, when the source dataset is mature and `matureAck` is false. */
+  /** `matureCount` is the count the quote showed; refused with `MatureRepriceError`, charging nothing,
+   *  when the server rates the source mature after a quote that was not, on a charge that would spend Green. */
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
     currencies: string[],
-    matureAck: boolean
+    matureCount: number
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
   /** Real whatif for ONE run's exact config (steps/epochs/base) — what the Review step's Final
    *  price shows. Orchestrator pricing has a base fee and per-epoch terms, so scaling the "from"
    *  quote misprices; only this number matches what Start will charge. Null = unpriced. */
-  quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
+  quoteRun(input: TrainingWhatIfInput): Promise<TrainingQuote | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The training service status moderators set on the main app; null when the host can't read it. */

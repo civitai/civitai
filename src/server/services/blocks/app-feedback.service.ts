@@ -726,7 +726,7 @@ async function notifyReporterOfOwnerStatus(
       name: 'app-feedback-status-notify-failed',
       details: { feedbackId, ownerStatus },
       message: error.message,
-    }).catch(() => undefined);
+    });
   }
 }
 

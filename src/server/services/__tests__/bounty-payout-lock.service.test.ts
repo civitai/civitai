@@ -1913,8 +1913,8 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
         userId: 5,
         unitAmount: 100,
         buzzTransactionId: ['bounty-4-5-1'],
-        winnerUserId: 9,
         moderatorId: 99,
+        payload: { winnerUserId: 9 },
       })
     );
   });

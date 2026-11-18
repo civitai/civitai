@@ -221,7 +221,7 @@ function logSignOutStepFailure(step: string, userId: number, err: unknown) {
     step,
     userId,
     message: (err as Error)?.message,
-  }).catch(() => undefined);
+  });
 }
 
 /**

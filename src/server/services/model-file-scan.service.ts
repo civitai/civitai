@@ -8,7 +8,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   deleteFilesForModelVersionCache,
@@ -204,7 +204,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -223,7 +223,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -242,7 +242,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         fileId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -409,7 +409,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
             fileId,
           },
           'webhooks'
-        ).catch(() => null)
+        )
       );
     }
   }
@@ -452,7 +452,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           fileId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 
@@ -471,7 +471,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           error: err instanceof Error ? err.message : String(err),
         },
         'webhooks'
-      ).catch();
+      );
     });
   }
 
@@ -499,7 +499,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
   }
 
@@ -525,7 +525,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
 }
 
@@ -571,9 +571,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     },
   });
   const log = (type: 'info' | 'warning', fields: Record<string, unknown>) =>
-    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks').catch(
-      () => undefined
-    );
+    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks');
   if (!file || file.type === 'Training Data') return void log('warning', { skipped: 'file' });
 
   const verdict = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
@@ -661,10 +659,11 @@ type FailedScanFile = {
 // Logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {
-    const prefix = REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
+    // A lost marker costs one more bust.
+    const prefix = REDIS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
     const [bustVersion, bustFile] = await Promise.all([
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
-      sysRedis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),
+      redis.setNxKeepTtlWithEx(`${prefix}:file:${file.id}`, '1', FAILURE_BUST_TTL_SECONDS),
     ]);
     await Promise.all([
       bustVersion && bustOrchestratorModelCache(modelVersionId),
@@ -687,7 +686,7 @@ async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile)
         fileId: file.id,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -964,7 +963,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
           duplicate: true,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
 
@@ -982,7 +981,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
             workflowId: event.workflowId,
           },
           'webhooks'
-        ).catch(() => undefined)
+        )
       );
       throw error;
     }
@@ -1019,7 +1018,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
         status: event.status,
       },
       'webhooks'
-    ).catch();
+    );
     await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
     return;
   }
@@ -1097,7 +1096,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
           workflowId: event.workflowId,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
   }
@@ -1167,7 +1166,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       workflowId: event.workflowId,
     },
     'webhooks'
-  ).catch();
+  );
 }
 
 // -----------------------------------------------------------------------------

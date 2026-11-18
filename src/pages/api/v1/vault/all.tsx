@@ -4,6 +4,7 @@ import type { SessionUser } from '~/types/session';
 import { getPaginatedVaultItems } from '~/server/services/vault.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
@@ -30,5 +31,6 @@ export default AuthedEndpoint(
       return;
     }
   },
-  ['GET']
+  ['GET'],
+  { scope: { scope: TokenScope.VaultRead } }
 );

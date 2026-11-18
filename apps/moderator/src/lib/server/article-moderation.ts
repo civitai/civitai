@@ -405,7 +405,7 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       message: 'images kept by a hold',
       articleId: id,
       kept: rows.refused,
-    }).catch(() => undefined);
+    });
   await finishImageDeletes(rows);
   return rows.refused;
 }

@@ -11,14 +11,12 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
   beginSemanticAudit,
+  isNonModClampOn,
+  makeRefusalOf,
+  type QueryTracker,
   queryVerdictLevel,
-  recordRefusal,
   refusedTextCandidates,
   resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
-  type QueryStage,
-  type QueryTracker,
-  isNonModClampOn,
 } from '~/server/services/semantic-query-guard';
 import {
   MAX_HITS_PER_USER,
@@ -81,7 +79,7 @@ export async function searchSemanticComics({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -96,16 +94,12 @@ export async function searchSemanticComics({
     query: input.query,
     firstPage: !input.cursor,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
-      browsingLevel,
-      disablePoi,
-      isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'comics_semantic', stage);
-    audit.verdict(refusal);
-    return refusal;
-  };
+  const refusalOf = makeRefusalOf({
+    index: 'comics_semantic',
+    track,
+    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
+    audit,
+  });
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse';
@@ -173,10 +167,9 @@ export async function searchSemanticComics({
   logToAxiom({
     type: 'info',
     name: 'semantic-comic-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
-  }).catch(() => undefined);
+    payload: { returned: search.state.returned, shown: page.items.length },
+  });
 
   audit.candidates(search.state.first);
   if (search.state.refused)

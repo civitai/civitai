@@ -113,7 +113,7 @@ beforeAll(async () => {
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "poi" boolean NOT NULL DEFAULT false, "minor" boolean NOT NULL DEFAULT false,
       "tosViolation" boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
-      "blockedFor" text, "postId" integer
+      "blockedFor" text, "postId" integer, "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "publishedAt" timestamptz, "availability" text NOT NULL DEFAULT 'Public'

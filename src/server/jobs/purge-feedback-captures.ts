@@ -100,14 +100,14 @@ export const purgeFeedbackCaptures = createJob(
     const deletedSet = new Set(deleted);
     const skipped = ids.filter((id) => !deletedSet.has(id));
     const result = { deleted: deleted.length, skippedByGuard: skipped.length, ...kept };
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'purge-feedback-captures',
       message: 'Purged expired feedback page captures',
       ...result,
       deletedIds: deleted,
       skippedIds: skipped,
-    }).catch(() => undefined);
+    });
     return result;
   }
 );

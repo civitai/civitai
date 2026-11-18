@@ -44,7 +44,7 @@ describe('tokenScopeToAuditName', () => {
     // A value that is not a single defined bit and not Full.
     const weird = TokenScope.ModelsRead | TokenScope.MediaRead;
     expect(tokenScopeToAuditName(weird)).toBe(`scope:${weird}`);
-    expect(tokenScopeToAuditName(999999999)).toBe('scope:999999999');
+    expect(tokenScopeToAuditName(999999999n)).toBe('scope:999999999');
   });
 });
 

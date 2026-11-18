@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2018",
+    "target": "ES2020",
     "lib": [
       "dom",
       "dom.iterable",
@@ -31,6 +31,8 @@
       "@civitai/db/*": ["./packages/civitai-db/src/*"],
       "@civitai/redis": ["./packages/civitai-redis/src/index"],
       "@civitai/redis/*": ["./packages/civitai-redis/src/*"],
+      "@civitai/email": ["./packages/civitai-email/src/index"],
+      "@civitai/email/*": ["./packages/civitai-email/src/*"],
       "@civitai/clickhouse": ["./packages/civitai-clickhouse/src/index"],
       "@civitai/clickhouse/*": ["./packages/civitai-clickhouse/src/*"],
       "@civitai/axiom": ["./packages/civitai-axiom/src/index"],

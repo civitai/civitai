@@ -6,7 +6,7 @@
  * Shows tasks grouped by minute and type for a given status.
  *
  * Usage:
- *   node .claude/skills/meilisearch-admin/task-rate.mjs [--feed] [--status enqueued] [--json]
+ *   node .claude/skills/meilisearch-admin/task-rate.mjs [--status enqueued] [--json]
  */
 
 import { readFileSync } from 'fs';
@@ -42,21 +42,19 @@ loadEnv();
 
 // Parse args
 const args = process.argv.slice(2);
-let useFeed = false;
 let jsonOutput = false;
 let status = 'enqueued';
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--feed') useFeed = true;
-  else if (args[i] === '--json') jsonOutput = true;
+  if (args[i] === '--json') jsonOutput = true;
   else if (args[i] === '--status') status = args[++i];
 }
 
-const host = useFeed ? process.env.METRICS_SEARCH_HOST : process.env.SEARCH_HOST;
-const apiKey = useFeed ? process.env.METRICS_SEARCH_API_KEY : process.env.SEARCH_API_KEY;
+const host = process.env.SEARCH_HOST;
+const apiKey = process.env.SEARCH_API_KEY;
 
 if (!host || !apiKey) {
-  console.error(`Error: ${useFeed ? 'METRICS_SEARCH_HOST/METRICS_SEARCH_API_KEY' : 'SEARCH_HOST/SEARCH_API_KEY'} not configured`);
+  console.error('Error: SEARCH_HOST/SEARCH_API_KEY not configured');
   process.exit(1);
 }
 
@@ -94,7 +92,7 @@ function toMinuteKey(isoDate) {
 }
 
 async function main() {
-  const label = useFeed ? 'Feed/Metrics' : 'Main';
+  const label = 'Main';
   console.error(`Using: ${label} Search (${host})\n`);
 
   const tasks = await fetchAllTasks();

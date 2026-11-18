@@ -184,7 +184,7 @@ function cpuUsageNow(): NodeJS.CpuUsage | undefined {
 }
 
 /**
- * The `ssrSignedInSkipPrefetch` A/B's getServerSideProps CPU: process CPU since `start` (just before
+ * The `ssrSignedInSkipPrefetch*` A/Bs' getServerSideProps CPU: process CPU since `start` (just before
  * the resolver), for a request `resolveSsrPrefetchCohort` marked. The delta is taken now; the metric
  * module is loaded lazily, so this file — imported by every page — never pulls prom-client into a
  * page's client test graph. Never throws, never delays the response.

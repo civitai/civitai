@@ -168,6 +168,7 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -293,6 +294,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
+  heldGalleryLevel,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -315,10 +317,13 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
-  getGatedModelIds,
+  getAllPaidModelIds,
   getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
-import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
+import {
+  freePublishedVersionExistsSql,
+  paidAccessLiveSql,
+} from '~/server/services/paid-access-sql';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -1047,13 +1052,16 @@ export const getModelsRaw = async ({
     // NOT EXISTS rather than an id list: the gated set is ~3k models and grows ~2.5k/month, and this
     // keeps the probe on PaidAccess_pkey. Measured 1.09ms -> 2.06ms on a p50 feed page; the planner
     // places it above every other predicate, so it only sees rows that already survived them.
+    // The OR arm runs only for a gated model, and keeps it when it has a free version to show.
     AND.push(
-      Prisma.sql`NOT EXISTS (
+      Prisma.sql`(NOT EXISTS (
         SELECT 1 FROM "PaidAccess" pa
         JOIN "ModelVersion" mv ON mv.id = pa."entityId"
         WHERE ${paidAccessLiveSql}
           AND mv."modelId" = m.id
-      )`
+      ) OR ${freePublishedVersionExistsSql(Prisma.sql`m.id`, {
+        publicOnly: hidePrivateModels || !!publicVersionsOnly,
+      })})`
     );
   }
   if (onSale) {
@@ -1431,7 +1439,8 @@ export const getModelsRaw = async ({
     ])
   );
   for (const model of models) {
-    const gate = paidAccessGates.get(model.id);
+    // Under Hide Paid the card shows only free versions, so the model-level chip would contradict it.
+    const gate = hidePaid ? undefined : paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
     model.hasActivePaidAccess = gate?.gated ?? false;
   }
@@ -1483,6 +1492,11 @@ export const getModelsRaw = async ({
 
           if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+          }
+
+          if (hidePaid) {
+            const gatedVersionIds = paidAccessGates.get(model.id)?.versionIds ?? [];
+            modelVersions = modelVersions.filter((mv) => !gatedVersionIds.includes(mv.id));
           }
 
           // Distinct base models across the visible versions — surfaced to the card
@@ -1707,7 +1721,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   if (hidePaid) {
-    AND.push({ id: { notIn: await getGatedModelIds() } });
+    AND.push({ id: { notIn: await getAllPaidModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -2011,8 +2025,9 @@ export const getModelsWithImagesAndModelVersions = async ({
       coverId: pickCoverImageId(model, showSfwFace),
     })),
     modelVersionImages,
-    // Under a base-model filter the card shows that version, so a cover from another stays put.
-    sameVersionOnly: !!input.baseModels?.length,
+    // Under a base-model filter or Hide Paid the card shows a chosen version, so a cover from another
+    // (under Hide Paid, possibly a paid one) stays put.
+    sameVersionOnly: !!input.baseModels?.length || !!input.hidePaid,
   });
   // A cover found outside the held images is read unheld, so it is held here too.
   const coverImages = holdExempt?.isModerator
@@ -2870,6 +2885,12 @@ export async function applyModelFlagSideEffects({
       }
 
       await bustMvCache(modelVersionIds, id);
+      // The documents showing these images apply the minor rule. Not awaited: a gallery can be
+      // large, and it never throws.
+      if (after.minor !== before.minor && updatedImages.length !== 0)
+        void queueModelsForImageChildTagChanges({
+          minorImageIds: updatedImages.map(({ id }) => id),
+        });
     }
   }
 
@@ -2905,7 +2926,7 @@ export async function purgeHeldShowcase(modelId: number, modelVersionIds?: numbe
       message: 'model showcase level changed; public API edge cache not purged',
       modelId,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -3067,7 +3088,7 @@ export async function setModelMinor({
         name: 'text-scan',
         message: 'moderator minor ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   }
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
@@ -3133,7 +3154,7 @@ export async function setModelMinor({
       name: 'minor-flag-snapshot',
       message: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
       modelId: id,
-    }).catch(() => null);
+    });
 
   await preventReplicationLag('model', id);
   const modActivity = activity ?? (minor ? 'setMinor' : 'unsetMinor');
@@ -3263,7 +3284,7 @@ export async function setModelSfwOnly({
         message: 'held restricted nsfw verdict not applied',
         modelId: id,
         error: error.message,
-      }).catch(() => null)
+      })
     );
   }
   const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
@@ -3397,7 +3418,7 @@ export async function setModelPoi({
         name: 'text-scan',
         message: 'moderator poi ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   };
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
@@ -3475,7 +3496,7 @@ export async function setModelPoi({
           error instanceof Error ? error.message : error
         }`,
         modelId: id,
-      }).catch(() => null)
+      })
     );
 
   if (poi)
@@ -4035,7 +4056,7 @@ async function applyHeldVerdictAfterOwnerSave(
       message: 'held restricted nsfw verdict not applied',
       modelId: after.id,
       error: error.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -4409,23 +4430,44 @@ export const upsertModel = async (
       { maxWait: 10000, timeout: 30000 }
     );
 
-    const modelMeta = result.meta as ModelMeta | null;
-    if (modelMeta?.showcaseCollectionId) {
-      // Best-effort — model create should not fail if the showcase collection
-      // can't be written to (e.g. user references one they don't own).
+    let modelMeta = result.meta as ModelMeta | null;
+    const showcaseCollectionId = modelMeta?.showcaseCollectionId;
+    if (showcaseCollectionId) {
+      // Best-effort: a refused add (e.g. a collection the user can't write) leaves the model
+      // created with no showcase, by the update branch's rule.
       await addModelToShowcaseCollection({
         modelId: result.id,
-        collectionId: modelMeta.showcaseCollectionId,
+        collectionId: showcaseCollectionId,
         userId,
         isModerator,
-      }).catch((error) =>
+      }).catch(async (error) => {
         logToAxiom({
           type: 'error',
           name: 'save-model-showcase-collection',
           error,
           message: error.message,
-        })
-      );
+        });
+        const cleared = await updateModelById({
+          id: result.id,
+          data: {},
+          meta: (stored) =>
+            ({
+              ...stored,
+              ...(stored?.showcaseCollectionId === showcaseCollectionId && {
+                showcaseCollectionId: null,
+              }),
+            } as ModelMeta),
+        }).catch((revertError) => {
+          logToAxiom({
+            type: 'error',
+            name: 'revert-model-showcase-collection',
+            error: revertError,
+            message: revertError.message,
+          });
+          return null;
+        });
+        if (cleared) modelMeta = cleared.meta as ModelMeta | null;
+      });
     }
 
     await modelTagCache.refresh(result.id);
@@ -4857,7 +4899,7 @@ export const upsertModel = async (
         modelId: result.id,
         modelType: result.type,
         modelVersionIds: clearedLicensingSources.map((v) => v.id),
-      }).catch(() => null);
+      });
       // Flag lag BEFORE the bust (as publishModelById does): otherwise a concurrent read inside the
       // replication window refills these caches from the replica's pre-clear row and the fee stays
       // live. A type change already busts every version id below — the ordering is what this adds.
@@ -6665,7 +6707,7 @@ export async function getShowcaseHeldLevels(
           message: 'gallery settings unreadable; showcase served at SFW for this request',
           modelId: id,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
     }),
     5
@@ -6737,18 +6779,7 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   return result;
 }
 
-/**
- * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
- * gallery reads 0 as no cap.
- */
-export function heldGalleryLevel(
-  stored: number | undefined,
-  model: { minor: boolean; sfwOnly: boolean }
-) {
-  const limit = modelBrowsingLevelLimit(model);
-  return Flags.intersection(stored ?? 0, limit) || limit;
-}
+export { heldGalleryLevel };
 
 export const getGalleryHiddenPreferences = async ({
   settings,
@@ -7131,8 +7162,9 @@ export async function copyGallerySettingsToAllModelsByUser({
 }
 
 /**
- * A showcase collection must list its model. A model already in it is left alone: re-saving would
- * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ * A showcase collection must list its model. A model already in it needs the caller's write access
+ * and is not re-saved: that would demand a tag the caller may not have, and would clear an existing
+ * item's tag. Otherwise it is added, which a caller who may only submit for review can do too.
  */
 async function addModelToShowcaseCollection({
   modelId,
@@ -7145,16 +7177,63 @@ async function addModelToShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
+  const refused = () => throwBadRequestError('The model could not be added to that collection');
+  // Checked before anything that depends on whether the model is already in it, so a refusal
+  // looks the same either way.
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!permissions.write && !permissions.manage && !permissions.writeReview) throw refused();
   const existing = await dbWrite.collectionItem.findFirst({
     where: { collectionId, modelId },
     select: { id: true },
   });
-  if (existing) return;
+  if (existing) {
+    if (!permissions.write && !permissions.manage) throw refused();
+    return;
+  }
   const status = await saveItemInCollections({
     input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
   });
-  if (status !== 'added')
-    throw throwBadRequestError('The model could not be added to that collection');
+  if (status !== 'added') throw refused();
+}
+
+/**
+ * After a model leaves collections, clears its showcase if it named one of them and the model is no
+ * longer listed there, whether the model's owner or the collection's side removed it.
+ */
+export async function clearModelShowcaseAfterRemoval({
+  modelId,
+  collectionIds,
+}: {
+  modelId: number;
+  collectionIds: number[];
+}) {
+  if (!collectionIds.length) return;
+  const model = await getModel({ id: modelId, select: { id: true, meta: true } });
+  const showcaseCollectionId = (model?.meta as ModelMeta | null)?.showcaseCollectionId;
+  if (!showcaseCollectionId || !collectionIds.includes(showcaseCollectionId)) return;
+  // primary: the removal this follows was just written.
+  const stillListed = await dbWrite.collectionItem.findFirst({
+    where: { collectionId: showcaseCollectionId, modelId },
+    select: { id: true },
+  });
+  if (stillListed) return;
+
+  await updateModelById({
+    id: modelId,
+    data: {},
+    meta: (stored) =>
+      ({
+        ...stored,
+        ...(stored?.showcaseCollectionId === showcaseCollectionId && {
+          showcaseCollectionId: null,
+        }),
+      } as ModelMeta),
+  });
+  await dataForModelsCache.refresh(modelId);
 }
 
 export async function setModelShowcaseCollection({
@@ -7438,7 +7517,7 @@ export async function getFeaturedModels() {
       message: error.message,
       stack: error.stack,
       cause: error.cause,
-    }).catch();
+    });
     return [];
   }
 }
@@ -7887,9 +7966,7 @@ export const privateModelFromTraining = async ({
             : 'revert left the model Private: held scan verdict not applied',
           modelId: id,
           error: revertError.message,
-        })
-          .catch(() => null)
-          .then(() => false)
+        }).then(() => false)
     );
     // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
     if (!reverted) throw throwDbError(error);
@@ -8433,7 +8510,7 @@ export async function transferModelOwnership({
         name: 'model-ownership-transfer-invalidation',
         message: `${name} failed after a committed transfer`,
         error: { name, modelIds, targetUserId, error: String(error) },
-      }).catch(() => null)
+      })
     );
 
   // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
@@ -8493,7 +8570,7 @@ export async function transferModelOwnership({
       : Promise.resolve(),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'model-ownership-transfer',
     message: 'Mod transferred model ownership',
@@ -8509,7 +8586,7 @@ export async function transferModelOwnership({
       postsUpdated: Number(result[5]),
       imagesUpdated: Number(result[6]),
     },
-  }).catch(() => null);
+  });
 
   await Promise.all([...sourceUserIds, targetUserId].map((id) => deleteBasicDataForUser(id)));
 

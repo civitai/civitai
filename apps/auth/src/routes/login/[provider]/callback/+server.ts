@@ -170,7 +170,7 @@ function logCallbackFailure(
     ...(providerError && {
       providerError: /^[a-z_]{1,64}$/.test(providerError) ? providerError : 'unrecognised',
     }),
-  }).catch(() => undefined);
+  });
 }
 
 // Append a query param to a (relative or absolute) returnUrl, preserving any hash.

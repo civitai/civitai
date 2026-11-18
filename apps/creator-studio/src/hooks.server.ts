@@ -70,7 +70,7 @@ export const handleError: HandleServerError = async ({ error, event, status, mes
   if (status === 404) return { message };
 
   const logger = getLogger();
-  await logger.logToAxiom({
+  logger.logToAxiom({
     name: 'creator-studio-server-error',
     status,
     route: event.route.id,

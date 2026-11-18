@@ -13,7 +13,7 @@ import {
 import { NOTE_MAX } from '../../knights/trials-limits';
 import { dbWrite } from '../db';
 import { countRows, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
-import type { Outcome } from './coreset.service';
+import { unservableReason, type Outcome } from './coreset.service';
 
 export const YESNO_QUESTION_STATUSES = ['open', 'closed', 'all'] as const;
 export type YesNoQuestionStatus = (typeof YESNO_QUESTION_STATUSES)[number];
@@ -235,6 +235,8 @@ export async function unretireYesNoQuestion(input: {
     if (item.voteCount > 0) {
       return { ok: false, error: 'Players have answered this question, so it stays retired.' };
     }
+    const problem = await unservableReason(item.imageId, trx);
+    if (problem) return { ok: false, error: problem };
     const origin = originOf(item);
     const copy = origin && (await openCopies(trx, [origin])).get(origin);
     if (copy) return { ok: false, error: `Retire ${copy} first: it replaced this question.` };
@@ -280,6 +282,8 @@ export async function rewordYesNoQuestion(input: {
         return { ok: false, error: 'Only an open question can be reworded.' };
       }
       if (prompt === item.prompt) return { ok: false, error: 'That is already the question.' };
+      const problem = await unservableReason(item.imageId, trx);
+      if (problem) return { ok: false, error: problem };
 
       const { [MODERATION_META_KEY]: _previous, ...inherited } = (item.meta ?? {}) as Record<
         string,

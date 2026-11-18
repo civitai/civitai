@@ -34,7 +34,7 @@ export const auditWildcardSetCategoriesJob = createJob(
         level: 'info',
         message: 'periodic audit submission pass',
         ...result,
-      }).catch(() => undefined);
+      });
     }
 
     return result;

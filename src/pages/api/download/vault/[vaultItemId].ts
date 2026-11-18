@@ -206,5 +206,6 @@ export default AuthedEndpoint(
       }
     }
   },
-  ['GET']
+  ['GET'],
+  { scope: 'selfGated' }
 );

@@ -140,7 +140,6 @@ import {
 } from '~/server/services/blocks/block-post.logic';
 import {
   gatedListingIconUrl,
-  isModerationFlagSet,
   listingMediaCeiling,
   listingMediaImageSelect,
   type ListingMediaImage,
@@ -338,27 +337,46 @@ export function postAppChipQuery(appId: string) {
   };
 }
 
+/** One listing as `chipListingSelect` reads it. */
+type ChipListing = {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  kind: string;
+  contentRating: string | null;
+  revisionOfId: string | null;
+  icon: ListingMediaImage | null;
+};
+
+type ChipBlock = {
+  status: string;
+  currentVersionDeployedAt: Date | null;
+  appListing: ChipListing | null;
+};
+
 /** The row shape {@link postAppChipQuery} produces. */
 export type PostAppChipRow = {
-  name?: unknown;
-  appBlocks?: unknown;
-  connectListings?: unknown;
+  name: string;
+  appBlocks: ChipBlock[];
+  connectListings: ChipListing[];
 };
 
 /**
  * The row's blocks plus each offsite Connect listing as a block-shaped candidate. An offsite
  * listing has no block, so the block-status and deploy terms do not apply and its own status gates.
  */
-function chipCandidateBlocks(row: PostAppChipRow | null | undefined): unknown[] {
-  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
-  const offsite = (Array.isArray(row?.connectListings) ? row.connectListings : [])
-    .filter((l) => (l as { kind?: unknown } | null)?.kind === 'offsite')
-    .map((appListing) => ({ status: APPROVED_STATUS, currentVersionDeployedAt: null, appListing }));
-  return [...blocks, ...offsite];
+function chipCandidateBlocks(row: PostAppChipRow): ChipBlock[] {
+  const offsite = row.connectListings.map((appListing) => ({
+    status: APPROVED_STATUS,
+    currentVersionDeployedAt: null,
+    appListing,
+  }));
+  return [...row.appBlocks, ...offsite];
 }
 
 type ListingCandidate = {
-  id: string | null;
+  id: string;
   slug: string;
   name: string;
   iconUrl: string | null;
@@ -392,7 +410,7 @@ type ListingCandidate = {
  * A refused candidate is a real store row this host may not acknowledge.
  */
 function readListingCandidate(
-  block: unknown,
+  block: ChipBlock,
   host: string,
   /** The viewer's browsing level, for the icon's red-host media ceiling. See {@link projectPostAppChip}. */
   viewerBrowsingLevel: number | null | undefined,
@@ -416,16 +434,12 @@ function readListingCandidate(
    */
   hiddenListingIds: ReadonlySet<string>
 ): ListingCandidate | null {
-  if (typeof block !== 'object' || block === null) return null;
-  const b = block as Record<string, unknown>;
-  const listing = b.appListing;
-  if (typeof listing !== 'object' || listing === null) return null;
-  const l = listing as Record<string, unknown>;
+  const l = block.appListing;
+  if (!l) return null;
   // A shadow revision is a draft and cannot be the app's store row.
   if (l.revisionOfId != null) return null;
-  const slug = typeof l.slug === 'string' ? l.slug.trim() : '';
+  const slug = l.slug.trim();
   if (!slug) return null;
-  const icon = l.icon;
   // 🔴 ALL FOUR TERMS, and every one an ALLOWLIST — see APPROVED_STATUS on why a
   // denylist admits both tables' default state, and postAppChipQuery on why the
   // last two exist at all (they are the destination's own gates; without them a
@@ -437,7 +451,7 @@ function readListingCandidate(
   // maturity term is evaluated even when lifecycle already failed, so a draft
   // mature app is still recorded as maturity-refused and still disappears on a
   // non-red host, which is what that host's store does with it.
-  const deployed = l.kind !== 'onsite' || b.currentVersionDeployedAt != null;
+  const deployed = l.kind !== 'onsite' || block.currentVersionDeployedAt != null;
   // 🔴 THE LEVEL IS A LIFECYCLE TERM, so a hidden listing degrades to name-unlinked rather
   // than vanishing — the same treatment a `removed` listing gets, and it is what keeps the
   // chip from becoming a 404. Grouped here, not with maturity, because it answers "does the
@@ -446,50 +460,24 @@ function readListingCandidate(
   // is required by the type so it cannot be forgotten in review, but a JS caller that omits
   // it must degrade to pre-feature behaviour rather than throw — a chip is cosmetic and must
   // never be the reason a post 500s. Same posture as the `…ForRender` readers.
-  const levelOk = typeof l.id !== 'string' || !hiddenListingIds?.has(l.id);
+  const levelOk = !hiddenListingIds?.has(l.id);
   const lifecycleOk =
-    b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed && levelOk;
-  const maturityOk = ratingAllowedOnHost(
-    typeof l.contentRating === 'string' ? l.contentRating : null,
-    host
-  );
+    block.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed && levelOk;
+  const maturityOk = ratingAllowedOnHost(l.contentRating, host);
   return {
-    id: typeof l.id === 'string' ? l.id : null,
+    id: l.id,
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
-    name: typeof l.name === 'string' ? sanitizeAppChromeName(l.name) ?? '' : '',
+    name: sanitizeAppChromeName(l.name) ?? '',
     iconUrl: gatedListingIconUrl(
-      readChipIcon(icon),
+      l.icon,
       listingMediaCeiling(
         { redCapable: isRedCapableHost(host), viewerBrowsingLevel },
-        typeof l.contentRating === 'string' ? l.contentRating : null
+        l.contentRating
       )
     ),
     viewable: lifecycleOk && maturityOk,
     maturityRefused: !maturityOk,
-  };
-}
-
-/**
- * The joined icon row → the shape the listing-media gate reads, or null. Defensive like the rest
- * of this reader (the row is typed `unknown`): any missing or mistyped field fails CLOSED — an
- * absent `ingestion` makes no image at all, an absent level reads as unrated (which the gate
- * refuses), and a moderation flag counts as SET unless it is literally `false` or absent.
- */
-function readChipIcon(icon: unknown): ListingMediaImage | null {
-  if (typeof icon !== 'object' || icon === null) return null;
-  const i = icon as Record<string, unknown>;
-  if (typeof i.url !== 'string' || typeof i.ingestion !== 'string') return null;
-  return {
-    url: i.url,
-    ingestion: i.ingestion,
-    nsfwLevel: typeof i.nsfwLevel === 'number' ? i.nsfwLevel : 0,
-    needsReview: i.needsReview == null ? null : String(i.needsReview),
-    poi: isModerationFlagSet(i.poi),
-    minor: isModerationFlagSet(i.minor),
-    tosViolation: isModerationFlagSet(i.tosViolation),
-    acceptableMinor: isModerationFlagSet(i.acceptableMinor),
-    blockedFor: i.blockedFor == null ? null : String(i.blockedFor),
   };
 }
 
@@ -564,22 +552,10 @@ function readChipIcon(icon: unknown): ListingMediaImage | null {
 /** The empty hidden-set, frozen so no caller can mutate a shared default. */
 const EMPTY_HIDDEN: ReadonlySet<string> = new Set<string>();
 
-/**
- * Every candidate listing id in a chip row, for the batched level read.
- *
- * Tolerant of shape by design: this module is handed an `unknown`-ish row and every other
- * reader here narrows defensively rather than trusting it.
- */
+/** Every candidate listing id in a chip row, for the batched level read. */
 export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
-  const blocks = chipCandidateBlocks(row);
-  const ids: string[] = [];
-  for (const b of blocks) {
-    const listing = (b as { appListing?: unknown } | null)?.appListing as
-      | { id?: unknown }
-      | null
-      | undefined;
-    if (listing && typeof listing.id === 'string') ids.push(listing.id);
-  }
+  if (!row) return [];
+  const ids = chipCandidateBlocks(row).flatMap((b) => (b.appListing ? [b.appListing.id] : []));
   return [...new Set(ids)];
 }
 
@@ -602,7 +578,7 @@ function projectChipAndListing(
   }
 ): { chip: PostAppChip; viewableListingIds: string[] } | null {
   if (!row) return null;
-  const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
+  const clientName = sanitizeAppChromeName(row.name) ?? '';
   const candidates = chipCandidateBlocks(row)
     .map((b) => readListingCandidate(b, opts.host, opts.viewerBrowsingLevel, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
@@ -640,7 +616,7 @@ function projectChipAndListing(
     },
     // Every viewable listing of the app, not only the chosen one: the item may sit under any.
     viewableListingIds: chosen?.viewable
-      ? candidates.filter((c) => c.viewable && c.id).map((c) => c.id as string)
+      ? candidates.filter((c) => c.viewable).map((c) => c.id)
       : [],
   };
 }

@@ -98,7 +98,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       grantId: grant.grantId,
       conversationId: grant.conversationId,
       ...extra,
-    }).catch(() => undefined);
+    });
 
   const open = async (): Promise<Answer> => {
     try {

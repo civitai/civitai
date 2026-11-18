@@ -15,7 +15,6 @@
   import type { PlayerBadge } from './player-badge';
   import type { PlayerStatus } from './server/player-status';
 
-  type Streak = { streak: number; shields: number; maxShields: number };
   type LadderRow = { rank: string; fromLevel: number; accuracyBar: number; minDaysPlayed?: number };
   let {
     player,
@@ -25,7 +24,6 @@
     isPlayer = false,
     feedbackOpen = false,
     status,
-    streak,
     recapUnseen = false,
     goldPerBuzz,
     ladder,
@@ -40,7 +38,6 @@
     isPlayer?: boolean;
     feedbackOpen?: boolean;
     status?: PlayerStatus;
-    streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
     recapUnseen?: boolean;
     goldPerBuzz: number;
@@ -103,7 +100,7 @@
 <svelte:window {onkeydown} />
 
 <header>
-  <a class="brand" href="/home">
+  <a class="brand" href="/home" aria-label="Knights of New Order home">
     <Icon name="shield" size={24} />
     <span class="title">Knights of New Order</span>
     <span class="wordmark">Knights</span>
@@ -112,7 +109,7 @@
   <PrimaryNav />
 
   {#if status}
-    <HeaderStats {status} {streak} {goldPerBuzz} {shopOpen} {ladder} />
+    <HeaderStats {status} {goldPerBuzz} {shopOpen} {ladder} />
   {/if}
 
   {#if player}
@@ -375,7 +372,10 @@
   }
 
   /* Beside the tabs and the stats there is room for the wordmark only until 90rem. */
-  @media (min-width: 75.0625rem) and (max-width: 89.9375rem) {
+  @media (min-width: 64rem) and (max-width: 89.9375rem) {
+    .brand {
+      flex: none;
+    }
     .title {
       display: none;
     }
@@ -388,8 +388,8 @@
 
   @media (max-width: 40rem) {
     header {
-      height: 52px;
-      gap: 6px;
+      height: 56px;
+      gap: 8px;
       padding: 0 12px;
     }
     .brand {
@@ -422,6 +422,15 @@
       position: fixed;
       top: 60px;
       right: 16px;
+    }
+  }
+  /* Narrow phones: the wordmark has no room beside gold, level, recap and the avatar; the shield stays as the Home link. */
+  @media (max-width: 27.5rem) {
+    .brand {
+      flex: none;
+    }
+    .wordmark {
+      display: none;
     }
   }
 </style>

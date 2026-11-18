@@ -588,7 +588,18 @@ function hasRecasedRefKey(value: Record<string, unknown>): boolean {
   return keys.some((key) => REF_KEYS.has(fold(key)) && !REF_KEYS.has(key));
 }
 
-type WalkState = { refs: number; loopVars: Set<string>; mediaRefsAllowed: boolean };
+type WalkState = {
+  refs: number;
+  loopVars: Set<string>;
+  mediaRefsAllowed: boolean;
+  /** Earlier steps (and repeat variables over them) that run a training `$type`. */
+  trainingSources: Set<string>;
+};
+
+const TRAINING_STEP_TYPES: ReadonlySet<string> = new Set(['training', 'imageresourcetraining']);
+
+export const TRAINING_MEDIA_REF_ERROR =
+  "a step may not reference a training step's media, urls or ids, only its text fields";
 
 /** A refusal message, or `null` when `value` is fine. */
 function checkValue(
@@ -624,6 +635,9 @@ function checkValue(
     }
     const sourceProblem = checkSource(object.$ref, sources, state);
     if (sourceProblem) return sourceProblem;
+    if (state.trainingSources.has(object.$ref) && refMayReachMedia(object.$ref, object.path)) {
+      return TRAINING_MEDIA_REF_ERROR;
+    }
     if (!state.mediaRefsAllowed && refMayReachMedia(object.$ref, object.path)) {
       return MEDIA_REF_ERROR;
     }
@@ -708,6 +722,7 @@ function checkStepInput(
   const sourceProblem = checkSource(forClause.$ref, sources, state);
   if (sourceProblem) return sourceProblem;
   state.loopVars.add(forClause.as);
+  if (state.trainingSources.has(forClause.$ref)) state.trainingSources.add(forClause.as);
   return checkStepInput(
     template.$type,
     template.input,
@@ -779,7 +794,12 @@ export function resolveBlockWorkflowGraph(body: {
   const steps: ResolvedBlockWorkflowStep[] = [];
   const earlier = new Set<string>([WORKFLOW_ARGUMENTS_REF]);
   const taken = new Set<string>();
-  const state: WalkState = { refs: 0, loopVars: new Set(), mediaRefsAllowed: false };
+  const state: WalkState = {
+    refs: 0,
+    loopVars: new Set(),
+    mediaRefsAllowed: false,
+    trainingSources: new Set(),
+  };
 
   for (let index = 0; index < body.steps.length; index += 1) {
     const step = body.steps[index];
@@ -811,6 +831,9 @@ export function resolveBlockWorkflowGraph(body: {
 
     taken.add(name);
     earlier.add(name);
+    if (stepTypes.some((type) => TRAINING_STEP_TYPES.has(fold(type)))) {
+      state.trainingSources.add(name);
+    }
     steps.push({
       name,
       $type: step.$type,

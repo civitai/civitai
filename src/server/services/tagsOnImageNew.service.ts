@@ -7,6 +7,7 @@ import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const imageService = () => import('~/server/services/image.service');
@@ -48,7 +49,8 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
     await imageTagsCache.bust(imageIds);
   });
 
-  await updateImageNsfwLevels(withTagRules);
+  const levelImageIds = await updateImageNsfwLevels(withTagRules);
+  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -84,7 +86,8 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
     await imageTagsCache.bust(imageIds);
   });
 
-  await updateImageNsfwLevels(withTagRules);
+  const levelImageIds = await updateImageNsfwLevels(withTagRules);
+  await queueModelsForImageChildTagChanges({ tagWrites: withTagRules, levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -107,7 +110,8 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
     await imageTagsCache.bust(imageIds);
   });
 
-  await updateImageNsfwLevels(args);
+  const levelImageIds = await updateImageNsfwLevels(args);
+  await queueModelsForImageChildTagChanges({ tagWrites: args, levelImageIds });
   await (
     await imageService()
   ).queueImageSearchIndexUpdate({
@@ -123,7 +127,7 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
     ...new Set(args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId)),
   ];
 
-  if (!imageIds.length) return;
+  if (!imageIds.length) return imageIds;
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
@@ -138,6 +142,7 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
     moderatedTags.filter((x) => x.nsfwLevel === NsfwLevel.Blocked).map((x) => x.id)
   );
   await queueBlockedTagReviews(args.filter((x) => blockedTagIds.has(x.tagId)));
+  return imageIds;
 }
 
 // update_nsfw_levels_new raises an image to Blocked but never queues it, so a blocked-level tag

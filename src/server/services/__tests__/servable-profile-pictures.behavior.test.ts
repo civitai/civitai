@@ -61,7 +61,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "needsReview" text, type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
@@ -69,9 +70,14 @@ beforeAll(async () => {
       (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
       (40, 'pending', 4, 'Pending', NULL),
       (50, 'other-review', 5, 'Scanned', 'other-review'),
-      (60, 'error', 6, 'Error', NULL);
+      (60, 'error', 6, 'Error', NULL),
+      (110, 'minor', 11, 'Scanned', 'minor');
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
       (70, 'pending-mod-rated', 7, 'Pending', true);
+    INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel") VALUES
+      (80, 'unrated', 8, 'Scanned', 0);
+    INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "modelRestricted") VALUES
+      (90, 'restricted-r', 9, 4, true), (100, 'restricted-pg', 10, 1, true);
   `);
 });
 afterAll(() => pg.close());
@@ -136,10 +142,20 @@ describe('servable profile pictures', () => {
       50,
       60,
       70,
+      80,
+      90,
+      100,
+      110,
     ]);
 
-    // Unscanned pictures (Pending, Error) are left out; a moderator's rating stands in for a scan.
-    expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending-mod-rated']);
+    // Unscanned (Pending, Error), unrated, csam- and minor-held pictures are left out; a moderator's rating stands in
+    // for a scan.
+    expect(pictureUrls(pictures)).toEqual([
+      'clean',
+      'other-review',
+      'pending-mod-rated',
+      'restricted-pg',
+    ]);
   });
 
   it('bounty search docs carry no author picture that may not be served', async () => {

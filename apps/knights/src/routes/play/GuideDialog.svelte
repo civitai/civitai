@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import type { ComponentProps } from 'svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import { modal } from '$lib/modal';
   import '$lib/overlay.css';
@@ -12,7 +13,7 @@
     submitting,
     submit,
   }: {
-    guide: { level: number; label: string; description: string }[];
+    guide: ComponentProps<typeof RatingGuide>['guide'];
     /** The first-visit guide says so; a reopened one does not. */
     first: boolean;
     message: string | null;

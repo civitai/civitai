@@ -29,6 +29,7 @@ import {
   buildWatermarkedPreview,
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
+import { buildWatermarkedVideoPreview } from '~/server/services/creator-service-deal-video-preview';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
@@ -43,8 +44,12 @@ import {
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_PREVIEW_VIDEO_GIVE_UP_MS,
+  SERVICE_PREVIEW_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
+  isVideoPreviewMime,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -57,6 +62,7 @@ import {
   getBucket,
   getGetUrlByKey,
   getPutUrl,
+  getImageUploadBackend,
   getS3Client,
   headObject,
   uploadImageBufferToStore,
@@ -164,7 +170,14 @@ export async function requestServiceDealUpload({
   // The buyer sees the file name. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
 
-  if (kind === 'Preview') {
+  if (kind === 'Preview' && isVideoPreviewMime(mimeType)) {
+    if (size > SERVICE_PREVIEW_VIDEO_MAX_BYTES)
+      throw throwBadRequestError(
+        `Preview is too large (max ${Math.floor(
+          SERVICE_PREVIEW_VIDEO_MAX_BYTES / (1024 * 1024)
+        )} MB).`
+      );
+  } else if (kind === 'Preview') {
     if (!isPreviewMime(mimeType))
       throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
     if (size > previewByteCap(mimeType))
@@ -192,6 +205,8 @@ export async function requestServiceDealUpload({
     if (kind === 'Preview') {
       const max = SERVICE_PREVIEW_MAX_FILES[deal.previewKind];
       if (max === 0) throw throwBadRequestError('This service does not take a preview.');
+      if (isVideoPreviewMime(mimeType) && deal.previewKind !== 'Video')
+        throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
       if (deal.files >= max)
         throw throwConflictError(`This delivery already has ${max === 1 ? 'a' : max} preview.`);
     } else if (deal.files >= SERVICE_FINAL_MAX_FILES) {
@@ -624,7 +639,7 @@ async function keepServerCopy(bucket: string, fileId: number, uploaderKey: strin
     name: 'service-deal-file-held',
     message: 'no server copy of a kept upload',
     details: { fileId, error: (lastError as Error)?.message },
-  }).catch(() => null);
+  });
 }
 
 /**
@@ -680,7 +695,7 @@ export async function recordFinalScanResult({
         name: 'service-deal-file-removed-failed',
         message: 'a removed deal file failed its scan',
         details: { fileId, dealId: file.dealId, kind: file.kind, failReason: file.failReason },
-      }).catch(() => null);
+      });
     return { recorded: true, held: false };
   }
   const held =
@@ -902,7 +917,11 @@ export async function listServiceDealFiles({
         scanStatus: row.kind === 'Final' || privileged ? row.scanStatus : null,
         previewUrl:
           row.kind === 'Preview' && row.status === 'Ready' && key
-            ? getEdgeUrl(key, { original: true, name: 'preview' })
+            ? getEdgeUrl(key, {
+                original: true,
+                name: 'preview',
+                type: isVideoPreviewMime(row.mimeType) ? 'video' : undefined,
+              })
             : null,
         canDownload: downloadable,
       },
@@ -1086,7 +1105,7 @@ const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
     message: 'Could not record a deal file access',
     ...access,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
 
 // ---------------------------------------------------------------------------------------------
 // Preview pipeline (the job)
@@ -1103,10 +1122,13 @@ const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
 // Each step is claimed per file and idempotent, so a pod that rolls mid-way leaves the file where
 // the next run picks it up, with no second ingest and no copy left behind.
 
+const VIDEO_MIMES = Prisma.join([...SERVICE_PREVIEW_VIDEO_MIME_TYPES]);
+
 type ClaimedPreview = {
   id: number;
   s3Key: string;
   scanKey: string | null;
+  mimeType: string;
   sellerId: number;
 };
 
@@ -1123,17 +1145,17 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_PREVIEW_PROCESSING_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT ${limit}::int FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
+    RETURNING f."id", f."s3Key", f."scanKey", f."mimeType", d."sellerId"`;
 }
 
-export async function readObject(bucket: string, key: string) {
-  const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+export async function readObject(bucket: string, key: string, s3 = getS3Client()) {
+  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
 }
 
 const logPreview = (message: string, fields: Record<string, unknown>, type = 'info') =>
-  logToAxiom({ name: 'creator-service-preview', type, message, ...fields }).catch(() => null);
+  logToAxiom({ name: 'creator-service-preview', type, message, ...fields });
 
 /** A seller-fixable problem fails the file with its reason; anything else is retried when stale. */
 async function failOrRetry(preview: ClaimedPreview, error: unknown) {
@@ -1151,13 +1173,19 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
  */
 export async function createScanImage(
   url: string,
-  copy: { mimeType: string; width: number; height: number; data: Buffer },
+  copy: {
+    mimeType: string;
+    width: number;
+    height: number | null;
+    data: Buffer;
+    type?: 'image' | 'video';
+  },
   userId: number
 ) {
   const { createImage } = await import('~/server/services/image.service');
   return createImage({
     url,
-    type: 'image',
+    type: copy.type ?? 'image',
     mimeType: copy.mimeType,
     width: copy.width,
     height: copy.height,
@@ -1168,10 +1196,15 @@ export async function createScanImage(
 
 /** Step 1: the hidden scan copy, for previews that have none yet. */
 export async function startPreviewScans({ limit = 5 } = {}) {
-  const claimed = await claimPreviews(
-    Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`,
-    limit
-  );
+  const unscanned = Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`;
+  // One video per run: each holds the run for a transcode wait, inside the claim's stale window.
+  const claimed = [
+    ...(await claimPreviews(
+      Prisma.sql`${unscanned} AND p."mimeType" NOT IN (${VIDEO_MIMES})`,
+      limit
+    )),
+    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" IN (${VIDEO_MIMES})`, 1)),
+  ];
   let started = 0;
   for (const preview of claimed) {
     const began = Date.now();
@@ -1186,7 +1219,15 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       }
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
-        const copy = await buildScanCopy(original);
+        // Scanned already marked: the transcode is the only place a video gets its mark, and publish reuses this clip.
+        const copy = isVideoPreviewMime(preview.mimeType)
+          ? {
+              ...(await buildWatermarkedVideoPreview(original, preview.mimeType, preview.sellerId)),
+              height: null,
+              frames: 0,
+              type: 'video' as const,
+            }
+          : await buildScanCopy(original);
         frames = copy.frames;
         let scanKey = preview.scanKey;
         if (!scanKey) {
@@ -1253,7 +1294,15 @@ export async function settlePreviewScans() {
       "failReason" = 'This preview could not be prepared. Upload it again.'
     WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
       AND "uploadedAt" < now() - (${SERVICE_PREVIEW_GIVE_UP_MS}::int * interval '1 millisecond')`;
-  return { passed, rejected, unchecked, timedOut };
+  // Each retry of an unfinished transcode is a new paid one, so a video gets far less time.
+  const videoTimedOut = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "status" = 'Failed'::"ServiceDealFileStatus",
+      "failReason" = 'This video could not be prepared. Upload a shorter or smaller one.'
+    WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
+      AND "imageId" IS NULL AND "mimeType" IN (${VIDEO_MIMES})
+      AND "uploadedAt" < now() - (${SERVICE_PREVIEW_VIDEO_GIVE_UP_MS}::int * interval '1 millisecond')`;
+  return { passed, rejected, unchecked, timedOut: timedOut + videoTimedOut };
 }
 
 /** Step 3: mark and publish the previews that passed. Ready only when the mark is on. */
@@ -1266,8 +1315,16 @@ export async function publishPreviews({ limit = 5 } = {}) {
   for (const preview of claimed) {
     const began = Date.now();
     try {
-      const original = await readObject(await getBucket(), preview.s3Key);
-      const result = await buildWatermarkedPreview(original);
+      let result: { data: Buffer; mimeType: string; frames: number };
+      if (isVideoPreviewMime(preview.mimeType)) {
+        // Published from the scanned clip only, copied because step 4 deletes the scan copy.
+        if (!preview.scanKey) throw new Error('Video preview has no scanned clip to publish');
+        const { s3, bucket } = await getImageUploadBackend();
+        const data = await readObject(bucket, preview.scanKey, s3);
+        result = { data, mimeType: 'video/mp4', frames: 0 };
+      } else {
+        result = await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));
+      }
       const { key } = await uploadImageBufferToStore(result.data, { contentType: result.mimeType });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile"
@@ -1278,7 +1335,6 @@ export async function publishPreviews({ limit = 5 } = {}) {
       logPreview('preview published', {
         fileId: preview.id,
         frames: result.frames,
-        inputBytes: original.byteLength,
         outputBytes: result.data.byteLength,
         ms: Date.now() - began,
       });
@@ -1299,7 +1355,10 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
     SELECT "id", "imageId" FROM "ServiceDealFile"
     WHERE "imageId" IS NOT NULL
-      AND ("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+      AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+          -- A video publishes by copying its scan copy, so the copy waits for that.
+          AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
+            OR "status" = 'Failed'::"ServiceDealFileStatus"))
         OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "status" = 'Failed'::"ServiceDealFileStatus"))
     ORDER BY "id" LIMIT ${limit}::int`;

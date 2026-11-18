@@ -233,6 +233,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // A link to a view of the app: the page host builds the canonical
+  // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
+  // share sheet, and replies with `{ url, copied, method }`. REQUEST-style ⇒ an unhandled
+  // one HANGS the block.
+  SHARE_LINK: {
+    request: true,
+    reply: 'SHARE_LINK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    // N/A: a model slot has no route of its own (no `subPath`, no deep-link base), so
+    // there is no app URL to build for it.
+    IframeHost: 'model slot has no app route to link to (no deep-link base); page-only',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   TRACK_EVENT: {
     request: false,
     reply: '',
@@ -587,8 +602,9 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
-    replyKeys: ['selected?'],
-    errorKeys: ['error'],
+    // `shared` is present only on replies to a `share: true` request (see PageBlockHost).
+    replyKeys: ['selected?', 'shared?'],
+    errorKeys: ['error', 'shared?'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',

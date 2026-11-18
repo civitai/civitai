@@ -239,7 +239,7 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
             error: err instanceof Error ? err.message : String(err),
           },
           'webhooks'
-        ).catch();
+        );
       }
     }),
     SCAN_FALLBACK_CONCURRENCY
@@ -261,7 +261,7 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
         elapsedMs: Date.now() - runStartedAt,
       },
       'webhooks'
-    ).catch();
+    );
   }
 
   return { submitted, failed, skipped };

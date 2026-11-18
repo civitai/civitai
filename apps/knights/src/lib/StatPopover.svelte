@@ -115,14 +115,21 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    box-sizing: border-box;
+    /* Every header pill is one height, whether it holds an icon or the level ring. */
+    height: 36px;
     min-height: 0;
-    padding: 5px 10px;
+    padding: 0 12px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;
     background: var(--io-bg);
     color: var(--io-parchment);
     font: 600 13px/1.2 var(--io-font-ui);
     white-space: nowrap;
+  }
+  /* The level ring hugs the pill's rounded end: 2px from the border all round, concentric with the curve. */
+  .pill:has(> :global(.gauge)) {
+    padding-left: 2px;
   }
   .pill:hover:not(:disabled),
   .pill[aria-expanded='true'] {
@@ -177,7 +184,7 @@
   @media (max-width: 40rem) {
     .pill {
       gap: 5px;
-      padding: 4px 8px;
+      padding: 0 9px;
       font-size: 12px;
     }
     .chev {

@@ -1,6 +1,6 @@
 // Command feed-go serves `image.getImagesAsPostsInfinite` for the request shapes it has ported and
 // proxies everything else to the Node app, and shadow-compares that procedure and the REST
-// `GET /api/v1/images`. See apps/feed-go/DESIGN.md.
+// `GET /api/v1/images`, `GET /api/v1/models` and `GET /api/v1/models/[id]`. See apps/feed-go/DESIGN.md.
 package main
 
 import (
@@ -17,10 +17,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -29,6 +31,8 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 func main() {
@@ -57,16 +61,57 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
 // (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
-// primary database, used (and opened) only with write-back on.
-func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int)) *hydrate.MissCompute {
+// primary database, used (and opened) only with write-back on. The tag-ids lookup's browsing gate
+// reads blocked and addons, the blocked-tag list and addons the procedures read.
+func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int),
+	blocked *feed.BlockedTags, addons func(context.Context) []browsing.Addon) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
 		return nil
 	}
-	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
+	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
+		TagGate: feed.ImageTagGate(blocked, addons)}
 	if cfg.CacheWriteBack {
 		c.Primary = primary
 	}
 	return c
+}
+
+// metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
+// configured (cfg.ClickHouseURL empty) or its URL is invalid, so feed-go starts and those misses fall
+// back (`metrics-miss`). The error is for the startup log; it never names the URL or credentials.
+// tracer spans its reads (nil when tracing is off).
+func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
+	if cfg.ClickHouseURL == "" {
+		return nil, nil
+	}
+	c, err := chread.New(chread.Config{URL: cfg.ClickHouseURL, Username: cfg.ClickHouseUsername, Password: cfg.ClickHousePassword,
+		MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bounds
+// (the lookup's, FEED_GO_CLICKHOUSE_TIMEOUT_MS; the populate-lock wait's, FEED_GO_METRICS_LOCK_WAIT_MS),
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). With tracing on (tp set) the reader's
+// reads are spanned (tracing.ClickHouseTracer) and so are c's waits (MissCompute.Tracer); tp nil
+// leaves both untraced. The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing.Provider) error {
+	var chTracer chread.Tracer
+	if tp != nil {
+		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
+		if c != nil {
+			c.Tracer = tp.Tracer
+		}
+	}
+	reader, err := metricsReader(cfg, chTracer)
+	if c != nil && reader != nil {
+		c.ClickHouse = reader
+		c.MetricsTimeout = cfg.ClickHouseTimeout
+		c.MetricsLockWait = cfg.MetricsLockWait
+	}
+	return err
 }
 
 // primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
@@ -80,9 +125,21 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Tracing (DESIGN.md §10.3): nil = off, and then nothing below starts a span or touches a header.
+	tp, err := tracing.Setup(ctx, cfg.Tracing)
+	if err != nil {
+		return err
+	}
+	log.Info("tracing", "FEED_GO_OTEL_ENABLED", cfg.Tracing.Enabled, "OTEL_SERVICE_NAME", cfg.Tracing.ServiceName,
+		"OTEL_TRACES_SAMPLE_RATIO", cfg.Tracing.Ratio, "FEED_GO_FALLBACK_LOG_PER_MIN", cfg.FallbackLogPerMinute,
+		"FEED_GO_ERROR_LOG_PER_MIN", cfg.ErrorLogPerMinute)
+
 	poolCfg, err := dbpool.Config(cfg.DatabaseURL, dbpool.Settings{MaxConns: cfg.DBMaxConns})
 	if err != nil {
 		return err
+	}
+	if tp != nil {
+		poolCfg.ConnConfig.Tracer = tracing.PgxTracer{Tracer: tp.Tracer}
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
@@ -95,6 +152,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = cache.Close() }()
+	if tp != nil {
+		cache.AddHook(tracing.RedisHook{Tracer: tp.Tracer, Client: "cache"})
+	}
 	// The system redis is a primary/replica set, never a cluster: through its Sentinels when
 	// REDIS_SYS_SENTINELS is set, else the single REDIS_SYS_URL connection (internal/sysredis).
 	sys, err := sysredis.New(sysredis.Settings{
@@ -107,6 +167,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = sys.Close() }()
+	if tp != nil {
+		sys.AddHook(tracing.RedisHook{Tracer: tp.Tracer, Client: "sys"})
+	}
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -120,6 +183,9 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		if tp != nil {
+			primaryCfg.ConnConfig.Tracer = tracing.PgxTracer{Tracer: tp.Tracer}
+		}
 		primaryPool, err := pgxpool.NewWithConfig(ctx, primaryCfg)
 		if err != nil {
 			return err
@@ -127,12 +193,25 @@ func run(log *slog.Logger) error {
 		defer primaryPool.Close()
 		primary = primaryPool
 	}
-	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
+	// One blocked-tag list (one memo, as in Node) and one addon source for every reader.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
+	addons := &feed.AddonSource{Sys: sys}
+	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
+	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
+		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
-		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
-	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
+		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,
+		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_METRICS_LOCK_WAIT_MS", cfg.MetricsLockWait.Milliseconds(),
+		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
+	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
+	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
+	var markers *auth.MarkerCache
+	if cfg.RevocationMarkerCache {
+		markers = auth.NewMarkerCache(auth.MarkerCacheMaxEntries)
+	}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
 		RefreshInterval: cfg.JWKSRefresh,
@@ -156,9 +235,9 @@ func run(log *slog.Logger) error {
 	go verifier.Run(ctx)
 	resolver := &auth.Resolver{
 		Verifier:            verifier,
-		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: failOpen.Report},
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{
@@ -166,11 +245,12 @@ func run(log *slog.Logger) error {
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
-		Addons:   &feed.AddonSource{Sys: sys},
+		Addons:   addons,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
 			ImageIndexFeed:          cfg.ImageIndexFeed,
+			PrioritizedVersionCache: cfg.PrioritizedVersionCache,
 			VisibleDecorationEvents: cfg.DecorationEvents,
 			CompletionConcurrency:   cfg.CompletionConcurrency,
 		},
@@ -199,7 +279,6 @@ func run(log *slog.Logger) error {
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
-	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,
@@ -221,38 +300,70 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
+	mc := config.LoadV1Models()
+	v1Models := &server.V1ModelsDeps{
+		Deps: &v1models.Deps{
+			DB:      pool,
+			Packed:  packed,
+			Sources: sources,
+			Gallery: deps.Gallery,
+			Addons:  deps.Addons.Addons,
+			Config: v1models.Config{
+				ImageLocation:        cfg.ImageLocation,
+				BaseURL:              mc.BaseURL,
+				CoverageNext:         cfg.CoverageNext,
+				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
+				ComputeMisses:        cfg.ComputeMisses,
+				ResponseCacheTTL:     mc.ResponseCacheTTL,
+				Production:           true,
+			},
+		},
+		Users: sources,
+	}
 	srv := &server.Server{
-		Resolver:    resolver,
-		Deps:        deps,
-		Models:      models,
-		Hosts:       cfg.Hosts,
-		RegionRules: cfg.RegionRules,
-		Metrics:     metrics,
-		Log:         log,
-		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:         resolver,
+		Deps:             deps,
+		Models:           models,
+		ServeModelGetAll: cfg.ServeModelGetAll,
+		Hosts:            cfg.Hosts,
+		RegionRules:      cfg.RegionRules,
+		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
+		RegionBlockRules: cfg.RegionBlockRules,
+		Metrics:          metrics,
+		Log:              log,
+		ShadowQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		Infinite:       infinite,
+		V1Models:       v1Models,
 		RequestBudget:  cfg.RequestBudget,
+		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
+		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
+		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},
+	}
+	var prop propagation.TextMapPropagator
+	if tp != nil {
+		srv.Tracer, srv.Propagator, prop = tp.Tracer, tp.Propagator, tp.Propagator
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {
 			return err
 		}
-		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(reason string, err error) {
+		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
-			if reason == proxyErrorUpstream {
-				log.Warn("fallback proxy: the Node app did not answer", "err", err)
-			}
-		})
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
 	}
 
 	public := server.PublicMux(srv)
+	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
-	internal := server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), cfg.Pprof)
+	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
+	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)
 	if cfg.Pprof {
 		log.Info("pprof enabled on the internal listener", "addr", cfg.InternalAddr, "path", "/debug/pprof/")
 	}
@@ -289,6 +400,10 @@ func run(log *slog.Logger) error {
 	}
 	for _, s := range servers {
 		_ = s.Shutdown(shutdown)
+	}
+	// The spans of the drained requests are exported before exit.
+	if err := tp.Shutdown(shutdown); err != nil {
+		log.Warn("trace exporter shutdown", "err", err)
 	}
 	return nil
 }

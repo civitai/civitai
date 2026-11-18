@@ -28,6 +28,10 @@ CREATE TYPE "PaidAccessEntityType" AS ENUM ('ModelVersion', 'ComicChapter');
 CREATE TYPE "SaleDiscountType" AS ENUM ('Fixed', 'Percent');
 CREATE TYPE "CosmeticEntity" AS ENUM ('Model', 'Image', 'Article', 'Post', 'Model3D');
 CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
+CREATE TYPE "ModelHashType" AS ENUM ('AutoV1', 'AutoV2', 'AutoV3', 'SHA256', 'CRC32', 'BLAKE3');
+CREATE TYPE "TagType" AS ENUM ('UserGenerated', 'Label', 'Moderation', 'System');
+CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'Hive', 'MinorDetection',
+  'HiveDemographics', 'Clavata', 'SpineRating', 'AiRecognition', 'AnimeRecognition');
 
 CREATE TABLE "User" (
   id                 integer PRIMARY KEY,
@@ -45,7 +49,9 @@ CREATE TABLE "Post" (
   "model3dId"      integer,
   "publishedAt"    timestamp(3),
   metadata         jsonb,
-  availability     "Availability" NOT NULL DEFAULT 'Public'
+  availability     "Availability" NOT NULL DEFAULT 'Public',
+  -- source: image.getInfinite's pending view (pendingViewerSQL, internal/feed/query.go).
+  "collectionId"   integer
 );
 
 CREATE TABLE "Image" (
@@ -75,7 +81,8 @@ CREATE TABLE "Image" (
   minor               boolean NOT NULL DEFAULT false,
   poi                 boolean NOT NULL DEFAULT false,
   "acceptableMinor"   boolean NOT NULL DEFAULT false,
-  "modelRestricted"   boolean NOT NULL DEFAULT false
+  "modelRestricted"   boolean NOT NULL DEFAULT false,
+  "tosViolation"      boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE "ImageResourceNew" (
@@ -85,11 +92,22 @@ CREATE TABLE "ImageResourceNew" (
   PRIMARY KEY ("imageId", "modelVersionId")
 );
 
+-- source: the tag-ids miss lookup (internal/hydrate/misses.go). A view in the app with no default;
+-- the default here only spares the feed tests' inserts from naming it.
 CREATE TABLE "TagsOnImageDetails" (
   "imageId"     integer NOT NULL,
   "tagId"       integer NOT NULL,
   disabled      boolean NOT NULL,
+  source        "TagSource" NOT NULL DEFAULT 'User',
   PRIMARY KEY ("imageId", "tagId")
+);
+
+-- source: getAllImages' `tools` filter (internal/feed/query.go). The app's notes and createdAt are
+-- not read.
+CREATE TABLE "ImageTool" (
+  "imageId" integer NOT NULL,
+  "toolId"  integer NOT NULL,
+  PRIMARY KEY ("imageId", "toolId")
 );
 
 CREATE TABLE "ImageReaction" (
@@ -158,15 +176,53 @@ CREATE TABLE "Model" (
   "allowNoCredit"         boolean NOT NULL DEFAULT true,
   "allowCommercialUse"    "CommercialUse"[] NOT NULL DEFAULT '{Image,RentCivit,Rent,Sell,SellMerge}',
   "allowDerivatives"      boolean NOT NULL DEFAULT true,
-  "allowDifferentLicense" boolean NOT NULL DEFAULT true
+  "allowDifferentLicense" boolean NOT NULL DEFAULT true,
+  "isOfficial"            boolean NOT NULL DEFAULT false
 );
 
+-- The columns after "trainingStatus" are dataForModelsCache's lookup's (internal/hydrate/modeldata.go).
 CREATE TABLE "ModelVersion" (
   id               integer PRIMARY KEY,
   "modelId"        integer NOT NULL,
   "baseModel"      text NOT NULL DEFAULT 'SD 1.5',
   status           "ModelStatus" NOT NULL DEFAULT 'Draft',
-  "trainingStatus" "TrainingStatus"
+  "trainingStatus" "TrainingStatus",
+  index                  integer,
+  name                   text NOT NULL DEFAULT 'version',
+  "earlyAccessTimeFrame" integer NOT NULL DEFAULT 0,
+  "baseModelType"        text NOT NULL DEFAULT 'Standard',
+  "createdAt"            timestamp(3) NOT NULL DEFAULT now(),
+  "publishedAt"          timestamp(3),
+  flags                  integer NOT NULL DEFAULT 0,
+  availability           "Availability" NOT NULL DEFAULT 'Public',
+  "nsfwLevel"            integer NOT NULL DEFAULT 0,
+  description            text,
+  "trainedWords"         text[]
+);
+
+-- dataForModelsCache's lookup: the hashes (a view in the app's database), generation coverage and
+-- the linked-VAE recommendations.
+CREATE TABLE "ModelHash" (
+  "modelId"        integer NOT NULL,
+  "modelVersionId" integer NOT NULL,
+  "hashType"       "ModelHashType" NOT NULL,
+  "fileType"       text NOT NULL,
+  hash             text NOT NULL
+);
+
+CREATE TABLE "GenerationCoverage" (
+  "modelId"        integer NOT NULL,
+  "modelVersionId" integer NOT NULL UNIQUE,
+  covered          boolean NOT NULL,
+  "coveredNext"    boolean NOT NULL,
+  PRIMARY KEY ("modelId", "modelVersionId")
+);
+
+CREATE TABLE "RecommendedResource" (
+  id           serial PRIMARY KEY,
+  "resourceId" integer NOT NULL,
+  "sourceId"   integer,
+  settings     jsonb
 );
 
 CREATE TABLE "Model3D" (
@@ -234,9 +290,11 @@ CREATE TABLE "ModelBaseModelMetric" (
   PRIMARY KEY ("modelId", "baseModel")
 );
 
+-- type: the tag-ids miss lookup's tag records (the app's default).
 CREATE TABLE "Tag" (
   id   integer PRIMARY KEY,
-  name citext NOT NULL UNIQUE
+  name citext NOT NULL UNIQUE,
+  type "TagType" NOT NULL DEFAULT 'UserGenerated'
 );
 
 CREATE TABLE "TagsOnModels" (
@@ -276,4 +334,33 @@ CREATE TABLE "ModelVersionSaleItem" (
   "saleId"         integer NOT NULL,
   "modelVersionId" integer NOT NULL,
   PRIMARY KEY ("saleId", "modelVersionId")
+);
+
+-- model.getAll's collection filter: the permission read (internal/modelfeed/collection.go) and the
+-- CollectionItem semi-join of the page query. CollectionContributor is also image.getInfinite's
+-- pending view of a signed-in viewer (pendingViewerSQL, internal/feed/query.go).
+CREATE TYPE "CollectionReadConfiguration" AS ENUM ('Private', 'Public', 'Unlisted');
+CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
+CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+
+CREATE TABLE "Collection" (
+  id       integer PRIMARY KEY,
+  "userId" integer NOT NULL,
+  read     "CollectionReadConfiguration" NOT NULL DEFAULT 'Private'
+);
+
+CREATE TABLE "CollectionItem" (
+  id             integer PRIMARY KEY,
+  "collectionId" integer NOT NULL,
+  "modelId"      integer,
+  "addedById"    integer,
+  status         "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED',
+  "tagId"        integer
+);
+
+CREATE TABLE "CollectionContributor" (
+  "userId"       integer NOT NULL,
+  "collectionId" integer NOT NULL,
+  permissions    "CollectionContributorPermission"[] NOT NULL,
+  PRIMARY KEY ("userId", "collectionId")
 );

@@ -10,9 +10,17 @@ import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
+import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE, SMITES } from '../smites/config';
+import {
+  activeSmiteCount,
+  cleanseSmites,
+  issueSmite,
+  resetNow,
+  type ResetDeps,
+} from '../smites/smites.service';
 import { YESNO_ANSWERS } from '../yesno/keys';
 import { answerImageJoin, answerQuestionKey, pairPrompt } from './answer-snapshot';
-import { APPRENTICE } from './config';
+import { APPRENTICE, type ApprenticeSettings } from './config';
 import {
   accuracyOf,
   chooseSource,
@@ -25,7 +33,14 @@ import {
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-export type ApprenticeDeps = { now: () => Date; mirrorXp?: XpMirror };
+export type ApprenticeDeps = {
+  now: () => Date;
+  mirrorXp?: XpMirror;
+  /** Starts the career reset an answer's third smite makes due; without it the tick does. */
+  resetPlayer?: ResetDeps['resetPlayer'];
+  /** Without it, smites are on. */
+  settings?: () => ApprenticeSettings | Promise<ApprenticeSettings>;
+};
 
 export type ItemKind = 'rating' | 'yesno';
 
@@ -84,7 +99,13 @@ export type ApprenticeView =
 export type AnswerResult =
   | {
       status: 'rejected';
-      reason: 'no-player' | 'not-acolyte' | 'checkpoint-pending' | 'not-current' | 'bad-answer';
+      reason:
+        | 'no-player'
+        | 'not-acolyte'
+        | 'reset-pending'
+        | 'checkpoint-pending'
+        | 'not-current'
+        | 'bad-answer';
     }
   | { status: 'recorded'; correct: boolean; xp: number; gold: number; promoted: boolean };
 
@@ -144,14 +165,14 @@ const seenBy = (
   column: 'referenceId' | 'yesNoReferenceId',
   refs: { id: string; imageId: string; questionKey: string }
 ) =>
-  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId} AND (
-    (s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
-    OR s.${sql.ref(column)} = ${sql.ref(refs.id)}
-  ))`;
+  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
+    AND s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
+  AND NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
+    AND s.${sql.ref(column)} = ${sql.ref(refs.id)})`;
 
-/** A stable per-player order, so reloading shows the same item and different players get different orders. */
-const shuffled = (playerId: number, idRef: string) =>
-  sql`md5(${sql.ref(idRef)}::text || ${String(playerId)})`;
+/** Re-dealt after every answer, yet the same until then, so a reload cannot reroll the item on screen. */
+const shuffled = (playerId: number, position: number, idRef: string) =>
+  sql`md5(${sql.ref(idRef)}::text || ${`:${playerId}:${position}`})`;
 
 async function ratingOptions(db: Executor): Promise<{ prompt: string; options: QuestionOption[] }> {
   const question = await db
@@ -162,7 +183,12 @@ async function ratingOptions(db: Executor): Promise<{ prompt: string; options: Q
   return { prompt: question.prompt, options: question.options as QuestionOption[] };
 }
 
-async function nextRating(db: Executor, playerId: number, core: boolean): Promise<NextItem | null> {
+async function nextRating(
+  db: Executor,
+  playerId: number,
+  position: number,
+  core: boolean
+): Promise<NextItem | null> {
   const row = await servableReferences(db, REFERENCE_POOL.trials)
     .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
@@ -174,7 +200,7 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
       })
     )
     .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
-    .orderBy(shuffled(playerId, 'r.id'))
+    .orderBy(shuffled(playerId, position, 'r.id'))
     .limit(1)
     .executeTakeFirst();
   if (!row) return null;
@@ -192,7 +218,11 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
   };
 }
 
-async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | null> {
+async function nextYesNo(
+  db: Executor,
+  playerId: number,
+  position: number
+): Promise<NextItem | null> {
   const row = await db
     .selectFrom('KnightsYesNoReference as y')
     .innerJoin('KnightsQuestion as q', 'q.key', 'y.questionKey')
@@ -220,7 +250,7 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
       'img.width',
       'img.height',
     ])
-    .orderBy(shuffled(playerId, 'y.id'))
+    .orderBy(shuffled(playerId, position, 'y.id'))
     .limit(1)
     .executeTakeFirst();
   if (!row) return null;
@@ -241,10 +271,7 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
 
 /** The item this player is on: the same one until it is answered. Null when nothing is left to show. */
 async function findNext(db: Executor, playerId: number): Promise<NextItem | null> {
-  const core = await nextRating(db, playerId, true);
-  if (core) return core;
-  const rating = await nextRating(db, playerId, false);
-  const yesNo = await nextYesNo(db, playerId);
+  // Every answer the player ever gave, not just this career's: the no-repeat rule spans resets too.
   const position = Number(
     (
       await db
@@ -254,13 +281,25 @@ async function findNext(db: Executor, playerId: number): Promise<NextItem | null
         .executeTakeFirstOrThrow()
     ).n
   );
+  const [core, yesNo] = await Promise.all([
+    nextRating(db, playerId, position, true),
+    nextYesNo(db, playerId, position),
+  ]);
+  // Harvested references only once the player has answered every core one.
+  const rating = core ? null : await nextRating(db, playerId, position, false);
   const source: Source | null = chooseSource({
     position,
-    core: false,
+    core: !!core,
     rating: !!rating,
     yesNo: !!yesNo,
   });
-  return source === 'rating' ? rating : source === 'yesno' ? yesNo : null;
+  return source === 'core'
+    ? core
+    : source === 'rating'
+    ? rating
+    : source === 'yesno'
+    ? yesNo
+    : null;
 }
 
 const labelOf = (options: QuestionOption[], value: string) =>
@@ -353,8 +392,9 @@ export async function answerApprentice(
 ): Promise<AnswerResult> {
   const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
+  const smites = (await deps.settings?.())?.smites ?? true;
 
-  const result = await db.transaction().execute(async (trx): Promise<AnswerResult> => {
+  const result = await db.transaction().execute(async (trx): Promise<TxResult> => {
     // The player row lock serialises one player's answers, so the item check below and the insert cannot interleave.
     const player = await trx
       .selectFrom('NewOrderPlayer')
@@ -364,6 +404,9 @@ export async function answerApprentice(
       .executeTakeFirst();
     if (!player) return { status: 'rejected', reason: 'no-player' };
     if (player.rankType !== 'Acolyte') return { status: 'rejected', reason: 'not-acolyte' };
+    if ((await activeSmiteCount(trx, userId)) >= SMITES.max) {
+      return { status: 'rejected', reason: 'reset-pending' };
+    }
 
     const before = await progressOf(trx, userId);
     if (await checkpointPending(trx, userId, before.answered)) {
@@ -424,12 +467,27 @@ export async function answerApprentice(
     let gold = 0;
     if (xp > 0) {
       await trx.updateTable('NewOrderPlayer').set({ exp }).where('userId', '=', userId).execute();
+      const levelBefore = getLevelProgression(player.exp).level;
+      const levelAfter = getLevelProgression(exp).level;
       gold = await grantAcolyteLevelGold(trx, {
         playerId: userId,
-        before: getLevelProgression(player.exp).level,
-        after: getLevelProgression(exp).level,
+        before: levelBefore,
+        after: levelAfter,
         now,
       });
+      if (levelAfter > levelBefore) {
+        await cleanseSmites(trx, { playerId: userId, reason: LEVEL_UP_CLEANSE, now });
+      }
+    }
+    let resetDue = false;
+    if (smites && !correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
+      const active = await issueSmite(trx, {
+        playerId: userId,
+        reason: ACOLYTE_WRONG_ANSWER_SMITE,
+        size: BASE_SMITE_SIZE,
+        now,
+      });
+      resetDue = active >= SMITES.max;
     }
     const after = await progressOf(trx, userId);
     const promoted = earnsKnighthood({
@@ -437,15 +495,43 @@ export async function answerApprentice(
       correct: after.correct,
       graded: after.graded,
     });
-    if (promoted) await promoteToKnight(trx, userId);
-    return { status: 'recorded', correct, xp, gold, promoted };
+    if (promoted) {
+      await promoteToKnight(trx, userId);
+      await cleanseSmites(trx, { playerId: userId, reason: PROMOTION_CLEANSE, now });
+    }
+    return { status: 'recorded', correct, xp, gold, promoted, resetDue };
   });
 
-  if (result.status === 'recorded') {
-    await mirrorXp(deps.mirrorXp, result.xp > 0 ? [{ playerId: userId, xp: result.xp }] : []);
-  }
-  return result;
+  if (result.status !== 'recorded') return result;
+  const { resetDue, ...recorded } = result;
+  await mirrorXp(deps.mirrorXp, recorded.xp > 0 ? [{ playerId: userId, xp: recorded.xp }] : []);
+  if (resetDue && deps.resetPlayer) await resetNow(userId, { resetPlayer: deps.resetPlayer });
+  return recorded;
 }
+
+const LEVEL_UP_CLEANSE = 'Acolyte - Level up!';
+const PROMOTION_CLEANSE = 'Acolyte - Knighted';
+
+/** Wrong answers among the player's last `smiteWindow`, counting only answers given after their last such smite. */
+async function wrongSinceLastSmite(trx: Executor, playerId: number): Promise<number> {
+  const recent = answersOf(trx, playerId)
+    .where(
+      sql<SqlBool>`a."createdAt" > COALESCE((SELECT max(s."createdAt") FROM "NewOrderSmite" s WHERE s."targetPlayerId" = a."playerId" AND s."reason" = ${ACOLYTE_WRONG_ANSWER_SMITE}), 'epoch')`
+    )
+    .select('a.correct')
+    .orderBy('a.id', 'desc')
+    .limit(APPRENTICE.smiteWindow)
+    .as('w');
+  const row = await trx
+    .selectFrom(recent)
+    .select(sql<string>`count(*) filter (where not w.correct)`.as('wrong'))
+    .executeTakeFirstOrThrow();
+  return Number(row.wrong);
+}
+
+type TxResult =
+  | Extract<AnswerResult, { status: 'rejected' }>
+  | (Extract<AnswerResult, { status: 'recorded' }> & { resetDue: boolean });
 
 /** Moves a player past the recap they are looking at. Safe to repeat; does nothing when no checkpoint is waiting. */
 export async function acknowledgeCheckpoint(

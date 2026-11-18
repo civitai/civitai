@@ -100,7 +100,10 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     // 17 → 18: `authorizeOutputUnlockRequest`, the shared preamble of `previewOutputUnlock` and
     // `unlockOutput`. One call site, on `parseSubjectUserId(claims.sub)` from
     // `authorizeBlockBridgeToken`, after the subject is checked against the session user.
-    calls: 18,
+    // 18 → 19: `persistUploadedGenerationSource` (a picked generation source kept as a scanned
+    // row), inline as in `persistGenerationSource`, on `parseSubjectUserId(claims.sub)` after the
+    // session check.
+    calls: 19,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
     why: 'The tRPC bridge procs. Block-JWT-authed procedures (`previewPostFromApp`, `createPostFromApp` and `publishGenerationOutputs` additionally require a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },

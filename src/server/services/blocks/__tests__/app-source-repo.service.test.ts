@@ -83,6 +83,11 @@ class FakeGit {
       new Response(data === undefined ? null : JSON.stringify(data), { status });
     let m: RegExpMatchArray | null;
 
+    if ((m = path.match(/^\/api\/v1\/orgs\/([^/]+)$/)) && method === 'GET') {
+      return this.orgs.has(decodeURIComponent(m[1]))
+        ? json(200, {})
+        : json(404, { message: 'no org' });
+    }
     if (method === 'POST' && path === '/api/v1/orgs') {
       if (this.orgs.has(body.username)) return json(422, { message: 'exists' });
       this.orgs.add(body.username);

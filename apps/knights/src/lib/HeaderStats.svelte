@@ -11,18 +11,15 @@
   import { sound } from './sound';
   import type { PlayerStatus } from './server/player-status';
 
-  type Streak = { streak: number; shields: number; maxShields: number };
   type LadderRow = { rank: string; fromLevel: number; accuracyBar: number; minDaysPlayed?: number };
 
   let {
     status,
-    streak,
     goldPerBuzz,
     shopOpen,
     ladder,
   }: {
     status: PlayerStatus;
-    streak?: Streak;
     goldPerBuzz: number;
     shopOpen: boolean;
     ladder: LadderRow[];
@@ -63,17 +60,6 @@
 </script>
 
 <ul class="stats" aria-label="Your standing">
-  {#if streak}
-    <li
-      class="chip wide"
-      title="Shields: {streak.shields}/{streak.maxShields}. A shield covers one missed day."
-    >
-      <span class="flame"><Icon name="flame" /></span>
-      {streak.streak}
-      {streak.streak === 1 ? 'day' : 'days'} streak
-    </li>
-  {/if}
-
   <li title={gold.title}>
     <StatPopover id="gold-popover" label="Gold: {gold.title}, details">
       {#snippet trigger()}
@@ -169,27 +155,11 @@
     padding: 0;
     list-style: none;
   }
-  .chip {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 999px;
-    background: var(--io-bg);
-    color: var(--io-parchment);
-    font: 600 13px/1.2 var(--io-font-ui);
-    white-space: nowrap;
-  }
-  .chip :global(svg),
   .icon :global(svg) {
     color: var(--io-gold);
   }
   .icon {
     display: inline-flex;
-  }
-  .flame :global(svg) {
-    color: var(--io-crimson-text);
   }
   .floater {
     --rise: -14px;
@@ -359,9 +329,6 @@
   @media (max-width: 40rem) {
     .stats {
       gap: 8px;
-    }
-    .wide {
-      display: none;
     }
     /* The level pill keeps its rank (design: "12 Knight"); on the narrowest phones it truncates instead of pushing the avatar off. */
     .rank-name {

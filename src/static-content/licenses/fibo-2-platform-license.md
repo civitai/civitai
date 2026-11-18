@@ -6,7 +6,7 @@ description: The terms that apply when you use Bria's FIBO 2.0 models on Civitai
 # FIBO 2.0 Platform License
 
 FIBO 2.0 is provided by Bria Artificial Intelligence Inc. ("Bria"). Civitai makes it available to you under Civitai's
-[Terms of Service](/content/tos), including Section 8.9, and this page. Using a FIBO 2.0 model, or any fine-tune, LoRA or
+[Terms of Service](/content/tos), including Section 8.10, and this page. Using a FIBO 2.0 model, or any fine-tune, LoRA or
 other derivative of one ("FIBO Model"), on Civitai means you agree to these terms.
 
 ## What you may do

@@ -26,16 +26,11 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-// The stored-file delete, captured by key: the only place a file leaves storage.
-const storage = vi.hoisted(() => ({ deletedKeys: [] as string[] }));
+// The stored files, in a versioned bucket: the only place a file leaves storage.
+const storage = vi.hoisted(() => ({ bucket: null as null | { send: (c: unknown) => unknown } }));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getB2ImageS3Client: () => ({
-    send: async (command: { input: { Key: string } }) => {
-      storage.deletedKeys.push(command.input.Key);
-      return {};
-    },
-  }),
+  getB2ImageS3Client: () => ({ send: (command: unknown) => storage.bucket!.send(command) }),
 }));
 vi.mock('~/server/services/storage-resolver', () => ({
   resolveMediaLocation: async () => ({ backend: 'b2Image' }),
@@ -66,6 +61,7 @@ import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches
 import { imagesMetricsSearchIndex } from '~/server/search-index';
 import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeVersionedBucket } from '~/__tests__/mocks/fake-versioned-bucket';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
@@ -497,18 +493,30 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     // Keyed on the rows the DELETE returned, never on the ids asked for: a kept image's file is
-    // the evidence.
-    it("deletes the stored file of each deleted image and never a kept one's", async () => {
+    // the evidence, every version of it.
+    it("deletes every version of each deleted image's file and none of a kept one's", async () => {
       await holder.db.exec(`UPDATE "Image" SET url = 'file-' || id`);
-      storage.deletedKeys = [];
+      const bucket = fakeVersionedBucket();
+      storage.bucket = bucket;
+      for (const id of [PLAIN, ...MARKED]) {
+        bucket.putVersion(`file-${id}`);
+        bucket.putVersion(`file-${id}`);
+        bucket.putDeleteMarker(`file-${id}`);
+      }
       setEnv({ DATABASE_IS_PROD: true });
       try {
-        await imageService.deleteImages([PLAIN, ...MARKED], true);
+        await imageService.deleteImages([PLAIN, ...MARKED], true, { moderatorDelete: true });
       } finally {
         setEnv({ DATABASE_IS_PROD: false });
       }
 
-      expect(storage.deletedKeys.sort()).toEqual([`file-${PLAIN}`, `file-${RELEASED}`]);
+      const versionsLeft = [PLAIN, ...MARKED].map((id) => [
+        id,
+        bucket.entriesFor(`file-${id}`).length,
+      ]);
+      expect(versionsLeft).toEqual(
+        [PLAIN, ...MARKED].map((id) => [id, id === PLAIN || id === RELEASED ? 0 : 3])
+      );
     });
 
     // Kept counts as moderated: the account-deletion markers go, already-blocked rows included, or

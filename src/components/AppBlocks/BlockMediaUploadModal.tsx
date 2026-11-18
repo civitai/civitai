@@ -12,6 +12,7 @@ import {
   type BlockMediaUploadInfo,
   type MediaUploadKind,
 } from './mediaUploadLogic';
+import type { ScannedRowsPath } from './generationSourceScannedRows';
 import { mediaUploadErrorMessage, uploadGenerationMedia } from './mediaUploadRun';
 
 const COPY: Record<MediaUploadKind, { title: string; label: string; types: string }> = {
@@ -30,10 +31,13 @@ type UploadStatus = 'idle' | 'uploading' | 'ready' | 'error';
 export default function BlockMediaUploadModal({
   kind,
   onResolved,
+  scannedRows,
 }: {
   kind: MediaUploadKind;
   /** Called once, with the upload, before the modal closes itself. */
   onResolved: (result: BlockMediaUploadInfo) => void;
+  /** An image's scanned-row path (`toGenerationSource`); absent → the blob, as before. */
+  scannedRows?: ScannedRowsPath | null;
 }) {
   const dialog = useDialogContext();
   const [status, setStatus] = useState<UploadStatus>('idle');
@@ -80,7 +84,8 @@ export default function BlockMediaUploadModal({
         kind,
         file,
         checked.contentType,
-        () => epoch === epochRef.current
+        () => epoch === epochRef.current,
+        scannedRows
       );
       if (!result || epoch !== epochRef.current) return;
       setStatus('ready');

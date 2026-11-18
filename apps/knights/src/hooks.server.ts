@@ -98,9 +98,9 @@ export const handleError: HandleServerError = ({ error, event, status, message }
       type: 'error',
       name: 'knights-unhandled-error',
       message: error instanceof Error ? error.message : String(error),
-      details: {
+      details: { status },
+      payload: {
         route: event.route.id,
-        status,
         stack: error instanceof Error ? error.stack : undefined,
       },
     });

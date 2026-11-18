@@ -10,7 +10,11 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
   onSearchIndexDocumentsCleanup: meili.cleanup,
 }));
 
-import { pushData, transformData } from '~/server/search-index/articles.search-index';
+import {
+  articleSelect,
+  pushData,
+  transformData,
+} from '~/server/search-index/articles.search-index';
 
 type Input = Parameters<typeof transformData>[0];
 const recordsOf = async (input: Input) => (await transformData(input)).records;
@@ -21,11 +25,12 @@ const image = (id: number, nsfwLevel: number, needsReview: string | null = null)
   nsfwLevel,
   ingestion: 'Scanned',
   needsReview,
+  modelRestricted: false,
   meta: null,
   tags: [],
 });
 
-const article = (images: { coverImage: unknown; bannerImage: unknown }) =>
+const article = (images: { coverImage: unknown; bannerImage: unknown; cover?: string }) =>
   ({
     id: 1,
     nsfwLevel: 1,
@@ -65,6 +70,77 @@ describe('articles search index', () => {
       modelWithheldImageIds: new Set([11]),
     });
     expect(records).toHaveLength(0);
+  });
+
+  const restricted = (id: number) => ({ ...image(id, 4), minor: true });
+
+  // transformData takes fetched rows, so only the select shows the flag is read. Without it `minor`
+  // is undefined, which the rule reads as unrestricted: the cover would be indexed for everyone.
+  it('reads the flag for the cover and the banner', () => {
+    expect(articleSelect.coverImage.select.minor).toBe(true);
+    expect(articleSelect.bannerImage.select.minor).toBe(true);
+  });
+
+  it('🔴 indexes an article without a restricted minor cover, and not with its banner', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: restricted(10), bannerImage: image(11, 1) })],
+      cosmetics: {},
+    });
+    expect(record).toBeDefined();
+    expect(record?.coverImage).toBeUndefined();
+  });
+
+  it('🔴 clears the legacy cover key of an article whose cover is a restricted minor image', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: restricted(10), bannerImage: null, cover: 'key-10' })],
+      cosmetics: {},
+    });
+    expect(record).toHaveProperty('cover', null);
+  });
+
+  it('🔴 indexes an article without a cover restricted by its base model, nor its banner, or its legacy key', async () => {
+    const [record] = await recordsOf({
+      articles: [
+        article({
+          coverImage: { ...image(10, 4), modelRestricted: true },
+          bannerImage: image(11, 1),
+          cover: 'key-10',
+        }),
+      ],
+      cosmetics: {},
+    });
+    expect(record?.coverImage).toBeUndefined();
+    expect(record).toHaveProperty('cover', null);
+  });
+
+  it('keeps the legacy cover key of an article whose cover is shown (control)', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: image(10, 4), bannerImage: null, cover: 'key-10' })],
+      cosmetics: {},
+    });
+    expect(record).toHaveProperty('cover', 'key-10');
+  });
+
+  it('🔴 leaves out a banner-only article whose banner is a restricted minor image', async () => {
+    const records = await recordsOf({
+      articles: [article({ coverImage: null, bannerImage: restricted(11) })],
+      cosmetics: {},
+    });
+    expect(records).toHaveLength(0);
+  });
+
+  it('keeps a minor-flagged PG-13 cover and an unflagged R cover, without the flag (control)', async () => {
+    for (const cover of [
+      { ...image(10, 2), minor: true },
+      { ...image(10, 4), minor: false },
+    ]) {
+      const [record] = await recordsOf({
+        articles: [article({ coverImage: cover, bannerImage: null })],
+        cosmetics: {},
+      });
+      expect(record?.coverImage).toMatchObject({ id: 10 });
+      expect(record?.coverImage).not.toHaveProperty('minor');
+    }
   });
 
   it('keeps the cover when there is one', async () => {

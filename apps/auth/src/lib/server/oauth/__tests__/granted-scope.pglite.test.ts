@@ -26,12 +26,13 @@ const { getGrantedScope } = await import('../granted-scope');
 
 const PRELUDE = `
   CREATE TABLE "OauthConsent" (
-    "userId" INTEGER NOT NULL, "clientId" TEXT NOT NULL, "scope" INTEGER NOT NULL,
+    "userId" INTEGER NOT NULL, "clientId" TEXT NOT NULL, "scope" BIGINT NOT NULL,
     PRIMARY KEY ("userId", "clientId")
   );
   CREATE TABLE "ApiKey" (
     "id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "clientId" TEXT, "type" TEXT NOT NULL,
-    "tokenScope" INTEGER NOT NULL, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "expiresAt" TIMESTAMP
+    "tokenScope" INTEGER NOT NULL, "tokenScopeWide" BIGINT,
+    "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "expiresAt" TIMESTAMP
   );
 `;
 
@@ -70,7 +71,7 @@ function pgliteDialect(db: PGlite): Dialect {
   };
 }
 
-const consent = (userId: number, clientId: string, scope: number) =>
+const consent = (userId: number, clientId: string, scope: number | bigint) =>
   pg.query(`INSERT INTO "OauthConsent" ("userId", "clientId", "scope") VALUES ($1, $2, $3)`, [
     userId,
     clientId,
@@ -82,17 +83,20 @@ const apiKey = (row: {
   clientId?: string;
   type?: string;
   scope: number;
+  /** `tokenScopeWide`; omitted: null, as on a row written before the column existed. */
+  wide?: bigint;
   createdAt?: Date;
   expiresAt?: Date | null;
 }) =>
   pg.query(
-    `INSERT INTO "ApiKey" ("userId", "clientId", "type", "tokenScope", "createdAt", "expiresAt")
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+    `INSERT INTO "ApiKey" ("userId", "clientId", "type", "tokenScope", "tokenScopeWide", "createdAt", "expiresAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       row.userId ?? USER,
       row.clientId ?? CLIENT,
       row.type ?? 'Refresh',
       row.scope,
+      row.wide?.toString() ?? null,
       row.createdAt ?? new Date(NOW.getTime() - HOUR),
       row.expiresAt === undefined ? new Date(NOW.getTime() + HOUR) : row.expiresAt,
     ]
@@ -115,23 +119,23 @@ describe('getGrantedScope', () => {
   it('combines the remembered consent with a live refresh token', async () => {
     await consent(USER, CLIENT, 0b0011);
     await apiKey({ scope: 0b0101 });
-    await expect(granted()).resolves.toBe(0b0111);
+    await expect(granted()).resolves.toBe(0b0111n);
   });
 
   it('is the remembered consent alone when there is no live refresh token', async () => {
     await consent(USER, CLIENT, 3);
-    await expect(granted()).resolves.toBe(3);
+    await expect(granted()).resolves.toBe(3n);
   });
 
   it('combines every live refresh token, not just the newest', async () => {
     await apiKey({ scope: 0b0011, createdAt: new Date(NOW.getTime() - 2 * HOUR) });
     await apiKey({ scope: 0b0101, createdAt: new Date(NOW.getTime() - HOUR) });
-    await expect(granted()).resolves.toBe(0b0111);
+    await expect(granted()).resolves.toBe(0b0111n);
   });
 
   it('counts a refresh token with no expiry as live', async () => {
     await apiKey({ scope: 9, expiresAt: null });
-    await expect(granted()).resolves.toBe(9);
+    await expect(granted()).resolves.toBe(9n);
   });
 
   it('is null when the user has granted this app nothing', async () => {
@@ -158,7 +162,15 @@ describe('getGrantedScope', () => {
   it('leaves an expired refresh token out of the combination', async () => {
     await apiKey({ scope: 0b0001 });
     await apiKey({ scope: 0b1000, expiresAt: new Date(NOW.getTime() - 1) });
-    await expect(granted()).resolves.toBe(0b0001);
+    await expect(granted()).resolves.toBe(0b0001n);
+  });
+
+  it('reads bits 31 and 32 from tokenScopeWide and the consent, not the 32-bit column', async () => {
+    // Consent: UserRead | AppsRead. Refresh token: UserRead | AppDataRead, split the way the writer
+    // splits it (the 32-bit column holds UserRead alone).
+    await consent(USER, CLIENT, 2147483649n);
+    await apiKey({ scope: 1, wide: 4294967297n });
+    await expect(granted()).resolves.toBe(6442450945n);
   });
 
   it('ignores access tokens and other key types', async () => {

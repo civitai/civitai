@@ -1080,3 +1080,62 @@ describe('link buttons: up to three, more than one for members only', () => {
     });
   });
 });
+
+// A mature cover made with a base model that restricts mature images is its uploader's alone: a
+// stranger gets the announcement without it, and the row's rating drops with the cover.
+describe('a model-restricted mature cover', () => {
+  const STRANGER = 999;
+  const R = 4;
+  const row = (id: number, cover: { nsfwLevel: number; modelRestricted: boolean }) => ({
+    id,
+    metadata: {},
+    cover: { id: 500 + id, url: `cover-${id}`, userId: AUTHOR, ...cover },
+    user: { id: AUTHOR, username: 'author' },
+  });
+  const RESTRICTED = 1;
+  const UNRESTRICTED = 2;
+  const RESTRICTED_SFW = 3;
+
+  beforeEach(() => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      row(RESTRICTED, { nsfwLevel: R, modelRestricted: true }),
+      row(UNRESTRICTED, { nsfwLevel: R, modelRestricted: false }),
+      row(RESTRICTED_SFW, { nsfwLevel: 1, modelRestricted: true }),
+    ] as never);
+  });
+
+  const shape = (rows: { id: number; cover: { url: string } | null; nsfwLevel: number }[]) =>
+    rows.map(({ id, cover, nsfwLevel }) => ({ id, cover: cover?.url ?? null, nsfwLevel }));
+
+  it('is dropped from the profile read for a stranger; the controls keep theirs', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: STRANGER });
+
+    expect(shape(rows)).toEqual([
+      { id: RESTRICTED, cover: null, nsfwLevel: 0 },
+      { id: UNRESTRICTED, cover: 'cover-2', nsfwLevel: R },
+      { id: RESTRICTED_SFW, cover: 'cover-3', nsfwLevel: 1 },
+    ]);
+  });
+
+  it('is dropped from a signed-out profile read', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR });
+
+    expect(shape(rows)[0]).toEqual({ id: RESTRICTED, cover: null, nsfwLevel: 0 });
+  });
+
+  it('is kept for its uploader', async () => {
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR, viewerId: AUTHOR });
+
+    expect(shape(rows)[0]).toEqual({ id: RESTRICTED, cover: 'cover-1', nsfwLevel: R });
+  });
+
+  it('is dropped from a follower’s feed; the controls keep theirs', async () => {
+    const { items } = await getFollowedAnnouncements({ userId: STRANGER });
+
+    expect(shape(items)).toEqual([
+      { id: RESTRICTED, cover: null, nsfwLevel: 0 },
+      { id: UNRESTRICTED, cover: 'cover-2', nsfwLevel: R },
+      { id: RESTRICTED_SFW, cover: 'cover-3', nsfwLevel: 1 },
+    ]);
+  });
+});

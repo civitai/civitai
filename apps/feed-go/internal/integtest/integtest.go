@@ -11,6 +11,9 @@ package integtest
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -20,6 +23,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 )
 
 const (
@@ -27,6 +32,11 @@ const (
 	EnvRedisCluster = "FEED_GO_TEST_REDIS_CLUSTER"
 	// EnvPostgresURL is the Postgres connection URL; the database holds testdata/integration/schema.sql.
 	EnvPostgresURL = "FEED_GO_TEST_PG_URL"
+	// EnvClickHouseURL is the ClickHouse HTTP endpoint; EnvClickHouseUser / EnvClickHousePassword its
+	// account (the job's container user).
+	EnvClickHouseURL      = "FEED_GO_TEST_CLICKHOUSE_URL"
+	EnvClickHouseUser     = "FEED_GO_TEST_CLICKHOUSE_USER"
+	EnvClickHousePassword = "FEED_GO_TEST_CLICKHOUSE_PASSWORD" //nolint:gosec // the variable's name, not a credential
 )
 
 func env(t *testing.T, name string) string {
@@ -133,4 +143,72 @@ func Del(t *testing.T, c redis.UniversalClient, keys ...string) {
 	}
 	del()
 	t.Cleanup(del)
+}
+
+// ClickHouse returns the service's read-only client of the real ClickHouse (at most maxInFlight
+// reads at once). It fails the test unless the server answers.
+func ClickHouse(t *testing.T, maxInFlight int) *chread.Client {
+	t.Helper()
+	c, err := chread.New(chread.Config{URL: env(t, EnvClickHouseURL), Username: env(t, EnvClickHouseUser),
+		Password: os.Getenv(EnvClickHousePassword), MaxInFlight: maxInFlight})
+	if err != nil {
+		t.Fatalf("clickhouse: %v", err)
+	}
+	if _, err := c.Query(Ctx(t), "SELECT 1 AS one", nil); err != nil {
+		t.Fatalf("clickhouse SELECT 1: %v", err)
+	}
+	return c
+}
+
+// ClickHouseExec runs one statement that writes (DDL, INSERT) as a POST, which the read-only client
+// cannot send, failing the test on error.
+func ClickHouseExec(t *testing.T, sql string) {
+	t.Helper()
+	u, err := url.Parse(env(t, EnvClickHouseURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(Ctx(t), http.MethodPost, u.String(), strings.NewReader(sql))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth(env(t, EnvClickHouseUser), os.Getenv(EnvClickHousePassword))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("clickhouse exec: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		t.Fatalf("clickhouse exec %q: %d %s", sql, resp.StatusCode, body)
+	}
+}
+
+// ClickHouseRaw sends sql as a GET with the given settings, as the read client sends it, and returns
+// the raw response: its status, headers, and as much of its body as could be read (with the read
+// error, e.g. the broken chunked stream after a mid-response exception).
+func ClickHouseRaw(t *testing.T, sql string, settings []chread.Setting) (int, http.Header, []byte, error) {
+	t.Helper()
+	u, err := url.Parse(env(t, EnvClickHouseURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("query", chread.WireQuery(sql))
+	for _, s := range settings {
+		q.Set(s.Name, s.Value)
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(Ctx(t), http.MethodGet, u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth(env(t, EnvClickHouseUser), os.Getenv(EnvClickHousePassword))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("clickhouse get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, readErr := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, body, readErr
 }

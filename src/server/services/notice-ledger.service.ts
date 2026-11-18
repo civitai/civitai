@@ -1,6 +1,8 @@
 import { logToAxiom } from '~/server/logging/client';
 import type { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { sysRedis } from '~/server/redis/client';
+import { NOTICE_MIN_INTERVAL_MS } from '@civitai/email';
+import type { Sleep } from '@civitai/email';
 import { sleep as realSleep } from '~/server/utils/concurrency-helpers';
 import { chunkIds } from '~/utils/array-helpers';
 
@@ -8,38 +10,14 @@ export type NoticeLedgerKey = (typeof REDIS_SYS_KEYS.NOTICES)[keyof typeof REDIS
 
 const READ_CHUNK = 500;
 
-/**
- * SES's sending rate is account-wide: a faster bulk run gets throttled and takes the rest of the
- * site's email down with it.
- */
-export const NOTICE_MIN_INTERVAL_MS = 500;
-export const THROTTLE_RETRY_DELAYS_MS = [2_000, 5_000];
-
-export type Sleep = (ms: number) => Promise<unknown>;
-
-/** SES answers an over-rate send with SMTP 454 "Throttling failure: Maximum sending rate exceeded". */
-export function isThrottlingError(e: unknown) {
-  const err = e as { responseCode?: number; message?: string } | null;
-  return err?.responseCode === 454 || /throttling/i.test(err?.message ?? '');
-}
-
-/**
- * Only wrap the email step: a retry re-runs `fn` in full, so it must not repeat whatever the send
- * did before it.
- */
-export async function withThrottleRetry<T>(
-  fn: () => Promise<T>,
-  { delaysMs = THROTTLE_RETRY_DELAYS_MS, sleep = realSleep } = {}
-): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn();
-    } catch (e) {
-      if (attempt >= delaysMs.length || !isThrottlingError(e)) throw e;
-      await sleep(delaysMs[attempt]);
-    }
-  }
-}
+// The pacing lives in @civitai/email so the moderator app's senders share it.
+export {
+  NOTICE_MIN_INTERVAL_MS,
+  THROTTLE_RETRY_DELAYS_MS,
+  isThrottlingError,
+  withThrottleRetry,
+} from '@civitai/email';
+export type { Sleep } from '@civitai/email';
 
 /** Which of `ids` the ledger (a hash of userId → sent-at) already records. */
 export async function getNoticeSentIds(ledgerKey: NoticeLedgerKey, ids: number[]) {
@@ -123,7 +101,7 @@ export async function sendLedgeredNotice<R extends { id: number }>({
             name: logName,
             message: 'send failed',
             details: { userId: recipient.id, error: (e as Error).name },
-          }).catch(() => undefined);
+          });
           failedUserIds.push(recipient.id);
           await sysRedis
             .hDel(key, String(recipient.id))

@@ -67,16 +67,17 @@ func InternalHTTPServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
-// DefaultFailOpenLogEvery is how often a revocation fail-open is logged at most.
-const DefaultFailOpenLogEvery = 10 * time.Second
+// DefaultDegradedLogEvery is how often a failed revocation read is logged at most.
+const DefaultDegradedLogEvery = 10 * time.Second
 
-// FailOpenReporter is the revocation check's OnFailOpen: every fail-open is counted, and at most one
-// warning per Every is logged (carrying how many were suppressed since the last one), so a system
-// redis incident does not turn every signed-in request into a log line.
-type FailOpenReporter struct {
+// RevocationDegradedReporter is the revocation check's OnDegraded: every failed read is counted by the
+// verdict it was then given (deny_cached | allow_unknown, as the app's session_revocation_degraded_total),
+// and at most one warning per Every is logged (carrying how many were suppressed since the last one), so
+// a system redis incident does not turn every signed-in request into a log line.
+type RevocationDegradedReporter struct {
 	Log     *slog.Logger
-	Counter prometheus.Counter
-	Every   time.Duration // 0 = DefaultFailOpenLogEvery
+	Counter *prometheus.CounterVec // label: verdict
+	Every   time.Duration          // 0 = DefaultDegradedLogEvery
 	Now     func() time.Time
 
 	mu         sync.Mutex
@@ -84,10 +85,10 @@ type FailOpenReporter struct {
 	suppressed int
 }
 
-// Report records one fail-open.
-func (f *FailOpenReporter) Report(err error) {
+// Report records one failed read and the verdict given.
+func (f *RevocationDegradedReporter) Report(err error, verdict string) {
 	if f.Counter != nil {
-		f.Counter.Inc()
+		f.Counter.WithLabelValues(verdict).Inc()
 	}
 	now := time.Now()
 	if f.Now != nil {
@@ -95,7 +96,7 @@ func (f *FailOpenReporter) Report(err error) {
 	}
 	every := f.Every
 	if every <= 0 {
-		every = DefaultFailOpenLogEvery
+		every = DefaultDegradedLogEvery
 	}
 	f.mu.Lock()
 	if !f.last.IsZero() && now.Sub(f.last) < every {
@@ -106,5 +107,6 @@ func (f *FailOpenReporter) Report(err error) {
 	suppressed := f.suppressed
 	f.suppressed, f.last = 0, now
 	f.mu.Unlock()
-	f.Log.Warn("revocation read failed open", "err", err, "suppressed", suppressed)
+	f.Log.Warn("revocation read failed; answered from the markers already read", "err", err, "verdict", verdict,
+		"suppressed", suppressed)
 }

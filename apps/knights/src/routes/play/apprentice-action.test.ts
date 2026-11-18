@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const answerApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
+// Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
+vi.mock('$lib/server/membership', async (original) => ({
+  ...(await original<typeof import('$lib/server/membership')>()),
+  consented: vi.fn(async () => true),
+  requireConsent: vi.fn(async () => undefined),
+}));
 const getStanding = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
@@ -16,7 +22,9 @@ vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
-vi.mock('$lib/server/hidden/hidden.service', () => ({}));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed: vi.fn() }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
@@ -167,7 +175,13 @@ describe('the milestone card lasts for the item it appeared with', () => {
   };
 
   beforeEach(async () => {
-    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
+    await seen.store!.set(7, {
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+      consent: true,
+    });
   });
 
   it('an answer given with the milestone card on screen records that standing as seen', async () => {
@@ -183,6 +197,7 @@ describe('the milestone card lasts for the item it appeared with', () => {
       level: 5,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 
@@ -195,6 +210,7 @@ describe('the milestone card lasts for the item it appeared with', () => {
       level: 4,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 
@@ -205,15 +221,23 @@ describe('the milestone card lasts for the item it appeared with', () => {
       level: 5,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
 
-    await seen.store!.set(7, { rank: 'Acolyte', level: 4, guide: true, whatsNew: true });
+    await seen.store!.set(7, {
+      rank: 'Acolyte',
+      level: 4,
+      guide: true,
+      whatsNew: true,
+      consent: true,
+    });
     await continuePast({});
     expect(await seen.store!.get(7)).toEqual({
       rank: 'Acolyte',
       level: 4,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 

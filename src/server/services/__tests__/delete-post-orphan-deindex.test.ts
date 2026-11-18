@@ -258,6 +258,7 @@ describe('deletePost orphan de-indexing', () => {
     expect(mockDeleteImageFromS3).toHaveBeenCalledWith({
       id: OWNER_IMAGE.id,
       url: OWNER_IMAGE.url,
+      allVersions: false,
       keepShopArtwork: false,
     });
   });

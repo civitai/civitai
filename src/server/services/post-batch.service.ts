@@ -389,9 +389,9 @@ function logSlowBatchSteps(steps: BatchSteps, durationMs: number, userId: number
     addImageMaxMs: round(steps.addImageMaxMs),
     toolsMs: round(steps.toolsMs),
     techniquesMs: round(steps.techniquesMs),
-    resourcesMs: round(steps.resourcesMs),
     publishMs: round(steps.publishMs),
-  }).catch(() => undefined);
+    payload: { resourcesMs: round(steps.resourcesMs) },
+  });
 }
 
 export async function scheduleBatch(args: {

@@ -307,13 +307,13 @@ export async function finishHeldVerdictApply(modelId: number) {
       await enqueueJobs([
         { entityId: modelId, entityType: EntityType.Model, type: JobQueueType.UpdateNsfwLevel },
       ]).catch(() => null);
-      await logToAxiom({
+      logToAxiom({
         name: 'text-scan',
         type: 'error',
         message: 'held restricted nsfw verdict applied; level refresh queued',
         modelId,
         error: error.message,
-      }).catch(() => null);
+      });
     });
 }
 
@@ -431,7 +431,7 @@ export async function applyModelNsfwTextScan({
     modelId: entityId,
     result,
     level: outcome.nsfw.detectedLevel,
-  }).catch(() => null);
+  });
   // A complete .com face already lists it on .com: the notice's advice to add one does not apply.
   if (result !== 'applied' || hasCompleteSfwFace(model)) return nothing;
 

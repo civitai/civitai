@@ -18,7 +18,7 @@ export const config = {
 };
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'clickup-webhook', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'clickup-webhook', ...data }, 'webhooks');
 
 function isValidSignature(rawBody: Buffer, signatureHeader: string, secret: string) {
   const digest = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');

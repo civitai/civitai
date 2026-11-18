@@ -25,7 +25,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
-  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
@@ -68,6 +67,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { NsfwLevel } from '~/server/common/enums';
+import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
   getPolyGenPostBlock,
@@ -246,7 +246,11 @@ export const getModel3DById = async ({
       : null;
 
     return {
-      ...model3d,
+      ...withServableImage(
+        withServableImage(model3d, 'thumbnailImage', user?.id),
+        'sourceImage',
+        user?.id
+      ),
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -429,7 +433,7 @@ async function withUserReviews(
   return rows.map(({ tags, ...rest }) => {
     const review = reviewByModel.get(rest.id);
     return {
-      ...rest,
+      ...withServableImage(rest, 'thumbnailImage', user?.id),
       tags: tags.map((t) => t.tagId),
       userReview: review ? { id: review.id, recommended: review.recommended } : null,
     };
@@ -1311,7 +1315,16 @@ export const getModel3DByPostId = async ({
           userId: true,
           status: true,
           deletedAt: true,
-          thumbnailImage: { select: { id: true, url: true, name: true } },
+          thumbnailImage: {
+            select: {
+              id: true,
+              url: true,
+              name: true,
+              userId: true,
+              nsfwLevel: true,
+              modelRestricted: true,
+            },
+          },
         },
       },
     },
@@ -1330,10 +1343,11 @@ export const getModel3DByPostId = async ({
   )
     return null;
 
+  const { thumbnailImage: thumbnail } = withServableImage(model3d, 'thumbnailImage', userId);
   return {
     id: model3d.id,
     name: model3d.name,
-    thumbnailImage: model3d.thumbnailImage,
+    thumbnailImage: thumbnail && { id: thumbnail.id, url: thumbnail.url, name: thumbnail.name },
   };
 };
 
@@ -1593,20 +1607,6 @@ const postLevelsWithin = (level: number) =>
     (v) => (v & level) !== 0
   );
 
-/** Images a post card may fall back to when an earlier one is a restricted model's. */
-const COVER_CANDIDATES = 3;
-
-/** Of these images, the mature ones of a restricted model, which the image feeds never show. */
-async function restrictedMatureImageIds(ids: number[]) {
-  if (!ids.length) return new Set<number>();
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT i.id FROM "Image" i
-    WHERE i.id IN (${Prisma.join(ids)})
-      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND i."modelRestricted"
-  `;
-  return new Set(rows.map((row) => row.id));
-}
-
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
@@ -1640,9 +1640,9 @@ export const getModel3DRelatedPosts = async ({
     // the viewer may see. Blocked is never a level a viewer browses at.
     const level = onlySelectableLevels(browsingLevel);
     // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
-    // their level, out of review and never blocked. A mature image of a restricted model is
-    // dropped below: that column is not in the Prisma schema.
+    // their level, out of review, never blocked and not restricted by its base model.
     const coverGate: Prisma.ImageWhereInput = {
+      AND: [imageNotRestrictedWhere()],
       ingestion: 'Scanned',
       nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
       needsReview: null,
@@ -1657,8 +1657,8 @@ export const getModel3DRelatedPosts = async ({
       nsfwLevel: { in: postLevelsWithin(level) },
       images: { some: coverGate },
     };
-    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
-      ? undefined
+    const coverWhere: Prisma.ImageWhereInput = isModerator
+      ? imageNotRestrictedWhere({ viewerId })
       : viewerId
       ? { OR: [{ userId: viewerId }, coverGate] }
       : coverGate;
@@ -1688,23 +1688,12 @@ export const getModel3DRelatedPosts = async ({
         user: { select: userWithCosmeticsSelect },
         images: {
           where: coverWhere,
-          take: COVER_CANDIDATES,
+          take: 1,
           orderBy: { index: 'asc' },
           select: model3dImageSelect,
         },
       },
     });
-    const restricted = isModerator
-      ? new Set<number>()
-      : await restrictedMatureImageIds(
-          items.flatMap((post) =>
-            post.images.filter((image) => image.userId !== viewerId).map((image) => image.id)
-          )
-        );
-    for (const post of items) {
-      post.images = post.images.filter((image) => !restricted.has(image.id)).slice(0, 1);
-    }
-
     let nextCursor: number | undefined;
     if (items.length > take) {
       const nextItem = items.pop();

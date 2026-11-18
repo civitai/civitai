@@ -74,7 +74,7 @@ function confidentialClient(over: Record<string, unknown> = {}) {
   };
 }
 
-async function token(scope: number | null, secret = SECRET, extra: Record<string, string> = {}) {
+async function token(scope: bigint | null, secret = SECRET, extra: Record<string, string> = {}) {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
     client_id: 'game-frame',
@@ -116,7 +116,9 @@ describe('client_credentials grant', () => {
       type: 'Access',
       userId: OWNER,
       clientId: 'game-frame',
-      tokenScope: CATALOG | TokenScope.UserRead,
+      // AppStoreCatalogWrite (268435456) | UserRead (1), in both scope columns.
+      tokenScope: 268435457,
+      tokenScopeWide: '268435457',
       // Marks the token as the client's own, which the user token exchange refuses as a subject.
       name: 'oauth-cc:game-frame',
     });

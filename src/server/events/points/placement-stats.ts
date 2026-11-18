@@ -120,7 +120,7 @@ export async function getHatPlacementViews(
       name: 'hat-placement-views',
       message: error instanceof Error ? error.message : String(error),
       event,
-    }).catch(() => undefined);
+    });
     return null;
   }
 }

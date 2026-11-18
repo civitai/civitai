@@ -2,6 +2,10 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
 import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const { getIsImageBlocked, canCheckBlockedImageHash } = vi.hoisted(() => ({
@@ -28,6 +32,7 @@ describe('getMyImages — published only', () => {
   it('lists published media only, by default', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -43,6 +48,7 @@ describe('getMyImages — published only', () => {
   it("also lists unpublished media from the crucible entry modal's drafts, still only the caller's own", async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -90,6 +96,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   const listForEntry = (cursor?: number) =>
     getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.video],
       limit: 10,
       publishedOnly: true,
@@ -119,6 +126,20 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     expect(days).toBeLessThan(7.01);
   });
 
+  it('holds them to a SFW-capped request too, unrated ones included', async () => {
+    await getMyImages({
+      userId: 42,
+      servableLevels: sfwBrowsingLevelsFlag,
+      mediaTypes: [MediaType.video],
+      limit: 10,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+    expect(errorQueryOf()?.where.AND).toContainEqual({
+      nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+    });
+  });
+
   it('adds them to the first page only, so paging never repeats one', async () => {
     const { items } = await listForEntry(800);
     expect(items.map((x) => x.id)).toEqual([800]);
@@ -129,6 +150,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   it('leaves callers that list unpublished media too without them', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: false,
@@ -141,6 +163,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   it('leaves other published-only callers without failed uploads', async () => {
     await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
@@ -213,6 +236,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     );
     const { items, nextCursor } = await getMyImages({
       userId: 42,
+      servableLevels: allBrowsingLevelsFlag,
       mediaTypes: [MediaType.video],
       limit: 2,
       publishedOnly: true,

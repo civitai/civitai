@@ -15,6 +15,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const getHeldMedia = vi.hoisted(() => vi.fn());
+const getRetractedMedia = vi.hoisted(() => vi.fn());
 const flags = vi.hoisted(() => ({ csamReports: true }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -25,6 +26,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () => flags }));
 vi.mock('~/server/services/held-media.service', () => ({ getHeldMedia }));
+vi.mock('~/server/services/retracted-media.service', () => ({ getRetractedMedia }));
 
 import handler from '~/pages/api/mod/held-media/shown';
 
@@ -108,6 +110,7 @@ beforeEach(async () => {
   await pg.exec(`DELETE FROM "ModActivity"`);
   flags.csamReports = true;
   getHeldMedia.mockReset().mockResolvedValue(null);
+  getRetractedMedia.mockReset().mockResolvedValue(null);
   dbMock.dbWrite.$executeRaw.mockReset().mockImplementation(executeRaw as never);
   // Image 501 is user 20's, on whose report page it is; 502 is user 21's; 503 is a feedback capture.
   const owners: Record<number, number> = { 501: 20, 502: 21, 503: FEEDBACK_CAPTURE_OWNER_ID };
@@ -152,6 +155,33 @@ describe('POST /api/mod/held-media/shown', () => {
 
     expect((await rows()).map((row) => row.activity)).toEqual(['reportMedia:open:original']);
     expect(getHeldMedia).toHaveBeenCalledWith(501, dbMock.dbWrite);
+  });
+
+  it('records a blocked image served by the retracted-media route as the original', async () => {
+    getRetractedMedia.mockResolvedValue({
+      url: 'key',
+      type: 'image',
+      mimeType: 'image/png',
+      tier: 'suspect',
+    });
+    // A held-media serve is not this route's serve.
+    await served(501, { activity: 'heldMedia:view' });
+    expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(403);
+    await served(501, { activity: 'retractedMedia:view' });
+    expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(204);
+
+    expect((await rows()).map((row) => row.activity)).toEqual(['reportMedia:open:original']);
+    expect(getRetractedMedia).toHaveBeenCalledWith(501, { csamReview: true }, dbMock.dbWrite);
+  });
+
+  it('still records the CDN rendition of a blocked image that is not held', async () => {
+    getRetractedMedia.mockResolvedValue({
+      url: 'key',
+      type: 'image',
+      mimeType: null,
+      tier: 'plain',
+    });
+    expect(await post(valid)).toBe(204);
   });
 
   it.each([

@@ -19,17 +19,20 @@ export async function runArticleCategoryBackfill({
   limit,
   concurrency,
   dryRun,
+  includeMature,
 }: {
   afterId: number;
   limit: number;
   concurrency: number;
   dryRun: boolean;
+  includeMature: boolean;
 }) {
   // dbWrite: a replica lagging behind an earlier chunk's writes would reselect classified articles.
   const rows = await dbWrite.$queryRawUnsafe<{ id: number }[]>(
     ARTICLE_CATEGORY_BACKFILL_SQL,
     afterId,
-    limit
+    limit,
+    includeMature
   );
   const ids = rows.map((r) => r.id);
   const nextAfterId = ids.length ? ids[ids.length - 1] : null;
@@ -38,7 +41,7 @@ export async function runArticleCategoryBackfill({
       acc[r.status] = (acc[r.status] ?? 0) + 1;
       return acc;
     }, {});
-    return { dryRun, selected: ids.length, nextAfterId, byStatus, results };
+    return { dryRun, includeMature, selected: ids.length, nextAfterId, byStatus, results };
   };
 
   if (dryRun || !ids.length)
@@ -69,7 +72,7 @@ export async function runArticleCategoryBackfill({
           });
           return { entityId, status };
         } catch (e) {
-          await logToAxiom({
+          logToAxiom({
             name: 'text-category',
             type: 'error',
             message: 'backfill submit threw',
@@ -82,14 +85,20 @@ export async function runArticleCategoryBackfill({
     )
   );
   const result = summary(results);
-  await logToAxiom({
+  // `failed` is an existing Axiom field; the other statuses are not, so they go under payload.
+  const { failed, ...otherStatuses } = result.byStatus;
+  logToAxiom({
     name: 'text-category',
     type: 'info',
     message: 'backfill chunk',
-    afterId,
-    selected: result.selected,
-    nextAfterId,
-    ...result.byStatus,
+    failed,
+    payload: {
+      afterId,
+      includeMature,
+      selected: result.selected,
+      nextAfterId,
+      ...otherStatuses,
+    },
   });
   return result;
 }

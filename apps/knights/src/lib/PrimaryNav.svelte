@@ -101,7 +101,7 @@
     outline-offset: -4px;
   }
 
-  @media (min-width: 75.0625rem) {
+  @media (min-width: 64rem) {
     a :global(svg) {
       display: none;
     }
@@ -116,8 +116,8 @@
     }
   }
 
-  /* Below 75rem the header's stats and account menu leave no room for four tabs. */
-  @media (max-width: 75rem) {
+  /* Below 64rem the header's stats and account menu leave no room for four tabs. */
+  @media (max-width: 63.9375rem) {
     nav {
       position: fixed;
       inset: auto 0 0;

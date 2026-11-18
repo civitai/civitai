@@ -3,12 +3,33 @@ import {
   followTrace,
   interpretTraceLine,
   parseTraceLine,
+  traceLineNote,
   traceLineText,
   traceLogText,
   traceLossPoints,
   tracePath,
 } from './trace';
 import { metricKeys, recordReadings, metricSeries, type Reading } from './loss';
+
+describe('traceLineNote', () => {
+  // As the Kohya worker logs it right after "saving checkpoint:", in both trace modes.
+  const gitWarning =
+    '2026-11-16 17:23:37 WARNING  Could not determine git       sai_model_spec.py:303';
+
+  // A narrower console wraps "git" onto the next line.
+  const narrowWrap = '2026-11-16 17:23:37 WARNING  Could not determine   sai_model_spec.py:303';
+
+  it.each([gitWarning, narrowWrap, JSON.stringify({ type: 'log', epoch: 1, message: gitWarning })])(
+    'explains the harmless sd-scripts git warning: %s',
+    (line) => {
+      expect(traceLineNote(traceLineText(line))).toMatch(/checkpoint saved normally/);
+    }
+  );
+
+  it('leaves other warnings unexplained', () => {
+    expect(traceLineNote('2026-11-16 17:23:37 WARNING  CUDA out of memory')).toBeNull();
+  });
+});
 
 describe('traceLossPoints', () => {
   it('reads every tqdm redraw on a concatenated log line, skipping ones without a loss', () => {

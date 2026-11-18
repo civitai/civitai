@@ -3184,3 +3184,191 @@ describe('new rows before deferred ones', () => {
     expect(errorLogs('cdn-access-sync-deferred-stale')).toHaveLength(1);
   });
 });
+
+// ── heldUrlSql against loadFacts ───────────────────────────────────────────────────────────────
+
+/**
+ * The sync reads held twice while the TypeScript rule is still live: from loadFacts' facts and from
+ * `heldUrlSql`, logging `cdn-access-held-parity` where they differ. Every url here carries a human
+ * takedown, so `held` decides deny or retract. One fact per url; the clean one is the control.
+ * Dropping a leg from `heldUrlSql` turns its case's parity line on.
+ */
+describe('heldUrlSql parity with loadFacts', () => {
+  const blockedImage = async (id: number, over: Parameters<typeof image>[1] = {}) => {
+    await image(id, over);
+    await moderatorBlock(id);
+  };
+  const parityLines = () => errorLogs('cdn-access-held-parity');
+  const cases: [name: string, held: boolean, setup: () => Promise<unknown>][] = [
+    ['no hold', false, () => blockedImage(1)],
+    [
+      'a CSAM review flag',
+      true,
+      async () => {
+        await image(1);
+        await sql`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`;
+        await moderatorBlock(1);
+      },
+    ],
+    ['an owner hold marker', true, async () => (await holdMarker(OWNER), blockedImage(1))],
+    [
+      'an unsent report on the owner',
+      true,
+      async () => (
+        await sql`INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`, blockedImage(1)
+      ),
+    ],
+    [
+      'an unsent report naming the owner as secondary user',
+      true,
+      async () => (
+        await sql`INSERT INTO "CsamReport" ("userId", details)
+                  VALUES (${OTHER_OWNER}, jsonb_build_object('secondaryUserId', ${OWNER}::int))`,
+        blockedImage(1)
+      ),
+    ],
+    [
+      'a sent report without a verified evidence copy',
+      true,
+      async () => (
+        await sql`INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${OWNER}, now())`,
+        blockedImage(1)
+      ),
+    ],
+    [
+      'a verified report covering the image, marker released',
+      false,
+      async () => (await verifiedReport([1]), await releaseMarkers(), blockedImage(1)),
+    ],
+    [
+      'a verified report naming the owner but not the image',
+      true,
+      async () => (await verifiedReport([2]), await releaseMarkers(), blockedImage(1)),
+    ],
+    [
+      'a csam-hold post removal',
+      true,
+      async () => {
+        await publishedPost(5);
+        await blockedImage(1, { postId: 5 });
+        await moderatorPostUnpublish(5, CSAM_HOLD_POST_UNPUBLISH_REASON);
+      },
+    ],
+    [
+      'a mature-underage version unpublish',
+      true,
+      async () => {
+        await publishedPost(5);
+        await blockedImage(1, { postId: 5 });
+        await sql`UPDATE "ModelVersion" SET meta = '{"unpublishedReason": "mature-underage"}' WHERE id = 1`;
+      },
+    ],
+    [
+      'a mature-underage model unpublish',
+      true,
+      async () => {
+        await publishedPost(5);
+        await blockedImage(1, { postId: 5 });
+        await sql`UPDATE "Model" SET meta = '{"unpublishedReason": "mature-underage"}' WHERE id = 1`;
+      },
+    ],
+    [
+      'a moderator delete on the url with no owner recorded',
+      true,
+      async () => (
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+            VALUES (901, ${u(1)}, NULL, false)`
+      ),
+    ],
+    [
+      'a CSAM-review moderator delete no report covers',
+      true,
+      async () => (
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+            VALUES (901, ${u(1)}, ${OWNER}, true)`
+      ),
+    ],
+    [
+      'a CSAM-review moderator delete a verified report covers',
+      false,
+      async () => (
+        await verifiedReport([1, 901]),
+        await releaseMarkers(),
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+            VALUES (901, ${u(1)}, ${OWNER}, true)`
+      ),
+    ],
+    [
+      'a clean moderator delete',
+      false,
+      async () => (
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+            VALUES (901, ${u(1)}, ${OWNER}, false)`
+      ),
+    ],
+    [
+      'a shop takedown with no owner recorded',
+      true,
+      async () => (
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES (${u(
+          1
+        )}, 1, NULL)`
+      ),
+    ],
+    [
+      'a shop takedown of a reported owner',
+      true,
+      async () => (
+        await verifiedReport([1]),
+        await releaseMarkers(),
+        // The image on the url is another owner's, so only the takedown's owner can hold it.
+        await blockedImage(2, { userId: OTHER_OWNER }),
+        sql`INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES (${u(
+          2
+        )}, 1, ${OWNER})`
+      ),
+    ],
+  ];
+
+  it.each(cases)('agrees on %s', async (name, held, setup) => {
+    await setup();
+    await syncCdnAccess();
+    const urls = new Set(
+      calls.filter((c) => !isPersist(c)).map((c) => /imageKey=([^&]+)/.exec(c.path)?.[1])
+    );
+    expect({ name, urls: urls.size }).toEqual({ name, urls: 1 });
+    expect({ name, call: calls.filter((c) => !isPersist(c)).map(kind) }).toEqual({
+      name,
+      call: [held ? 'deny' : 'retract'],
+    });
+    expect({ name, parity: parityLines() }).toEqual({ name, parity: [] });
+    expect(errorLogs('cdn-access-held-predicate-failed')).toEqual([]);
+  });
+
+  it('holds every url when the predicate cannot be read, one line per failed lookup, comparing nothing', async () => {
+    await blockedImage(1);
+    await blockedImage(2, { userId: OTHER_OWNER });
+    const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    let failed = 0;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      if (!strings.join('').includes('AS u("url")'))
+        return (real as (...a: unknown[]) => unknown)(strings, ...v);
+      failed++;
+      return Promise.reject(new Error('predicate down'));
+    }) as never);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+    expect(failed).toBeGreaterThan(0);
+    expect(errorLogs('cdn-access-held-predicate-failed')).toHaveLength(failed);
+    expect(parityLines()).toEqual([]);
+  });
+});

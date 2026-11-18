@@ -281,7 +281,7 @@ export const announcementMediaCheckJob = createJob(
           ),
           bucket: UPLOADS_BUCKET(),
         },
-      }).catch();
+      });
     }
 
     for (const finding of broken) {
@@ -294,7 +294,7 @@ export const announcementMediaCheckJob = createJob(
           imageKey: finding.key,
           url: getAnnouncementImageUrl(finding.key),
         },
-      }).catch();
+      });
     }
 
     for (const finding of atRisk) {
@@ -307,7 +307,7 @@ export const announcementMediaCheckJob = createJob(
           announcementIds: finding.announcementIds,
           imageKey: finding.key,
         },
-      }).catch();
+      });
     }
 
     for (const finding of renderFailures) {
@@ -321,7 +321,7 @@ export const announcementMediaCheckJob = createJob(
           url: getAnnouncementImageUrl(finding.key),
           status: finding.renderedStatus,
         },
-      }).catch();
+      });
     }
 
     log(

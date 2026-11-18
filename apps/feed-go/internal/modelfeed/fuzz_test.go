@@ -49,7 +49,7 @@ func FuzzParse(f *testing.F) {
 		}
 		q := PageQuery{Take: in.Limit, Cursor: in.Cursor, Sort: in.Sort, BrowsingLevel: lv, Types: in.Types,
 			BaseModels: in.BaseModels, FileFormats: in.FileFormats, CheckpointType: in.CheckpointType}
-		if _, err := q.Build(); err != nil && fallback.Reason(err) != "model-cursor" && fallback.Reason(err) != "short-fraction-cursor" {
+		if _, err := q.Build(); err != nil && fallback.Reason(err) != "model-cursor" {
 			t.Fatalf("Build(%s): %v", raw, err)
 		}
 	})

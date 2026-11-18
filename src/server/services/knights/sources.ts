@@ -1,10 +1,10 @@
-import { sql } from 'kysely';
 import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   knightsSourcesMaxOpen,
   parseKnightsSourcesConfig,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
+import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -65,34 +65,23 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
 }
 
 /**
- * Open Knight-stage items, counted only up to `limit` so the read stays short on the (status, minRank, ...) index. The result is
- * cached for a minute whenever the query lands. A failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
+ * Open servable Knight-stage rating items (`countOpenServableKnightItems`), counted only up to `limit`. Yes/no questions share
+ * the queue table but not this intake: an imported backlog must not stop sampling. Cached for a minute whenever the query
+ * lands; a failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
  */
 function startOpenCount(limit: number): Promise<number | null> {
-  const read: Promise<number | null> = kyselyRead
-    .selectFrom(
-      kyselyRead
-        .selectFrom('KnightsQueueItem')
-        .select(sql<number>`1`.as('one'))
-        .where('status', '=', 'Open')
-        .where('minRank', '=', 'Knight')
-        .limit(limit)
-        .as('open')
-    )
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .executeTakeFirstOrThrow()
-    .then((row) => {
-      const open = Number(row.n);
+  const read: Promise<number | null> = countOpenServableKnightItems(kyselyRead, limit)
+    .then((open) => {
       if (openCountRead === read)
         openCount = { open, limit, expiresAt: Date.now() + OPEN_COUNT_TTL_MS };
       return open;
     })
     .catch(async (error: Error) => {
       if (openCountRead === read) openCountFailedUntil = Date.now() + OPEN_COUNT_BACKOFF_MS;
-      await logToAxiom(
+      logToAxiom(
         { type: 'knights-v2-open-count-error', error: error.message },
         'knights-v2-sources'
-      ).catch(() => undefined);
+      );
       return null;
     })
     .finally(() => {
@@ -121,10 +110,10 @@ async function openKnightItems(limit: number): Promise<number | null> {
     if (open !== TIMED_OUT) return open;
     if (Date.now() >= slowCountLoggedUntil) {
       slowCountLoggedUntil = Date.now() + OPEN_COUNT_TTL_MS;
-      await logToAxiom(
+      logToAxiom(
         { type: 'knights-v2-open-count-slow', timeoutMs: OPEN_COUNT_TIMEOUT_MS },
         'knights-v2-sources'
-      ).catch(() => undefined);
+      );
     }
     return null;
   } finally {
@@ -147,16 +136,21 @@ async function enqueueFromSource(
   try {
     const config = await getKnightsSourcesConfig();
     if (!config.enabled || !(await shouldEnqueue(config))) return;
-    await enqueueKnightsItems(kyselyWrite, {
-      source,
-      questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-      items: [item],
-    });
+    await enqueueKnightsItems(
+      kyselyWrite,
+      {
+        source,
+        questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+        items: [item],
+      },
+      undefined,
+      { requirePost: true }
+    );
   } catch (error) {
-    await logToAxiom(
+    logToAxiom(
       { type, imageId: item.imageId, error: (error as Error).message },
       'knights-v2-sources'
-    ).catch(() => undefined);
+    );
   }
 }
 

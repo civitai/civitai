@@ -53,6 +53,7 @@ export default ModEndpoint(
       for (const batch of chunk(imageIds, batchSize)) {
         const result = await deleteImages(batch, true, {
           onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+          moderatorDelete: true,
         });
         deletedImages += result.length;
       }

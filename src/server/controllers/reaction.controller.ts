@@ -467,7 +467,7 @@ export const createReactionNotification = async ({ entityType, entityId }: Toggl
           message: 'Could not find resource',
         },
         'notifications'
-      ).catch();
+      );
       return;
     }
 

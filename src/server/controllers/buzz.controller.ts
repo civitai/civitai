@@ -35,7 +35,6 @@ import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { claimTipIdempotency } from '~/server/utils/block-tip-rate-limit';
-import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -200,8 +199,17 @@ export async function createBuzzTipTransactionHandler({
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
       // May have contributros, check this...
       const collaboratorEntityType = EntityType.Post; // For the time being, only this is supported.
-      const collaboratorEntityId =
-        entityType === 'Post' ? entityId : (await getImageById({ id: entityId }))?.postId;
+      let image: { postId: number | null; poi: boolean } | null = null;
+      if (entityType === 'Image') {
+        // primary: a check guarding a write; a just-flagged POI image must not be tippable.
+        image = await dbWrite.image.findUnique({
+          where: { id: entityId },
+          select: { postId: true, poi: true },
+        });
+      }
+      // Same rule as the image reaction bars, which hide the tip on a POI image.
+      if (image?.poi) throw throwBadRequestError('This image cannot receive tips');
+      const collaboratorEntityId = entityType === 'Post' ? entityId : image?.postId;
 
       if (collaboratorEntityId && collaboratorEntityType) {
         const collaborators = await getEntityCollaborators({
@@ -472,7 +480,7 @@ async function claimTipRecord(userId: number, sharedId: string) {
       userId,
       sharedId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return true;
   }
 }

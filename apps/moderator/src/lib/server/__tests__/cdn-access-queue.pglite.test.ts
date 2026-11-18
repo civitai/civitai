@@ -132,7 +132,11 @@ CREATE TABLE "Thread" (
   "commentId" INTEGER, "metadata" JSONB
 );
 CREATE TABLE "CommentV2" ("id" INTEGER, "userId" INTEGER, "threadId" INTEGER);
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+-- Rates a restored image as its tags would: an untagged one would go back to the scanner.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL;
+$$;
 `;
 
 const OWNER = 7;

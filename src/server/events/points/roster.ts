@@ -224,9 +224,7 @@ export async function addRosterPoints(
 // Points past their packed field (roster-score.ts MAX_POINTS) carry into the next field and
 // mis-order the rank sets until the reconcile rewrites them clamped.
 function logScoreOverflow(extra: object) {
-  void logToAxiom({ type: 'error', name: 'event-roster', fn: 'scoreOverflow', ...extra }).catch(
-    () => undefined
-  );
+  void logToAxiom({ type: 'error', name: 'event-roster', fn: 'scoreOverflow', ...extra });
 }
 
 // The listed members among these owner topic ids: for the pusher and the interest set, which must

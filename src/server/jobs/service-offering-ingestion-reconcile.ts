@@ -167,7 +167,7 @@ export const serviceOfferingIngestionReconcile = createJob(
               message: 'content check spent its retries; resubmitting',
               offeringId: id,
               moderationStatus: moderation?.status,
-            }).catch(() => null);
+            });
           if (action === 'submit' || action === 'resubmit-exhausted')
             await scanServiceOffering(id, { forceRescan: true });
           else if (action === 'settle') {
@@ -191,7 +191,7 @@ export const serviceOfferingIngestionReconcile = createJob(
             message: error instanceof Error ? error.message : String(error),
             offeringId: id,
             action,
-          }).catch(() => null);
+          });
         }
       }),
       CONCURRENCY
