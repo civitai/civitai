@@ -29,8 +29,10 @@ import type { SessionUser } from '~/types/session';
 import {
   collectPage,
   resolveTagIds,
+  resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -58,6 +60,7 @@ export async function searchSemanticImages({
   track,
   candidateSource = searchServiceCandidates,
   refuseNarrowing = false,
+  tagMatchesFirst = false,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -70,6 +73,8 @@ export async function searchSemanticImages({
   candidateSource?: CandidateSource;
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
+  /** A query that names a tag ranks the images carrying it first (the showcase picker). */
+  tagMatchesFirst?: boolean;
 }) {
   // Every moderator exemption below reads `user.isModerator`, so the viewer carries the view.
   const user = sessionUser && {
@@ -238,6 +243,14 @@ export async function searchSemanticImages({
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
 
+  const queryTag =
+    tagMatchesFirst && 'text' in query && query.text.trim()
+      ? (await resolveTags([query.text.trim()])).find(
+          (t) => !blockedTags.some((b) => b.id === t.id)
+        )
+      : undefined;
+  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
+
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks
   // of different ages.
@@ -248,7 +261,7 @@ export async function searchSemanticImages({
     candidates: async (offset, limit) => {
       const result = await timed(
         'candidates',
-        cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
+        ranked({ query, filter, offset, limit, viewer, sort: input.sort })
       );
       audit.candidates(result);
       first ??= result;
