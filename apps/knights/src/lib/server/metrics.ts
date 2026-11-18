@@ -25,6 +25,26 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const REFUSAL_REASONS = [
+  'no-player',
+  'not-open',
+  'unavailable',
+  'not-eligible',
+  'bad-answer',
+  'bad-block-reason',
+  'already-voted',
+  'no-weight',
+  'reset-pending',
+  'limited',
+  'busy',
+  'muted',
+  'no-consent',
+  'bad-token',
+] as const;
+const REFUSAL_KINDS = [...VOTE_KINDS, 'unknown'] as const;
+const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
+export type RefusalKind = (typeof REFUSAL_KINDS)[number];
+export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
 const TICK_FAILURE_STEPS = ['writeback', 'payout', 'yesno', 'reset', 'buzz_grant'] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
@@ -117,6 +137,12 @@ const tickItemFailures = counter(
   { step: TICK_FAILURE_STEPS }
 );
 
+const voteRefusals = counter(
+  'knights_vote_refusals_total',
+  'Votes and skips the server refused, by reason, item kind (unknown before the token is opened) and action; the press did not count.',
+  { reason: [...REFUSAL_REASONS, 'other'], kind: REFUSAL_KINDS, action: REFUSAL_ACTIONS }
+);
+
 registerGauges(register, loadGaugeSnapshot);
 
 // Telemetry must never break the path that records it.
@@ -161,6 +187,23 @@ export const metrics = {
     safely(() => {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
     }),
+  // No table records a refused vote or skip, so each also leaves an Axiom event naming the player and the ledger item id
+  // (negative for a hidden check; null before the token is opened).
+  voteRefused: (
+    reason: string,
+    kind: RefusalKind,
+    playerId: number,
+    itemId: number | null,
+    action: RefusalAction
+  ) => {
+    safely(() => voteRefusals.inc({ reason: bounded(reason, REFUSAL_REASONS), kind, action }));
+    void logToAxiom({
+      type: 'info',
+      name: 'knights-vote-refused',
+      message: `A ${action} was refused`,
+      details: { reason, kind, playerId, itemId, action },
+    });
+  },
   // No table records these three, so each also leaves one Axiom event.
   careerReset: (playerId: number, trigger: ResetTrigger) => {
     safely(() => careerResets.inc({ trigger }));

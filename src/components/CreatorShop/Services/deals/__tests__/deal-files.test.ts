@@ -12,6 +12,7 @@ import {
   deliverWait,
   filesPollMs,
   sellerFileStatus,
+  previewAccept,
   sortPicked,
   uploadRefusal,
   uploadSlotsLeft,
@@ -43,6 +44,14 @@ describe('upload checks before sending', () => {
     expect(uploadRefusal('Preview', { name: 'a.webp', type: 'image/webp', size: 21 * MB })).toMatch(
       /max 20 MB/
     );
+  });
+
+  it('offers and keeps a video preview only on a deal that takes one', () => {
+    expect(previewAccept('Video')).toContain('video/mp4');
+    expect(previewAccept('Image')).not.toContain('video/');
+    const clip = { name: 'a.mp4', type: 'video/mp4', size: MB };
+    expect(sortPicked('Preview', [clip], 1, 'Video').send).toEqual([clip]);
+    expect(sortPicked('Preview', [clip], 1, 'Image').refused).toHaveLength(1);
   });
 
   it('takes an MP4 or WebM preview only where the deal takes a video preview, under 64 MB', () => {

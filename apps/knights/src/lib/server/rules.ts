@@ -74,7 +74,11 @@ export function rulesFacts() {
       windowDays: PROGRESSION.fervorWindowDays,
       accuracyFloorPercent: PROGRESSION.fervorAccuracyFloor * 100,
     },
-    hearts: { max: SMITES.max, returnAfterDays: SMITES.expireAfterDays },
+    hearts: {
+      max: SMITES.max,
+      returnAfterDays: SMITES.expireAfterDays,
+      rightVerdictsBack: SMITES.size,
+    },
     ratingGuide: ratingGuide(),
   };
 }
