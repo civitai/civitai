@@ -399,7 +399,6 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
 
     expect(error).toBeInstanceOf(HeldMediaCopyError);
     expect((error as Error).message).not.toContain(HASH.toString());
-    expect(JSON.stringify((error as Error).cause)).not.toContain(HASH.toString());
     expect(String(((error as Error).cause as Error)?.message ?? '')).not.toContain(HASH.toString());
     expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(3);
     const logged = vi

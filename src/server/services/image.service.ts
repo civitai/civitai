@@ -7180,6 +7180,8 @@ export class HeldMediaCopyError extends Error {
 const COPY_BUDGET_MS = 1_500;
 const COPY_ATTEMPTS = 3;
 const COPY_BACKOFF_MS = [100, 300];
+/** An attempt with less time than this left would only time out. */
+const COPY_MIN_ATTEMPT_MS = 50;
 
 /**
  * The Postgres copy of the CSAM entries, which review routing reads. Retried within COPY_BUDGET_MS,
@@ -7196,7 +7198,7 @@ async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteConte
   while (attempts < COPY_ATTEMPTS && Date.now() < deadline) {
     if (attempts > 0) {
       await sleep(Math.min(COPY_BACKOFF_MS[attempts - 1], deadline - Date.now()));
-      if (Date.now() >= deadline) break;
+      if (deadline - Date.now() < COPY_MIN_ATTEMPT_MS) break;
     }
     attempts++;
     let timer: ReturnType<typeof setTimeout> | undefined;
