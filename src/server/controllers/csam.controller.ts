@@ -46,9 +46,10 @@ export async function createCsamReportHandler({
 
 export const CSAM_BLOCKLIST_FAILED_MESSAGE =
   'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
-/** The blocklist entry landed but its review copy did not. The daily drift check repairs it. */
+/** The blocklist entry landed but its review copy did not. An operator repairs it with the reconcile
+ *  script (scripts/oneoffs/reconcile-held-media-blocked-hashes.ts). */
 export const CSAM_HELD_MEDIA_COPY_FAILED_MESSAGE =
-  'The report was filed and the account removed. The blocklist entry was written, but its review copy failed and has been logged; the daily check will repair it. Do not file the report again.';
+  'The report was filed and the account removed. The blocklist entry was written, but its review copy failed and has been logged for repair. Do not file the report again.';
 
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */

@@ -193,8 +193,8 @@ describe('fileCsamReport', () => {
   });
 
   // Ruled by the moderation lead: the blocklist entry landed, so the moderator is told the copy is
-  // repaired by the daily check, with no instruction to re-block (that would mean viewing the media).
-  it('names the copy as the failed store and says the daily check repairs it when only the copy fails', async () => {
+  // logged for repair, with no instruction to re-block (that would mean viewing the media).
+  it('names the copy as the failed store and says it is logged for repair when only the copy fails', async () => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(
       new HeldMediaCopyError(new Error('INSERT INTO "BlockedImage" (hash, reason) VALUES (123, …)'))

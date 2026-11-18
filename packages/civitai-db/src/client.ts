@@ -36,12 +36,6 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
 };
 
-/**
- * Build the Prisma read/write clients. Connection config defaults come from the
- * package env schema (./env, overridable via options); app behavior (logger, slow-query
- * sink) is injected. HMR/global caching and the Next build guard live in the app shim
- * that calls this. See the `~/server/db/client` shim.
- */
 /** The handler for a client's query events: logs a statement slower than 2 s, as `loggableQuery`. */
 export function slowQueryLogger({
   target,
@@ -61,6 +55,12 @@ export function slowQueryLogger({
   };
 }
 
+/**
+ * Build the Prisma read/write clients. Connection config defaults come from the
+ * package env schema (./env, overridable via options); app behavior (logger, slow-query
+ * sink) is injected. HMR/global caching and the Next build guard live in the app shim
+ * that calls this. See the `~/server/db/client` shim.
+ */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
   const { onSlowQuery, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
