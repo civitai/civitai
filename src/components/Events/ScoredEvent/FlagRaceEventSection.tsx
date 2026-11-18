@@ -14,7 +14,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
-/** The home row's Flag Race on the event page: shown to everyone while a flag day runs. */
+/**
+ * The home row's Flag Race on the event page, signed in or not: while a flag day runs and the viewer
+ * may see one of its flags. Under it, each team's race so far.
+ */
 export function FlagRaceEventSection({
   event,
   myTeam,
@@ -22,7 +25,7 @@ export function FlagRaceEventSection({
 }: {
   event: string;
   myTeam?: string;
-  teamHats?: { team: string; url: string }[];
+  teamHats?: { team: string; url: string | null }[];
 }) {
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);

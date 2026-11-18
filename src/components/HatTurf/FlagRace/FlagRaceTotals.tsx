@@ -17,7 +17,7 @@ export function FlagRaceTotals({
 }: {
   event: string;
   myTeam?: string;
-  teamHats?: { team: string; url: string }[];
+  teamHats?: { team: string; url: string | null }[];
 }) {
   const teamColor = useTeamColor();
   const { data } = trpc.hatTurf.getFlagRaceTotals.useQuery(
