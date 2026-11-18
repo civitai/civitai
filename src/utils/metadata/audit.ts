@@ -210,6 +210,11 @@ export function isBlankAuditInput(prompt?: string | null, negativePrompt?: strin
   return !prompt?.trim() && !negativePrompt?.trim();
 }
 
+export type AuditPromptOptions = AuditTimerOptions & {
+  /** Audit the input as nsfw, as `includesInappropriate`'s `nsfw` argument does. */
+  nsfw?: boolean;
+};
+
 /**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
  * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
@@ -224,7 +229,7 @@ export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
   checkProfanity?: boolean,
-  options?: AuditTimerOptions
+  options?: AuditPromptOptions
 ): EnrichedAuditResult => {
   const result = auditFirstBlock(prompt, negativePrompt, checkProfanity, options);
   // Evidence is collected only for a block, not on the passing path.
@@ -245,7 +250,7 @@ const auditFirstBlock = (
   prompt: string,
   negativePrompt?: string,
   checkProfanity?: boolean,
-  options?: AuditTimerOptions
+  options?: AuditPromptOptions
 ): EnrichedAuditResult => {
   if (isBlankAuditInput(prompt, negativePrompt))
     return { blockedFor: [], triggers: [], success: true };
@@ -348,7 +353,7 @@ const auditFirstBlock = (
 
   // 3. Inappropriate content check (with matched word capture)
   const inappropriateResult = timer.time('inappropriate', () =>
-    includesInappropriateEnriched({ prompt, negativePrompt })
+    includesInappropriateEnriched({ prompt, negativePrompt }, options?.nsfw)
   );
   if (inappropriateResult) {
     const message =
