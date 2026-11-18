@@ -1,4 +1,5 @@
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { markUserDealUploadsRemovedSql } from '~/server/services/creator-service-deal-file-retention';
 import {
   assertCollectionItemsVisibleToViewer,
   type CollectionItemKey,
@@ -1268,6 +1269,8 @@ export const deleteUser = async ({
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      // Their uploads to closed deals go now, under the deal holds; the purge job deletes them.
+      dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id)),
       ...(removeModels
         ? []
         : [

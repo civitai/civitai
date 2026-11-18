@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type {
@@ -67,6 +67,7 @@ import {
   headObject,
   uploadImageBufferToStore,
 } from '~/utils/s3-utils';
+import { purgeObjectVersions } from '~/utils/s3-purge-versions';
 
 /**
  * Delivery files for a Creator Services deal.
@@ -553,13 +554,37 @@ async function deleteImages(imageIds: number[]) {
   for (const id of imageIds) await deleteImageById({ id, updatePost: false }).catch(() => null);
 }
 
-/** The row is the source of truth; an object left behind is unreachable and harmless. */
+/**
+ * The row is the source of truth; an object left behind is unreachable. Every stored version goes,
+ * so a versioned bucket keeps no copy; where versions cannot be listed, a plain delete, logged.
+ * Returns the upload's ETag for the purge record.
+ */
 async function deleteFileObjects(file: FileObjects) {
   const bucket = await getBucket();
-  await deleteObject(bucket, file.s3Key).catch(() => null);
-  if (file.deliveryKey) await deleteObject(bucket, file.deliveryKey).catch(() => null);
+  const client = getS3Client();
+  const head = await client
+    .send(new HeadObjectCommand({ Bucket: bucket, Key: file.s3Key }))
+    .catch(() => null);
+  const etag = head?.ETag?.replace(/"/g, '') ?? null;
+  for (const key of [file.s3Key, ...(file.deliveryKey ? [file.deliveryKey] : [])]) {
+    const remaining = await purgeObjectVersions({ client, bucket, key })
+      .then((result) => result.remaining)
+      .catch(async () => {
+        await deleteObject(bucket, key).catch(() => null);
+        return null;
+      });
+    if (remaining !== 0)
+      logToAxiom({
+        name: 'creator-service-deal-file',
+        type: 'warning',
+        message: 'object versions may remain after delete',
+        fileId: file.id,
+        payload: { remaining },
+      });
+  }
   // A preview deleted mid-scan: its hidden copy goes with it.
   if (file.imageId) await deleteImages([file.imageId]);
+  return etag;
 }
 
 /**
@@ -599,11 +624,21 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
       FOR UPDATE OF f SKIP LOCKED`;
     if (!rows.length) return rows;
     const ids = rows.map(({ id }) => id);
+    // What stays of a deleted file: no name or content, only what it was and when it went.
+    await tx.$executeRaw`
+      INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size")
+      SELECT "id", "dealId", "size" FROM "ServiceDealFile" WHERE "id" = ANY(${ids}::int[])
+      ON CONFLICT ("fileId") DO NOTHING`;
     await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ANY(${ids}::int[])`;
     await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ANY(${ids}::int[])`;
     return rows;
   });
-  for (const file of purged) await deleteFileObjects(file);
+  for (const file of purged) {
+    const etag = await deleteFileObjects(file);
+    if (etag)
+      await dbWrite.$executeRaw`
+        UPDATE "ServiceDealFilePurge" SET "etag" = ${etag} WHERE "fileId" = ${file.id}::int`;
+  }
   return purged.length;
 }
 

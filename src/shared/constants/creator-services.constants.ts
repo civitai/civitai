@@ -18,6 +18,18 @@ export const SERVICE_DEAL_AUTO_COMPLETE_MS = 72 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
 
+/** A declined, expired or canceled deal's files are deleted this long after it closed. */
+export const SERVICE_DEAL_FILE_RETENTION_CLOSED_MS = 30 * 24 * HOUR;
+/** A completed deal's files are deleted this long after its dispute window ended. */
+export const SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS = 90 * 24 * HOUR;
+
+const days = (ms: number) => ms / (24 * HOUR);
+export const SERVICE_DEAL_FILE_RETENTION_NOTICE = `Deal files are deleted ${days(
+  SERVICE_DEAL_FILE_RETENTION_CLOSED_MS
+)} days after a deal is declined, expires or is canceled, and ${days(
+  SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS
+)} days after a completed deal's dispute window ends. Download anything you want to keep.`;
+
 /**
  * When an unconfirmed hold is looked up. Longer than the Buzz call timeout, so a write that was
  * still in flight when the request gave up has landed (or failed) by then.

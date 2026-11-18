@@ -1,0 +1,326 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { PGlite } from '@electric-sql/pglite';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+/**
+ * Deal-file retention against the real deal migrations on an in-process Postgres: which files the
+ * sweep marks removed, what holds them, and what the purge leaves behind. Storage is faked.
+ */
+
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const s3 = vi.hoisted(() => ({
+  purgeObjectVersions: vi.fn(),
+  deleteObject: vi.fn(),
+  send: vi.fn(),
+}));
+vi.mock('~/utils/s3-utils', () => ({
+  getBucket: async () => 'bucket',
+  deleteObject: s3.deleteObject,
+  getGetUrlByKey: vi.fn(),
+  getPutUrl: vi.fn(),
+  getImageUploadBackend: vi.fn(),
+  getS3Client: () => ({ send: s3.send }),
+  headObject: vi.fn(),
+  uploadImageBufferToStore: vi.fn(),
+}));
+vi.mock('~/utils/s3-purge-versions', () => ({ purgeObjectVersions: s3.purgeObjectVersions }));
+void loggingMock;
+
+type Raw = ReturnType<typeof pgliteRaw>;
+const bridge = (db: { query: PGlite['query'] }) => {
+  const raw = pgliteRaw(db as PGlite);
+  return { $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw };
+};
+dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
+  pgliteRaw(holder.db).executeRaw(...a)) as never);
+dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
+dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+  holder.db.transaction((tx) => fn(bridge(tx)))) as never);
+
+const retention = await import('~/server/services/creator-service-deal-file-retention');
+const files = await import('~/server/services/creator-service-deal-file.service');
+
+const MIGRATIONS = [
+  '20261025120000_creator_services_foundation',
+  '20261028130000_service_deal_event_reason_code',
+  '20261028140000_creator_service_deal_file_state',
+  '20261028150000_creator_service_max_nsfw_level',
+  '20261028160000_creator_service_deal_file_entries',
+  '20261028170000_creator_service_offering_takedown',
+  '20261029140000_creator_service_deal_file_delivery',
+  '20261128150000_creator_service_final_malware_scan',
+  '20261208120000_creator_service_dispute_review',
+  '20261224150000_service_deal_file_removed_at',
+  '20261224150100_service_deal_file_attachment',
+  '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
+].map((name) =>
+  join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
+);
+
+const SELLER = 1;
+const BUYER = 2;
+
+const q = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) =>
+  (await holder.db.query<T>(sql, params)).rows;
+const daysAgo = (days: number) => `now() - interval '${days} days'`;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(`
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status "AppealStatus" NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+      "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "tosViolation" boolean NOT NULL DEFAULT false);
+  `);
+  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+});
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 2, remaining: 0 });
+  s3.deleteObject.mockResolvedValue(undefined);
+  s3.send.mockResolvedValue({ ETag: '"abc123"' });
+  await holder.db.exec(`
+    TRUNCATE "ServiceDealFilePurge", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering",
+      "Report", "CsamReport", "EvidenceHold", "Appeal", "ModActivity" RESTART IDENTITY CASCADE;
+    DELETE FROM "User";
+    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
+    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
+      VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
+  `);
+});
+
+/** A closed deal `age` days past the start of its clock, with one seller final and one buyer attachment. */
+async function closedDeal(
+  status: 'Cancelled' | 'Declined' | 'Expired' | 'Completed',
+  age: number,
+  settled = true
+) {
+  const completed = status === 'Completed';
+  const [deal] = await q<{ id: number }>(
+    `INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", price, "buzzType", "revisionsIncluded",
+       "deliveryDays", "previewKind", status, "requestText", "heldAt", "settledAt", "closedAt",
+       "completedAt", "releaseAt", "updatedAt")
+     VALUES (1, ${BUYER}, ${SELLER}, 500, 'yellow', 1, 3, 'Image', $1, 'a request', ${daysAgo(
+      age + 5
+    )},
+       ${settled ? daysAgo(age) : 'NULL'}, ${completed ? 'NULL' : daysAgo(age)},
+       ${completed ? daysAgo(age + 2) : 'NULL'}, ${completed ? daysAgo(age) : 'NULL'}, now())
+     RETURNING id`,
+    [status]
+  );
+  const [final] = await q<{ id: number }>(
+    `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "fileName", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+     VALUES ($1, 'Final', $2, 'portrait.png', 'image/png', 1234, 'Ready', 'Passed', 'Passed') RETURNING id`,
+    [deal.id, `k/${deal.id}/final`]
+  );
+  const [attachment] = await q<{ id: number }>(
+    `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "fileName", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+     VALUES ($1, 'Attachment', $2, 'ref.png', 'image/png', 99, 'Ready', 'Passed', 'Passed') RETURNING id`,
+    [deal.id, `k/${deal.id}/ref`]
+  );
+  return { dealId: deal.id, finalId: final.id, attachmentId: attachment.id };
+}
+
+const removed = async (fileId: number) =>
+  (
+    await q<{ removedAt: Date | null }>(`SELECT "removedAt" FROM "ServiceDealFile" WHERE id = $1`, [
+      fileId,
+    ])
+  )[0]?.removedAt != null;
+
+describe('the retention windows', () => {
+  it.each(['Cancelled', 'Declined', 'Expired'] as const)(
+    "removes a %s deal's files 30 days after it closed, and not a day before",
+    async (status) => {
+      const early = await closedDeal(status, 29);
+      const due = await closedDeal(status, 31);
+      expect(await retention.markExpiredDealFiles()).toBe(2);
+      expect(await removed(early.finalId)).toBe(false);
+      expect(await removed(due.finalId)).toBe(true);
+      expect(await removed(due.attachmentId)).toBe(true);
+    }
+  );
+
+  it("removes a completed deal's files 90 days after its dispute window ended, and not a day before", async () => {
+    const early = await closedDeal('Completed', 89);
+    const due = await closedDeal('Completed', 91);
+    await retention.markExpiredDealFiles();
+    expect(await removed(early.finalId)).toBe(false);
+    expect(await removed(due.finalId)).toBe(true);
+  });
+
+  it('keeps the files of a deal whose money has not settled, or that is still open', async () => {
+    const unsettled = await closedDeal('Cancelled', 60, false);
+    expect(unsettled.dealId).toBeGreaterThan(0);
+    const open = await closedDeal('Cancelled', 60);
+    await q(`UPDATE "ServiceDeal" SET status = 'Accepted' WHERE id = $1`, [open.dealId]);
+    expect(await retention.markExpiredDealFiles()).toBe(0);
+  });
+});
+
+describe('a later moderation action restarts the clock', () => {
+  it.each([
+    [
+      'a dispute ruling',
+      `UPDATE "ServiceDeal" SET "disputeResolvedAt" = ${daysAgo(
+        10
+      )}, "disputeResolution" = 'Refund'`,
+    ],
+    [
+      'a takedown of the offering',
+      `UPDATE "ServiceOffering" SET status = 'Removed', "removedAt" = ${daysAgo(
+        10
+      )}, "removedReason" = 'x', "removedById" = 9`,
+    ],
+    [
+      'a report handled',
+      `INSERT INTO "Report" (status, "createdAt", "statusSetAt") VALUES ('Actioned', ${daysAgo(
+        50
+      )}, ${daysAgo(10)});
+      INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1)`,
+    ],
+  ])('%s', async (_name, sql) => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(sql);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(false);
+  });
+});
+
+describe('holds', () => {
+  const holds: [string, (party: number) => string][] = [
+    ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
+    [
+      'a child-safety report, long sent and archived',
+      (p) =>
+        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
+          800
+        )}, ${daysAgo(700)})`,
+    ],
+    [
+      'a child-safety report naming them as the secondary user',
+      (p) => `INSERT INTO "CsamReport" (details) VALUES ('{"secondaryUserId": "${p}"}')`,
+    ],
+    ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
+    [
+      'a lost payment dispute',
+      (p) =>
+        `INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('user', ${p}, 'chargeback:dp_1:banned')`,
+    ],
+  ];
+  const cases = holds.flatMap(([name, sql]) =>
+    [
+      ['buyer', BUYER],
+      ['seller', SELLER],
+    ].map(([who, party]) => [`${name} on the ${who}`, sql(party as number)] as const)
+  );
+
+  it.each(cases)('%s keeps the deal files', async (_name, sql) => {
+    const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(sql);
+    expect(await retention.markExpiredDealFiles()).toBe(0);
+    expect(await removed(finalId)).toBe(false);
+    expect(await removed(attachmentId)).toBe(false);
+  });
+
+  it('an open report on the offering keeps them; a handled one does not', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(`
+      INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(45)});
+      INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1);`);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(false);
+    await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(true);
+  });
+
+  it('a released evidence hold and a resolved appeal keep nothing', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(`
+      INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${BUYER}, now());
+      INSERT INTO "Appeal" ("userId", status) VALUES (${SELLER}, 'Rejected');`);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(true);
+  });
+});
+
+describe('the purge after the sweep', () => {
+  it('deletes every version of the objects and keeps a record with no name', async () => {
+    const { dealId, finalId } = await closedDeal('Cancelled', 40);
+    await retention.markExpiredDealFiles();
+    expect(await files.purgeRemovedFiles()).toBe(2);
+    expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
+    expect(s3.purgeObjectVersions).toHaveBeenCalledWith(
+      expect.objectContaining({ bucket: 'bucket', key: `k/${dealId}/final` })
+    );
+    const [record] = await q(`SELECT * FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId]);
+    expect(record).toMatchObject({ fileId: finalId, dealId, size: 1234, etag: 'abc123' });
+    expect(JSON.stringify(record)).not.toContain('portrait');
+  });
+
+  it('falls back to a plain delete where versions cannot be listed, and still purges', async () => {
+    const { dealId } = await closedDeal('Cancelled', 40);
+    s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied'));
+    await retention.markExpiredDealFiles();
+    expect(await files.purgeRemovedFiles()).toBe(2);
+    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`);
+    expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
+  });
+});
+
+describe('the notice', () => {
+  it('states the windows the sweep uses', async () => {
+    const { SERVICE_DEAL_FILE_RETENTION_NOTICE } = await import(
+      '~/shared/constants/creator-services.constants'
+    );
+    expect(SERVICE_DEAL_FILE_RETENTION_NOTICE).toBe(
+      "Deal files are deleted 30 days after a deal is declined, expires or is canceled, and 90 days after a completed deal's dispute window ends. Download anything you want to keep."
+    );
+  });
+});
+
+describe('account deletion', () => {
+  it("removes the user's own uploads on closed deals at once, not the other party's", async () => {
+    const { finalId, attachmentId } = await closedDeal('Completed', 1);
+    await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+    expect(await removed(finalId)).toBe(true);
+    expect(await removed(attachmentId)).toBe(false);
+  });
+
+  it('keeps them under a hold, and while the deal is open', async () => {
+    const held = await closedDeal('Completed', 1);
+    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+    expect(await removed(held.finalId)).toBe(false);
+    await q(`DELETE FROM "EvidenceHold"`);
+    await q(
+      `UPDATE "ServiceDeal" SET status = 'Delivered', "releaseAt" = NULL, "settledAt" = NULL`
+    );
+    await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+    expect(await removed(held.finalId)).toBe(false);
+  });
+});

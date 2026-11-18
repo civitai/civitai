@@ -11719,6 +11719,19 @@ model ServiceDealEvent {
   @@index([dealId, createdAt, id])
 }
 
+/// What remains of a deal file once it is deleted: no name or content. `etag` is the storage
+/// fingerprint of the upload, when it could be read at deletion.
+model ServiceDealFilePurge {
+  id       Int      @id @default(autoincrement())
+  fileId   Int      @unique
+  dealId   Int
+  size     Int
+  etag     String?
+  purgedAt DateTime @default(now())
+
+  @@index([dealId])
+}
+
 model ServiceDealFile {
   id             Int                       @id @default(autoincrement())
   dealId         Int
