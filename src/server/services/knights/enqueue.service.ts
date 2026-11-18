@@ -29,15 +29,20 @@ export type EnqueueRefusal =
   | 'bad-expiry'
   | 'image-not-found'
   | 'held-for-review'
-  | 'not-servable';
+  | 'not-servable'
+  | 'no-post';
 
 export type EnqueueOptions = {
   /**
-   * Refuse images the public feeds would not show, such as one whose post is unpublished or
-   * missing. Scan samples and owner ratings pass it, giving up the few images whose post
-   * publishes after the scan.
+   * Refuse images the public feeds would not show. Intake leaves it off: scan results often
+   * arrive before the post is published.
    */
   servableOnly?: boolean;
+  /**
+   * Refuse images with no post. Intake passes it: an image rarely gains a post after its scan,
+   * while drafts and scheduled posts often publish later, so those still queue.
+   */
+  requirePost?: boolean;
 };
 
 export type EnqueueOutcome = { imageId: number } & (
@@ -61,7 +66,7 @@ export async function enqueueKnightsItems(
   db: Kysely<DB>,
   input: EnqueueInput,
   now: Date = new Date(),
-  { servableOnly = false }: EnqueueOptions = {}
+  { servableOnly = false, requirePost = false }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
     input.items.map((item) => ({ imageId: item.imageId, outcome: 'refused', reason }));
@@ -74,7 +79,7 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  const images = new Map<number, { held: boolean; servable: boolean }>(
+  const images = new Map<number, { held: boolean; servable: boolean; hasPost: boolean }>(
     input.items.length === 0
       ? []
       : (
@@ -85,6 +90,7 @@ export async function enqueueKnightsItems(
               'img.id',
               'img.needsReview',
               'img.acceptableMinor',
+              'p.id as postRowId',
               servableImage(eb).as('servable'),
             ])
             .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
@@ -94,6 +100,7 @@ export async function enqueueKnightsItems(
           {
             held: row.needsReview !== null || row.acceptableMinor,
             servable: Boolean(row.servable),
+            hasPost: row.postRowId !== null,
           },
         ])
   );
@@ -122,6 +129,7 @@ export async function enqueueKnightsItems(
     if (image === undefined) return refuse('image-not-found');
     if (image.held) return refuse('held-for-review');
     if (servableOnly && !image.servable) return refuse('not-servable');
+    if (requirePost && !image.hasPost) return refuse('no-post');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;

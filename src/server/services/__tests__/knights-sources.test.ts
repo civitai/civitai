@@ -80,7 +80,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 1, priority: 1 }],
       },
       undefined,
-      { servableOnly: true }
+      { requirePost: true }
     );
     expect(enqueue).toHaveBeenNthCalledWith(
       2,
@@ -91,7 +91,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 2, priority: 2 }],
       },
       undefined,
-      { servableOnly: true }
+      { requirePost: true }
     );
   });
 
@@ -179,7 +179,7 @@ describe('queueOwnerRatingForKnights', () => {
         items: [{ imageId: 7, priority: 1 }],
       },
       undefined,
-      { servableOnly: true }
+      { requirePost: true }
     );
   });
 

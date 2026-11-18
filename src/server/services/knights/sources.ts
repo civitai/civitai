@@ -157,7 +157,7 @@ async function enqueueFromSource(
         items: [item],
       },
       undefined,
-      { servableOnly: true }
+      { requirePost: true }
     );
   } catch (error) {
     logToAxiom(
