@@ -74,7 +74,7 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
-  // The ruling toast floats over the answer row, so nothing answers or skips until it is dismissed.
+  // The ruling toast floats over the image stage; nothing answers or skips until it is dismissed.
   const rulingNotice = dismissible(
     () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
     { noticeFailed: true }
@@ -713,6 +713,7 @@
           />
         {/key}
         {@render levelToast(true)}
+        {@render ruling(true)}
       </div>
       <div class="controls" class:yesno={yesNo}>
         <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers} inert={rulingPending}>
@@ -728,7 +729,6 @@
           <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
-        {@render ruling(true)}
       </div>
       {#if formMessage}
         <p class="notice flat" role="alert">{formMessage}</p>
@@ -805,6 +805,7 @@
           />
         {/key}
         {@render levelToast(true)}
+        {@render ruling(true)}
         {#if note}
           <p class="nudge" class:sticky>
             <span role="status">{note}</span>
@@ -833,7 +834,6 @@
           <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
-        {@render ruling(true)}
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}

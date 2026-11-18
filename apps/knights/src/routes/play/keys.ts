@@ -18,7 +18,7 @@ export function answerForKeyPress(options: Option[], key: string, yesNo: boolean
 type Screen = {
   question?: { options: Option[] } | null;
   apprentice?: { kind: string; options?: Option[] } | null;
-  /** A skill-check ruling is up; it floats over the answer row and must be dismissed before the next answer. */
+  /** A skill-check ruling is up; it must be dismissed before the next answer. */
   rulingPending?: boolean;
 };
 

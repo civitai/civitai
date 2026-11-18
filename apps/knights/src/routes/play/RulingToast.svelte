@@ -16,7 +16,7 @@
     /** Why the last dismissal failed, if it did. */
     message: string | null;
     submit: SubmitFunction;
-    /** Over the answer row (a bottom sheet on phones); otherwise in the page flow, where no answer row is drawn. */
+    /** Over the bottom of the image stage; otherwise in the page flow, where no stage is drawn. */
     anchored: boolean;
   } = $props();
 
@@ -79,14 +79,15 @@
     color: var(--io-crimson-text);
     font: 400 13px/1.4 var(--io-font-ui);
   }
-  /* Covers the answer row, the full column wide, and never rises over the image. */
+  /* Over the bottom of the image stage, as the level card floats over its top (z-index 4): the answer row stays clear. */
   .toast.anchored {
     position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    z-index: 11;
-    width: auto;
+    bottom: 16px;
+    left: 50%;
+    z-index: 5;
+    width: min(480px, calc(100% - 32px));
     margin: 0;
+    transform: translateX(-50%);
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
     animation: ov-fade var(--motion-base) var(--ease-out-quart);
   }
@@ -136,13 +137,12 @@
     font-size: 13px;
   }
   @media (max-width: 40rem) {
-    /* A bottom sheet over the phone nav (15), under the account-menu scrim (20). */
+    /* The stage's full width, its bottom edge on the stage's, just above the answer row. */
     .toast.anchored {
-      position: fixed;
-      z-index: 19;
-      border-width: 1px 0 0;
-      border-radius: 12px 12px 0 0;
-      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      transform: none;
     }
     .check-thumb {
       display: none;
