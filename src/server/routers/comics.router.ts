@@ -2331,11 +2331,23 @@ export const comicsRouter = router({
         isModerator: ctx.user.isModerator,
         surface: 'comic',
       });
-      // createImage refuses these too, but only after the project exists; checked first so a
-      // refused cover or hero leaves no project behind.
-      const imageUrls = [input.coverUrl, input.heroUrl];
-      await assertClientImageUrlsUsable({ urls: imageUrls, userId: ctx.user.id });
-      await assertClientKeysIssuedToCaller({ urls: imageUrls, userId: ctx.user.id });
+      // Images first, so a refused cover or hero leaves no project behind.
+      const cover = input.coverUrl
+        ? await createImage({
+            url: input.coverUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
+      const hero = input.heroUrl
+        ? await createImage({
+            url: input.heroUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2343,6 +2355,8 @@ export const comicsRouter = router({
           description: input.description ?? null,
           genre: input.genre ?? null,
           heroImagePosition: input.heroImagePosition ?? 50,
+          coverImageId: cover?.id ?? null,
+          heroImageId: hero?.id ?? null,
           chapters: {
             create: {
               name: 'Chapter 1',
@@ -2354,34 +2368,6 @@ export const comicsRouter = router({
           chapters: true,
         },
       });
-
-      // Handle cover image
-      if (input.coverUrl) {
-        const image = await createImage({
-          url: input.coverUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { coverImageId: image.id },
-        });
-      }
-
-      // Handle hero image
-      if (input.heroUrl) {
-        const image = await createImage({
-          url: input.heroUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { heroImageId: image.id },
-        });
-      }
 
       await comicsSearchIndex.queueUpdate(
         [{ id: project.id, action: SearchIndexUpdateQueueAction.Update }],
@@ -3258,7 +3244,7 @@ export const comicsRouter = router({
             errorMessage: userFacingError,
           },
         });
-        return { ...updated, referenceImagesSkipped };
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 
@@ -5846,7 +5832,7 @@ export const comicsRouter = router({
           projectId: input.projectId,
           status: updated.status,
         });
-        return { ...updated, referenceImagesSkipped };
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 

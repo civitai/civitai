@@ -492,7 +492,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     },
   },
   'src/server/routers/comics.router.ts#createProject': {
-    writes: ['coverImageId: image.id', 'heroImageId: image.id'],
+    writes: ['coverImageId: cover?.id ?? null', 'heroImageId: hero?.id ?? null'],
     decision: 'server-derived',
   },
   'src/server/routers/comics.router.ts#duplicateChapter': {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as SearchIndex from '~/server/search-index';
 
-/** `comics.createProject` refuses a cover or hero url before it writes the project. */
+/** `comics.createProject` creates the cover and hero images first, so a refused one leaves no project. */
 
 const mocks = vi.hoisted(() => ({
   assertUsable: vi.fn(async (_args: { urls: unknown[]; userId: number }) => undefined),
@@ -88,15 +88,25 @@ describe('comics.createProject', () => {
     (check === 'usable' ? mocks.assertUsable : mocks.assertIssued).mockImplementation(refusing);
     await expect(create(input)).rejects.toBe(refusal);
     expect(dbMock.dbWrite.comicProject.create).not.toHaveBeenCalled();
-    expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
-  it('CONTROL: accepted cover and hero create the project, then both images', async () => {
+  it('CONTROL: accepted cover and hero create the project pointing at both images', async () => {
+    mocks.createImage.mockResolvedValueOnce({ id: 501 }).mockResolvedValueOnce({ id: 502 });
     await create({ coverUrl: GOOD, heroUrl: GOOD });
-    expect(dbMock.dbWrite.comicProject.create).toHaveBeenCalledTimes(1);
     expect(mocks.createImage).toHaveBeenCalledTimes(2);
     expect(mocks.createImage.mock.calls[0][0]).toMatchObject({ url: GOOD, clientUrl: true });
-    expect(mocks.assertUsable.mock.calls[0][0]).toEqual({ urls: [GOOD, GOOD], userId: USER_ID });
-    expect(mocks.assertIssued.mock.calls[0][0]).toEqual({ urls: [GOOD, GOOD], userId: USER_ID });
+    expect(dbMock.dbWrite.comicProject.create.mock.calls[0][0].data).toMatchObject({
+      coverImageId: 501,
+      heroImageId: 502,
+    });
+  });
+
+  it('CONTROL: a project with no cover or hero creates no image', async () => {
+    await create({});
+    expect(mocks.createImage).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.comicProject.create.mock.calls[0][0].data).toMatchObject({
+      coverImageId: null,
+      heroImageId: null,
+    });
   });
 });
