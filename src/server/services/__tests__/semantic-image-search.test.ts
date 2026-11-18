@@ -280,6 +280,7 @@ describe('a stale index cannot surface a hidden image', () => {
     });
     const anchorCheck = asked.find((call) => call.ids.length === 1 && call.ids[0] === 6);
     const results = asked.find((call) => call.ids.includes(5));
+    expect(anchorCheck).toBeDefined();
     expect(anchorCheck?.excludedUserIds ?? []).not.toContain(VIEWER.id);
     expect(results?.excludedUserIds).toContain(VIEWER.id);
   });
