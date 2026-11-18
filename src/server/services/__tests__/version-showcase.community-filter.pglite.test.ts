@@ -67,6 +67,7 @@ const {
   repointVersionShowcases,
   withCuratedShowcases,
   removeMyImageFromVersionShowcase,
+  bustVersionShowcasesForImages,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
 
@@ -392,6 +393,19 @@ describe('when a featured image stops qualifying', () => {
     const entry = [...after.values()][0];
     expect(entry.sites).toEqual(new Set(['red']));
     expect(entry.image.nsfwLevel).toBe(R);
+  });
+
+  it("a deleted image's cover is cleared, found through its showcase row", async () => {
+    const id = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [id, MODEL]);
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
+
+    await bustVersionShowcasesForImages([id]);
+
+    expect(saveModelCovers).toHaveBeenCalledTimes(1);
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
   });
 
   it("doesn't count a row featured on another model", async () => {

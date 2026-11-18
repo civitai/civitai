@@ -582,6 +582,51 @@ async function dropCoversAfterWrite(modelId: number) {
   }
 }
 
+/**
+ * After images are deleted: refreshes every showcase that featured them and clears a cover that was
+ * one of them. Showcase rows have no foreign key, so they are found by image id once the image row
+ * is gone, which the post-based bust can't do.
+ */
+export async function bustVersionShowcasesForImages(imageIds: number[]) {
+  const ids = [...new Set(imageIds)];
+  if (!ids.length) return;
+  try {
+    const affected = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+      SELECT DISTINCT s."modelVersionId", mv."modelId"
+      FROM "ModelVersionShowcaseItem" s
+      JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+      WHERE s."imageId" IN (${Prisma.join(ids)}) AND s.source = 'Community'
+    `;
+    if (!affected.length) return;
+    await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
+    const modelIds = [...new Set(affected.map((row) => row.modelId))];
+    const covers = await dbWrite.$queryRaw<
+      { id: number; coverImageId: number | null; sfwCoverImageId: number | null }[]
+    >`
+      SELECT id, "coverImageId", "sfwCoverImageId" FROM "Model"
+      WHERE id IN (${Prisma.join(modelIds)})
+        AND ("coverImageId" IN (${Prisma.join(ids)}) OR "sfwCoverImageId" IN (${Prisma.join(ids)}))
+    `;
+    const deleted = new Set(ids);
+    const { saveModelCovers } = await import('~/server/services/model-cover.service');
+    for (const model of covers)
+      await saveModelCovers({
+        modelId: model.id,
+        covers: {
+          ...(model.coverImageId && deleted.has(model.coverImageId) ? { coverImageId: null } : {}),
+          ...(model.sfwCoverImageId && deleted.has(model.sfwCoverImageId)
+            ? { sfwCoverImageId: null }
+            : {}),
+        },
+        actorUserId: -1,
+        systemReason: 'version-showcase-image-deleted',
+      });
+  } catch (error) {
+    // Best effort: the delete already committed.
+    logShowcaseError('version-showcase-bust-failed', error);
+  }
+}
+
 /** Refreshes every showcase holding these posts' images, and drops covers that no longer qualify. */
 export async function bustVersionShowcasesForPosts(postIds: number[]) {
   try {

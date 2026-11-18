@@ -109,7 +109,10 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
+import {
+  bustVersionShowcasesForImages,
+  bustVersionShowcasesForPosts,
+} from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
@@ -1495,6 +1498,7 @@ export const deletePost = async ({
   });
 
   const deletedImageIds = deletedImages.map((img) => img.id);
+  await bustVersionShowcasesForImages(deletedImageIds);
 
   // Orphans leave the index but keep their rows — they must not reach the S3 delete below.
   const deindexIds = [...deletedImageIds, ...orphanedImageIds];

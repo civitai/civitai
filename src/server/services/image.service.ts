@@ -134,6 +134,7 @@ import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import {
+  bustVersionShowcasesForImages,
   bustVersionShowcasesForPosts,
   getCarouselShowcaseIds,
 } from '~/server/services/version-showcase.service';
@@ -994,6 +995,7 @@ export const deleteImageById = async ({
           ]
         : []),
       invalidateExistence,
+      bustVersionShowcasesForImages([id]),
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
       userImageVideoCountCaches.bust(image.userId),
@@ -1162,6 +1164,7 @@ export async function deleteImages(
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
       invalidateExistence,
+      bustVersionShowcasesForImages(imageIds),
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
       userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),

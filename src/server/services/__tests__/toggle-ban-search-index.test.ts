@@ -564,6 +564,7 @@ describe('toggleBan -> version showcases', () => {
       email: null,
     });
     await call();
+    expect(showcaseBust).toHaveBeenCalledTimes(1);
     expect(showcaseBust).toHaveBeenCalledWith(USER_ID);
   });
 });
