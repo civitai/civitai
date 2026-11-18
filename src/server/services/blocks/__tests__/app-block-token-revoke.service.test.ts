@@ -93,6 +93,21 @@ describe('revokeAppBlockOauthTokens', () => {
     expect(keys).toHaveLength(0);
   });
 
+  it('🔴 a block on an ordinary third-party OAuth client loses Access tokens only, never Refresh', async () => {
+    const { tx, keys } = store(
+      [{ id: 'apb_tp', appId: '3f2b7c1e-uuid-client', status: 'suspended' }],
+      [
+        { id: 1, clientId: '3f2b7c1e-uuid-client', type: 'Access', userId: 21 },
+        { id: 2, clientId: '3f2b7c1e-uuid-client', type: 'Refresh', userId: 22 },
+      ]
+    );
+    expect(await revokeAppBlockOauthTokens(tx, 'apb_tp')).toEqual({
+      clientId: '3f2b7c1e-uuid-client',
+      userIds: [21],
+    });
+    expect(keys.map((k) => k.id)).toEqual([2]);
+  });
+
   it('a missing block deletes nothing', async () => {
     const { tx, keys } = store([], [{ id: 1, clientId: 'appblk-x', type: 'Access' }]);
     expect(await revokeAppBlockOauthTokens(tx, 'apb_gone')).toBeNull();

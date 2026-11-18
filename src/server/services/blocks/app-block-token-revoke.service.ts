@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
 
+/** The OAuth client the approve provisions for an app (`appblk-<slug>`, publish-request.service). */
+const APP_BLOCK_CLIENT_PREFIX = 'appblk-';
+
 /** The holders of the app tokens a suspension deleted, for the post-commit orchestrator revoke. */
 export type RevokedAppTokens = { clientId: string; userIds: number[] };
 
@@ -11,7 +14,8 @@ export type RevokedAppTokens = { clientId: string; userIds: number[] };
  *
  * Does nothing unless the block now reads `suspended`, so a drifted flip (pending, deprecated) and
  * the shared remix client's rows (their own statuses) revoke nothing. A client with another block
- * still approved keeps its tokens.
+ * still approved keeps its tokens. A block on an ordinary third-party OAuth client loses its Access
+ * tokens only: its Refresh tokens belong to that integration's own users.
  */
 export async function revokeAppBlockOauthTokens(
   tx: Prisma.TransactionClient,
@@ -26,7 +30,10 @@ export async function revokeAppBlockOauthTokens(
     where: { appId: block.appId, status: 'approved', NOT: { id: appBlockId } },
   });
   if (approvedSiblings > 0) return null;
-  const where = { clientId: block.appId, type: { in: ['Access' as const, 'Refresh' as const] } };
+  const types: Array<'Access' | 'Refresh'> = block.appId.startsWith(APP_BLOCK_CLIENT_PREFIX)
+    ? ['Access', 'Refresh']
+    : ['Access'];
+  const where = { clientId: block.appId, type: { in: types } };
   const holders = await tx.apiKey.findMany({ where, select: { userId: true } });
   if (!holders.length) return null;
   await tx.apiKey.deleteMany({ where });
