@@ -12,6 +12,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
+    // "More like this" without the viewer's own images (results only, never the source image).
+    excludeOwn: z.boolean().optional(),
     // Room for whatever the images feed can select: its filters carry into the search unchanged.
     tagIds: z.number().int().array().max(100).optional(),
     // By name, as the image search URLs and pickers carry them; resolved to ids on the server.

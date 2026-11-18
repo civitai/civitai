@@ -158,16 +158,19 @@ export async function searchSemanticImages({
       excludedTagIds: number[];
       fromPlatform?: boolean;
       withMeta?: boolean;
+      // Users left out of these results only.
+      alsoExcludedUserIds?: number[];
     }
   ) => {
+    const { alsoExcludedUserIds = [], ...feedFilters } = filters;
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
         browsingLevel: level,
-        ...filters,
-        excludedUserIds,
+        ...feedFilters,
+        excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
         include: ['cosmetics', 'tagIds'],
@@ -212,6 +215,8 @@ export async function searchSemanticImages({
         excludedTagIds,
         fromPlatform: input.fromPlatform,
         withMeta: input.withMeta,
+        // "More like this" without the viewer's own images; the source check above still sees them.
+        alsoExcludedUserIds: input.excludeOwn && user ? [user.id] : undefined,
       })
     );
   // The candidate cache holds nothing per user, and an upload is one user's.
