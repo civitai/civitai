@@ -327,12 +327,12 @@ func TestIntegrationToolsFilter(t *testing.T) {
 		{"all of two", []int{2102001, 2102002}, []int{2101003, 2101001}},
 		{"all of three, out of order", []int{2102003, 2102001, 2102002}, []int{2101003}},
 		{"a repeated tool", []int{2102002, 2102002}, []int{2101003, 2101002, 2101001}},
-		{"a tool and one nobody holds with it", []int{2102004, 2102001}, nil},
-		{"a zero id (bound as sent)", []int{0}, nil},
+		{"a tool and one nobody holds with it", []int{2102004, 2102001}, []int{}},
+		{"a zero id (bound as sent)", []int{0}, []int{}},
 	} {
 		q := mod
 		q.Tools = c.tools
-		if got := integIDs(integRun(t, pool, q)); !reflect.DeepEqual(got, c.want) && !(len(got) == 0 && len(c.want) == 0) {
+		if got := integIDs(integRun(t, pool, q)); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
