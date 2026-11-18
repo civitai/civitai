@@ -161,7 +161,7 @@ func recorder(t *testing.T) (*Provider, *tracetest.SpanRecorder) {
 func attrs(s sdktrace.ReadOnlySpan) map[attribute.Key]string {
 	out := map[attribute.Key]string{}
 	for _, kv := range s.Attributes() {
-		out[kv.Key] = kv.Value.Emit()
+		out[kv.Key] = kv.Value.String()
 	}
 	return out
 }
@@ -208,7 +208,7 @@ func TestPgxTracer(t *testing.T) {
 	}
 	for _, s := range ended {
 		for _, kv := range s.Attributes() {
-			if strings.Contains(kv.Value.Emit(), sentinel) {
+			if strings.Contains(kv.Value.String(), sentinel) {
 				t.Fatalf("span %q attribute %s carries the bind value / error text", s.Name(), kv.Key)
 			}
 		}
@@ -277,7 +277,7 @@ func TestRedisHook(t *testing.T) {
 			t.Fatalf("span %q status carries the error text", s.Name())
 		}
 		for _, kv := range s.Attributes() {
-			if strings.Contains(kv.Value.Emit(), sentinel) {
+			if strings.Contains(kv.Value.String(), sentinel) {
 				t.Fatalf("span %q attribute %s carries a key or argument", s.Name(), kv.Key)
 			}
 		}

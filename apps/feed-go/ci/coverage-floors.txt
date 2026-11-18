@@ -16,7 +16,7 @@ internal/chread 93
 internal/config 78
 internal/dbpool 95
 internal/feed 76
-internal/fallback 80
+internal/fallback 91
 internal/feedsvc 92
 internal/hydrate 86
 internal/inputschema 80
@@ -27,6 +27,6 @@ internal/server 93
 internal/shadow 95
 internal/superjson 97
 internal/sysredis 88
-internal/tracing 70
+internal/tracing 92
 internal/trpc 89
 internal/v1models 91

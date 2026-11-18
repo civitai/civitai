@@ -40,9 +40,9 @@ func traceparent(traceID, flags string) string {
 }
 
 // traced turns tracing on for s, as main does, over an in-memory recorder at Node's ratio.
-func traced(s *Server, ratio float64) *tracetest.SpanRecorder {
+func traced(s *Server) *tracetest.SpanRecorder {
 	rec := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(tracing.HeadSampler(ratio)), sdktrace.WithSpanProcessor(rec))
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(tracing.HeadSampler(0.1)), sdktrace.WithSpanProcessor(rec))
 	s.Tracer, s.Propagator = tp.Tracer("test"), tracing.Propagator()
 	return rec
 }
@@ -50,7 +50,7 @@ func traced(s *Server, ratio float64) *tracetest.SpanRecorder {
 func spanAttrs(s sdktrace.ReadOnlySpan) map[attribute.Key]string {
 	out := map[attribute.Key]string{}
 	for _, kv := range s.Attributes() {
-		out[kv.Key] = kv.Value.Emit()
+		out[kv.Key] = kv.Value.String()
 	}
 	return out
 }
@@ -71,7 +71,7 @@ func endedNamed(rec *tracetest.SpanRecorder, name string) []sdktrace.ReadOnlySpa
 // drops, records nothing (and the request is answered the same).
 func TestServeSpanContinuesTheCallersTrace(t *testing.T) {
 	s := serveServer(prometheus.NewRegistry(), served(nil), &proxyRecorder{})
-	rec := traced(s, 0.1)
+	rec := traced(s)
 	r := publicRequest()
 	r.Header.Set("traceparent", traceparent(inTrace, "01"))
 	w := httptest.NewRecorder()
@@ -122,7 +122,7 @@ func TestFallbackProxyHopIsAChildSpan(t *testing.T) {
 	s := serveServer(prometheus.NewRegistry(), func(context.Context, *http.Request) (*computed, error) {
 		return nil, fallback.Safef("feed-status", "%d", 503)
 	}, fb)
-	rec := traced(s, 0.1)
+	rec := traced(s)
 	r := publicRequest()
 	r.Header.Set("traceparent", traceparent(inTrace, "01"))
 	s.ServeHTTP(httptest.NewRecorder(), r)
@@ -147,7 +147,7 @@ func TestFallbackProxyHopIsAChildSpan(t *testing.T) {
 	}
 	got := map[attribute.Key]string{}
 	for _, kv := range ev[0].Attributes {
-		got[kv.Key] = kv.Value.Emit()
+		got[kv.Key] = kv.Value.String()
 	}
 	if got["feed_go.fallback.reason"] != "feed-status" || got["feed_go.fallback.detail"] != "503" {
 		t.Fatalf("fallback event attributes %v", got)
@@ -162,7 +162,7 @@ func TestShadowSpanContinuesTheSamplersTrace(t *testing.T) {
 	s := newPhaseServer(reg, 1, func(context.Context, *http.Request) (*computed, error) {
 		return &computed{payload: []byte(nodeEnvelope)}, nil
 	})
-	rec := traced(s, 0.1)
+	rec := traced(s)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, shadowBody(t, "{}"))
 	req.Header.Set("traceparent", traceparent(inTrace, "01"))
 	w := httptest.NewRecorder()
@@ -241,7 +241,7 @@ func TestDurationExemplarOnlyForSampledRequests(t *testing.T) {
 			reg := prometheus.NewRegistry()
 			s := serveServer(reg, served(nil), &proxyRecorder{})
 			if c.tracing {
-				traced(s, 0.1)
+				traced(s)
 			}
 			r := publicRequest()
 			r.Header.Set("traceparent", c.traceparent)
@@ -318,7 +318,7 @@ func TestFallbackLogLineFieldsAndRedaction(t *testing.T) {
 		var buf bytes.Buffer
 		s := serveServer(prometheus.NewRegistry(), nil, &proxyRecorder{})
 		s.Events = &EventLog{Log: slog.New(slog.NewJSONHandler(&buf, nil)), FallbackPerMinute: 10}
-		rec := traced(s, 0.1)
+		rec := traced(s)
 		r := inputRequest(c.input)
 		r.Header.Set("traceparent", traceparent(inTrace, "01"))
 		w := httptest.NewRecorder()
@@ -379,7 +379,7 @@ func TestServeErrorLogLineHasNoErrorText(t *testing.T) {
 		return nil, errors.New("replica on fire for user " + sentinel)
 	}, &proxyRecorder{})
 	s.Log = slog.New(slog.NewJSONHandler(&buf, nil))
-	rec := traced(s, 0.1)
+	rec := traced(s)
 	r := publicRequest()
 	r.Header.Set("traceparent", traceparent(inTrace, "01"))
 	s.ServeHTTP(httptest.NewRecorder(), r)

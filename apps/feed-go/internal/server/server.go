@@ -843,7 +843,7 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 	w.WriteHeader(http.StatusAccepted)
 	started = true
 	spanHandedOff = true
-	go func() {
+	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		// Deferred in this order so they run in reverse: recover first (a panic in compare or
 		// classify is counted, never fatal), then the queue slot is released, then shutdown is told,
 		// and the span ends before all of them.
