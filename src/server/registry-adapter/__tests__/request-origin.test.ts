@@ -144,8 +144,14 @@ describe('🔴 a region value in the request’s meta is judged as its header is
 
   it.each([
     ['meta GB, no headers: held', true, { country: 'GB' }, {}],
-    ['meta isuk, no headers: held as GB', true, { isuk: 'true' }, {}],
-    ['meta isuk, header DE: held as GB', true, { isuk: '1' }, { 'cf-ipcountry': 'DE' }],
+    // `x-isuk` comes from no edge the gateway sits behind, so it has no meta key: a caller's own
+    // `isuk` is not read.
+    [
+      'meta isuk is not read: meta DE with isuk is not held',
+      false,
+      { country: 'DE', isuk: 'true' },
+      {},
+    ],
     ['positive control: meta DE, no headers: not held', false, { country: 'DE' }, {}],
     [
       'meta XX, header DE: meta wins and names no country',

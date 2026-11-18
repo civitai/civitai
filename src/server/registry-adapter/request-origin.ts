@@ -66,7 +66,6 @@ export type RequestOrigin = {
 export const REGION_META_KEYS = {
   'cf-ipcountry': 'country',
   'cf-region-code': 'region',
-  'x-isuk': 'isuk',
 } as const;
 
 /**
