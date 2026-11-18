@@ -54,7 +54,7 @@ describe('clearHeldUserImages', () => {
     await pg.exec(`
       INSERT INTO "User" VALUES (8, 1, 'key-csam');
     `);
-    expect((await clearHeldUserImages(db, [1, 2, 3, 4, 5, 6, 7])).sort()).toEqual([1, 2]);
+    expect((await clearHeldUserImages(db, [1, 2, 3, 4, 5, 6, 7])).sort()).toEqual([1, 2, 3, 7]);
     const { rows } = await pg.query<{ id: number; image: string | null }>(
       `SELECT id, image FROM "User" ORDER BY id`
     );

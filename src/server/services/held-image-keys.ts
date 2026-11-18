@@ -23,16 +23,25 @@ export async function anyImageHeldForReview(db: RawQueryClient, keys: string[]) 
 }
 
 /**
- * Clears `User.image` for those of `userIds` whose `User.image` names their profile picture while it
- * is under an owner-hidden hold; returns the ids it cleared.
+ * Of `userIds`, those whose profile picture is under an owner-hidden hold; for each of them whose
+ * `User.image` names that picture, clears `User.image` in the same statement.
  */
 export async function clearHeldUserImages(db: RawQueryClient, userIds: number[]) {
   if (!userIds.length) return [];
   const rows = await db.$queryRaw<{ id: number }[]>`
-    UPDATE "User" u SET image = NULL
-    WHERE u.id IN (${Prisma.join(userIds)}) AND u.image IS NOT NULL
-      AND ${Prisma.raw(userImageNamesHeldPicture)}
-    RETURNING u.id
+    WITH held AS (
+      SELECT u.id, (u.image IS NOT NULL AND ${Prisma.raw(
+        userImageNamesHeldPicture
+      )}) AS "namesPicture"
+      FROM "User" u
+      JOIN "Image" picture ON picture.id = u."profilePictureId"
+      WHERE u.id IN (${Prisma.join(userIds)})
+        AND picture."needsReview" IN (${Prisma.join(OWNER_HIDDEN_REVIEWS)})
+    ), cleared AS (
+      UPDATE "User" u SET image = NULL FROM held WHERE u.id = held.id AND held."namesPicture"
+      RETURNING u.id
+    )
+    SELECT id FROM held
   `;
   return rows.map((row) => row.id);
 }

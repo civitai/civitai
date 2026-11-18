@@ -133,22 +133,26 @@ beforeEach(() => {
 });
 
 describe('a bulk picture refresh', () => {
-  it("clears a User.image naming a held picture, then refreshes the basic-user cache and the users' search documents", async () => {
+  it("clears a User.image naming a held picture, then refreshes those users' basic-user cache and search documents", async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');
     clearImages.mockRejectedValueOnce(new Error('clear failed'));
-
     await refreshProfilePicturesForUsers([3, 4, 3]);
-    expect(refreshBasic).toHaveBeenCalledWith([3, 4]);
-
-    await refreshProfilePicturesForUsers([3, 4]);
     expect(clearImages).toHaveBeenLastCalledWith(expect.anything(), [3, 4]);
-    expect(clearImages.mock.invocationCallOrder[1]).toBeLessThan(
-      refreshBasic.mock.invocationCallOrder[1]
+    expect(refreshPicture).toHaveBeenLastCalledWith([3, 4]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+
+    clearImages.mockResolvedValueOnce([]);
+    await refreshProfilePicturesForUsers([3, 4]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+    expect(queueUserUpdate).not.toHaveBeenCalled();
+
+    clearImages.mockResolvedValueOnce([4]);
+    await refreshProfilePicturesForUsers([3, 4]);
+    expect(refreshBasic).toHaveBeenCalledWith([4]);
+    expect(clearImages.mock.invocationCallOrder[2]).toBeLessThan(
+      refreshBasic.mock.invocationCallOrder[0]
     );
-    expect(queueUserUpdate).toHaveBeenLastCalledWith([
-      { id: 3, action: 'Update' },
-      { id: 4, action: 'Update' },
-    ]);
+    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
   });
 
   it('refreshes every session, never more than the cap at once', async () => {
