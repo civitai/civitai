@@ -41,7 +41,11 @@ import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-ad
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
-import { clientAddress, regionRestricted } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  regionRestricted,
+  subscriptionRegionLine,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -198,6 +202,11 @@ export type ServeOptions = {
    * region at all): the site's own rule (`request-origin.ts`) unless replaced.
    */
   regionRestricted?: (origin: RequestOrigin) => boolean;
+  /**
+   * Called with one line per subscription once its token is accepted: its region decision
+   * (`regionLine`).
+   */
+  onRegion?: (line: string) => void;
 };
 
 export function handleRequest(
@@ -243,6 +252,7 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
