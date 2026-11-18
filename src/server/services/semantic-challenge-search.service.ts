@@ -157,8 +157,6 @@ export async function searchSemanticChallenges({
       participation: input.participation,
       browsingLevel,
       currentUserId: user?.id,
-      // Semantic results hold the viewer's own challenges to every gate too, so a narrowed query
-      // can't show them above its level.
       ownRowsExempt: false,
       isGreen,
       canAccessUserChallenges,

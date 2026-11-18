@@ -100,7 +100,9 @@ vi.mock('~/utils/logging', () => ({
   createLogger: vi.fn(() => vi.fn()),
 }));
 
-const { getInfiniteChallenges } = await import('~/server/services/challenge.service');
+const { getInfiniteChallenges, getCompletedChallengesWithWinners } = await import(
+  '~/server/services/challenge.service'
+);
 
 // See challenge-feed-block-exclusion.service.test.ts for why Prisma.Sql is duck-typed rather than
 // detected with instanceof.
@@ -206,7 +208,8 @@ describe('getInfiniteChallenges — content level filter', () => {
 // narrowed query can't show the viewer their own challenge above its level (the rule itself is
 // run as SQL in challenge-visibility-own-rows.behavior.test.ts).
 describe('getInfiniteChallenges — the owner exemption', () => {
-  const OWNER_EXEMPTION = 'OR c."createdById" =';
+  // Every gate's exemption compares the creator with the viewer: `c."createdById" = <viewer>`.
+  const OWNER_EXEMPTION = 'c."createdById" =';
   const query = (ownRowsExempt?: boolean) =>
     getInfiniteChallenges({
       limit: 20,
@@ -225,13 +228,30 @@ describe('getInfiniteChallenges — the owner exemption', () => {
     mockDbRead.image.findMany.mockResolvedValue([]);
   });
 
-  it("lets the viewer's own challenges past the gates by default", async () => {
-    await query();
+  const winners = (ownRowsExempt?: boolean) =>
+    getCompletedChallengesWithWinners({
+      limit: 20,
+      isGreen: false,
+      currentUserId: 5,
+      canAccessUserChallenges: true,
+      browsingLevel: 1,
+      ownRowsExempt,
+    } as Parameters<typeof getCompletedChallengesWithWinners>[0]);
+
+  // The default cases are the control: they show the matcher sees the clause the others drop.
+  it.each([
+    ['the feed', query],
+    ['the winners list', winners],
+  ])("%s lets the viewer's own challenges past the gates by default", async (_name, run) => {
+    await run();
     expect(captureQuery().text).toContain(OWNER_EXEMPTION);
   });
 
-  it('holds them to every gate with ownRowsExempt: false', async () => {
-    await query(false);
+  it.each([
+    ['the feed', query],
+    ['the winners list', winners],
+  ])('%s holds them to every gate with ownRowsExempt: false', async (_name, run) => {
+    await run(false);
     expect(captureQuery().text).not.toContain(OWNER_EXEMPTION);
   });
 });

@@ -125,6 +125,24 @@ describe('challenge.getInfinite text query guard', () => {
     expect(h.includesInappropriate).toHaveBeenCalledTimes(1);
   });
 
+  // The visibility rule lets a creator see their own challenge past the level gate; a narrowed
+  // query holds them to it (the rule itself: challenge-visibility-own-rows.behavior.test.ts).
+  it("a minor-narrowed text search holds the viewer's own challenges to the narrowed level", async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    await caller(VIEWER).getInfinite({ query: 'young', browsingLevel: ALL });
+    await caller(VIEWER).getCompletedWithWinners({ query: 'young', browsingLevel: ALL } as never);
+    expect(h.feed.mock.calls[0][0].ownRowsExempt).toBe(false);
+    expect(h.winners.mock.calls[0][0].ownRowsExempt).toBe(false);
+  });
+
+  it('keeps the owner exemption when nothing narrowed the query', async () => {
+    await caller(VIEWER).getInfinite({ query: 'neon', browsingLevel: ALL });
+    await caller(VIEWER).getInfinite({ browsingLevel: ALL });
+    await caller(VIEWER).getCompletedWithWinners({ query: 'neon', browsingLevel: ALL } as never);
+    for (const [input] of [...h.feed.mock.calls, ...h.winners.mock.calls])
+      expect(input.ownRowsExempt).not.toBe(false);
+  });
+
   it('the winners list refuses a refused query, and narrows a minor one', async () => {
     h.includesInappropriate.mockReturnValue('inappropriate');
     const refused = await caller(VIEWER).getCompletedWithWinners({ query: 'bad words' } as never);

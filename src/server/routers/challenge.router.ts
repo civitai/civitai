@@ -94,14 +94,15 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
- * request's own unless a minor verdict narrowed it to the safe levels.
+ * request's own unless a minor verdict narrowed it to the safe levels. A narrowed search holds the
+ * viewer's own challenges to that level too (`ownRowsExempt: false`).
  */
 async function guardTextQuery(
   input: { query?: string; browsingLevel?: number },
   ctx: Pick<Context, 'features' | 'user' | 'track'>
-): Promise<number | undefined | 'refuse'> {
+): Promise<{ browsingLevel: number | undefined; ownRowsExempt?: false } | 'refuse'> {
   const query = input.query?.trim();
-  if (!query) return input.browsingLevel;
+  if (!query) return { browsingLevel: input.browsingLevel };
   const effective = getEffectiveBrowsingLevel({
     isGreen: ctx.features.isGreen,
     isLoggedIn: !!ctx.user,
@@ -114,7 +115,9 @@ async function guardTextQuery(
     track: ctx.track,
   });
   if (level === 'refuse') return 'refuse';
-  return level === effective ? input.browsingLevel : level;
+  return level === effective
+    ? { browsingLevel: input.browsingLevel }
+    : { browsingLevel: level, ownRowsExempt: false };
 }
 
 // Router definition
@@ -129,7 +132,7 @@ export const challengeRouter = router({
       if (guard === 'refuse') return { items: [], nextCursor: undefined };
       return getInfiniteChallenges({
         ...input,
-        browsingLevel: guard,
+        ...guard,
         currentUserId: ctx.user?.id,
         isGreen: ctx.features.isGreen,
         canAccessUserChallenges: ctx.features.userChallenges,
@@ -201,7 +204,7 @@ export const challengeRouter = router({
       if (guard === 'refuse') return { items: [], nextCursor: undefined };
       return getCompletedChallengesWithWinners({
         ...input,
-        browsingLevel: guard,
+        ...guard,
         isGreen: ctx.features.isGreen,
         currentUserId: ctx.user?.id,
         canAccessUserChallenges: ctx.features.userChallenges,
