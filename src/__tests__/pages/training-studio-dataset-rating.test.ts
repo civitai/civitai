@@ -21,6 +21,11 @@ const limiter = vi.hoisted(() => ({ claim: vi.fn(), record: vi.fn(async () => un
 vi.mock('~/server/utils/rate-limit-bucket', () => ({ claimRateLimitAttempt: limiter.claim }));
 const globalCap = vi.hoisted(() => ({ check: vi.fn() }));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow: globalCap.check }));
+const flag = vi.hoisted(() => ({ variant: vi.fn() }));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { TRAINING_STUDIO_DATASET_RATING_V2: 'trainingStudioDatasetRatingV2' },
+  getFliptVariant: flag.variant,
+}));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -66,6 +71,7 @@ describe('POST /api/training-studio/dataset-rating', () => {
   beforeEach(() => {
     service.rate.mockClear();
     gate.allow.mockReset().mockResolvedValue(true);
+    flag.variant.mockReset().mockResolvedValue('s2');
     limiter.record.mockClear();
     limiter.claim.mockReset().mockResolvedValue(limiter.record);
     globalCap.check.mockReset().mockResolvedValue({ allowed: true });
@@ -102,6 +108,35 @@ describe('POST /api/training-studio/dataset-rating', () => {
       86_400,
       { failOpen: false }
     );
+  });
+
+  it.each([
+    ['off or matching no rule', null],
+    ['an unknown variant', 'control'],
+    ['the level that would count everything', 's0'],
+  ])(
+    'with the rating flag %s: 403 before any limit is counted or anything is submitted',
+    async (_name, variant) => {
+      flag.variant.mockResolvedValue(variant);
+      const res = await call({ items: [item(1)] });
+      expect(res.statusCode).toBe(403);
+      expect(service.rate).not.toHaveBeenCalled();
+      expect(limiter.claim).not.toHaveBeenCalled();
+      expect(globalCap.check).not.toHaveBeenCalled();
+    }
+  );
+
+  it('a Flipt failure refuses', async () => {
+    flag.variant.mockRejectedValue(new Error('flipt down'));
+    expect((await call({ items: [item(1)] })).statusCode).toBe(403);
+    expect(service.rate).not.toHaveBeenCalled();
+  });
+
+  it('reads the rating flag for this user, and a mature-level variant proceeds', async () => {
+    flag.variant.mockResolvedValue('S3');
+    expect((await call({ items: [item(1)] })).statusCode).toBe(200);
+    expect(service.rate).toHaveBeenCalledTimes(1);
+    expect(flag.variant.mock.calls[0]!.slice(0, 2)).toEqual(['trainingStudioDatasetRatingV2', '7']);
   });
 
   it('a user the Studio gate refuses rates nothing', async () => {
