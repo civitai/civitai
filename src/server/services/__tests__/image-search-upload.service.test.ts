@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RateLimitBucket from '~/server/utils/rate-limit-bucket';
 import { isFailClosedRateLimitScope } from '~/server/utils/rate-limit-bucket';
@@ -63,6 +64,10 @@ beforeEach(() => {
     }
   );
   redisMock.redis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
+  redisMock.redis.eval.mockImplementation(
+    async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) =>
+      store.get(keys[0]) === args[0] && store.delete(keys[0]) ? 1 : 0
+  );
 });
 
 describe('the global daily upload cap', () => {
@@ -153,9 +158,66 @@ describe("one of the viewer's upload searches at a time", () => {
     await expect(withSearchUploadSearch(6, async () => 'other viewer')).resolves.toBe(
       'other viewer'
     );
+    await expect(withSearchUploadSearch(5, async () => 'third')).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
     release();
     await first;
     await expect(withSearchUploadSearch(5, async () => 'after')).resolves.toBe('after');
+  });
+
+  const holdKey = () => [...store.keys()].find((k) => k.includes('search-upload-searching'));
+
+  it('takes the hold with an expiry, so a crashed search cannot lock the viewer out', async () => {
+    await withSearchUploadSearch(5, async () => undefined);
+    expect(redisMock.redis.set).toHaveBeenCalledWith(
+      expect.stringContaining('search-upload-searching'),
+      expect.any(String),
+      { NX: true, EX: 60 }
+    );
+  });
+
+  it("does not free a newer search's hold when the first outlives its own", async () => {
+    let release!: () => void;
+    const first = withSearchUploadSearch(5, () => new Promise<void>((r) => (release = r)));
+    await Promise.resolve();
+    const key = holdKey()!;
+    store.set(key, 'newer-request-token');
+    release();
+    await first;
+    expect(store.get(key)).toBe('newer-request-token');
+  });
+
+  it('frees the viewer when the search throws, and the error still surfaces', async () => {
+    await expect(
+      withSearchUploadSearch(5, async () => {
+        throw new Error('search failed');
+      })
+    ).rejects.toThrow('search failed');
+    expect(holdKey()).toBeUndefined();
+  });
+
+  it('refuses without searching when the hold cannot be taken', async () => {
+    const run = vi.fn(async () => 'ran');
+    redisMock.redis.set.mockRejectedValueOnce(new Error('redis down'));
+    await expect(withSearchUploadSearch(5, run)).rejects.toThrow();
+    redisMock.redis.set.mockResolvedValueOnce(undefined as never);
+    await expect(withSearchUploadSearch(5, run)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("keeps the search's result and refusal when the release fails", async () => {
+    redisMock.redis.eval.mockRejectedValue(new Error('redis down'));
+    await expect(withSearchUploadSearch(5, async () => 'result')).resolves.toBe('result');
+    store.clear();
+    const refusal = new TRPCError({ code: 'FORBIDDEN', message: 'no' });
+    await expect(
+      withSearchUploadSearch(5, async () => {
+        throw refusal;
+      })
+    ).rejects.toBe(refusal);
   });
 });
 

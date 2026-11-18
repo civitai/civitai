@@ -93,11 +93,6 @@ export async function claimSearchUploadSlot(req: NextApiRequest) {
   await record();
 }
 
-/**
- * Scans the uploaded consumer blob with the imageScanning step. Nothing is written to the database:
- * the upload is a cache record for an hour, and the orchestrator expires the blob. Returns at once;
- * the client polls {@link getSearchUploadStatus}.
- */
 export const SEARCH_UPLOAD_SOURCE_MESSAGE = 'Search needs the site item you started from.';
 
 /** Whether the item exists: a case is checked by its reference's format, as it lives in another app. */
@@ -148,26 +143,45 @@ export async function claimSearchUploadUserDay({
 const searchingKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_SEARCHING}:${userId}` as RedisKeyTemplateCache;
 const SEARCHING_HOLD_SECONDS = 60;
+// Deletes the hold only if this request still owns it: a request outliving its hold must not free
+// the next request's.
+const RELEASE_IF_OWNER = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`;
 
 /**
  * Runs one of the viewer's upload searches at a time: the daily claim reads then writes its count,
  * so two at once would both pass it. The second is refused while the first runs.
  */
 export async function withSearchUploadSearch<T>(userId: number, run: () => Promise<T>) {
-  const token = randomUUID();
+  // Widened so the reply is read as SET's ('OK' | null), not as the token's template type.
+  const token: string = randomUUID();
   const held = await redis.set(searchingKey(userId), token, {
     NX: true,
     EX: SEARCHING_HOLD_SECONDS,
   });
-  if (held === null)
+  if (held !== 'OK')
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'A search is already running.' });
   try {
     return await run();
   } finally {
-    if ((await redis.get(searchingKey(userId))) === token) await redis.del(searchingKey(userId));
+    // A failed release must not replace the search's own result or refusal; the hold expires.
+    await redis
+      .eval(RELEASE_IF_OWNER, { keys: [searchingKey(userId)], arguments: [token] })
+      .catch((error: unknown) =>
+        logToAxiom({
+          type: 'error',
+          name: 'search-upload-search-release',
+          userId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
   }
 }
 
+/**
+ * Scans the uploaded consumer blob with the imageScanning step. Nothing is written to the database:
+ * the upload is a cache record for an hour, and the orchestrator expires the blob. Returns at once;
+ * the client polls {@link getSearchUploadStatus}.
+ */
 export async function prepareSearchUpload({
   userId,
   url,
