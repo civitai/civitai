@@ -819,6 +819,7 @@ describe('free-text actions', () => {
 
   it.each([
     { action: 'composeEntities', entityType: 'CommentV3', entityIds: [7] },
+    { action: 'composeComFaceIntent', modelIds: [7] },
     { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
   ])('$action is refused on the unattributed testing route', async (input) => {
     const res = await call(input);
@@ -878,6 +879,44 @@ describe('free-text actions', () => {
         },
       ],
     });
+  });
+
+  it('composeComFaceIntent returns the fields the live intent check reads', async () => {
+    dbMock.dbRead.model.findMany.mockResolvedValue([
+      { id: 5, name: 'Retro', description: '<p>A <b>retro</b> style</p>', userId: 3 },
+    ]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { trainedWords: ['retro', 'r2'] },
+      { trainedWords: ['retro'] },
+    ]);
+    const res = await runTextScanHarnessAction(
+      textScanHarnessSchema.parse({ action: 'composeComFaceIntent', modelIds: [5, 6] }),
+      { moderatorId: 1 }
+    );
+    const { comFaceIntentFields } = await import('~/server/services/model-com-face-intent.service');
+    // The live check's own function over the stored listing and the owner's deduped trigger words.
+    const fields = comFaceIntentFields({
+      name: 'Retro',
+      description: '<p>A <b>retro</b> style</p>',
+      triggerWords: ['retro', 'r2'],
+    });
+    expect(res.body).toEqual({
+      results: [
+        { entityId: 5, ok: true, fields, userId: 3 },
+        { entityId: 6, ok: false, error: 'entity not found' },
+      ],
+    });
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [5, 6] }, deletedAt: null } })
+    );
+    // The owner's own versions only, in a fixed order, as the live check reads them.
+    expect(dbMock.dbRead.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { modelId: 5, model: { userId: 3 } },
+        orderBy: { id: 'asc' },
+      })
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('quoteTexts prices the composition with whatif', async () => {
@@ -1178,7 +1217,12 @@ describe('free-text actions', () => {
   });
 
   it('scanEntity refuses a wait past the time budget', async () => {
-    const res = await call({ action: 'scanEntity', entityType: 'CommentV3', entityId: 7, wait: 121 });
+    const res = await call({
+      action: 'scanEntity',
+      entityType: 'CommentV3',
+      entityId: 7,
+      wait: 121,
+    });
     expect(res._status()).toBe(400);
     expect(submitWorkflow).not.toHaveBeenCalled();
   });

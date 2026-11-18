@@ -48,7 +48,11 @@ function BountiesPage() {
               />
             </Stack>
           )}
-          <BountiesInfinite filters={query.engagement ? { ...query, status: undefined } : query} />
+          {/* An engagement view lists the viewer's own bounties; the search covers the whole feed. */}
+          <BountiesInfinite
+            filters={query.engagement ? { ...query, status: undefined } : query}
+            searchable={!query.engagement}
+          />
         </Stack>
       </MasonryContainer>
     </>

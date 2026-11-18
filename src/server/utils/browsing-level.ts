@@ -113,31 +113,34 @@ export const domainBrowsingLevelCap = ({
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
 
 /**
+ * The verified search crawler making this request, if any: the header the API request policy
+ * sets after checking the user agent and source address. Its answers can differ from a
+ * signed-out visitor's, so the edge cache must not keep them (`createContext`).
+ */
+export const requestVerifiedCrawler = (req: Pick<NextApiRequest, 'headers'> | undefined) =>
+  parseVerifiedBotHeader(req?.headers[VERIFIED_BOT_HEADER]);
+
+/**
  * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
  * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
  */
 export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
   const canViewNsfw = !!ctx.features.canViewNsfw;
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  const isAuthorized = !!ctx.user || (requestVerifiedCrawler(ctx.req) !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
 }
 
 /**
  * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
- * parent does not reach each image: this drops those above the cap, mixed ratings that reach
- * above it, and unrated ones. The owner
- * and moderators keep them, since edit forms are filled from these reads and save back only the
- * images they were shown.
+ * parent does not reach each image: this applies it per image. An edit saved from such a read
+ * keeps the dropped links (`shownImageIds` on `updateEntityImages`).
  */
 export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   images: T[],
-  ctx: Pick<Context, 'user' | 'features' | 'req'>,
-  { ownerId }: { ownerId?: number | null } = {}
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   const cap = requestDomainBrowsingLevelCap(ctx);
-  if (cap === undefined || ctx.user?.isModerator) return images;
-  if (ownerId != null && ctx.user?.id === ownerId) return images;
+  if (cap === undefined) return images;
   return images.filter((image) => isRatingWithinCap(image.nsfwLevel, cap));
 }
 

@@ -5,6 +5,7 @@ import { eventTurfTopic, turfKeys, type TurfCounts } from '~/server/events/turf/
 import type { FeedSticker } from '~/server/events/turf/turf.service';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
+import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { signalClient } from '~/utils/signal-client';
 
 // Live turf counts on feed cards and image pages: a client marks the images it has on screen, and
@@ -15,7 +16,6 @@ import { signalClient } from '~/utils/signal-client';
 // images can never crowd out hat and team totals.
 export const TURF_WATCH_TTL_MS = 90_000;
 export const MAX_TURF_WATCHED = 20_000;
-export const MAX_TURF_IMAGES_PER_MARK = 50;
 const PUSH_CONCURRENCY = 20;
 
 export type TurfWatchRedis = Pick<
@@ -52,7 +52,7 @@ export async function markTurfWatched(
       event: event.name,
       message: 'turf interest set at its cap, images refused',
       refused: ids.length - marked.length,
-    }).catch(() => undefined);
+    });
   if (!marked.length) return 0;
   const lapse = now + TURF_WATCH_TTL_MS;
   await Promise.all([
@@ -108,14 +108,10 @@ export async function pushTurfCounts(
       failed += results.filter((r) => r.status === 'rejected').length;
     }
     if (failed)
-      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed });
     return watched.length - failed;
   } catch (error) {
-    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error });
     return 0;
   }
 }

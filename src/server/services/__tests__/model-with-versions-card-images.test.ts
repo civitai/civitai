@@ -434,6 +434,9 @@ describe('the REST handlers, for an anonymous caller', () => {
       ctx: {},
       scopes: [],
       maxBrowsingLevel: allBrowsingLevelsFlag,
+      // The viewer at every level too: the route serves the viewer's level held to the
+      // domain, and a token without the claim fails closed to PG.
+      viewerBrowsingLevel: allBrowsingLevelsFlag,
       domain: 'red',
     };
     const body = await call('~/pages/api/v1/blocks/models', '/api/v1/blocks/models', {});

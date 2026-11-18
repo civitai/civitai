@@ -20,6 +20,7 @@ import {
   modelSearchIndexEligibilitySql,
 } from '~/server/search-index/model-index-eligibility';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import {
   MODELS_WITHHELD_ATTRIBUTES,
   modelsDisplayedAttributes,
@@ -216,7 +217,27 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
     coveredVersionIds.flatMap((versionId) =>
       images.filter(
         (image) =>
-          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+          image.modelVersionId === versionId &&
+          image.availability !== Availability.Unsearchable &&
+          !isTaggedMatureImage(image)
+      )
+    )
+  );
+}
+
+/** The document is shared by every searcher: a held model's showcase at its gallery level. */
+async function holdSearchShowcase<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: { id: number; minor: boolean; sfwOnly: boolean; modelVersions: { id: number }[] }[]
+) {
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  return holdShowcaseImages(
+    byVersion,
+    new Map(
+      models.flatMap((m) =>
+        m.modelVersions.map(
+          (v) => [v.id, { modelId: m.id, minor: m.minor, sfwOnly: m.sfwOnly }] as const
+        )
       )
     )
   );
@@ -622,7 +643,10 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const imagesCache = await holdSearchShowcase(
+    await imagesForModelVersionsCache.fetch(modelVersionIds),
+    models
+  );
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
@@ -815,9 +839,10 @@ export const pullModelsData = async (
         // process's L1 (see imagesForModelVersionsCache): the document keeps them until its next
         // reindex. Only this index builder bypasses; getModelSearchIndexRecords is a request path
         // (the resource picker) that stores nothing, so it stays on the L1.
-        const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch, {
-          bypassLocal: true,
-        });
+        const imagesCache = await holdSearchShowcase(
+          await imagesForModelVersionsCache.fetch(versionBatch, { bypassLocal: true }),
+          batch
+        );
         const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
         logger(`PullData :: Pulled images`, batchLogKey);
 

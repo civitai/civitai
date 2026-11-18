@@ -8,9 +8,8 @@ import {
   subListingErrorResponse,
 } from '~/server/services/blocks/app-sub-listing.service';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { Flags } from '~/shared/utils/flags';
 
 export type CatalogCaller = { clientId: string; parentListingId: string };
 
@@ -46,7 +45,7 @@ export async function resolveCatalogCaller(req: NextApiRequest): Promise<Catalog
       'insufficient_scope',
       'The token must be a client_credentials token carrying AppStoreCatalogWrite'
     );
-  if (!Flags.hasFlag(session.tokenScope, TokenScope.AppStoreCatalogWrite)) throw insufficient();
+  if (!hasScope(session.tokenScope, TokenScope.AppStoreCatalogWrite)) throw insufficient();
 
   // The token is the client acting as itself: issued to the client's owner, by a client that
   // holds the grant.

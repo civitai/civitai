@@ -52,9 +52,8 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptClientSync: () => null,
 }));
 
-const { placeFlagHats, placeTurfSticker, getFlagSummary } = await import(
-  '~/server/events/turf/turf.service'
-);
+const { placeFlagHats, placeTurfSticker, getFlagSummary, getFlagRaceTotals, getPastFlags } =
+  await import('~/server/events/turf/turf.service');
 const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
 const { flagSummaryKey, flagSummaryGenKey } = await import('~/server/events/turf/flag-day');
 
@@ -70,7 +69,7 @@ const FLAGS = {
   homeCollectionId: 77,
   size: 10,
   pot: { steps: [{ from: START, perPerson: 100, upTo: 10, after: 50 }], cap: 10_000 },
-  lean: 'none',
+  lean: 'none' as const,
 };
 
 let db: PGlite;
@@ -165,6 +164,19 @@ describe('hats on a flag', () => {
     expect(await hatsLeft()).toBe(5);
   });
 
+  it('takes any count from 1 to 10, so the picker can offer what the player has', async () => {
+    await add(8);
+    expect(await hatsLeft()).toBe(12);
+    await add(3);
+    expect(await hatsLeft()).toBe(9);
+  });
+
+  it('refuses 0, a negative, a fraction and more than 10, and spends none', async () => {
+    for (const count of [0, -1, 2.5, 11])
+      await expect(add(count)).rejects.toThrow(/Add 1 to 10 hats at a time/);
+    expect(await hatsLeft()).toBeUndefined();
+  });
+
   it('refuses more hats than the player has, and spends none', async () => {
     await add(10);
     await add(5);
@@ -204,10 +216,6 @@ describe('hats on a flag', () => {
     expect(await hatsLeft()).toBeUndefined();
   });
 
-  it('refuses a count other than 1, 5 or 10', async () => {
-    await expect(add(3)).rejects.toThrow(/1, 5 or 10/);
-  });
-
   it('refuses a normal sticker on a flag, so it cannot go around the cut', async () => {
     await expect(
       placeTurfSticker(
@@ -224,15 +232,82 @@ describe('hats on a flag', () => {
   });
 });
 
+describe('the race so far', () => {
+  it("counts each team's unvoided flags won and their points over every frozen day, with every team listed", async () => {
+    const row = (sourceId: string, team: string | null, points: number, voided = false) =>
+      db.query(
+        `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs, "voidedAt")
+         VALUES ('e', $1, 'flag', $2, $3, $4, '{}', $5)`,
+        [sourceId, team, points, CUT, voided ? CUT : null]
+      );
+    expect(await getFlagRaceTotals('e')).toEqual({
+      days: 0,
+      teams: [
+        { team: 'Blue', flags: 0, points: 0 },
+        { team: 'Pink', flags: 0, points: 0 },
+      ],
+    });
+    await row('flag:4:1', null, 0);
+    await row('flag:4:1:Pink', 'Pink', 3);
+    await row('flag:4:2', null, 0);
+    await row('flag:4:2:Pink', 'Pink', 40, true);
+    await row('flag:5:3', null, 0);
+    await row('flag:5:3:Blue', 'Blue', 10);
+    await row('flag:5:4', null, 0);
+    await row('flag:5:4:Blue', 'Blue', 5);
+    await row('flag:5:4:Pink', 'Pink', 5);
+    expect(await getFlagRaceTotals('e')).toEqual({
+      days: 2,
+      teams: [
+        { team: 'Blue', flags: 2, points: 15 },
+        { team: 'Pink', flags: 2, points: 8 },
+      ],
+    });
+  });
+});
+
+describe('past flags', () => {
+  it("names each frozen flag's winners and the points paid, and leaves out a day not frozen", async () => {
+    await db.query(
+      `INSERT INTO "FlagDay" (event, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds")
+       VALUES ('e', 2, '2026-11-15T16:03:00Z', '2026-11-16T15:30:00Z', '2026-11-16T16:00:00Z', ARRAY[${NOT_FLAG}])`
+    );
+    await db.query(
+      `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs, "voidedAt")
+       VALUES ('e', $1, 'flag', NULL, 0, $2, '{}', NULL), ('e', $3, 'flag', 'Pink', 10, $2, '{}', NULL),
+              ('e', $4, 'flag', 'Blue', 6, $2, '{}', NULL), ('e', $5, 'flag', 'Green', 50, $2, '{}', $2)`,
+      [
+        `flag:${dayId}:${FLAG}`,
+        CUT,
+        `flag:${dayId}:${FLAG}:Pink`,
+        `flag:${dayId}:${FLAG}:Blue`,
+        `flag:${dayId}:${FLAG}:Green`,
+      ]
+    );
+    expect(await getPastFlags('e')).toEqual([
+      {
+        imageId: FLAG,
+        flagDayId: dayId,
+        rank: 1,
+        cutAt: CUT,
+        closesAt: new Date('2026-11-15T16:00:00Z'),
+        // A voided share still names its team, as the day's own badge did, but pays nothing.
+        winners: ['Blue', 'Green', 'Pink'],
+        points: 16,
+      },
+    ]);
+  });
+});
+
 describe('the shared flag summary', () => {
   it('hides the cut until it passes, then names the winner', async () => {
     await add(5);
     const open = await getFlagSummary('e', BEFORE);
-    expect(open).toMatchObject({ closed: false, cutAt: null });
+    expect(open).toMatchObject({ closed: false, cutAt: null, frozen: false });
     expect(open?.flags[0]).toMatchObject({ hatsByTeam: { Blue: 5 }, winners: [] });
 
     const closed = await getFlagSummary('e', CUT);
-    expect(closed).toMatchObject({ closed: true, cutAt: CUT });
+    expect(closed).toMatchObject({ closed: true, cutAt: CUT, frozen: false });
     expect(closed?.flags[0].winners).toEqual(['Blue']);
   });
 
@@ -246,6 +321,20 @@ describe('the shared flag summary', () => {
     // The recount says Blue; the freeze paid Pink (say, before an exclusion): the badge says Pink.
     const closed = await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
     expect(closed?.flags[0].winners).toEqual(['Pink']);
+    // And the row's "Race complete" chips: the points each team was paid, from the frozen rows.
+    expect(closed?.teamPoints).toEqual({ Pink: 10 });
+    expect(closed?.frozen).toBe(true);
+  });
+
+  it('stops counting once the freeze runs, even on a day nobody placed a hat on', async () => {
+    const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
+    const after = new Date(CUT.getTime() + 120_000);
+    expect(await getFlagSummary('e', after)).toMatchObject({ closed: true, frozen: false });
+    // The freeze writes a marker for every flag, won or not, so an empty day still reads as paid.
+    expect(await freezeFlagDays({ name: 'e', startDate: START }, FLAGS, after)).toBeGreaterThan(0);
+    const frozen = await getFlagSummary('e', after);
+    expect(frozen).toMatchObject({ closed: true, frozen: true, teamPoints: {} });
+    expect(frozen?.flags[0].winners).toEqual([]);
   });
 
   it('caches an open or unfrozen day for seconds, and a frozen day for longer', async () => {

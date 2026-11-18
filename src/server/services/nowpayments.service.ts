@@ -74,7 +74,7 @@ const getIpnCallbackUrl = () =>
 // (per-purchase addresses) — it's the only attribution-safe shape.
 
 const log = async (data: MixedObject) => {
-  await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'nowpayments-service', type: 'error', ...data });
 };
 
 export { manualPayinCreditExternalId };
@@ -1217,7 +1217,7 @@ const processLateFinish = async (
     select: { status: true, buzzCredited: true },
   });
   const credited = after?.status === 'finished';
-  await logToAxiom({
+  logToAxiom({
     name: 'nowpayments-late-finish',
     type: 'warning',
     paymentId,
@@ -1225,7 +1225,7 @@ const processLateFinish = async (
     credited,
     held: after?.status === HELD,
     handPaid: after?.status === HAND_PAID,
-    heldReason,
+    payload: { heldReason },
     error: failure,
     buzz: buzzAmount,
     transactionId,
@@ -1234,7 +1234,7 @@ const processLateFinish = async (
     status: after?.status ?? null,
     buzzCredited: after?.buzzCredited ?? null,
     rowAgeDays: dayjs.utc().diff(row.createdAt, 'day'),
-  }).catch(() => undefined);
+  });
   return credited;
 };
 

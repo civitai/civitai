@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { getServiceOfferingFeedSchema } from '~/server/schema/creator-service.schema';
 import { getServiceOfferingFeed } from '~/server/services/creator-service.service';
 import {
   BlockedByUsers,
@@ -11,7 +12,11 @@ import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+} from '~/shared/utils/prisma/enums';
 
 /**
  * The cross-seller services feed against a fixture table: `findMany` applies the `where`,
@@ -21,12 +26,23 @@ import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 type Row = {
   id: number;
+  title: string;
+  description: string;
   status: ServiceOfferingStatus;
   maxNsfwLevel: number;
   price: number;
   maxOpenDeals: number | null;
   createdAt: Date;
   sellerId: number;
+  ingestion: ServiceOfferingIngestionStatus;
+  coverImageId: number | null;
+  coverImage: {
+    ingestion: ImageIngestionStatus;
+    needsReview: string | null;
+    tosViolation: boolean;
+    nsfwLevel: number;
+    modelRestricted?: boolean;
+  } | null;
   seller: {
     username: string | null;
     bannedAt: Date | null;
@@ -44,6 +60,25 @@ function matches(value: unknown, filter: unknown): boolean {
     switch (key) {
       case 'OR':
         return (arg as unknown[]).some((clause) => matches(value, clause));
+      case 'AND':
+        return (arg as unknown[]).every((clause) => matches(value, clause));
+      case 'contains': {
+        // As Postgres runs Prisma's `contains`: a LIKE where an unescaped `%` or `_` is a
+        // wildcard, case-sensitive unless the clause asks otherwise.
+        const flags = (filter as { mode?: string }).mode === 'insensitive' ? 'i' : '';
+        const pattern = (arg as string).replace(
+          /\\(.)|([%_])|([^\\%_])/g,
+          (_, escaped, wild, char) =>
+            wild
+              ? wild === '%'
+                ? '.*'
+                : '.'
+              : (escaped ?? char).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        );
+        return new RegExp(pattern, flags).test(value as string);
+      }
+      case 'mode':
+        return true;
       case 'lte':
         return (value as number) <= (arg as number);
       case 'in':
@@ -63,6 +98,8 @@ function matches(value: unknown, filter: unknown): boolean {
       case 'equals':
         return 'path' in (filter as object) || value === arg;
       default:
+        // An absent relation (`coverImage: null`) matches no filter on it.
+        if (value === null && key !== 'equals') return false;
         if (typeof value !== 'object' || value === null) throw new Error(`unread operator ${key}`);
         return matches((value as Record<string, unknown>)[key], arg);
     }
@@ -87,12 +124,17 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
   const id = nextId++;
   return {
     id,
+    title: `Offering ${id}`,
+    description: 'Custom work.',
     status: ServiceOfferingStatus.Active,
     maxNsfwLevel: NsfwLevel.PG13,
     price: 1000,
     maxOpenDeals: null,
     createdAt: new Date(Date.UTC(2026, 10, id)),
     sellerId: SELLER,
+    ingestion: ServiceOfferingIngestionStatus.Scanned,
+    coverImageId: null,
+    coverImage: null,
     ...rest,
     seller: {
       username: 'seller',
@@ -107,7 +149,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
 
 let table: Row[] = [];
 const feedIds = async (
-  opts: { browsingLevel?: number; servable?: number; viewerId?: number } = {}
+  opts: { browsingLevel?: number; servable?: number; viewerId?: number; query?: string } = {}
 ) => {
   const { items } = await getServiceOfferingFeed({
     sort: 'newest',
@@ -149,6 +191,15 @@ beforeEach(() => {
 });
 
 describe('services feed', () => {
+  it("selects the seller with their equipped cosmetics, so the card's avatar shows frame and nameplate", async () => {
+    table = [row()];
+    await feedIds({});
+    const [args] = dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1) as [
+      { select: { seller: { select: { cosmetics?: unknown } } } }
+    ];
+    expect(args.select.seller.select.cosmetics).toBeDefined();
+  });
+
   it('hides an X-rated offering from an SFW viewer and shows it to one who browses X', async () => {
     const pg13 = row();
     const x = row({ maxNsfwLevel: NsfwLevel.X });
@@ -161,6 +212,23 @@ describe('services feed', () => {
     expect(
       await feedIds({ browsingLevel: allBrowsingLevelsFlag, servable: sfwBrowsingLevelsFlag })
     ).toEqual([pg13.id]);
+  });
+
+  it("hides an offering until its content checks, and its cover's, are done", async () => {
+    const shown = row();
+    const cover = (ingestion: ImageIngestionStatus) => ({
+      coverImageId: 1,
+      coverImage: { ingestion, needsReview: null, tosViolation: false, nsfwLevel: NsfwLevel.PG },
+    });
+    const withCover = row(cover(ImageIngestionStatus.Scanned));
+    table = [
+      shown,
+      withCover,
+      row({ ingestion: ServiceOfferingIngestionStatus.Pending }),
+      row({ ingestion: ServiceOfferingIngestionStatus.Blocked }),
+      row(cover(ImageIngestionStatus.Pending)),
+    ];
+    expect(await feedIds()).toEqual([withCover.id, shown.id]);
   });
 
   it('hides paused, draft and removed offerings', async () => {
@@ -228,5 +296,125 @@ describe('services feed', () => {
       if (!cursor) break;
     }
     expect(seen).toEqual(expected);
+  });
+
+  describe('with a search query', () => {
+    it('keeps only offerings whose title or description matches, ignoring case', async () => {
+      const byTitle = row({ title: 'Anime LoRA training' });
+      const byDescription = row({ description: 'I train a LoRA on your character.' });
+      const other = row({ title: 'Logo design', description: 'Vector logos.' });
+      table = [byTitle, byDescription, other];
+      expect(await feedIds({ query: 'lora' })).toEqual([byDescription.id, byTitle.id]);
+      expect(await feedIds({})).toEqual([other.id, byDescription.id, byTitle.id]);
+    });
+
+    it('never returns a mature match on civitai.com, and does on civitai.red', async () => {
+      const pg = row({ title: 'Portrait commission' });
+      const x = row({ title: 'Portrait commission, mature', maxNsfwLevel: NsfwLevel.X });
+      table = [pg, x];
+      const query = 'portrait';
+      // civitai.com serves nothing mature, whatever the viewer browses at.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: sfwBrowsingLevelsFlag,
+        })
+      ).toEqual([pg.id]);
+      // civitai.red, browsing X: the same query finds it.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: allBrowsingLevelsFlag,
+        })
+      ).toEqual([x.id, pg.id]);
+    });
+
+    it('matches `%` and `_` literally, not as wildcards', async () => {
+      const discount = row({ title: '50% off portraits' });
+      const other = row({ title: 'Logo design' });
+      table = [discount, other];
+      expect(await feedIds({ query: '%' })).toEqual([discount.id]);
+      expect(await feedIds({ query: '_' })).toEqual([]);
+    });
+
+    it("on civitai.red, still hides a mature match above the viewer's browsing level", async () => {
+      const r = row({ title: 'Portrait commission', maxNsfwLevel: NsfwLevel.R });
+      const x = row({ title: 'Portrait commission, mature', maxNsfwLevel: NsfwLevel.X });
+      table = [r, x];
+      expect(
+        await feedIds({
+          query: 'portrait',
+          browsingLevel: sfwBrowsingLevelsFlag | NsfwLevel.R,
+          servable: allBrowsingLevelsFlag,
+        })
+      ).toEqual([r.id]);
+    });
+
+    it("never returns a muted seller's matching offering", async () => {
+      const unmuted = row({ title: 'Portrait commission' });
+      const muted = row({ title: 'Portrait commission', sellerId: 8, seller: { muted: true } });
+      table = [unmuted, muted];
+      expect(await feedIds({ query: 'portrait' })).toEqual([unmuted.id]);
+    });
+
+    it('keeps the listing rule for a match whose cover is still being checked', async () => {
+      const pending = row({
+        title: 'Portrait commission',
+        coverImageId: 1,
+        coverImage: {
+          ingestion: ImageIngestionStatus.Pending,
+          needsReview: null,
+          tosViolation: false,
+          nsfwLevel: NsfwLevel.PG,
+        },
+      });
+      table = [pending];
+      expect(await feedIds({ query: 'portrait' })).toEqual([]);
+    });
+  });
+});
+
+describe('the feed query input', () => {
+  const parse = (query?: string) => getServiceOfferingFeedSchema.parse({ query }).query;
+
+  it('treats a blank query as no filter, and searches on at most 100 characters', () => {
+    expect(parse('   ')).toBeUndefined();
+    expect(parse('  lora  ')).toBe('lora');
+    expect(parse('a'.repeat(300))).toHaveLength(100);
+  });
+});
+
+describe('services feed covers restricted by their base model', () => {
+  const cover = (nsfwLevel: number, modelRestricted: boolean) => ({
+    coverImageId: 1,
+    coverImage: {
+      ingestion: ImageIngestionStatus.Scanned,
+      needsReview: null,
+      tosViolation: false,
+      nsfwLevel,
+      modelRestricted,
+    },
+  });
+
+  it('keeps the offering listed but withholds a mature restricted cover, even from its seller', async () => {
+    const restricted = row({ maxNsfwLevel: NsfwLevel.R, ...cover(NsfwLevel.R, true) });
+    const sfw = row(cover(NsfwLevel.PG, true));
+    const clean = row({ maxNsfwLevel: NsfwLevel.R, ...cover(NsfwLevel.R, false) });
+    table = [restricted, sfw, clean];
+    for (const viewerId of [VISITOR, SELLER]) {
+      const { items } = await getServiceOfferingFeed({
+        sort: 'newest',
+        limit: 50,
+        servable: allBrowsingLevelsFlag,
+        browsingLevel: allBrowsingLevelsFlag,
+        viewerId,
+      });
+      const covers = Object.fromEntries(items.map((i) => [i.id, i.coverImage]));
+      expect(covers[restricted.id]).toBeNull();
+      expect(covers[sfw.id]).toMatchObject({ nsfwLevel: NsfwLevel.PG });
+      expect(covers[clean.id]).toMatchObject({ nsfwLevel: NsfwLevel.R });
+    }
   });
 });

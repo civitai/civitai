@@ -52,7 +52,11 @@ beforeEach(async () => {
   vi.mocked(sendEmail).mockReset();
   clearNotificationEmailEnabledCache();
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ key: 'k', value: true } as never);
-  redisMock.sysRedis.incrBy.mockResolvedValue(1 as never);
+  // The send quotas are counters on the cache cluster: every count is the first of its window.
+  redisMock.redis.multi.mockImplementation((() => {
+    const chain = { set: () => chain, incr: () => chain, exec: async () => ['OK', 1] };
+    return chain;
+  }) as never);
   await db.pg.exec(`
     TRUNCATE "UserEmailNotificationOptOut", "PushSubscription", "UserPushSetting";
     DELETE FROM "User";

@@ -320,12 +320,14 @@ async function fetchModelPerformance({
   to,
   compareFrom,
   compareTo,
+  maxExecutionSeconds,
 }: {
   userId: number;
   from: string;
   to: string;
   compareFrom: string;
   compareTo: string;
+  maxExecutionSeconds?: number;
 }): Promise<ModelPerformance[]> {
   const uid = Number(userId);
 
@@ -359,6 +361,9 @@ async function fetchModelPerformance({
   const prev = { from: compareFrom, to: compareTo };
   const w: Window = { from, to, prev };
   const ch = getClickhouse();
+  const limit = maxExecutionSeconds
+    ? `\n     SETTINGS max_execution_time = ${Math.floor(maxExecutionSeconds)}`
+    : '';
   // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
   const [earnRows, genRows, dlRows, imprRows, accessRows, donationRows] = await Promise.all([
     ch.$query<{
@@ -373,7 +378,7 @@ async function fetchModelPerformance({
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
        WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
-       GROUP BY modelVersionId, accountType, source`
+       GROUP BY modelVersionId, accountType, source${limit}`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
@@ -381,7 +386,7 @@ async function fetchModelPerformance({
          sumIf(count, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.daily_resource_generation_counts
        WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY modelVersionId`
+       GROUP BY modelVersionId${limit}`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
@@ -389,7 +394,7 @@ async function fetchModelPerformance({
          sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
        WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY modelVersionId`
+       GROUP BY modelVersionId${limit}`
     ),
     ch.$query<{ entityId: number | string; cur: number | string; prev: number | string }>(
       `SELECT entityId,
@@ -397,12 +402,12 @@ async function fetchModelPerformance({
          sumIf(impressions, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_impressions
        WHERE entityType = '${IMPRESSION_ENTITY.model}' AND entityId IN (${modelIdList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY entityId`
+       GROUP BY entityId${limit}`
     ),
-    ch.$query<AccessRow>(accessSalesQuery(uid, w)),
+    ch.$query<AccessRow>(accessSalesQuery(uid, w) + limit),
     versionByGoal.size === 0
       ? Promise.resolve([] as DonationRow[])
-      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()])),
+      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()]) + limit),
   ]);
 
   const byId = new Map<number, ModelPerformance>();
@@ -542,6 +547,24 @@ export const getModelPerformance = createCache({
   name: 'models:performance:v5',
   fetch: fetchModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+// Lower bound for the all-time read: nothing a creator earns or is counted for predates their first version, and
+// without a bound the owner-keyed earnings reads would scan from the start of the tables.
+async function fetchFirstVersionDate({ userId }: { userId: number }): Promise<string | null> {
+  const row = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', Number(userId))
+    .select((eb) => eb.fn.min('mv.createdAt').as('first'))
+    .executeTakeFirst();
+  return row?.first ? new Date(row.first).toISOString().slice(0, 10) : null;
+}
+
+export const getFirstVersionDate = createCache({
+  name: 'models:first-version-date',
+  fetch: fetchFirstVersionDate,
+  ttlSeconds: 1800,
 }).get;
 
 // Per-version analytics for a single model (feedback 4.5) — generations / downloads / buzz per version over the

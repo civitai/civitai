@@ -3,12 +3,13 @@ import type { FastifyInstance } from 'fastify';
 
 // Mutable state the mocked backend reads, so individual tests can force a complete/abort to throw a
 // specific S3-shaped error and assert the classified status.
-const state = vi.hoisted(() => ({ multipartError: null as unknown }));
+const state = vi.hoisted(() => ({ multipartError: null as unknown, purgeRemaining: 0 }));
 
 vi.mock('../lib/server/backends', () => ({
   getBackendClient: () => ({
     deleteObject: async () => ({}),
     deleteManyObjects: async () => [{}],
+    purgeObjectVersions: async () => ({ versionsDeleted: 3, remaining: state.purgeRemaining }),
     getPutUrl: async (key: string, opts?: { bucket?: string }) => ({
       url: 'https://signed.example/put',
       bucket: opts?.bucket ?? 'default-bucket',
@@ -67,6 +68,7 @@ afterAll(async () => {
 
 afterEach(() => {
   state.multipartError = null;
+  state.purgeRemaining = 0;
 });
 
 describe('ops routes', () => {
@@ -127,6 +129,36 @@ describe('happy paths (mocked backend)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ ok: true });
+  });
+
+  it('purges every version of an object', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/objects/purge-versions',
+      payload: { backend: 'b2Image', key: 'abc' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ versionsDeleted: 3, remaining: 0 });
+  });
+
+  it('fails a purge that reads back versions', async () => {
+    state.purgeRemaining = 1;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/objects/purge-versions',
+      payload: { backend: 'b2Image', key: 'abc' },
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toMatchObject({ versionsDeleted: 3, remaining: 1 });
+  });
+
+  it('refuses a purge on the csam backend', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/objects/purge-versions',
+      payload: { backend: 'csam', key: 'abc' },
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('heads an object', async () => {

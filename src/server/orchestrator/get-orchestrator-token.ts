@@ -19,8 +19,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** The caller's request, whose credential is checked. Server-side callers with no request in hand
  *  (e.g. the publish → workflow stamp) omit it. */
@@ -193,7 +192,7 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
   const credential = getRequestCredential(ctx.req);
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
-  if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+  if (!presentedBearer || hasScope(tokenScope, TokenScope.AIServicesWrite)) return;
 
   const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
     .context?.session?.user;

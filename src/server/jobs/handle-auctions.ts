@@ -137,7 +137,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
         message: error.message,
         stack: error.stack,
         cause: error.cause,
-      }).catch();
+      });
       throw error;
     }
   }
@@ -262,8 +262,8 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
         name: 'handle-auctions',
         type: 'error',
         message: `Error running winners`,
-        data: { auctionId: auctionRow.id },
-      }).catch();
+        payload: { auctionId: auctionRow.id },
+      });
     }
   }
 };
@@ -336,7 +336,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
         error: err.message,
         cause: err.cause,
         stack: err.stack,
-      }).catch();
+      });
       return false;
     }
 
@@ -437,7 +437,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
           error: err.message,
           cause: err.cause,
           stack: err.stack,
-        }).catch();
+        });
 
         return false;
       }
@@ -545,11 +545,11 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
                 name: 'handle-auctions',
                 type: 'error',
                 message: `Failed to refund bid`,
-                data: { tid },
+                payload: { tid },
                 error: err.message,
                 cause: err.cause,
                 stack: err.stack,
-              }).catch();
+              });
               return { transactionId: null };
             }
           });
@@ -559,11 +559,11 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
             name: 'handle-auctions',
             type: 'error',
             message: `Failed to run refund`,
-            data: { tid },
+            payload: { tid },
             error: err.message,
             cause: err.cause,
             stack: err.stack,
-          }).catch();
+          });
 
           return { transactionId: null };
         }
@@ -574,8 +574,8 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
         name: 'handle-auctions',
         type: 'warning',
         message: `Failed to refund user for lost bid`,
-        data: { lostBid },
-      }).catch();
+        payload: { lostBid },
+      });
     } else {
       // Mark refunded
       refundedBidIds.push(lostBid.id);
@@ -642,7 +642,7 @@ export const _createRecurringBids = async (now: Dayjs) => {
             type: 'warning',
             message: `Failed to find auction for recurring bid`,
             data: { recurringBid },
-          }).catch();
+          });
           continue;
         }
 
@@ -710,7 +710,7 @@ export const _createRecurringBids = async (now: Dayjs) => {
             type: 'warning',
             message: `Failed to charge user for recurring bid`,
             data: { recurringBid },
-          }).catch();
+          });
 
           await createNotification({
             userId: recurringBid.userId,
@@ -747,7 +747,7 @@ export const _createRecurringBids = async (now: Dayjs) => {
           error: err.message,
           cause: err.cause,
           stack: err.stack,
-        }).catch();
+        });
       }
     }
   }

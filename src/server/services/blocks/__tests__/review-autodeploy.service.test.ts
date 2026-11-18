@@ -154,10 +154,10 @@ const building = () => row({ deployState: 'preview-building' });
 const queued = () => row({ deployState: 'preview-queued' });
 const states = () => rows.map((r) => r.deployState);
 
-/** sysRedis MULTI whose INCR answers `count` (or throws). */
+/** A MULTI whose INCR answers `count` (or throws). */
 /**
- * Today's agent-review auto-start reservation, in cents: a real counter shared by the MULTI's
- * INCRBY and the plain INCRBY that releases it, so concurrent starts see each other.
+ * Today's agent-review auto-start reservation, in cents: one counter behind the MULTI that takes
+ * and releases it, so concurrent starts see each other.
  */
 const reservation = { cents: 0, fail: false };
 
@@ -182,11 +182,10 @@ function budgetCounter(count: number | Error) {
       return ['OK', count];
     }),
   };
+  // The build budget's MULTI is in system Redis; the reservation's MULTI and its release are on the
+  // cache cluster.
   redisMock.sysRedis.multi.mockImplementation(() => chain);
-  redisMock.sysRedis.incrBy.mockImplementation(async (_k: string, cents: number) => {
-    reservation.cents += cents;
-    return reservation.cents;
-  });
+  redisMock.redis.multi.mockImplementation(() => chain);
   return chain;
 }
 
@@ -618,10 +617,17 @@ describe('agent review auto-start', () => {
     // $37 of reviews + $2 cap = $39 fits; add $1.50 of listing-edit checks and it no longer does.
     spend(37);
     expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('started');
+    // The listing checks' spend is a day counter in system Redis: it must survive eviction.
     redisMock.sysRedis.get.mockImplementation((async (key: string) =>
       key.includes('listing-check-spend') ? '150' : null) as never);
+    redisMock.redis.get.mockClear();
     try {
       expect(await maybeAutoStartAgentReview(PUBREQ)).toBe('budget-refused');
+      expect(
+        redisMock.redis.get.mock.calls.filter(([k]: unknown[]) =>
+          String(k).includes('listing-check-spend')
+        )
+      ).toEqual([]);
     } finally {
       redisMock.sysRedis.get.mockImplementation((async () => null) as never);
     }
@@ -686,7 +692,8 @@ describe('moderator alert throttle', () => {
   /** One counter per Redis key, like the real INCR: the alert key and the budget key apart. */
   function countersByKey(fail?: (key: string) => boolean) {
     const counts = new Map<string, number>();
-    redisMock.sysRedis.multi.mockImplementation(() => {
+    // The alert window is on the cache cluster.
+    redisMock.redis.multi.mockImplementation(() => {
       let key = '';
       const chain = {
         set: vi.fn((k: string) => {
@@ -710,6 +717,7 @@ describe('moderator alert throttle', () => {
   });
 
   it('posts 10 alerts per submitter per hour, then ONE roll-up, then nothing', async () => {
+    redisMock.sysRedis.multi.mockClear();
     const counts = countersByKey();
     const outcomes: string[] = [];
     for (let i = 0; i < 13; i++) outcomes.push(await notifyModsOfNewSubmission(sub));
@@ -722,6 +730,7 @@ describe('moderator alert throttle', () => {
     expect(titles[10]).toBe('More app submissions from alice');
     const hour = new Date().toISOString().slice(0, 13);
     expect([...counts.keys()]).toEqual([`system:blocks:review-submission-alerts:9:${hour}`]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('counts per submitter: another account still gets its alerts', async () => {
@@ -1087,5 +1096,82 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
       available: false,
       scope: 'fixture-slug',
     });
+  });
+});
+
+describe('agent review auto-start: a release after the reservation key was evicted', () => {
+  /** The cache cluster as a key store with TTLs: a key missing from `ttls` never expires. */
+  const store = new Map<string, number>();
+  const ttls = new Map<string, number>();
+  const incrBy = (key: string, by: number) => {
+    const next = (store.get(key) ?? 0) + by;
+    store.set(key, next);
+    return next;
+  };
+  const deps = {
+    automationOn: async () => true,
+    startAgentReview: (...a: unknown[]) => m.startAgentReview(...a),
+  };
+
+  beforeEach(() => {
+    store.clear();
+    ttls.clear();
+    dbMock.dbRead.appReviewAgentReport.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appReviewAgentReport.aggregate.mockResolvedValue({ _sum: { costUsd: 0 } });
+    dbMock.dbWrite.appReviewAgentReport.count.mockResolvedValue(0);
+    redisMock.redis.multi.mockImplementation(() => {
+      const ops: Array<() => unknown> = [];
+      const chain = {
+        set: vi.fn((key: string, value: string, opts: { NX?: boolean; EX?: number }) => {
+          ops.push(() => {
+            if (opts.NX && store.has(key)) return null;
+            store.set(key, Number(value));
+            if (opts.EX) ttls.set(key, opts.EX);
+            return 'OK';
+          });
+          return chain;
+        }),
+        incr: vi.fn((key: string) => {
+          ops.push(() => incrBy(key, 1));
+          return chain;
+        }),
+        incrBy: vi.fn((key: string, by: number) => {
+          ops.push(() => incrBy(key, by));
+          return chain;
+        }),
+        exec: vi.fn(async () => ops.map((op) => op())),
+      };
+      return chain;
+    });
+    // A bare INCRBY, as Redis does it: creates a missing key with no TTL.
+    redisMock.redis.incrBy.mockImplementation(async (key: string, by: number) => incrBy(key, by));
+  });
+
+  it('leaves no reservation key without a TTL', async () => {
+    m.startAgentReview.mockImplementation(async () => {
+      // The cluster evicts the reservation while the start is in flight.
+      store.clear();
+      ttls.clear();
+      return {};
+    });
+
+    expect(await maybeAutoStartAgentReview('pubreq_evicted', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toEqual([
+      expect.stringMatching(/^system:blocks:agent-review-autostart-reserved:\d{4}-\d{2}-\d{2}$/),
+    ]);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
+  });
+
+  it('CONTROL: a release on a live key hands the reservation back and keeps its TTL', async () => {
+    m.startAgentReview.mockResolvedValue({});
+
+    expect(await maybeAutoStartAgentReview('pubreq_live_key', deps)).toBe('started');
+
+    const keys = [...store.keys()];
+    expect(keys).toHaveLength(1);
+    expect(store.get(keys[0])).toBe(0);
+    expect(ttls.get(keys[0])).toBe(26 * 60 * 60);
   });
 });

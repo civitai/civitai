@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * its own cap. Three defects came from treating them as one thing, and each was invisible in a way the
  * next one was not.
  *
- * ONE cap across both sides let the busy side eat it — measured on user 2557503, all 200 rows of a
- * 90-day window were receipts spanning two days, so every one of its 128 payments was invisible.
+ * ONE cap across both sides let the busy side eat it: a user with many receipts in a short span filled
+ * the whole page, hiding every payment.
  *
  * ONE client-side filter over that page could only shrink what was already fetched, so selecting a type
  * returned whatever share of the page happened to match. Across 300 accounts that bought Buzz with

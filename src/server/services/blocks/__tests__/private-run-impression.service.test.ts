@@ -296,31 +296,6 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
   });
 
-  it('🔴 records the impression when the LOG REJECTS — and HANDLES the rejection', async () => {
-    // 🔴 `resolves.toBe(false)` ALONE CANNOT SEE THE `.catch`, and neither can an
-    // `unhandledRejection` listener — MEASURED: with the `.catch` deleted, every test
-    // still passed and the test COUNT did not move, so both the per-test result lines and
-    // the count-moved check read green. A dangling rejection is invisible to a harness
-    // built on either.
-    //
-    // So the property is observed DIRECTLY: the gate must ATTACH a rejection handler to
-    // whatever the logger returns. A thenable whose `.catch` is a spy turns "is it
-    // handled?" into a call count. `packages/civitai-axiom` records the cost of getting
-    // this wrong — an unhandled rejection from a non-awaited log call exited three pods
-    // at once.
-    const attachCatch = vi.fn(() => Promise.resolve(undefined));
-    loggingMock.logToAxiom.mockReturnValueOnce({ catch: attachCatch } as unknown as Promise<void>);
-    mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('replica unreachable'));
-
-    await expect(
-      isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })
-    ).resolves.toBe(false);
-    expect(
-      attachCatch,
-      'the gate must attach a rejection handler to the log promise'
-    ).toHaveBeenCalledTimes(1);
-  });
-
   it('a NON-Error throw is classified by `typeof`, and still leaks nothing', async () => {
     // Covers the `typeof err` branch, which every other case leaves unexercised — and a
     // thrown string is the shape most likely to carry text straight into a payload.

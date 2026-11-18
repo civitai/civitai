@@ -62,13 +62,13 @@ function storedMeta(): unknown {
 beforeEach(async () => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: IMAGE_ID } as never);
-  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(CALLER)] as never);
   h.storedBytes = await pngWithTextChunks({ parameters: A1111_PARAMETERS });
 });
 
 describe('persistBlockUploadImage → real createImage', () => {
   it('refuses a key issued to another user before writing', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER + 1)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(CALLER + 1)] as never);
 
     await expect(
       persistBlockUploadImage({ input: { url: KEY } as never, userId: CALLER })
@@ -120,9 +120,68 @@ describe('persistBlockUploadImage → real createImage', () => {
 
     expect(storedMeta()).toBe(Prisma.JsonNull);
   });
+
+  it('🔴 a SHARED viewer-picked upload stores blockSharedUploadAppId = that verified appId, and only that key', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      sharedWithAppId: APP_ID,
+    });
+
+    const metadata = storedMetadata();
+    expect(metadata?.blockSharedUploadAppId).toBe(APP_ID);
+    // Not postable, and not the bytes key the gated read refuses.
+    expect(metadata && 'blockUploadedAppId' in metadata).toBe(false);
+    expect(metadata && 'blockPublishedAppId' in metadata).toBe(false);
+  });
+
+  it('🔴 an app bytes upload never stores the shared-upload key', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      uploadedByAppId: APP_ID,
+    });
+
+    const metadata = storedMetadata();
+    expect(metadata?.blockUploadedAppId).toBe(APP_ID);
+    expect(metadata && 'blockSharedUploadAppId' in metadata).toBe(false);
+  });
+
+  it('a viewer-picked upload made for an app still reads no embedded parameters', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      sharedWithAppId: APP_ID,
+    });
+
+    expect(storedMeta()).toBe(Prisma.JsonNull);
+  });
+
+  it('refuses both stamp sources at once, before writing', async () => {
+    await expect(
+      persistBlockUploadImage({
+        input: { url: KEY } as never,
+        userId: CALLER,
+        uploadedByAppId: APP_ID,
+        sharedWithAppId: 'appblk-other',
+      })
+    ).rejects.toThrow(/not both/);
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('createImage (default ingestion) with client metadata', () => {
+  it('🔴 drops a client-supplied blockSharedUploadAppId and keeps the rest', async () => {
+    await createImage({
+      url: KEY,
+      type: 'image',
+      userId: CALLER,
+      metadata: { size: 1, blockSharedUploadAppId: 'client-claimed-app' },
+    } as never);
+
+    expect(storedMetadata()).toEqual({ size: 1 });
+  });
+
   it('drops a client-supplied blockUploadedAppId and keeps the rest', async () => {
     await createImage({
       url: KEY,

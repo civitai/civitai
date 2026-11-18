@@ -40,6 +40,11 @@ import {
 } from '~/shared/constants/bot-cache.constants';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+import {
+  isSsrPrefetchCohort,
+  SSR_PREFETCH_COHORT_REQ_KEY,
+  SSR_PREFETCH_ROUTE_REQ_KEY,
+} from '~/shared/constants/ssr-prefetch-cohort.constants';
 
 /**
  * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
@@ -170,6 +175,41 @@ export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
   );
 }
 
+function cpuUsageNow(): NodeJS.CpuUsage | undefined {
+  try {
+    return process.cpuUsage();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `ssrSignedInSkipPrefetch*` A/Bs' getServerSideProps CPU: process CPU since `start` (just before
+ * the resolver), for a request `resolveSsrPrefetchCohort` marked. The delta is taken now; the metric
+ * module is loaded lazily, so this file — imported by every page — never pulls prom-client into a
+ * page's client test graph. Never throws, never delays the response.
+ */
+function recordPrefetchCohortGsspCpu(req: object, start: NodeJS.CpuUsage | undefined) {
+  if (!start) return;
+  const marks = req as {
+    [SSR_PREFETCH_COHORT_REQ_KEY]?: unknown;
+    [SSR_PREFETCH_ROUTE_REQ_KEY]?: unknown;
+  };
+  const cohort = marks[SSR_PREFETCH_COHORT_REQ_KEY];
+  const route = marks[SSR_PREFETCH_ROUTE_REQ_KEY];
+  if (!isSsrPrefetchCohort(cohort) || typeof route !== 'string') return;
+  let seconds: number;
+  try {
+    const { user, system } = process.cpuUsage(start);
+    seconds = (user + system) / 1e6;
+  } catch {
+    return;
+  }
+  void import('~/server/prom/ssr-cpu.metrics')
+    .then((metrics) => metrics.recordSsrPrefetchGsspCpu(route, cohort, seconds))
+    .catch(() => undefined);
+}
+
 export function createServerSideProps<P>({
   resolver,
   useSSG,
@@ -260,6 +300,8 @@ export function createServerSideProps<P>({
         ? await getServerProxySSGHelpers(context, session, features, capture)
         : undefined;
 
+    // The trial's getServerSideProps CPU runs from here (its prefetches) through dehydrate.
+    const gsspCpuStart = cpuUsageNow();
     const result = ((await resolver?.({
       ctx: context,
       isClient,
@@ -302,6 +344,7 @@ export function createServerSideProps<P>({
       session: jsonSafeSession(session),
     } as NonNullable<P>;
     attachSsrDehydratedState(pageProps, capture);
+    recordPrefetchCohortGsspCpu(context.req, gsspCpuStart);
     return { props: pageProps };
   };
 }

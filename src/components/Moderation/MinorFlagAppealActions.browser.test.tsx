@@ -8,7 +8,7 @@ import {
 } from '~/components/Moderation/MinorFlagAppealActions';
 
 const row = (overrides: Partial<MinorFlagAppealActionRow> = {}): MinorFlagAppealActionRow => ({
-  modelId: 2186217,
+  modelId: 990100031,
   modelName: 'Some Checkpoint',
   minor: true,
   poi: false,

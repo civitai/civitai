@@ -17,6 +17,7 @@ import {
   claimAllPrepaidTokens,
   unlockTokensForUser,
   getHistoricalPrepaidDeliveries,
+  getUserMembershipHistory,
   purchaseMembershipWithBuzz,
 } from '~/server/services/subscriptions.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -41,6 +42,9 @@ export const subscriptionsRouter = router({
   getAllUserSubscriptions: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getAllUserSubscriptionsHandler),
+  getMembershipHistory: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(({ ctx }) => getUserMembershipHistory({ userId: ctx.user.id })),
   claimPrepaidToken: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(claimPrepaidTokenSchema)

@@ -54,6 +54,7 @@ function mountShelf(share: Share, username?: string) {
     earned: EARNED,
     activity: { milestones: [], closestNext: null },
     secrets: [],
+    reveals: [],
     share: { shareable: [], hiddenOnProfile: [], secret: [], ...share },
   } as unknown as Journey;
   container = document.createElement('div');

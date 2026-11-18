@@ -6,53 +6,40 @@ import {
   SFW_ONLY_RESOURCE_TOOLTIP,
   SFW_ONLY_TOOLTIP,
 } from '~/components/SfwOnlyBadge/sfw-only.utils';
-import { baseModelLicenses, nsfwRestrictedBaseModels } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { baseModelRecords, ECO } from '~/shared/constants/basemodel.constants';
+import { baseModelByName, baseModelRecords, ECO } from '~/shared/constants/basemodel.constants';
 
-const original = { ...baseModelLicenses };
-afterEach(() => Object.assign(baseModelLicenses, original));
+const illustrious = baseModelByName.get('Illustrious')!;
+afterEach(() => {
+  delete (illustrious as { matureRestricted?: unknown }).matureRestricted;
+});
+const restrict = (surfaces: ('generation' | 'models' | 'images')[]) =>
+  Object.assign(illustrious, { matureRestricted: surfaces });
 
 describe('isBaseModelSfwOnly', () => {
-  it('marks exactly the bases the licence flags restrict', () => {
-    const marked = baseModelRecords.map((r) => r.name).filter((name) => isBaseModelSfwOnly(name));
-    expect(marked.sort()).toEqual([...nsfwRestrictedBaseModels].sort());
-  });
-
   it.each(['Ideogram 4.5', 'SD 3.5 Large', 'SDXL Turbo'])('%s is SFW only', (name) => {
     expect(isBaseModelSfwOnly(name)).toBe(true);
   });
 
-  it.each(['Illustrious', 'SDXL 1.0', 'Flux.2 D', undefined, null, 'Not A Base'])(
+  it.each(['Nano Banana', 'Illustrious', 'SDXL 1.0', undefined, null, 'Not A Base'])(
     '%s is not',
     (name) => {
       expect(isBaseModelSfwOnly(name)).toBe(false);
     }
   );
 
-  // The badge reads the licence table, not a copied list: flagging a licence is the whole change.
-  it('follows a licence that gains disableMature', () => {
-    expect(isBaseModelSfwOnly('Illustrious')).toBe(false);
-    baseModelLicenses['Illustrious' as BaseModel] = { url: '', name: 'Fake', disableMature: true };
+  it('follows a base model that gains the images restriction', () => {
+    restrict(['images']);
     expect(isBaseModelSfwOnly('Illustrious')).toBe(true);
-  });
-
-  // Deliberate: a licence restricting only some mature levels is in nsfwRestrictedBaseModels but
-  // "SFW only" would overstate it. It needs its own wording, not this badge.
-  it('does not mark a licence that restricts only some mature levels', () => {
-    baseModelLicenses['Illustrious' as BaseModel] = {
-      url: '',
-      name: 'Fake',
-      restrictedNsfwLevels: [NsfwLevel.XXX],
-    };
-    expect(isBaseModelSfwOnly('Illustrious')).toBe(false);
   });
 });
 
 describe('isEcosystemNsfwRestricted', () => {
-  it('marks Ideogram, where every base is restricted', () => {
+  it('marks Ideogram, where every base is SFW only', () => {
     expect(isEcosystemNsfwRestricted(ECO.Ideogram)).toBe(true);
+  });
+
+  it('does not mark Nano Banana, which restricts generation only', () => {
+    expect(isEcosystemNsfwRestricted(ECO.NanoBanana)).toBe(false);
   });
 
   it('does not mark SDXL, which holds SDXL Turbo among unrestricted bases', () => {
@@ -73,14 +60,14 @@ describe('getResourceSfwOnlyMessage', () => {
     model,
   });
 
-  it('gives a restricted base the posting copy', () => {
-    expect(getResourceSfwOnlyMessage(resource('SDXL Turbo'))).toBe(SFW_ONLY_TOOLTIP);
+  it('gives a base that restricts generation the generation copy', () => {
+    expect(getResourceSfwOnlyMessage(resource('SDXL Turbo'))).toBe(SFW_ONLY_RESOURCE_TOOLTIP);
+    expect(getResourceSfwOnlyMessage(resource('Nano Banana'))).toBe(SFW_ONLY_RESOURCE_TOOLTIP);
   });
 
-  it('keeps the stronger sfwOnly claim when the base is restricted too', () => {
-    expect(getResourceSfwOnlyMessage(resource('SDXL Turbo', { sfwOnly: true }))).toBe(
-      SFW_ONLY_RESOURCE_TOOLTIP
-    );
+  it('gives a base that restricts only posting the posting copy', () => {
+    restrict(['images']);
+    expect(getResourceSfwOnlyMessage(resource('Illustrious'))).toBe(SFW_ONLY_TOOLTIP);
   });
 
   it('keeps the minor claim on an unrestricted base', () => {

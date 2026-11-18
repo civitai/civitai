@@ -200,7 +200,7 @@ async function logMissingPrompts(ctx: { entityType: string; entityId: number; ke
     if (first) unlogged.push(key);
   }
   if (!unlogged.length) return;
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'error',
     message: 'missing prompt rows',
@@ -221,7 +221,7 @@ function logCsamShadowDrop(entityType: TextScanEntityType) {
     type: 'info',
     message: 'csam not requested for shadow scans',
     entityType,
-  }).catch(() => null);
+  });
 }
 
 const NO_TEXT_REASON = 'No text left to scan.';
@@ -609,7 +609,7 @@ async function submitTextScanPass({
     ...(variant ? { variant } : {}),
     workflowId,
     segments: composed.segments.length,
-  }).catch(() => null);
+  });
   return { status: 'submitted', workflowId };
 }
 

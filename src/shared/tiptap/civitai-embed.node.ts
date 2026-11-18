@@ -8,7 +8,8 @@ import {
   toCivitaiEmbedItem,
 } from '~/shared/tiptap/civitai-embed.utils';
 
-export type CivitaiEmbedAttrs = { items: CivitaiEmbedItem[] };
+export type CivitaiEmbedDisplay = 'card' | 'full';
+export type CivitaiEmbedAttrs = { items: CivitaiEmbedItem[]; display: CivitaiEmbedDisplay };
 
 // A line that is nothing but a model, version or image link.
 export const CIVITAI_EMBED_PASTE_URL =
@@ -48,6 +49,13 @@ export const CivitaiEmbedNode = Node.create<{ pasteToCard: boolean }>({
         default: [],
         parseHTML: (el) => readItems(el as HTMLElement),
         renderHTML: () => ({}),
+      },
+      // Emitted only when full, so a card embed's HTML is what it was before the attribute.
+      display: {
+        default: 'card',
+        parseHTML: (el) =>
+          (el as HTMLElement).getAttribute('data-display') === 'full' ? 'full' : 'card',
+        renderHTML: (attrs) => (attrs.display === 'full' ? { 'data-display': 'full' } : {}),
       },
     };
   },

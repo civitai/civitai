@@ -40,6 +40,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     view = mockView;
   },
+  // The handler hands this to the beacon-go shadow sampler, which is off here (no
+  // BEACON_GO_SHADOW_URL), so it is never called.
+  trackerSends: () => true,
 }));
 
 function makeRes() {
@@ -142,7 +145,11 @@ describe('POST /api/internal/pulse', () => {
 
   it('accepts the referer host as the origin fallback', async () => {
     const handler = (await import('~/pages/api/internal/pulse')).default;
-    const req = makeReq({ host: 'civitai.com', referer: 'https://civitai.com/models/1', body: validInput });
+    const req = makeReq({
+      host: 'civitai.com',
+      referer: 'https://civitai.com/models/1',
+      body: validInput,
+    });
     const res = makeRes();
 
     await handler(req as any, res);

@@ -43,7 +43,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -80,8 +80,9 @@ import {
   assertGenerationInputsUsable,
   generationInputUrlsIn,
 } from '~/server/services/generation-input-urls';
-import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
+import type { GenerationInputCaller } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -221,7 +222,7 @@ export type GenerateOptions = {
  * is for server-composed input whose urls the calling route already checked (comics, iterate).
  */
 export type GenerationInputGate =
-  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | (GenerationInputCaller & { isApiCaller: boolean })
   | 'checked-by-caller';
 
 const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
@@ -1344,6 +1345,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
+  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
+  capOutput: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1369,6 +1372,10 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
+  const capOutput = capsGenerationOutput({
+    baseModels: enrichedResources.map((r) => r.baseModel),
+    ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+  });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1412,6 +1419,17 @@ export async function createWorkflowStepsFromGraph({
     // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
+    // Handlers branch on the checkpoint's base model, so prefer the stored one over the client's.
+    ...('model' in data && data.model
+      ? {
+          model: {
+            ...data.model,
+            baseModel:
+              enrichedResources.find((r) => r.id === data.model?.id)?.baseModel ??
+              data.model.baseModel,
+          },
+        }
+      : {}),
   };
 
   // Convert graph output to legacy {resources, params} format for storage.
@@ -1592,6 +1610,7 @@ export async function createWorkflowStepsFromGraph({
       tags: extraTags,
       hasTipEligibleResource,
       boostRequired,
+      capOutput,
     };
   });
 }
@@ -1613,6 +1632,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * Callers must apply `capOutput` to the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,
@@ -1628,7 +1648,11 @@ export async function createWorkflowStepsFromGraphInput({
   isWhatIf?: boolean;
   isGreen?: boolean;
   inputGate: GenerationInputGate;
-}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
+}): Promise<{
+  steps: WorkflowStepTemplate[];
+  workflowMetadata?: Record<string, unknown>;
+  capOutput: boolean;
+}> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
   if (!isWhatIf)
@@ -1644,7 +1668,7 @@ export async function createWorkflowStepsFromGraphInput({
   // It is intentionally `undefined` on whatIf — the caller must only attach it to
   // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
   // the App-Blocks submit path can carry it; the normal path bakes it in directly.
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user: user && { ...user, tier: externalCtx.user.tier },
@@ -1652,7 +1676,7 @@ export async function createWorkflowStepsFromGraphInput({
     sourceImageIds,
     isGreen,
   });
-  return { steps, workflowMetadata };
+  return { steps, workflowMetadata, capOutput };
 }
 
 type SnippetsPayloadShape = {
@@ -2016,6 +2040,7 @@ export async function generateFromGraph({
     tags: assemblyTags,
     hasTipEligibleResource,
     boostRequired,
+    capOutput,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -2149,6 +2174,7 @@ export async function generateFromGraph({
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,
+        capOutput,
         allowMatureContent,
       }),
       // @ts-ignore - BuzzSpendType is properly supported
@@ -2336,6 +2362,7 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
+import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
 import {
   exceedsNsfwLevel,
   isMature,
@@ -2831,22 +2858,9 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
   }
 }
 
-/**
- * Max rating across a workflow's `model3DPreview` render images. The
- * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
- * chained 2D preview render carries the result's effective rating, so it must
- * be propagated onto the `model3d` output for the client's NSFW gates
- * (yellow-Buzz unlock, enableNsfw, siteRestricted) to apply.
- */
-export function getModel3DPreviewNsfwLevel(
-  steps: WorkflowStep[] | null | undefined
-): NsfwLevel | undefined {
-  const previews = (steps ?? []).filter((s) => s.$type === 'model3DPreview') as Array<{
-    output?: { images?: ImageBlob[] };
-  }>;
-  if (!previews.length) return undefined;
-  return maxNsfwLevel(previews.flatMap((s) => (s.output?.images ?? []).map((i) => i?.nsfwLevel)));
-}
+// `getModel3DPreviewNsfwLevel` lives in `~/shared/orchestrator/model3d-output` so the App
+// Blocks producers apply the same propagation; re-exported for existing importers.
+export { getModel3DPreviewNsfwLevel };
 
 /**
  * Formats step outputs into normalized images array
@@ -3311,7 +3325,7 @@ export async function updateWorkflow({
 }
 
 export async function formatGenerationResponse2(
-  workflows: Workflow[],
+  rawWorkflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
   {
     acceptBoostRequired = false,
@@ -3323,6 +3337,10 @@ export async function formatGenerationResponse2(
     skipResourceEnrichment?: boolean;
   } = {}
 ): Promise<NormalizedWorkflow[]> {
+  // A training run's weights are moderators-only on every workflow read (`withoutTrainingWeightHandles`).
+  const workflows = rawWorkflows.map((workflow) =>
+    withoutTrainingWeightHandles(workflow, { isModerator: user?.isModerator })
+  );
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
   const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
@@ -3707,11 +3725,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;

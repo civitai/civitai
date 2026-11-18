@@ -3482,7 +3482,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedream is ByteDance's text-to-image model, developed by the company's Seed research team. It is designed around high-resolution output, strong prompt adherence, and fine-grained typography — rendering legible text inside the image, including Chinese characters, rather than overlaying it. According to ByteDance's technical write-ups, Seedream 3.0 introduced native 2K output, and Seedream 4.0 raised that to native 4K resolution. It is a distinct model from Seedance, ByteDance's video generator.",
-      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers — with v5.0 Pro as the current flagship. A 2K/4K switch appears on v4.5 and v5.0 Lite; the remaining versions, v5.0 Pro included, render at 2K, so pick v4.5 or v5.0 Lite when you specifically need 4K. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
+      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers. A 2K/4K switch appears on v4.5 and v5.0 Lite; the remaining versions, v5.0 Pro included, render at 2K, so pick v4.5 or v5.0 Lite when you specifically need 4K. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
       'Choose Seedream when legible in-image text and typography, high-resolution output, or careful adherence to complex prompts matter — it is a strong fit for posters, signage, packaging, and text-heavy design work, and ByteDance publishes an official prompting guide for it. For the deepest library of community styles and characters via LoRAs, the SDXL-based Pony and Illustrious ecosystems still lead; Qwen-Image is the closest open-weight alternative for text-in-image work. As a premium hosted model, Seedream costs more Buzz per image than lighter open checkpoints — a fair trade when resolution and prompt precision are the priority.',
     ],
     promptTips: [
@@ -3499,7 +3499,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         versionId: 3110984,
         imageId: 136836725,
         displayName: 'Seedream v5.0 Pro',
-        note: 'Civitai-hosted · default',
+        note: 'Civitai-hosted',
       },
       {
         modelId: 1951069,
@@ -3617,7 +3617,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Which Seedream version should I use?',
-        a: 'v5.0 Pro is the current flagship and the default, and it renders at 2K. If you need 4K, choose v4.5 or v5.0 Lite — they are the two versions with a 2K/4K switch. Remix an example above to compare versions on the same prompt.',
+        a: 'If you need 4K, choose v4.5 or v5.0 Lite — they are the two versions with a 2K/4K switch; the others render at 2K. Remix an example above to compare versions on the same prompt.',
       },
     ],
     attribution: 'a hosted text-to-image model by ByteDance (Seedream)',

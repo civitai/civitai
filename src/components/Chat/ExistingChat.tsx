@@ -57,7 +57,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ChatSystemNoteText } from '~/components/Chat/ChatSystemNoteText';
 import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -67,11 +67,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
-import {
-  activeMemberStatuses,
-  filterBlockedChatMessages,
-  formatChatSystemMessage,
-} from '~/shared/utils/chat';
+import { activeMemberStatuses, filterBlockedChatMessages } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -1336,12 +1332,7 @@ function DisplayMessages({
                   <EmbedMessage content={c.content} />
                 ) : isSystemChat ? (
                   <Text className={classes.systemNote} component="div" size="xs">
-                    <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                      {formatChatSystemMessage({
-                        content: c.content,
-                        username: currentUser?.username,
-                      })}
-                    </CustomMarkdown>
+                    <ChatSystemNoteText content={c.content} username={currentUser?.username} />
                   </Text>
                 ) : (
                   <div

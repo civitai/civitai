@@ -15,15 +15,18 @@ import {
 } from '~/server/services/hot-reads-5.reads';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readUserReviewsViaKysely } from '~/server/services/hot-reads-6.reads';
+import { readResourceReviewsPage } from '~/server/services/hot-reads-12.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
+import type {
+  GetRecommendedByInput,
+  GetResourceReviewsInput,
+} from '~/server/schema/resourceReview.schema';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIds,
@@ -189,35 +192,14 @@ export const getResourceReviewsInfinite = async ({
   }
 
   orderBy.push({ createdAt: 'desc' });
-  const items = await dbRead.resourceReview.findMany({
+  // On the replica; behind `kysely-hot-reads-12` the reviews' users (nested
+  // `userWithCosmeticsSelect`, one Prisma statement per relation) are one Kysely statement.
+  const items = await readResourceReviewsPage({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
     orderBy,
-    select: {
-      id: true,
-      modelId: true,
-      modelVersionId: true,
-      details: true,
-      createdAt: true,
-      rating: true,
-      recommended: true,
-      user: { select: userWithCosmeticsSelect },
-      // helper: { select: { imageCount: true } },
-      model: include?.includes('model')
-        ? {
-            select: { id: true, name: true },
-          }
-        : undefined,
-      modelVersion: include?.includes('model')
-        ? {
-            select: {
-              id: true,
-              name: true,
-            },
-          }
-        : undefined,
-    },
+    includeModel: !!include?.includes('model'),
   });
 
   let nextCursor: number | undefined;
@@ -543,6 +525,16 @@ export const writtenReviewSql = Prisma.sql`(
   NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
   AND rr.details IS NOT NULL AND rr.details <> ''
   AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
+)`;
+
+// The thumbs-up reviews the written list leaves out: no text, and not hidden by a moderator or flag.
+export const thumbsOnlyRecommendSql = Prisma.sql`(
+  NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
+  AND rr.recommended = TRUE
+  AND (
+    rr.details IS NULL OR rr.details = ''
+    OR btrim(regexp_replace(rr.details, '<[^>]*>|&nbsp;', '', 'g')) = ''
+  )
 )`;
 
 // A post can keep an `unpublishedAt` stamp with `publishedAt` still set; the stamp hides it.
@@ -873,6 +865,65 @@ export const getPagedResourceReviews = async ({
   });
 
   return getPagingData({ items, count, hasMore }, limit, page);
+};
+
+/** Who gave one version a thumbs-up without writing a review, newest first, one page at a time. */
+export const getRecommendedBy = async ({
+  input,
+  userId,
+}: {
+  input: GetRecommendedByInput;
+  userId?: number;
+}) => {
+  const { modelId, modelVersionId, limit, cursor: page } = input;
+  const AND = [
+    Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
+    visibleReviewForViewerSql('rr', userId),
+    thumbsOnlyRecommendSql,
+    Prisma.sql`EXISTS (SELECT 1 FROM "User" u WHERE u.id = rr."userId" AND u."deletedAt" IS NULL)`,
+  ];
+  const excludedUserIds = await getExcludedReviewerIds({ userId, modelId, modelVersionId });
+  if (excludedUserIds.length) {
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
+  }
+
+  // One extra row says whether another page follows, so there is no exact COUNT.
+  const rows = await dbRead.$queryRaw<{ userId: number; createdAt: Date }[]>`
+    SELECT rr."userId", rr."createdAt"
+    FROM "ResourceReview" rr
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY rr."createdAt" DESC, rr.id DESC
+    LIMIT ${limit + 1}
+    OFFSET ${limit * (page - 1)}
+  `;
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+
+  const userIds = pageRows.map((row) => row.userId);
+  const [users, userCosmetics, profilePictures] = await Promise.all([
+    getBasicDataForUsers(userIds),
+    getCosmeticsForUsers(userIds),
+    getProfilePicturesForUsers(userIds),
+  ]);
+  const items = pageRows.flatMap(({ userId: id, createdAt }) => {
+    const user = users[id];
+    if (!user) return [];
+    return [
+      {
+        createdAt,
+        user: {
+          id,
+          username: user.username,
+          userImage: user.image,
+          deletedAt: user.deletedAt,
+          cosmetics: userCosmetics?.[id] ?? [],
+          profilePicture: profilePictures?.[id] ?? null,
+        },
+      },
+    ];
+  });
+
+  return { items, nextCursor: hasMore ? page + 1 : undefined };
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {

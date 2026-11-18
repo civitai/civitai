@@ -22,6 +22,20 @@ export const CRUCIBLE_ENTRY_WARNING_PERCENT = { min: 10, max: 50, default: 20 } 
 export const CRUCIBLE_ENTRY_CUTOFF_PERCENT = { min: 0, max: 40, default: 10 } as const;
 export const CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE =
   'Entries must close later than the late-entry warning starts';
+/**
+ * What a moderator can fix on a running crucible besides its name, description and images: none
+ * of these moves Buzz or prices the setup fee, and the server checks each so no entry already in
+ * becomes invalid. Duration is not here: it prices the setup fee, and every entry's post is
+ * scheduled to publish at the current end.
+ */
+export const CRUCIBLE_MODERATOR_RUNNING_FIELDS = [
+  'maxTotalEntries',
+  'entryLimit',
+  'entryWarningPercent',
+  'entryCutoffPercent',
+  'allowedResources',
+  'allowedBaseModels',
+] as const;
 export const CRUCIBLE_ENTRIES_CLOSED_MESSAGE =
   'Entries are closed. This crucible stops taking entries near the end so every entry has time to be judged.';
 
@@ -114,6 +128,15 @@ export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
   status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
 
 export { hasCrucibleStarted } from '@civitai/shared/crucible';
+
+/** Finalized, or past its end time even before the job finalizes it. */
+export const crucibleHasEnded = ({
+  status,
+  endAt,
+}: {
+  status: CrucibleStatus;
+  endAt: Date | string | null;
+}) => crucibleRankingsAreFinal(status) || (!!endAt && new Date(endAt) <= new Date());
 
 /**
  * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.

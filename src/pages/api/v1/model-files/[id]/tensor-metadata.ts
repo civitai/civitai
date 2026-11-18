@@ -18,6 +18,7 @@ import {
   supportsTensorVramEstimate,
 } from '~/utils/model-tensor-metadata';
 import { FAILED_SCAN_DOWNLOAD_MESSAGE } from '~/server/utils/failed-scan';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 /**
  * 🔴 `id` is bounded to a Postgres int4, and the bound is load-bearing — this is
@@ -47,7 +48,9 @@ const schema = z.object({
 const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
 const NO_STORE_CACHE_CONTROL = 'private, no-store';
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: MODEL_VIEW_SCOPE });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   sessionUser: Session['user'] | undefined
@@ -189,7 +192,7 @@ export default MixedAuthEndpoint(async function handler(
       fileId: id,
       modelVersionId: file.modelVersionId,
       format,
-    }).catch(() => undefined);
+    });
 
     // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
     // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got
@@ -210,7 +213,7 @@ export default MixedAuthEndpoint(async function handler(
     // `logToAxiom` call directly above — nothing is destroyed, only moved.
     return res.status(422).json({ error: 'Unable to read tensor metadata for this file' });
   }
-});
+}
 
 function getStatusCode(
   status: Exclude<Awaited<ReturnType<typeof getFileForModelVersion>>['status'], 'success'>

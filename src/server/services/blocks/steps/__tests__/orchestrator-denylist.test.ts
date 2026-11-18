@@ -7,7 +7,11 @@ import {
   isPlatformInternalStepType,
   isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
-import { isTrainingStepType } from '~/server/services/blocks/steps/output';
+import {
+  canonicalTrainingStepType,
+  isTrainingStepType,
+} from '~/server/services/blocks/steps/output';
+import { foldCase } from '~/server/services/blocks/workflow-graph';
 import { assertStepInvariants, listRegisteredSteps } from '~/server/services/blocks/steps';
 
 /**
@@ -300,8 +304,19 @@ describe('isTrainingStepTypeIgnoringCase', () => {
   it('uses the SAME fold as the denylist, and the exact predicate is unchanged', () => {
     expect(foldStepTypeCase('XGuardModeration')).toBe('xguardmoderation');
     expect(isPlatformInternalStepType('XGUARDMODERATION')).toBe(true);
-    // `isTrainingStepType` stays exact: it reads a `$type` the orchestrator returned.
+    // `isTrainingStepType` stays an exact type guard; a returned `$type` is folded first.
     expect(isTrainingStepType('training')).toBe(true);
     expect(isTrainingStepType('Training')).toBe(false);
+    expect(canonicalTrainingStepType('Training')).toBe('training');
+    expect(canonicalTrainingStepType('IMAGERESOURCETRAINING')).toBe('imageResourceTraining');
+    expect(canonicalTrainingStepType('imageGen')).toBeNull();
+  });
+
+  it('🔴 folds exactly as the workflow graph does, including ı and ſ', () => {
+    expect(foldCase('ſ')).toBe('s');
+    expect(foldCase('ı')).toBe('i');
+    for (const text of ['XGuardModeration', 'ſ', 'ı', 'tranſcode', 'fıelds', 'İ']) {
+      expect(foldStepTypeCase(text)).toBe(foldCase(text));
+    }
   });
 });

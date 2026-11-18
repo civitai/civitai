@@ -57,6 +57,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', async () => {
 });
 vi.mock('~/components/Apps/AppsBuildBody', () => ({
   AppsBuildBody: () => <div data-testid="build-body" />,
+  AppsBuildRequestView: () => <div data-testid="request-view" />,
 }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({
   AppsPageLayout: ({ actions, children }: { actions?: ReactNode; children: ReactNode }) => (
@@ -75,6 +76,7 @@ const ASSISTANT = {
   sandboxUrl: 'https://sandbox.example',
   subagents: false,
   remoteRunner: true,
+  hibernate: false,
 };
 const MEMBER = { id: 12, isModerator: false };
 const MODERATOR = { id: 2, isModerator: true };
@@ -123,6 +125,13 @@ describe('/apps/build — which view the page mounts', () => {
     await expect.element(page.getByTestId('workspace')).toBeInTheDocument();
     await warm.unmount();
     workspaceLoaded = true;
+  });
+
+  test('🔴 the request view mounts the request view in the layout, and no build body', async () => {
+    await renderPage({ mode: 'request' });
+    await expect.element(page.getByTestId('request-view')).toBeInTheDocument();
+    expect(seen('build-body')).toBe(0);
+    expect(seen('workspace')).toBe(0);
   });
 
   test('the build view mounts the build body and never the workspace', async () => {

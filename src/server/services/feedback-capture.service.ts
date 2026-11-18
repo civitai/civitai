@@ -76,7 +76,7 @@ export async function captureFeedbackScreenshot({
       message: 'Failed to store a feedback page capture',
       feedbackId,
       error: (error as Error).message,
-    }).catch(() => undefined);
+    });
     result = { screenshotCheck: 'unverified' };
   }
 
@@ -93,7 +93,7 @@ export async function captureFeedbackScreenshot({
       message: 'Failed to record a feedback page capture',
       feedbackId,
       error: (error as Error).message,
-    }).catch(() => undefined);
+    });
   }
   return result;
 }

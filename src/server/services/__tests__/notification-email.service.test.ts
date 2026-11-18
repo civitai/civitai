@@ -14,8 +14,9 @@ import {
   verifyEmailUnsubscribe,
 } from '~/server/services/notification-email.service';
 import { getUserEmailSettings, toggleEmailSetting } from '~/server/services/notification.service';
-import { emailNotificationTypeList } from '~/server/notifications/utils.notifications';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { emailOptOutTypeList } from '~/server/notifications/utils.notifications';
+import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
 
@@ -23,6 +24,8 @@ const DEAL = 'service-deal-requested';
 const deal = { type: DEAL, details: { dealId: 7, offeringTitle: 'Portrait' } };
 
 const counters = new Map<string, number>();
+/** Every `SET` the cap MULTIs sent: `[key, value, options]`. */
+let capSets: unknown[][] = [];
 let redisDown: false | 'all' | 'user-quota' = false;
 
 beforeEach(() => {
@@ -35,16 +38,34 @@ beforeEach(() => {
       ? { key: where.key, value: true }
       : null) as never);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, email: 'a@example.com' }] as never);
-  redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) => {
+  redisMock.redis.incrBy.mockImplementation((async (key: string, by: number) => {
     if (redisDown === 'all') throw new Error('redis down');
     if (
       redisDown === 'user-quota' &&
-      key.startsWith(REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA)
+      key.startsWith(REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA)
     )
       throw new Error('redis down');
     const next = (counters.get(key) ?? 0) + by;
     counters.set(key, next);
     return next;
+  }) as never);
+  // A cap is counted by SET NX EX + INCR in one MULTI; its INCR lands on the counter above.
+  capSets = [];
+  redisMock.redis.multi.mockImplementation((() => {
+    const queued: Array<() => unknown> = [];
+    const chain = {
+      set: (...a: unknown[]) => {
+        capSets.push(a);
+        queued.push(() => 'OK');
+        return chain;
+      },
+      incr: (key: string) => {
+        queued.push(() => redisMock.redis.incrBy(key, 1));
+        return chain;
+      },
+      exec: async () => Promise.all(queued.map((op) => op())),
+    };
+    return chain;
   }) as never);
 });
 
@@ -101,10 +122,10 @@ describe('sendNotificationEmails', () => {
   });
 
   it('sends the type its hourly ceiling and stops at the next one', async () => {
-    const typeKeyPrefix = `${REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${DEAL}:`;
+    const typeKeyPrefix = `${REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${DEAL}:`;
     counters.set('type-count', NOTIFICATION_EMAIL_TYPE_HOURLY_CAP - 1);
-    const real = redisMock.sysRedis.incrBy.getMockImplementation()!;
-    redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) =>
+    const real = redisMock.redis.incrBy.getMockImplementation()!;
+    redisMock.redis.incrBy.mockImplementation((async (key: string, by: number) =>
       key.startsWith(typeKeyPrefix) ? real('type-count', by) : real(key, by)) as never);
     await sendNotificationEmails({ ...deal, userIds: [1] });
     expect(sendEmail).toHaveBeenCalledTimes(1);
@@ -113,13 +134,30 @@ describe('sendNotificationEmails', () => {
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it('re-arms a cap key that lost its expiry', async () => {
-    redisMock.sysRedis.expire.mockClear();
-    redisMock.sysRedis.ttl.mockResolvedValue(-1 as never);
-    redisMock.sysRedis.incrBy.mockResolvedValue(5 as never);
+  it('counts both caps on the cache cluster, not in system Redis', async () => {
+    redisMock.sysRedis.incrBy.mockClear();
     await sendNotificationEmails({ ...deal, userIds: [1] });
-    // Both keys (type and user) are past their first hit and report no TTL.
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(2);
+    expect([...counters.keys()].sort()).toEqual([
+      expect.stringMatching(/^system:notification-email-type-quota:/),
+      expect.stringMatching(/^system:notification-email-user-quota:1:/),
+    ]);
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('creates each cap key with its TTL in the same MULTI as the count', async () => {
+    await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect(capSets).toEqual([
+      [
+        expect.stringMatching(/^system:notification-email-type-quota:/),
+        '0',
+        { NX: true, EX: 7200 },
+      ],
+      [
+        expect.stringMatching(/^system:notification-email-user-quota:1:/),
+        '0',
+        { NX: true, EX: 172800 },
+      ],
+    ]);
   });
 
   it('sends nothing when only the per-user cap cannot be read', async () => {
@@ -162,11 +200,12 @@ describe('unsubscribe signature', () => {
 });
 
 describe('getUserEmailSettings', () => {
-  it('a user with no rows gets email for every email type', async () => {
+  it('a user with no rows gets email for every email type, and the weekly digest', async () => {
     dbMock.dbWrite.userEmailNotificationOptOut.findMany.mockResolvedValue([] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).toContain(DEAL);
-    expect(types).toHaveLength(emailNotificationTypeList.length);
+    expect(types).toContain(MISSED_DIGEST_EMAIL_TYPE);
+    expect(types).toHaveLength(emailOptOutTypeList.length);
   });
 
   it('an opt-out row turns that one type off', async () => {
@@ -175,7 +214,7 @@ describe('getUserEmailSettings', () => {
     ] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).not.toContain(DEAL);
-    expect(types).toHaveLength(emailNotificationTypeList.length - 1);
+    expect(types).toHaveLength(emailOptOutTypeList.length - 1);
   });
 });
 
@@ -184,6 +223,14 @@ describe('toggleEmailSetting', () => {
     await toggleEmailSetting({ userId: 1, type: [DEAL], enabled: false });
     expect(dbMock.dbWrite.userEmailNotificationOptOut.createMany).toHaveBeenCalledWith({
       data: [{ userId: 1, type: DEAL }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('turning the weekly digest off writes its opt-out row', async () => {
+    await toggleEmailSetting({ userId: 1, type: [MISSED_DIGEST_EMAIL_TYPE], enabled: false });
+    expect(dbMock.dbWrite.userEmailNotificationOptOut.createMany).toHaveBeenCalledWith({
+      data: [{ userId: 1, type: MISSED_DIGEST_EMAIL_TYPE }],
       skipDuplicates: true,
     });
   });

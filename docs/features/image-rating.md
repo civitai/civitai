@@ -62,7 +62,7 @@ The webhook `/api/webhooks/image-scan-result` runs the shared stages in `image-s
    `needsReview = 'modRule'`, _Approve_ changes nothing.
 6. **`scannedAt`** is stamped on the first scan. Later scans re-stamp it only for images under a week old,
    not on `Rescan`.
-7. A scanned image with no review key is offered to the Knights rating game.
+7. A scanned image with no review key is offered to the Knights rating game, and to the Knights of New Order v2 queue when its sources switch is on (see [`knights-sources.md`](knights-sources.md)).
 
 ### 3. Scan failure and retry
 
@@ -98,7 +98,7 @@ All go through `updateImageNsfwLevel` (main app) or its moderator-app twin.
 | Who                | Effect                                                                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | Moderator          | Sets `nsfwLevel`, **locks it**, records the reason and ModActivity. Does not change `ingestion` or `needsReview`.               |
-| Knights consensus  | Same as a moderator, with `nsfwLevelReason = KNIGHTS_VOTE_NSFW_LEVEL_REASON`. A large down-rating escalates instead of locking. |
+| Knights consensus  | Written by the Knights app through `POST /api/mod/image/kono-set-nsfw-level` (activity `setNsfwLevelKono`, reason `KNIGHTS_VOTE_NSFW_LEVEL_REASON`). Same effect as a moderator, but only onto an image that exists, has no block marker, and is unlocked or Knights-locked; never sets Blocked. A large down-rating or a Blocked consensus goes to moderators instead of writing. See `apps/knights/CLAUDE.md`. |
 | Owner / other user | Only on unlocked images: records an `ImageRatingRequest` vote (owner votes weigh more). Does not change the level directly.     |
 
 ### 6. Leaving a review queue
@@ -140,11 +140,21 @@ Every public read path below requires **reviewed** and `needsReview IS NULL`, th
 The `metrics-images` Meilisearch feed (the main image feed) applies its own query-time filters on the fields
 it indexes rather than calling `imageReviewedSql`; a change to the rule above has to be made there separately.
 
-Owners always see their own images, including unrated and in-review ones. Moderators see everything in the
-pending views.
+Reads also require **not restricted**: `imageNotRestrictedSql` / `imageNotRestrictedWhere` in the same file
+hide a mature image made with a base model that restricts mature images (see
+`docs/nsfw-license-restrictions.md`). Its exceptions are listed there under "Hiding images is one-way": chiefly
+the uploader's own image where the read is per viewer, a moderator opening the image by id (`getImage`,
+`assertImageVisibleToViewer`: `imageVisibilityConditions` applies no conditions for moderators), and an
+article's owner and moderators on that article's images.
 
-When adding a new image read path, use `imageReviewedSql()`, or `isImageReviewed` for rows already fetched —
-do not re-derive visibility from `nsfwLevel` alone.
+Owners always see their own images, including unrated and in-review ones, and their restricted ones on per-viewer
+reads. Moderators see everything in the main site's pending views except restricted images, which they reach
+by the image's id, on an article's or crucible's page and edit form, and in the labelled moderator tools;
+the moderator app's queues still list them.
+
+When adding a new image read path, use `imageReviewedSql()` and `imageNotRestrictedSql({ viewerId })` (or
+`isImageReviewed` / `isImageNotRestricted` for rows already fetched) — do not re-derive visibility from
+`nsfwLevel` alone.
 
 ### 8. Sort order
 

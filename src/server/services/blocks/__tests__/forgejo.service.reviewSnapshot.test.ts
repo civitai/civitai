@@ -37,7 +37,9 @@ function makeFetchMock() {
     calls,
     enqueue(body: unknown, status = 200) {
       const text = body == null ? '' : JSON.stringify(body);
-      responses.push(new Response(text, { status, headers: { 'Content-Type': 'application/json' } }));
+      responses.push(
+        new Response(text, { status, headers: { 'Content-Type': 'application/json' } })
+      );
     },
     enqueueRaw(response: Response) {
       responses.push(response);
@@ -67,7 +69,7 @@ describe('ensureReviewRepo — snapshot visibility', () => {
    */
   it('creates the snapshot repo PRIVATE', async () => {
     const { ensureReviewRepo } = await import('../forgejo.service');
-    fm.enqueue({ id: 1 }); // org create
+    fm.enqueue({ id: 1 }); // org lookup: exists
     fm.enqueue({ id: 2 }); // repo create
 
     await ensureReviewRepo('gen-matrix');
@@ -81,8 +83,9 @@ describe('ensureReviewRepo — snapshot visibility', () => {
 
   it('keeps the containing org private too', async () => {
     const { ensureReviewRepo } = await import('../forgejo.service');
-    fm.enqueue({ id: 1 });
-    fm.enqueue({ id: 2 });
+    fm.enqueue({ message: 'not found' }, 404); // org lookup: missing
+    fm.enqueue({ id: 1 }); // org create
+    fm.enqueue({ id: 2 }); // repo create
 
     await ensureReviewRepo('gen-matrix');
 
@@ -92,10 +95,47 @@ describe('ensureReviewRepo — snapshot visibility', () => {
 
   it('stays idempotent: 409/422 on an existing repo is not an error', async () => {
     const { ensureReviewRepo } = await import('../forgejo.service');
+    fm.enqueue({ id: 1 }); // org lookup: exists
+    fm.enqueue({ message: 'repo exists' }, 409);
+
+    await expect(ensureReviewRepo('gen-matrix')).resolves.toBeUndefined();
+  });
+
+  it('tolerates a concurrent org create: 422 on the org POST after a 404 lookup', async () => {
+    const { ensureReviewRepo } = await import('../forgejo.service');
+    fm.enqueue({ message: 'not found' }, 404);
     fm.enqueue({ message: 'org exists' }, 422);
     fm.enqueue({ message: 'repo exists' }, 409);
 
     await expect(ensureReviewRepo('gen-matrix')).resolves.toBeUndefined();
+  });
+
+  /**
+   * A token that belongs to the org but may not create orgs (the PR-preview bot) gets 403 on
+   * POST /orgs before Forgejo checks the name. Looking the org up first is what lets its submit
+   * reach the repo create at all.
+   */
+  it('does not POST /orgs when the org already exists', async () => {
+    const { ensureReviewRepo } = await import('../forgejo.service');
+    fm.enqueue({ id: 1 }); // org lookup: exists
+    fm.enqueue({ id: 2 }); // repo create
+
+    await ensureReviewRepo('gen-matrix');
+
+    expect(fm.calls.map((c) => `${c.init?.method ?? 'GET'} ${c.url}`)).toEqual([
+      'GET https://forgejo.example/api/v1/orgs/civitai-apps-review',
+      'POST https://forgejo.example/api/v1/orgs/civitai-apps-review/repos',
+    ]);
+  });
+
+  it('throws on an org lookup that is neither found nor missing', async () => {
+    const { ensureReviewRepo } = await import('../forgejo.service');
+    fm.enqueue({ message: 'boom' }, 500);
+
+    await expect(ensureReviewRepo('gen-matrix')).rejects.toThrow(
+      /org lookup civitai-apps-review 500/
+    );
+    expect(fm.calls).toHaveLength(1);
   });
 });
 
@@ -106,7 +146,9 @@ describe('deleteReviewRepo', () => {
 
     await expect(deleteReviewRepo('gen-matrix')).resolves.toBe('deleted');
 
-    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix');
+    expect(fm.calls[0].url).toBe(
+      'https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix'
+    );
     expect(fm.calls[0].init?.method).toBe('DELETE');
   });
 
@@ -162,7 +204,9 @@ describe('setReviewRepoPrivate', () => {
 
     await expect(setReviewRepoPrivate('gen-matrix')).resolves.toBe('updated');
 
-    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix');
+    expect(fm.calls[0].url).toBe(
+      'https://forgejo.example/api/v1/repos/civitai-apps-review/gen-matrix'
+    );
     expect(fm.calls[0].init?.method).toBe('PATCH');
     expect(bodyOf(fm.calls[0])).toEqual({ private: true });
   });

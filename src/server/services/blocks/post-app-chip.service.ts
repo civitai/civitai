@@ -34,11 +34,7 @@ import {
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import type {
-  PostAppChip,
-  PostAppChipItemRow,
-  PostAppChipRow,
-} from '~/server/services/blocks/post-app-chip.logic';
+import type { PostAppChip, PostAppChipItemRow } from '~/server/services/blocks/post-app-chip.logic';
 import {
   postAppChipItemQuery,
   postAppChipQuery,
@@ -49,11 +45,6 @@ import {
 } from '~/server/services/blocks/post-app-chip.logic';
 import type { SessionUser } from '~/types/session';
 
-/**
- * `logToAxiom` returns a promise that can reject, so the `.catch` is required —
- * an unhandled rejection from a fail-open path would defeat the point of failing
- * open.
- */
 function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'item'): void {
   logToAxiom({
     name: 'post-app-chip-read-degraded',
@@ -63,7 +54,7 @@ function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'ite
     ...(read && { read }),
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
-  }).catch(() => null);
+  });
 }
 
 /**
@@ -244,8 +235,7 @@ export async function readAppChip({
         }
         return hidden;
       },
-      readApp: async (appId) =>
-        (await dbRead.oauthClient.findUnique(postAppChipQuery(appId))) as PostAppChipRow | null,
+      readApp: (appId) => dbRead.oauthClient.findUnique(postAppChipQuery(appId)),
     });
     recordPostAppChipRead(outcome, surface);
     return chip;

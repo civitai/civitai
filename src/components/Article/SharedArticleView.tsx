@@ -2,6 +2,7 @@ import { AspectRatio, Container, Divider, Group, Stack, Text, Title } from '@man
 import { IconEye } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { ArticleBanner } from '~/components/Article/Detail/ArticleBanner';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Gated } from '~/components/Gated/Gated';
@@ -19,9 +20,14 @@ import { isDefined } from '~/utils/type-guards';
 
 /** The read-only view of a draft opened through its share link. */
 export function SharedArticleView({ article }: { article: SharedArticle }) {
-  const coverImages = useMemo(() => [article.coverImage].filter(isDefined), [article.coverImage]);
+  const coverImages = useMemo(
+    () => [article.coverImage, article.bannerImage].filter(isDefined),
+    [article.coverImage, article.bannerImage]
+  );
   const { items } = useApplyHiddenPreferences({ type: 'images', data: coverImages });
-  const [image] = items;
+  const banner = items.find((item) => item.id === article.bannerImage?.id);
+  // A banner takes the cover's place, as on the article page.
+  const image = banner ? undefined : items.find((item) => item.id === article.coverImage?.id);
 
   return (
     <Gated
@@ -33,6 +39,7 @@ export function SharedArticleView({ article }: { article: SharedArticle }) {
         deIndex: true,
       }}
     >
+      {banner && <ArticleBanner image={banner} articleId={article.id} title={article.title} bare />}
       <Container size="md">
         <Stack gap="md" my="xl">
           <AlertWithIcon icon={<IconEye />} color="blue" iconColor="blue" size="lg">

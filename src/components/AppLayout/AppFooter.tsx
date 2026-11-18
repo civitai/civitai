@@ -35,6 +35,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Privacy',
   },
   {
+    key: 'take-it-down',
+    href: '/content/take-it-down',
+    children: 'Remove Intimate Images',
+  },
+  {
     key: 'safety',
     href: '/safety',
     children: 'Safety',

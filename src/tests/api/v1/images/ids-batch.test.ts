@@ -41,6 +41,7 @@ vi.mock('~/server/redis/caches', () => ({
 // Hand-listed: the route takes only these from model.service, whose import graph is large.
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: async () => undefined,
+  isModelGalleryWithheld: async () => false,
   getHeldLevelsByPost: mockHeldLevelsByPost,
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -283,7 +284,9 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
       expect(res._getStatusCode()).toBe(200);
       expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([1, 3]);
-      expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST]);
+      expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST], {
+        withOwners: false,
+      });
     });
 
     it('leaves out an image on a held post that is not yet rated', async () => {
@@ -306,6 +309,26 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
       expect(res._getStatusCode()).toBe(200);
       expect(res._getJSONData().items).toEqual([]);
+    });
+
+    it.each<Record<string, string>>([
+      { username: 'someone' },
+      {},
+      // A model or version search selects by resource, so its images can sit on another model's post.
+      { modelId: '5' },
+      { modelVersionId: '6' },
+      { ids: '1,2,3', modelId: '5' },
+    ])("drops images above their own post's held level (%o)", async (query) => {
+      // Whichever source the search reads (the feed service or the database).
+      const page = { items: [rated(1, 1), rated(2, 4), rated(3, 4, OTHER_POST)] };
+      mockGetAllImages.mockResolvedValue({ ...page, nextCursor: undefined });
+      mockGetImagesFromFeed.mockResolvedValue({ ...page, nextCursor: undefined });
+      const { req, res } = createMocks({ query: { ...query, nsfw: 'X' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([1, 3]);
     });
   });
 });

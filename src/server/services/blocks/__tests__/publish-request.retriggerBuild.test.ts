@@ -90,6 +90,12 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
   createRepoFromTemplate: vi.fn(),
   ensurePushWebhook: vi.fn(),
 }));
+const { mockOpenHolds } = vi.hoisted(() => ({
+  mockOpenHolds: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+}));
+vi.mock('~/server/services/blocks/publish-request-holds.service', () => ({
+  getOpenHoldsBySlug: mockOpenHolds,
+}));
 vi.mock('~/server/utils/blocks-retrigger-rate-limit', () => ({
   acquireRetriggerLock: limiter.acquire,
   releaseRetriggerLock: limiter.release,
@@ -160,6 +166,7 @@ beforeEach(() => {
   mockRedis.nxResult = true;
   mockRedis.quotaAllowed = true;
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-1' });
+  mockOpenHolds.mockImplementation(async () => []);
 });
 
 describe('retriggerBuild — happy path', () => {
@@ -313,6 +320,33 @@ describe('retriggerBuild — guard 5: superseded by a newer approved version', (
     await expect(
       callRetrigger({ appBlock: { id: APB, currentVersionSha: null } })
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('retriggerBuild — an open review hold refuses the rebuild', () => {
+  // A version approved over a late hold is never built; a first version has no current sha to
+  // supersede it, so only the hold check keeps its build from running.
+  it('🔴 refuses while the app has an open hold, with no build', async () => {
+    mockOpenHolds.mockImplementation(async () => [{ id: 12 }]);
+    await expectRejectCode(
+      callRetrigger({ appBlock: { id: APB, currentVersionSha: null } }),
+      'NOT_RETRIGGERABLE'
+    );
+    expect(mockOpenHolds).toHaveBeenCalledWith(expect.anything(), ['my-app']);
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the holds cannot be read', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockOpenHolds.mockImplementation(async () => {
+      throw new Error('relation "app_publish_request_holds" does not exist');
+    });
+    try {
+      await expectRejectCode(callRetrigger(), 'NOT_RETRIGGERABLE');
+      expect(mockTriggerBuild).not.toHaveBeenCalled();
+    } finally {
+      quiet.mockRestore();
+    }
   });
 });
 

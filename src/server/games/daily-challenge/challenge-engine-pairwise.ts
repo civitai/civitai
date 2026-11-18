@@ -129,7 +129,7 @@ export const pairwiseLadderEngine: ChallengeJudgingEngine = {
       unresolvedGroups: rerun.unresolvedGroups,
       // Finishers that entered the rerun near the K boundary — the signal that K wants raising.
       nearBoundary: rerun.nearBoundary,
-    }).catch(() => undefined);
+    });
 
     const order = rerun.order;
     assertLadderCoverage(
@@ -311,7 +311,7 @@ function createSession(
       comparisons,
       reroutes,
       buzz: spend,
-    }).catch(() => undefined);
+    });
   }
 
   return {
@@ -344,7 +344,7 @@ function createSession(
             challengeId: ctx.challengeId,
             phase,
             message: (error as Error).message,
-          }).catch(() => undefined);
+          });
         }
       }
     },

@@ -25,6 +25,7 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 }));
 
 import {
+  areAccountsUnderLegalHold,
   getAccountLegalHoldLegs,
   guardedAccountScrubSql,
   isAccountUnderLegalHold,
@@ -348,6 +349,33 @@ describe('isAccountUnderLegalHold', () => {
     expect(await isAccountUnderLegalHold(CLEAN)).toBe(false);
     failQueries = true;
     expect(await isAccountUnderLegalHold(CLEAN)).toBeNull();
+  });
+});
+
+describe('areAccountsUnderLegalHold (one batched lookup)', () => {
+  it('answers each user from the real hold SQL', async () => {
+    expect(await areAccountsUnderLegalHold([CLEAN, PENDING_REPORT, RECENTLY_SENT])).toEqual(
+      new Map([
+        [CLEAN, false],
+        [PENDING_REPORT, true],
+        [RECENTLY_SENT, true],
+      ])
+    );
+  });
+
+  it('a failed lookup holds EVERY user in the batch, the clean one included', async () => {
+    failQueries = true;
+    expect(await areAccountsUnderLegalHold([CLEAN, PENDING_REPORT])).toEqual(
+      new Map([
+        [CLEAN, true],
+        [PENDING_REPORT, true],
+      ])
+    );
+  });
+
+  it('an unreadable answer (no boolean) holds the user', async () => {
+    unreadable = true;
+    expect(await areAccountsUnderLegalHold([CLEAN])).toEqual(new Map([[CLEAN, true]]));
   });
 });
 

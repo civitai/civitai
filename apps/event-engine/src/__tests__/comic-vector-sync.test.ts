@@ -10,13 +10,19 @@ describe('comic payload, against the real query', () => {
     const pg = new PGlite();
     await pg.exec(`
       CREATE TYPE "ComicGenre" AS ENUM ('Action', 'Fantasy');
-      CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp);
+      CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp,
+        "deletedAt" timestamp);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL
+        DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
+      CREATE TABLE "EvidenceHeldUser" ("userId" int);
       CREATE TABLE "ComicProject" (id int PRIMARY KEY, name text, description text,
         genre "ComicGenre", "nsfwLevel" int, "updatedAt" timestamp, "userId" int,
         "coverImageId" int, status text, "tosViolation" boolean);
-      CREATE TABLE "ComicChapter" ("projectId" int, position int, status text);
+      CREATE TABLE "ComicChapter" ("projectId" int, position int, status text,
+        availability text DEFAULT 'Public');
       CREATE TABLE "Image" (id int PRIMARY KEY, ingestion text, "needsReview" text,
-        "tosViolation" boolean);
+        "tosViolation" boolean, "userId" int DEFAULT 7, "blockedFor" text,
+        minor boolean DEFAULT false, poi boolean DEFAULT false, "nsfwLevel" int DEFAULT 1);
       CREATE TABLE "ComicPanel" ("projectId" int, "chapterPosition" int, "imageId" int,
         "imageUrl" text, status text);
       INSERT INTO "User" VALUES (7, 'someone', NULL);
@@ -24,7 +30,8 @@ describe('comic payload, against the real query', () => {
         5, '2026-01-01', 7, 70, 'Active', false), (2, 'Unpublished', NULL, NULL, 0, '2026-01-01',
         7, NULL, 'Active', false);
       INSERT INTO "ComicChapter" VALUES (1, 1, 'Published'), (2, 1, 'Draft');
-      INSERT INTO "Image" VALUES (10, 'Scanned', NULL, false), (20, 'Scanned', NULL, false);
+      INSERT INTO "Image" VALUES (10, 'Scanned', NULL, false), (20, 'Scanned', NULL, false),
+        (70, 'Scanned', NULL, false);
       INSERT INTO "ComicPanel" VALUES (1, 1, 10, 'u', 'Ready'), (2, 1, 20, 'u', 'Ready');
     `);
     try {

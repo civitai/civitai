@@ -148,3 +148,17 @@ export const hubRevocationFailOpenTotal = new Counter({
   labelNames: ['reason'] as const,
   registers: [register],
 });
+
+/**
+ * Session revocation checks whose store read failed but which still refused the session, because a revocation
+ * marker the hub had already read applied, by reason. Disjoint from hub_revocation_failopen_total: a failed read
+ * lands in exactly one of the two.
+ */
+export const hubRevocationDeniedCachedTotal = new Counter({
+  name: 'hub_revocation_denied_cached_total',
+  help:
+    'Hub session revocation checks that failed to read the store but refused the session from a revocation ' +
+    'marker already read, labeled by reason (timeout|error).',
+  labelNames: ['reason'] as const,
+  registers: [register],
+});

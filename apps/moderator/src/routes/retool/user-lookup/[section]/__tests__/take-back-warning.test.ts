@@ -39,14 +39,14 @@ beforeEach(() => {
 describe('take-back actions pass the warning to the panel', () => {
   it('refundPurchase', async () => {
     await expect(
-      actions.refundPurchase(formEvent({ userId: '8675309', buzzTransactionId: 'tx-1' }))
+      actions.refundPurchase(formEvent({ userId: '990200018', buzzTransactionId: 'tx-1' }))
     ).resolves.toEqual({ success: true, warning: WARNING });
   });
 
   it('removeCosmetic', async () => {
     await expect(
       actions.removeCosmetic(
-        formEvent({ userId: '8675309', cosmeticId: '700', claimKey: 'claimed' })
+        formEvent({ userId: '990200018', cosmeticId: '700', claimKey: 'claimed' })
       )
     ).resolves.toEqual({ success: true, warning: WARNING });
   });

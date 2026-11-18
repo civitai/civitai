@@ -7,9 +7,10 @@ import type {
 } from './client';
 
 // Read-through Redis cache for expensive reads (e.g. ClickHouse metrics) so a client reloading a page doesn't
-// re-hit the source every time. Build ONE cache factory per app+client with `createRedisCacheBuilder` (cache
-// client) or `createSysRedisCacheBuilder` (sys client), setting the app-wide key `prefix` once; then define one
-// cache per data family with `createCache({ name, fetch, ttlSeconds })` and call `.get(args)` with named args.
+// re-hit the source every time. Build ONE cache factory per app with `createRedisCacheBuilder` on the cache
+// client, setting the app-wide key `prefix` once; then define one cache per data family with
+// `createCache({ name, fetch, ttlSeconds })` and call `.get(args)` with named args. Cached data never goes on
+// the sys client: that store holds durable state, not caches.
 //
 // - **Args are the key.** The named args double as the cache key (sorted, so field order doesn't matter), so the
 //   key can't drift out of sync with what's actually fetched (no separate key array to keep aligned).
@@ -132,7 +133,10 @@ export function createRedisCacheBuilder(base: {
   return makeBuilder<RedisKeyTemplateCache>(base);
 }
 
-/** Same as `createRedisCacheBuilder`, bound to the **sys** redis client. */
+/**
+ * Same as `createRedisCacheBuilder`, bound to the **sys** redis client. Not for new caches: cached data
+ * belongs on the cache client (`createRedisCacheBuilder`).
+ */
 export function createSysRedisCacheBuilder(base: {
   getClient: () => RedisSysClient;
   prefix: string;

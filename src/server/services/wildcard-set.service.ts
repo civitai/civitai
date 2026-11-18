@@ -37,7 +37,7 @@ function scheduleAudit(categoryId: number): void {
       message: 'failed to schedule audit after User-kind mutation',
       wildcardSetCategoryId: categoryId,
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined)
+    })
   );
 }
 

@@ -1103,11 +1103,7 @@ We're using **Option 2** - extend `ModelFile.metadata` with `componentType` fiel
   - Make "Download All Components" the primary action
   - Update Generate button positioning
 
-**Task 4.5: Update File Info Display**
-- File: `src/components/FileInfo/FileInfo.tsx`
-- Changes:
-  - Show quantType for GGUF files
-  - Show componentType for component files
+**Task 4.5: Update File Info Display** — dropped: `FileInfo.tsx` had no importers and was deleted in #8584.
 
 ---
 
@@ -1147,7 +1143,6 @@ We're using **Option 2** - extend `ModelFile.metadata` with `componentType` fiel
 | `src/components/Resource/FilesProvider.tsx` | Update validation |
 | `src/components/Resource/LinkComponentModal.tsx` | **New file** |
 | `src/components/Model/ModelVersions/ModelVersionDetails.tsx` | Variant grouping, components section |
-| `src/components/FileInfo/FileInfo.tsx` | Show new metadata |
 
 ---
 
