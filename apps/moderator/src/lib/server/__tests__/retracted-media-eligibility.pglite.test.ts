@@ -214,19 +214,20 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
-  // Each of these is refused by heldUrlSql alone: heldImageSql and the sole-row guard pass them.
+  // Each of these is refused by heldUrlSql alone: heldImageSql and the sole-row guards pass them.
+  // Its delete and takedown legs are pinned by the cdn-access parity suite, since a delete or
+  // takedown row on the url is refused here before them.
   it('refuses a url cdn-access holds', async () => {
-    // A csam-hold post removal; mature-underage on the version, then on the model; a delete on the
-    // url with no owner recorded; a shop takedown with no owner recorded.
-    for (const id of [13, 14, 15, 16, 18])
+    // A csam-hold post removal; mature-underage on the version, then on the model.
+    for (const id of [13, 14, 15])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
   // A deleted or taken-down copy shares the bytes but not this row's signals, so it refuses the url
-  // even when cdn-access would not hold it: a clean owner's delete, a CSAM-review delete that a
-  // sent, verified report covers, and a clean owner's shop takedown.
+  // even when cdn-access would not hold it: deletes with no owner, a clean owner, a covering verified
+  // report and an unverified one; takedowns with no owner and a clean owner.
   it('refuses a url with a deleted or taken-down copy behind it, held or not', async () => {
-    for (const id of [17, 23, 24, 27])
+    for (const id of [16, 17, 23, 24, 18, 27])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
