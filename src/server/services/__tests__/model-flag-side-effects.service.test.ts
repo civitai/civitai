@@ -480,9 +480,11 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
 
   it('queues the model and collection reindexes when it turns sfwOnly on', async () => {
     await makePrivate(false);
+    expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockModelsQueueUpdate).toHaveBeenCalledWith([
       { id: MODEL_ID, action: SearchIndexUpdateQueueAction.Update },
     ]);
+    expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
     expect(mockCollectionsReindex).toHaveBeenCalledWith([MODEL_ID]);
   });
 
@@ -498,5 +500,17 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
     expect(mockDbWrite.model.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'Draft' }) })
     );
+  });
+});
+
+describe('applyModelFlagSideEffects — sfwOnly alone', () => {
+  it("leaves each image's own minor and poi flags as they are", async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, sfwOnly: true },
+    });
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    // The rest of the fan-out still runs for the held showcase.
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
   });
 });

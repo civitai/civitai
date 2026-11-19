@@ -4,15 +4,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import {
-  enqueueCollectionRebuild,
-  getCollectionIdsForImages,
-} from '~/server/services/collection-media-index';
 import {
   flagRestrictedImages,
   getRestrictedModelVersionIds,
+  reindexRestrictedImages,
 } from '~/server/services/restricted-images.service';
 import {
   restrictedImageDriftGauge,
@@ -22,53 +17,6 @@ import {
 import { createJob } from './job';
 
 const VERSIONS_PER_CHUNK = 100;
-const IMAGES_PER_REINDEX = 500;
-const REINDEX_SOURCE = 'reconcile-restricted-images';
-
-// A newly restricted image is removed from image queues (cached thumbnails, game pools) and the
-// collection documents that show it are rebuilt without it. Logged, not thrown, like the showcase
-// refresh: the flags are committed, so no later run selects these images again. Counts only.
-async function reindexRestrictedImages(imageIds: number[]) {
-  let images = 0;
-  let collections = 0;
-  let truncated = false;
-  try {
-    for (const ids of chunk(imageIds, IMAGES_PER_REINDEX)) {
-      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
-      const found = await getCollectionIdsForImages({ imageIds: ids, source: REINDEX_SOURCE });
-      const rebuilt = await enqueueCollectionRebuild({ ...found, source: REINDEX_SOURCE });
-      images += ids.length;
-      collections += rebuilt.queued;
-      truncated ||= found.truncated;
-    }
-  } catch (error) {
-    logToAxiom(
-      {
-        name: REINDEX_SOURCE,
-        type: 'error',
-        message: 'Search reindex failed',
-        images,
-        collections,
-        pending: imageIds.length - images,
-        error: (error as Error).message,
-      },
-      'webhooks'
-    );
-    return;
-  }
-  if (truncated)
-    logToAxiom(
-      {
-        name: REINDEX_SOURCE,
-        type: 'warning',
-        message: 'Collection reindex truncated',
-        images,
-        collections,
-      },
-      'webhooks'
-    );
-}
-
 // Sets `Image."modelRestricted"` for images whose resources point at a base model
 // whose `matureRestricted` includes `images`: the backstop for
 // `flagImagesOnRestrictedVersions`, which applies the same rule when resources are
@@ -119,7 +67,8 @@ export const reconcileRestrictedImages = createJob(
             'webhooks'
           )
         );
-      if (chunkResult.imageIds.length) await reindexRestrictedImages(chunkResult.imageIds);
+      // Out of the image queues and every search document showing them; never throws.
+      await reindexRestrictedImages(chunkResult.imageIds, 'reconcile-restricted-images');
     }
 
     // Reported, never acted on. This is also the recovery query if a model owner

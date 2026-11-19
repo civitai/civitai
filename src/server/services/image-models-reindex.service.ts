@@ -46,6 +46,14 @@ export async function queueModelsForImageChildTagChanges({
 const MINOR_BATCH = 1000;
 
 /**
+ * Queue every search document that shows these images (models, articles, comics, collections and
+ * bounties), whatever changed about them. Never throws, like the function above.
+ */
+export async function queueDocumentsForImages(imageIds: number[]) {
+  await queueModelsForImageChildTagChanges({ minorImageIds: imageIds });
+}
+
+/**
  * Queue an update for the articles using these images as cover or banner and the comics using them
  * as cover, whatever changed about the images. Never throws, with the same retry as above.
  */

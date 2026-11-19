@@ -1,10 +1,47 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 
 type Db = Pick<Prisma.TransactionClient, '$queryRaw'>;
 type FlagResult = { flagged: number; postIds: number[]; imageIds: number[] };
+
+const IMAGES_PER_REINDEX = 500;
+
+/**
+ * After images are newly restricted: take them out of the image queues (cached thumbnails, game
+ * pools) and queue every search document that shows them, 500 images at a time. Never throws, and
+ * logs counts only: the flags are already committed.
+ */
+export async function reindexRestrictedImages(imageIds: number[], source: string) {
+  if (!imageIds.length) return;
+  // Call-site imports: both modules reach this one through image.service.
+  const [{ queueImageSearchIndexUpdate }, { queueDocumentsForImages }] = await Promise.all([
+    import('~/server/services/image.service'),
+    import('~/server/services/image-models-reindex.service'),
+  ]);
+  let failedBatches = 0;
+  for (let i = 0; i < imageIds.length; i += IMAGES_PER_REINDEX) {
+    const ids = imageIds.slice(i, i + IMAGES_PER_REINDEX);
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }).catch(
+      () => failedBatches++
+    );
+    await queueDocumentsForImages(ids);
+  }
+  if (failedBatches)
+    logToAxiom(
+      {
+        name: 'restricted-images',
+        type: 'error',
+        message: 'Image queue removal failed',
+        source,
+        images: imageIds.length,
+        failedBatches,
+      },
+      'webhooks'
+    );
+}
 
 /** Versions whose base model restricts mature `images`, optionally only those `among`. */
 export async function getRestrictedModelVersionIds(db: Db, among?: number[]): Promise<number[]> {
@@ -86,7 +123,9 @@ export async function flagImagesOnRestrictedVersions({
 }): Promise<FlagResult> {
   try {
     const restricted = await getRestrictedModelVersionIds(dbWrite, modelVersionIds);
-    return await flagRestrictedImages(dbWrite, { modelVersionIds: restricted, imageIds });
+    const result = await flagRestrictedImages(dbWrite, { modelVersionIds: restricted, imageIds });
+    await reindexRestrictedImages(result.imageIds, 'resource-write');
+    return result;
   } catch (error) {
     logToAxiom(
       {

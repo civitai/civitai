@@ -2809,6 +2809,9 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
+  // The images carry the model's minor and poi flags, not sfwOnly: an sfwOnly change on a model that
+  // is not minor leaves each image's own flags as they are. A minor model re-syncs its images.
+  const imageFlagsChanged = after.minor !== before.minor || poiChanged || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2819,7 +2822,9 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
-      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+      const updatedImages = !imageFlagsChanged
+        ? []
+        : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
           SET minor = ${after.minor},
               poi = ${after.poi}

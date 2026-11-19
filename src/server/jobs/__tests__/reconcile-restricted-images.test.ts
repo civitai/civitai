@@ -38,7 +38,10 @@ vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
   matureRestrictedBaseModels: () => restricted.list,
 }));
 
-const sqlOf = (call: unknown[]) => (call[0] as string[]).join('');
+const sqlOf = (call: unknown[]) =>
+  Array.isArray(call[0])
+    ? (call[0] as string[]).join('')
+    : ((call[0] as Prisma.Sql | undefined)?.strings ?? []).join('');
 const valuesOf = (call: unknown[]) =>
   call.slice(1).flatMap((v) => ((v as Prisma.Sql)?.values ?? [v]) as unknown[]);
 const isUpdateQuery = (call: unknown[]) => /SET\s+"modelRestricted"/i.test(sqlOf(call));
@@ -54,6 +57,7 @@ let chunkPostIds: number[][] = [];
 let chunkImageIds: number[][] = [];
 let collectionsShowing: number[] = [];
 let collectionLookups: unknown[][] = [];
+let articlesShowing: number[] = [];
 // Fixture image ids start here; the lookup's other numeric parameter (its cap) is far above them.
 const FIRST_IMAGE_ID = 501;
 const CAP_PARAM = 5000;
@@ -74,6 +78,7 @@ beforeEach(() => {
   chunkImageIds = [];
   collectionsShowing = [];
   collectionLookups = [];
+  articlesShowing = [];
   executeRaw.mockReset();
   executeRaw.mockResolvedValue(0);
   queryRaw.mockImplementation((...call: unknown[]) => {
@@ -85,6 +90,8 @@ beforeEach(() => {
     }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
     if (sqlOf(call).includes('pg_index')) return Promise.resolve([{ present: true }]);
+    if (sqlOf(call).includes('"ComicProject"'))
+      return Promise.resolve(articlesShowing.map((id) => ({ kind: 'article', id })));
     if (sqlOf(call).includes('"CollectionItem"')) {
       collectionLookups.push(
         valuesOf(call).filter((v) => typeof v === 'number' && v >= FIRST_IMAGE_ID && v < CAP_PARAM)
@@ -278,6 +285,19 @@ describe('reconcile-restricted-images search reindex', () => {
     expect(collectionUpdates()).toEqual([77, 77]);
   });
 
+  it('also queues the articles whose cover or banner it is', async () => {
+    chunkImageIds = [[501]];
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    const articleUpdates = addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('articles') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+    expect(articleUpdates).toEqual([9]);
+  });
+
   it('queues nothing when no image was newly restricted', async () => {
     collectionsShowing = [77];
     await run();
@@ -307,8 +327,8 @@ describe('reconcile-restricted-images search reindex', () => {
     const failure = vi
       .mocked(logToAxiom)
       .mock.calls.map(([entry]) => entry as Record<string, unknown>)
-      .find((entry) => entry.message === 'Search reindex failed');
-    expect(failure).toMatchObject({ images: 0, collections: 0, pending: 2 });
+      .find((entry) => entry.message === 'Image queue removal failed');
+    expect(failure).toMatchObject({ images: 2, failedBatches: 1 });
     expect(JSON.stringify(failure)).not.toContain('501');
   });
 });
