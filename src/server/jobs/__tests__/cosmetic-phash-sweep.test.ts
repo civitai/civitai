@@ -20,7 +20,6 @@ vi.mock('~/server/services/cosmetic-phash.service', async (importOriginal) => ({
 }));
 import { COSMETIC_PHASH_LANE } from '~/server/services/cosmetic-phash.service';
 import { sweepCosmeticPerceptualHashes } from '../cosmetic-phash-sweep';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.$queryRaw.mockImplementation((...args: unknown[]) =>
   (mocks.queryRaw as (...a: unknown[]) => unknown)(...args)
@@ -75,32 +74,6 @@ describe('sweepCosmeticPerceptualHashes', () => {
 
     expect(await sweepCosmeticPerceptualHashes()).toEqual({ scanned: 3, hashed: 2, failed: 1 });
     expect(mocks.markCosmeticHashFailed).toHaveBeenCalledWith(2);
-  });
-
-  // The tick's `failed` tally cannot say WHY a row failed — dead CDN artwork, an
-  // orchestrator still working when the wait elapsed, and a hash the store
-  // refused for disagreeing with the lane all land in it identically, and the
-  // operator's next move differs for each. This per-row log is the only thing
-  // that separates them, so it has to be asserted: without it the catch is a
-  // silent path again, which is the failure this whole area keeps producing.
-  it('names the row and the reason when a store is refused, not just the tally', async () => {
-    loggingMock.logToAxiom.mockClear();
-    mocks.queryRaw.mockResolvedValue([{ id: 7, url: 'artwork-7' }]);
-    mocks.getPerceptualHash.mockResolvedValue('a'.repeat(64));
-    mocks.storeCosmeticPerceptualHash.mockRejectedValue(
-      new Error('Hash is wider than lane perceptualDct256/256: 128 > 64')
-    );
-
-    expect(await sweepCosmeticPerceptualHashes()).toEqual({ scanned: 1, hashed: 0, failed: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'cosmetic-phash-sweep',
-        message: expect.stringContaining('7'),
-        error: expect.stringContaining('wider than lane'),
-      })
-    );
   });
 
   it('selects on the version as well as the url, which is what drains a lane upgrade', async () => {

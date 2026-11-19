@@ -458,6 +458,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. Default-off; create the key disabled before
+  // the deploy that reads it, and only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.

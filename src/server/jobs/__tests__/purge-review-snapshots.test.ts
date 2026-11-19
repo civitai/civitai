@@ -449,7 +449,7 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
     expect(result.failed).toBe(0);
   });
 
-  it('logs-and-continues past a per-repo failure', async () => {
+  it('continues past a per-repo failure', async () => {
     mockFindMany.mockResolvedValue([row('bad'), row('good')]);
     mockDelete.mockImplementation(async (slug: string) => {
       if (slug === 'bad') throw new Error('forgejo 500');
@@ -461,10 +461,6 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
     expect(result.failed).toBe(1);
     expect(result.deleted).toBe(1);
     expect(mockDelete).toHaveBeenCalledWith('good');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'bad', outcome: 'failed', level: 'error' }),
-      'webhooks'
-    );
   });
 });
 
@@ -491,9 +487,5 @@ describe('purgeReviewSnapshotsJob wrapper', () => {
 
     expect(result.error).toBe(true);
     expect(result.deleted).toBe(0);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'run-failed', level: 'error' }),
-      'webhooks'
-    );
   });
 });

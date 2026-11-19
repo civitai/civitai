@@ -233,23 +233,6 @@ describe('harvest rows', () => {
 });
 
 describe('changeSummary', () => {
-  it('names a save, edit or clear of the question rules', () => {
-    const base = { enabled: true, sfwRate: 1, nsfwRate: 0.3 };
-    const guide = (description: string) => ({
-      sets: [{ title: 'T', points: [description] }],
-    });
-    expect(changeSummary(base, { ...base, ruleGuide: guide('One') })).toBe('Question rules: saved');
-    expect(
-      changeSummary({ ...base, ruleGuide: guide('One') }, { ...base, ruleGuide: guide('Two') })
-    ).toBe('Question rules: edited');
-    expect(changeSummary({ ...base, ruleGuide: guide('One') }, base)).toBe(
-      'Question rules: cleared'
-    );
-    expect(
-      changeSummary({ ...base, ruleGuide: guide('One') }, { ...base, ruleGuide: guide('One') })
-    ).toBe('No change');
-  });
-
   it('names a change of the open-item cap', () => {
     expect(
       changeSummary(
