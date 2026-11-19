@@ -1402,6 +1402,19 @@ describe('the report-not-filed view matches a report to the held item', () => {
       expect(await listed()).toHaveLength(3);
     });
 
+    it('reads the decision in UTC whatever the session time zone', async () => {
+      await db.exec(`SET TIME ZONE 'America/Denver'`);
+      try {
+        // Six hours before the decision: read in Denver time it would look later than the decision.
+        await refiled('postText:210', '2026-09-12T18:00:00.000Z');
+        expect(await listed()).toEqual([21, 22, 23, 24]);
+        await refiled('postText:210', '2026-09-13T00:00:00.000Z');
+        expect(await listed()).toEqual([22, 23, 24]);
+      } finally {
+        await db.exec(`SET TIME ZONE 'UTC'`);
+      }
+    });
+
     it('at the decision instant covers the item', async () => {
       await refiled('postText:210', '2026-09-13T00:00:00.000Z');
       expect(await listed()).toEqual([22, 23, 24]);
@@ -1413,8 +1426,14 @@ describe('the report-not-filed view matches a report to the held item', () => {
       ['another item', 'postText:211', after],
       ['a date with no time', 'postText:210', '2026-09-14'],
       ['an impossible month', 'postText:210', '2026-19-14T00:00:00.000Z'],
-      // Read as a date this would throw and fail the whole queue.
-      ['a day the month does not have', 'postText:210', '2026-02-31T00:00:00.000Z'],
+      // Read as a date this would throw and fail the whole queue; compared as text it sorts before.
+      [
+        'a day the month does not have, without failing the view',
+        'postText:210',
+        '2026-02-31T00:00:00.000Z',
+      ],
+      ['an impossible hour', 'postText:210', '2026-09-14T24:00:00.000Z'],
+      ['more than three fractional digits', 'postText:210', '2026-09-14T00:00:00.0001Z'],
       ['no milliseconds', 'postText:210', '2026-09-14T00:00:00Z'],
     ])('does not cover for a re-file %s', async (_, item, at) => {
       await refiled(item, at);

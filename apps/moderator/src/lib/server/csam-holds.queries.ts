@@ -118,7 +118,8 @@ const itemSourceCase = sql.raw(
 // edited and held again keeps its id. A filing whose text equals the item's latest capture adds no
 // entry and is recorded in `identicalRefiles` instead, so a re-file after the decision covers too.
 // Compared as text against the decision in the same form, so a malformed time can never throw and
-// fail the whole queue: the writer stores `toISOString()`, and anything else covers nothing.
+// fail the whole queue. The only writer stores `toISOString()`; a value not in that shape covers
+// nothing. A well-formed impossible date (31 November) still compares as text; none is ever written.
 const afterDecision = (iso: RawBuilder<unknown>) => sql<boolean>`CASE
   WHEN ${iso} ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{3}Z$'
   THEN ${iso} >= to_char(h."decidedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
