@@ -43,8 +43,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
         WHERE i.id = "User"."profilePictureId"
           AND ${sql.raw(userImageNamesPicture('i', '"User"'))}
       ) OR EXISTS (
-        -- One probe of Image_url_covered_idx (declared outside the Prisma schema); every session
-        -- produce relies on that index, without it this walks the user's images.
+        -- Every session produce relies on Image_url_covered_idx here.
         SELECT 1 FROM "Image" i
         WHERE ${sql.raw(ownImageNamedByUserImage('i', '"User"'))}
           AND ${servablePictureSql()} IS NOT TRUE

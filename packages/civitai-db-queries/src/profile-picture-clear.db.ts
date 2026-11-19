@@ -36,8 +36,7 @@ const userImageKeyText = (user: string) =>
 
 /**
  * Whether `Image` aliased `alias` is one of the user's own images stored under the key `User.image`
- * (`User` aliased `user`) names: an equality on the stored url, answered by `Image_url_covered_idx`
- * (declared outside the Prisma schema).
+ * (`User` aliased `user`) names: an equality on the stored url, answered by `Image_url_covered_idx`.
  */
 export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
   `(${alias}."userId" = ${user}.id AND ${alias}.url IN (${userImageKeyText(
