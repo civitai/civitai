@@ -1,6 +1,6 @@
 {
   "name": "@civitai/knights-app",
-  "version": "0.0.4",
+  "version": "0.0.15",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "test": "vitest run",
     "dev:enqueue-recent": "tsx --env-file=.env scripts/vite-run.ts scripts/dev-enqueue-recent.ts",
     "import:yesno": "tsx --env-file=.env scripts/vite-run.ts scripts/import-yesno.ts",
+    "rebuild:hidden-checks": "tsx --env-file=.env scripts/vite-run.ts scripts/rebuild-hidden-checks.ts",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },
   "dependencies": {

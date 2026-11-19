@@ -35,6 +35,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { AppConfirmWithinLimitControl } from '~/components/Apps/AppConfirmWithinLimitControl';
 import { AppsCardGrid } from '~/components/Apps/appsWideLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
@@ -718,6 +719,9 @@ function GrantCard({ grant, defaultOpened }: { grant: ActivityGrant; defaultOpen
               appName={grant.name}
               budget={grant.buzzBudgetPerDay}
             />
+            {grant.buzzBudgetPerDay != null && (
+              <AppConfirmWithinLimitControl appBlockId={grant.appBlockId} />
+            )}
           </>
         ) : null}
       </Stack>

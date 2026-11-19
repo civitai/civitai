@@ -61,6 +61,7 @@ export const appBlockNotifications = createNotificationProcessor({
     displayName: 'App block approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
       return {
@@ -73,6 +74,7 @@ export const appBlockNotifications = createNotificationProcessor({
     displayName: 'App block not approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppBlockModerationNotificationDetails;
       return {

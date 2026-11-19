@@ -6,11 +6,13 @@ import {
   archiveSetAction,
   cancelAction,
   editCaseAction,
+  importIntentAction,
   removeCaseAction,
 } from '$lib/server/text-scan-tests/form-actions';
 import { routeId, setForView } from '$lib/server/text-scan-tests/guard';
 import { baselineHistory, caseListRow, listRuns } from '$lib/server/text-scan-tests/reports';
 import { listCases } from '$lib/server/text-scan-tests/store';
+import { isIntentEvalSet } from '$lib/text-scan-tests/intent-set';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
   const setId = routeId(params.setId);
@@ -28,6 +30,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
     history,
     runs,
     canEdit: !!locals.grants['textScan.testSets.edit'],
+    isIntentSet: isIntentEvalSet(setId),
     wide: true,
   };
 };
@@ -36,5 +39,6 @@ export const actions: Actions = {
   editCase: requiresGrant('textScan.testSets.edit', editCaseAction),
   removeCase: requiresGrant('textScan.testSets.edit', removeCaseAction),
   archiveSet: requiresGrant('textScan.testSets.edit', archiveSetAction),
+  importIntent: requiresGrant('textScan.testSets.edit', importIntentAction),
   cancelRun: cancelAction,
 };

@@ -50,14 +50,24 @@ const EXEMPT: Record<string, string> = {
   SQL_STAMP_SEQ_MAJOR: "the write's response: the writer's own document",
   SQL_STAMP_SEQ_LEVELS: "the write's response, with its rating: the writer's own document",
   SQL_STAMP_SEQ_MAJOR_LEVELS: "the write's response, with its rating: the writer's own document",
+  SQL_UNCHANGED_PROBE:
+    "an unchanged put's read: returned only when the caller authored it (classifyPublish)",
+  SQL_UNCHANGED_PROBE_LEVELS:
+    "an unchanged put's read, with its rating: returned only when the caller authored it",
+  SQL_UNCHANGED_PROBE_TAIL:
+    "the unchanged put's probe columns (content hashes, index-row comparison), never a body",
   SQL_MIGRATE_LOCK_DOC: 'a schema migration rewriting the body server-side; returns nothing',
   SQL_MOD_GET: 'the moderator tooling: moderators see every document',
+  SQL_RATER_UNRATED: 'the rater: read server-side to be rated, never returned to a viewer',
+  SQL_RATER_GET: 'the rater: one document read server-side to be rated, never returned to a viewer',
   SQL_PUBLISH_SOURCES:
     "server-side publish: the CALLER'S OWN private documents, copied server-side, never returned",
   SQL_PUBLISH_TARGETS:
     'server-side publish: only a content hash and the author of each shared copy, never a body',
   SQL_PUBLISH_LOCK_OWN_TARGETS:
     "server-side publish: the content hash of the caller's own copies, locked, never a body",
+  SQL_VIEWER_RECORDS:
+    "the record export: only the CALLER'S OWN documents (private, and visible shared ones they created), returned to that caller",
 };
 
 describe('content-level seam ledger', () => {

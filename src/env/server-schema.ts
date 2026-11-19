@@ -63,6 +63,9 @@ export const serverSchema = z
       .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
+    // App Storage record core (`services/apps/app-record.ts`). OFF by default. On: the record
+    // export (`appStorage.exportMine`); off, that route is NOT_FOUND.
+    APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -484,6 +487,19 @@ export const serverSchema = z
       .catch([])
       .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
+    // How API routes apply the token scope they declare (`getServerAuthSession`'s `scope`): `off`
+    // ignores it, `report` logs each request it would refuse, `enforce` applies it.
+    // Any other value reads as `off`, with a warning when the env is parsed; '' reads as unset.
+    REST_SCOPE_ENFORCE: z
+      .enum(['off', 'report', 'enforce'])
+      .default('off')
+      .catch(({ value }) => {
+        if (value !== '')
+          console.warn(
+            `REST_SCOPE_ENFORCE=${JSON.stringify(value)} is not off, report or enforce; using off.`
+          );
+        return 'off' as const;
+      }),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
@@ -607,16 +623,22 @@ export const serverSchema = z
     // search through /api/search).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
-    METRICS_SEARCH_HOST: z.url().optional(),
-    METRICS_SEARCH_API_KEY: z.string().optional(),
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Set privately; see search-upload-gate.ts.
+    SEARCH_UPLOAD_FACE_ANIME_MIN: z.string().optional(),
     // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
     // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
+    // The app index service (apps/app-index-go): `/apps` store text search reads its `/search`
+    // when the `app-index-search` flag is on for the viewer. Unset = the store's database search.
+    APP_INDEX_URL: z.url().optional(),
+    // The fraction (0-1) of index-answered store searches that also read the database grid page,
+    // off the response path, to log how the two result sets compare. 0 = never.
+    APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -650,15 +672,6 @@ export const serverSchema = z
     // Traefik's 30s router timeout fires. Default tuned for the image feed
     // hot path (typical P99 ~700ms under healthy load).
     MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
-    // Server-side deadline for fetchDocumentsAbortable in ms. Distinct from
-    // MEILI_CALL_TIMEOUT_MS — that one wraps SDK calls via withMeili();
-    // this one is the local AbortController timer on the raw fetch path
-    // (image:meili:http span). Generous default (5_000) so healthy
-    // /documents/fetch calls complete cleanly; tunable down at runtime if
-    // the backend tightens up, or up if a brownout needs more headroom
-    // without a code redeploy. Defensive cap: prevents pods from holding
-    // event-loop slots for the Node default (~30s) when -new goes slow.
-    MEILI_FETCH_TIMEOUT_MS: z.coerce.number().optional().default(5000),
     // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
@@ -1066,6 +1079,11 @@ export const serverSchema = z
     // token; if either is unset, reports are saved but not filed.
     HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
     HQ_INTAKE_TOKEN: z.string().optional(),
+    // HQ -> feedback triage status sync (the `feedback-hq-sync` job): a member's HQ `read` token,
+    // the narrowest HQ issues that reaches its data API (it also reads recordings, so set it ONLY on
+    // the deployment that runs jobs, never on web pods). Unset (or '') the job does nothing and says
+    // so once. Also behind the `feedback-hq-sync` Flipt flag, default off.
+    HQ_FEEDBACK_SYNC_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
@@ -1250,6 +1268,14 @@ export const serverSchema = z
     FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
     FORGEJO_ADMIN_TOKEN: z.string().optional(),
     FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+    // The three Forgejo orgs App Blocks writes to: build (canonical app repos), review (in-review
+    // snapshots) and source (developer git history). Unset = production's orgs. Set ALL THREE or
+    // none, each distinct and none a production org name; PR previews point them at preview-only
+    // orgs that their scoped bot token can write. Read only through
+    // `src/server/services/blocks/forgejo-orgs.ts`, which enforces those rules.
+    FORGEJO_APPS_ORG: z.string().optional(),
+    FORGEJO_REVIEW_ORG: z.string().optional(),
+    FORGEJO_SRC_ORG: z.string().optional(),
     // Client-side abort timeouts for Forgejo API calls. The cheap metadata calls
     // (get repo/version, add collaborator, list tree, branch lookup) are
     // sub-second and use FORGEJO_API_TIMEOUT_MS so an in-cluster reachability
@@ -1280,6 +1306,12 @@ export const serverSchema = z
     // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+    // Build review previews, serve none (PR previews). A passed review build is recorded on the
+    // request (`preview-failed` with `buildOnly: true`) and nothing is deployed: no apply Job into
+    // APPS_KUBE_NAMESPACE and no shared-server publish. Every function that creates a Job in that
+    // namespace refuses (`assertAppsNamespaceWritable`), and review/agent teardowns do nothing.
+    // Unset (production) changes nothing.
+    APPS_REVIEW_BUILD_ONLY: zc.booleanString.optional().default(false),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.

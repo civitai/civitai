@@ -1,3 +1,4 @@
+import type { TrainingQuote } from './orchestrator-core';
 // The SvelteKit shell's StudioBackend: every call is a relative fetch to this app's own /api routes
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
@@ -14,7 +15,6 @@ import type {
   TrainingDetail,
   TrainingRow,
 } from '$lib/data/trainingRows';
-import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
 import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 import { messageOf, studioServerCalls } from '$lib/studio-server-calls';
@@ -45,16 +45,6 @@ async function quoteFrom(path: string): Promise<number | null> {
   const res = await fetch(path);
   if (!res.ok) return null;
   return ((await res.json()) as { cost: number | null }).cost;
-}
-
-async function postFor(path: string, body: unknown, fallback: string) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await messageOf(res, fallback));
-  return (await res.json()) as { workflowId: string };
 }
 
 const READINESS_REQUEST_TIMEOUT_MS = 60_000;
@@ -155,8 +145,6 @@ export const shellBackend: StudioBackend = {
   editImageQuote: (imageUrl) =>
     quoteFrom(`/api/edit-image?imageUrl=${encodeURIComponent(imageUrl)}`),
 
-  editImageSubmit: (req) => postFor('/api/edit-image', req, "Couldn't create the image."),
-
   editImagePoll: (workflowId, signal) =>
     getFor<{ done: boolean; options: EditImageOption[] }>(
       `/api/edit-image/${encodeURIComponent(workflowId)}`,
@@ -165,9 +153,6 @@ export const shellBackend: StudioBackend = {
     ),
 
   suggestQuote: () => quoteFrom('/api/suggest-instruction'),
-
-  suggestSubmit: (req) =>
-    postFor('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
 
   suggestPoll: (workflowId, signal) =>
     getFor<{ done: boolean; text?: string }>(
@@ -183,15 +168,6 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ workflowId, name }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
-  },
-
-  epochArchive: async (workflowId, kind) => {
-    const res = await fetch(
-      `/api/epoch-archive?id=${encodeURIComponent(workflowId)}&kind=${kind}`,
-      { method: 'POST' }
-    );
-    if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
-    return (await res.json()) as EpochArchive[];
   },
 
   deleteTraining: async (workflowId) => {
@@ -213,7 +189,7 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify(input),
     });
     if (!res.ok) return null;
-    return ((await res.json()) as { cost: number | null }).cost;
+    return (await res.json()) as TrainingQuote;
   },
 
   getBuzz: async () => {

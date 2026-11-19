@@ -4,6 +4,7 @@ import {
   getRatingReviewScan,
   loadRatingReviewSubject,
 } from '~/server/services/rating-review.entities';
+import { createRatingReview } from '~/server/services/rating-review.service';
 
 const at = new Date('2026-09-01T00:00:00Z');
 const textScan = (level: string, textHash = 'h') => ({
@@ -258,6 +259,90 @@ describe('loadRatingReviewSubject', () => {
       moderatorNsfwLevelBasis: null,
     });
     expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+  });
+
+  describe('a bounty the text scan flagged nsfw', () => {
+    // nsfw=true stores every NSFW bit (R|X|XXX|Blocked), whatever was rated.
+    const flagged = (over: Record<string, unknown> = {}) =>
+      dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+        userId: 3,
+        nsfw: true,
+        details: { textScanNsfw: { workflowId: 'w', level: 4, at: '2026-11-16' } },
+        nsfwLevel: 60,
+        updatedAt: at,
+        name: 'b',
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+        ...over,
+      });
+    const scanned = (nsfwLevel: number, label = 'r') =>
+      dbMock.dbRead.entityModeration.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel,
+        result: textScan(label),
+      });
+    const contentLevel = (level: number | null) =>
+      dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ level }]);
+
+    it('reports the level its scan rated, not the highest bit of the pinned mask', async () => {
+      flagged();
+      scanned(4);
+      contentLevel(1);
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 4 });
+    });
+
+    it('reports its images when they rate it higher than its text', async () => {
+      flagged();
+      scanned(4);
+      contentLevel(1 | 8);
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 8 });
+    });
+
+    it('takes the level from the scan row, not the owner-writable details', async () => {
+      flagged({ details: { textScanNsfw: { level: 1 } } });
+      scanned(8, 'x');
+      contentLevel(1);
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 8 });
+    });
+
+    it('stays XXX when no raised scan row backs the flag', async () => {
+      flagged();
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+      scanned(1, 'pg');
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+      // A rescan below R does not lift the flag the first scan set.
+      scanned(2, 'pg13');
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+    });
+
+    it('stays XXX when the flag was not set by the scan (owner or legacy filter)', async () => {
+      scanned(4);
+      flagged({ details: { profanityMatches: ['x'] } });
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+      flagged({ details: null });
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+    });
+
+    it('reports a moderator rating over the text rating', async () => {
+      scanned(4);
+      flagged({ nsfwLevel: 2, moderatorNsfwLevel: 2, moderatorNsfwLevelBasis: 60 });
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 2 });
+    });
+
+    it('reads the stored level of a bounty that is not flagged nsfw', async () => {
+      scanned(4);
+      flagged({ nsfw: false, nsfwLevel: 2 });
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 2 });
+    });
+
+    it('refuses a dispute asking for the R it is already rated', async () => {
+      flagged();
+      scanned(4);
+      contentLevel(1);
+      await expect(
+        createRatingReview({ entityType: 'Bounty', entityId: 9, suggestedLevel: 4, userId: 3 })
+      ).rejects.toThrow(/matches the current rating/);
+    });
   });
 
   it('returns null for a missing row', async () => {

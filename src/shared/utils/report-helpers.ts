@@ -19,6 +19,8 @@ export enum ReportEntity {
   GameFrameGame = 'gameFrameGame',
   Storyline = 'storyline',
   ServiceOffering = 'serviceOffering',
+  /** One storyline text item. Moderated in the post report queue, with its post. */
+  PostText = 'postText',
 }
 
 /**
@@ -52,4 +54,5 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.GameFrameGame]: 'Game',
   [ReportEntity.Storyline]: 'Storyline',
   [ReportEntity.ServiceOffering]: 'Service',
+  [ReportEntity.PostText]: 'Text',
 };

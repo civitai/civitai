@@ -41,17 +41,17 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
   details, so the id points at nothing personal.
 - **Reports are listed once** (2026-10-29). The mirror copies every old comment report into
   `CommentV3Report`, so the `commentV3` report entity matches only reports with no old link (no
-  `CommentReport` or `CommentV2Report` row for the same report). The filter goes in Phase 6 with
+  `CommentReport` or `CommentV2Report` row for the same report). The filter went in Phase 5 with
   the old entities.
-- **Article writes, then every read, then the other surfaces' writes** (2026-10-30, Briant).
-  Stage B ships as built. Next, one read flip moves every other surface's section and every
-  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, every
-  other surface's writes flip at once (`comments-v3-write-flip.md`); the old-row sync stays until
-  Phase 6 (revised 2026-11-03). A comment written after
-  the article flip has no `CommentV2` row; the sync keeps the row of an older one in step, so that
-  a reader still on the old tables does not serve it after it is deleted or removed, and an
-  old-table update does not make the mirror copy it back. Stage B already gives the block checks,
-  reaction tracking, `goodContentReward` and the comment owner lookup a `CommentV3` fallback.
+- **Article writes, then every read, then the other surfaces' writes** (2026-10-30, Briant). Stage B
+  ships as built. Next, one read flip moves every other surface's section and every remaining reader
+  of the old tables to `CommentV3`. Once nothing reads the old tables, every other surface's writes
+  flip at once (`comments-v3-write-flip.md`); the old-row sync stays until Phase 6 (revised
+  2026-11-03; moved to Phase 5 on 2026-11-09, which removed it). A comment written after the article
+  flip has no `CommentV2` row; the sync keeps the row of an older one in step, so that a reader
+  still on the old tables does not serve it after it is deleted or removed, and an old-table update
+  does not make the mirror copy it back. Stage B already gives the block checks, reaction tracking,
+  `goodContentReward` and the comment owner lookup a `CommentV3` fallback.
 - **One write path for every surface** (2026-10-30, Briant; built with their write flips, not in
   stage B). Comic chapters and model comments write through the `commentv3` mutations like every other surface: `comics.createChapterComment`
   and the v1 model-comment writes are removed, not ported (`createChapterComment` was the
@@ -198,9 +198,10 @@ review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below reco
 | Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments write through `commentv3.create` since write flip release 2; links open the chapter |
 | Model discussion       | masonry of cards and thread dialog (`comments-v3-model-flip.md`)           | built 2026-11-06 with its write flip; `model` surface gates, page budget 8                |
 
-Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 drops them with the old tables.
+Questions and answers have no surface to flip: their code was removed in #7543, and their threads
+stayed as data until Phase 6 dropped them with the old tables (2026-11-17).
 
-### Read flip as built (2026-11-02; comic chapters 2026-11-03; not yet deployed)
+### Read flip as built (2026-11-02; comic chapters 2026-11-03; deployed by 2026-11-10)
 
 Every surface in the table above reads CommentV3
 (`v3ReadSurfaces`); their writes went through `commentv2` and reached CommentV3 by the mirror until
@@ -274,7 +275,7 @@ comment's surface. What it covers, beyond the SQL itself:
   CommentV2, the column on Comment), which nothing sets since comment holds were removed (kept
   until a migration drops the columns).
 
-### Stage B as built (2026-10-29, not yet deployed)
+### Stage B as built (2026-10-29; deployed by 2026-11-10)
 
 - `constants.comments.v3WriteSurfaces` (`['article']`; write flip release 2, built 2026-11-05, copies
   `v3ReadSurfaces` into it) is the switch; `isV3WriteSurface` reads it.
@@ -328,11 +329,12 @@ Before the deploy, in this order:
    (`rootId`, `depth`) refuses every UPDATE and DELETE.
 3. Grant moderators the new `commentV3` report queue in the moderator app.
 4. ~~Apply `20261211120000_comment_v3_moderation_trigger`~~: applied in prod 2026-10-30, with
-   `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. Still
-   pending, after the deploy: cut `CommentV3` over wherever `CommentV2` is cut over, with
+   `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. After
+   the deploy: cut `CommentV3` over wherever `CommentV2` is cut over, with
    `POST /api/admin/temp/text-scan-clavata-cutover` (`{action:'disable', entityType:'CommentV3'}`).
-5. Apply `20261217120000_comment_v3_removed_by_author`. The Prisma client and the reverse copy name
-   the column, so it goes first.
+   Whether that ran is not recorded (checklist, Phase 4).
+5. ~~Apply `20261217120000_comment_v3_removed_by_author`~~: applied; the column was dropped by the
+   Phase 6 teardown (2026-11-17).
 6. ~~The reverse-copy rerun on the dev database~~: done 2026-10-29, every reverse step's dry count
    at zero. A reply under a tombstone with no old row now goes on a reply thread with no parent
    comment; `reverseRootThreads` no longer creates threads for v1-shaped model comments.

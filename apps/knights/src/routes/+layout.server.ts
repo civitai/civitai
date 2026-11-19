@@ -7,6 +7,7 @@ import { getDailyStatus, getRecapState } from '$lib/server/daily/daily.service';
 import { db } from '$lib/server/db';
 import { feedbackEnabled } from '$lib/server/feedback/enabled';
 import { ladderRows } from '$lib/server/ladder';
+import { PROGRESSION } from '$lib/server/progression/config';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { rankBadgeUrls } from '$lib/server/rank-badges';
@@ -78,11 +79,13 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     userId: locals.user?.id ?? null,
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
-    shopOpen: shopEnabled(),
+    shopOpen: await shopEnabled(),
     feedbackOpen: locals.user ? await feedbackOpen(locals.user) : false,
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
     ladder: ladderRows(),
+    // Fervor is a rolling window, not a calendar week; labels name its length.
+    fervorWindowDays: PROGRESSION.fervorWindowDays,
     // A signed-out visitor (the welcome page, a 404) wears no badge, so the cosmetics are not read for them.
     badges: locals.user ? await rankBadgeUrls(db) : { small: {}, large: {} },
     recapUnseen: await recapUnseen(locals.user?.id),

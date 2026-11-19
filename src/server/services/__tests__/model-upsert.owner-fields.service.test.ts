@@ -484,6 +484,7 @@ describe('a moderator lifting the nsfw lock', () => {
     detected: true,
     reason: 'r',
     textHash: listingHash,
+    promptId: 77,
     at: '2026-11-01T00:00:00.000Z',
     priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
     laterVerdict: { source: 'xguard-text-moderation', at: '2026-11-02T00:00:00.000Z' },
@@ -517,7 +518,11 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
     expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
     expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
-    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: false, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: false,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 
@@ -533,7 +538,11 @@ describe('a moderator lifting the nsfw lock', () => {
     await unlock();
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: true, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: true,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta.comFaceIntentRelockSuppressed).toEqual({
       textHash: listingHash,
       at: expect.any(String),
@@ -552,7 +561,7 @@ describe('a moderator lifting the nsfw lock', () => {
     const editedHash = comFaceIntentTextHash({ ...edited, triggerWords: words });
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, editedHash)).toBeNull();
+    expect(reusableComFaceIntent(meta, editedHash, 77)).toBeNull();
   });
 
   it('keys the re-lock suppression to the text the save leaves', async () => {

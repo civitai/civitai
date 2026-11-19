@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import type { SimpleUser } from '~/server/selectors/user.selector';
@@ -20,7 +21,7 @@ export const reviewDetailFetcher = createDetailFetcher({
         u.id,
         u.username,
         u."deletedAt",
-        u.image,
+        ${Prisma.raw(fallbackUserImageColumn)} AS image,
         r.details
       FROM "ResourceReview" r
       JOIN "User" u ON r."userId" = u.id

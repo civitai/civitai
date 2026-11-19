@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import {
   actOnRemixGallerySubmissionSchema,
   declineOutOfBandRemixGallerySubmissionsSchema,
@@ -470,6 +471,7 @@ export const placementRouter = router({
       // preferences — a gallery is other people's content on someone else's
       // page, so it is exactly where a block should still bite.
       user: ctx.user ?? undefined,
+      ...credentialViews(ctx),
     })
   ),
 

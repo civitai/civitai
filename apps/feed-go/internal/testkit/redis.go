@@ -14,7 +14,8 @@ import (
 )
 
 // Redis is an in-memory redis.UniversalClient for the commands this service sends: GET, HGET,
-// HGETALL, SET, SET NX, SADD and (pipelined) DEL, directly or in a pipeline. Any other command panics (the embedded nil
+// HGETALL, SET, SET NX, SADD and (pipelined) DEL, EXISTS, EXPIRE and EVAL of a registered script,
+// directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
 // Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
@@ -471,6 +472,90 @@ func (p *pipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 		cmd.SetVal(n)
 	})
 	return cmd
+}
+
+// Expire is EXPIRE, pipelined: true when key held a value (its expiry is then d).
+func (p *pipe) Expire(ctx context.Context, key string, d time.Duration) *redis.BoolCmd {
+	cmd := redis.NewBoolCmd(ctx, "expire", key)
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		if !p.r.Has(key) {
+			cmd.SetVal(false)
+			return
+		}
+		p.r.mu.Lock()
+		p.r.ttls[key] = d
+		p.r.mu.Unlock()
+		cmd.SetVal(true)
+	})
+	return cmd
+}
+
+// Scripts maps a Lua script's exact text to the fake's implementation of it, for EVAL. A script
+// not registered panics, so a test never passes on one the fake did not run.
+var Scripts = map[string]func(r *Redis, keys []string, args []any) (any, error){}
+
+// Eval is EVAL, pipelined, of a script registered in Scripts (run atomically under the fake's
+// state).
+func (p *pipe) Eval(ctx context.Context, script string, keys []string, args ...any) *redis.Cmd {
+	fn, ok := Scripts[script]
+	if !ok {
+		panic("testkit.Redis: EVAL of an unregistered script")
+	}
+	cmd := redis.NewCmd(ctx, "eval")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		for _, key := range keys {
+			if failErr == nil {
+				failErr = p.r.keyErr(key)
+			}
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		v, err := fn(p.r, keys, args)
+		cmd.SetVal(v)
+		cmd.SetErr(err)
+	})
+	return cmd
+}
+
+// DelKey deletes key of any type (for a script implementation).
+func (r *Redis) DelKey(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.strings, key)
+	delete(r.hashes, key)
+	delete(r.sets, key)
+	delete(r.ttls, key)
+}
+
+// SetStringTTL stores a string value with an expiry (0: none).
+func (r *Redis) SetStringTTL(key string, val []byte, ttl time.Duration) {
+	r.SetString(key, val)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ttl > 0 {
+		r.ttls[key] = ttl
+	}
+}
+
+// SetHashTTL stores a hash with an expiry (for a script implementation).
+func (r *Redis) SetHashTTL(key string, fields map[string]string, ttl time.Duration) {
+	r.SetHash(key, fields)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ttl > 0 {
+		r.ttls[key] = ttl
+	}
 }
 
 // ErrDown is a stand-in transport failure.

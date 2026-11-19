@@ -270,6 +270,8 @@ const BRIDGE_INPUT_LEDGER = [
   // `authorizeQuotedGrantConsentRequest`, above.
   'previewQuoteGrant',
   'consentQuoteGrant',
+  // The step-only standing consent, through the same preamble.
+  'consentQuoteGrantStanding',
   // The two app-reaction procedures (SET_ENTITY_REACTION / GET_ENTITY_REACTIONS), via
   // `authorizeBlockReactionRequest`, above.
   'setReactionFromApp',

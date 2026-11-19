@@ -1,3 +1,4 @@
+import { useRouter } from 'next/router';
 import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -26,7 +27,10 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
-import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
+import {
+  parseExcludeOwn,
+  toSemanticImageSearchInput,
+} from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import type { SearchRefusal } from '~/components/Search/search-refusal';
@@ -34,6 +38,7 @@ import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSea
 import {
   useImageFeedSearchQuery,
   useImageFeedSearchSort,
+  useImageFeedSimilarTo,
   useSearchPeriod,
   useSemanticImageFeed,
 } from '~/components/Image/Infinite/useImageFeedSearch';
@@ -90,15 +95,24 @@ export function ImagesInfiniteContent(props: ImagesInfiniteProps) {
 // Only a feed that can be searched pays for the flag lookup and the query checks.
 function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const query = useImageFeedSearchQuery();
+  const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
   const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
-  const period = useSearchPeriod(!!query);
-  return <ImagesFeed {...props} feedSearch={{ query, sort, refusal, profanityMatches, period }} />;
+  // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
+  const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
+  return (
+    <ImagesFeed
+      {...props}
+      feedSearch={{ query, similarTo, sort, refusal, profanityMatches, period }}
+    />
+  );
 }
 
 type FeedSearch = {
   query?: string;
+  /** "More like this": the image to match while no query is set. */
+  similarTo?: number;
   sort?: ImageFeedSearchSort;
   refusal?: SearchRefusal;
   profanityMatches: string[];
@@ -123,7 +137,11 @@ function ImagesFeed({
 }: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
-  const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
+  const {
+    query: rawSearchQuery,
+    similarTo: _similarTo,
+    ...computedFilters
+  } = removeEmpty({
     ...(disableStoreFilters
       ? filterOverrides
       : {
@@ -135,6 +153,7 @@ function ImagesFeed({
   });
   const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
   const searchQuery = rawSearchQuery && !refusal ? feedSearch?.query : undefined;
+  const similarTo = rawSearchQuery ? undefined : feedSearch?.similarTo;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
@@ -155,22 +174,28 @@ function ImagesFeed({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
+  const excludeOwn = parseExcludeOwn(useRouter().query.excludeOwn);
   const searchInput = useMemo(
     () =>
-      searchQuery
+      searchQuery || similarTo
         ? toSemanticImageSearchInput({
             query: searchQuery,
+            imageId: similarTo,
             filters,
             browsingLevel,
             sort: feedSearch?.sort,
+            excludeOwn,
           })
         : undefined,
-    [searchQuery, filters, browsingLevel, feedSearch?.sort]
+    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn]
   );
   const search = useSemanticImageFeed(searchInput);
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
+  // "More like this" from an image it can't search answers NOT_FOUND: say so, rather than outage.
+  const similarUnavailable =
+    searchFailed && !!searchInput?.imageId && search.error?.data?.code === 'NOT_FOUND';
   const searching = !!searchInput && !searchFailed;
   const feed = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
@@ -299,9 +324,11 @@ function ImagesFeed({
       {searchInput && (
         <ImageFeedSearchSummary
           query={searchInput.query ?? ''}
+          similarTo={searchInput.imageId}
           correctedQuery={searching ? search.correctedQuery : undefined}
           filters={filters}
           failed={searchFailed}
+          unavailable={similarUnavailable}
           onRetry={() => search.refetch()}
         />
       )}

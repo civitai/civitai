@@ -72,6 +72,7 @@ import {
   PARENT_LINK_TEMPLATE_SQL,
 } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
+import { idsInSlugOrder } from '~/server/services/blocks/store-slug-order';
 import { logToAxiom } from '~/server/logging/client';
 import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
@@ -82,6 +83,7 @@ import {
 } from '~/server/services/blocks/app-listing-source-repo.service';
 // The no-type `issue_tracker_url` column, raw SQL only — see its module header.
 import { readListingIssueTrackerUrlForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
+import { readLiveActionsRunSourceForListing } from '~/server/services/blocks/actions-run-source.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -933,6 +935,10 @@ export function projectListingDetail(
     // Issue-tracker / support link. A no-type column (raw SQL only), so this projection carries
     // `null` and the callers that read it (`getListingDetail`, the moderator preview) override it.
     issueTrackerUrl: null,
+    // The submitting GitHub Actions run (no-type columns, raw SQL only). `null` here;
+    // `getListingDetail` overrides it for an on-site listing whose serving version has one from a
+    // public repository. The moderator preview shows none.
+    actionsRunSource: null,
     screenshots: gallery.screenshots,
     kindData: detailKindData(row),
     // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
@@ -1051,7 +1057,7 @@ export function projectListingDetail(
       row.kind === 'offsite' &&
       Boolean(row.connectClientId) &&
       typeof connectRequestedScopes === 'number'
-        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
         : [],
   };
 }
@@ -1145,15 +1151,20 @@ export function listingSortKeyExpr(
  * red-capable host, and on one whichever the viewer's browsing level leaves out
  * (`matureRatingsAllowed`). Mirrors the AppBlock `matureHostSqlFilter`. Fail-closed: a
  * null/unknown rating is treated as SFW (kept); the direction is fail-closed for the MATURE
- * rows we must hide. G / PG / PG-13 are never filtered here.
+ * rows we must hide. G / PG / PG-13 are never filtered here. An app is never rated above `x`.
  */
 export function listingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
   return matureFilterFor(Prisma.sql`al.content_rating`, allowed);
 }
 
-/** {@link listingMatureFilter} for the sub-listing alias `s`. */
+/**
+ * {@link listingMatureFilter} for the sub-listing alias `s`, with the third mature rating only an
+ * item card carries: `xxx` (content levels), hidden unless the viewer's level includes XXX.
+ */
 export function subListingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
-  return matureFilterFor(Prisma.sql`s.content_rating`, allowed);
+  const rx = matureFilterFor(Prisma.sql`s.content_rating`, allowed);
+  if (allowed.xxx) return rx;
+  return Prisma.sql`(${rx}) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'`;
 }
 
 function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Prisma.Sql {
@@ -1427,7 +1438,10 @@ function catalogPageCache(
     dbRead,
     `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}:${
       withSubListings ? 'sl' : 'nosl'
-    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}`,
+    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}${
+      // XXX decides rows only through the item cards (`subListingMatureFilter`).
+      withSubListings ? (mature.xxx ? 'X' : '-') : ''
+    }`,
     'v1'
   );
 }
@@ -1527,7 +1541,7 @@ function restrictedAudienceForRow(
   });
 }
 
-type ListAvailableListingsOpts = {
+export type ListAvailableListingsOpts = {
   /** The viewer, for `restrictedAudience` only — never for which ROWS are returned. */
   viewer?: ListingViewer;
   redCapable?: boolean;
@@ -1766,6 +1780,29 @@ export async function listAvailableListings(
   if (trimmed.length === 0) return { items: [], nextCursor: undefined };
 
   const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
+  const items = await hydrateStoreGridItems(pageIds, {
+    redCapable,
+    floor,
+    viewer: opts.viewer ?? ANONYMOUS_LISTING_VIEWER,
+    viewerBrowsingLevel: opts.viewerBrowsingLevel,
+  });
+  return { items, nextCursor };
+}
+
+/**
+ * The store cards of `pageIds` (listing and sub-listing ids), in that order: the live
+ * hydration below the cached id page. An id with no hydrated row is dropped.
+ */
+async function hydrateStoreGridItems(
+  pageIds: string[],
+  opts: {
+    redCapable: boolean;
+    floor: ListingAudienceFloor;
+    viewer: ListingViewer;
+    viewerBrowsingLevel?: number | null;
+  }
+): Promise<StoreGridItem[]> {
+  const { redCapable, floor, viewer } = opts;
   const listingIds = pageIds.filter((id) => !isAppSubListingId(id));
   const subListingIds = pageIds.filter((id) => isAppSubListingId(id));
   // 🔴 IN PARALLEL, not serially: all four reads are keyed on ids already in hand. The beta
@@ -1784,7 +1821,6 @@ export async function listAvailableListings(
   // floor admits no restricted level, so `restrictedAudienceForViewer` can only answer `null`
   // and the read could never reach the response (the anonymous `/apps` grid and every public
   // REST page). A signed-in viewer on the same floor still needs it — they may OWN a row.
-  const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
   // Per-image media gate for every card on this page — see `listing-media-audience.ts`. Built
   // from the same `redCapable` that keys the id cache above, and applied BELOW it, to the live
   // hydration: the cache never holds media, so it cannot serve one host's media to the other.
@@ -1851,7 +1887,54 @@ export async function listAvailableListings(
     }
   }
 
-  return { items, nextCursor };
+  return items;
+}
+
+/**
+ * The store cards of the listings `slugs` names, in that order, for a search answered elsewhere
+ * (the app index): only listings this viewer could find in the store grid with the same `kind`
+ * and `category`, through the same eligibility predicate and the same live hydration as
+ * {@link listAvailableListings}. A slug the viewer could not find there is dropped. Listings
+ * only: sub-listing cards are never returned. Not cached: the id read is keyed on the slugs.
+ */
+export async function listStoreListingsBySlugs(
+  slugs: string[],
+  input: Pick<ListAppListingsInput, 'kind' | 'category'>,
+  opts: ListAvailableListingsOpts = {}
+): Promise<ListingCard[]> {
+  if (slugs.length === 0) return [];
+  const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
+  const scope = narrowStoreScope(opts.scope);
+  const mature = matureRatingsAllowed(redCapable, opts.viewerBrowsingLevel);
+  const idsFor = (levelFilter: Prisma.Sql) =>
+    dbRead.$queryRaw<{ id: string; slug: string }[]>(Prisma.sql`
+    SELECT al.id, al.slug
+    FROM app_listings al
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+    WHERE ${storeEligibilityWhere({
+      levelFilter,
+      kind: input.kind === 'all' ? null : input.kind,
+      category: input.category ?? null,
+      mature,
+      scope,
+    })}
+      AND al.slug = ANY(${slugs}::text[])
+  `);
+  // The same narrow degradation as the grid: a missing `visibility` column re-runs the
+  // pre-feature predicate; anything else propagates.
+  const rows = await idsFor(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
+    if (!isMissingColumnError(err)) throw err;
+    noteDegradedRead(VISIBILITY_READ_DEGRADED_EVENT, err);
+    return idsFor(Prisma.sql`al.status = 'approved'`);
+  });
+  const items = await hydrateStoreGridItems(idsInSlugOrder(slugs, rows), {
+    redCapable,
+    floor,
+    viewer: opts.viewer ?? ANONYMOUS_LISTING_VIEWER,
+    viewerBrowsingLevel: opts.viewerBrowsingLevel,
+  });
+  return items.filter((item): item is ListingCard => !isAppSubListingId(item.id));
 }
 
 /**
@@ -1897,21 +1980,35 @@ export async function getListingDetail(
   // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
   // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red, forkProvenance, isOfficial, issueTracker] =
-    await Promise.all([
-      loadDisplayedCollaboratorChips(row.id),
-      readListingSourceRepoUrl(row.id, dbRead),
-      readListingBetaForRender(row.id, dbRead),
-      redCapable
-        ? readListingRedMediaManyForRender(dbRead, [row.id])
-        : Promise.resolve(new Map<string, ListingRedMediaImages>()),
-      // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
-      readListingForkProvenanceForRender(row.id, dbRead),
-      // The Official badge (no-type column; degrades to "not official" on any error).
-      readListingOfficialForRender(row.id, dbRead),
-      // The Support link (no-type column; degrades to "no link" on any error).
-      readListingIssueTrackerUrlForRender(row.id, dbRead),
-    ]);
+  const [
+    collaborators,
+    sourceRepo,
+    beta,
+    red,
+    forkProvenance,
+    isOfficial,
+    issueTracker,
+    actionsRunSource,
+  ] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
+    redCapable
+      ? readListingRedMediaManyForRender(dbRead, [row.id])
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+    // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
+    readListingForkProvenanceForRender(row.id, dbRead),
+    // The Official badge (no-type column; degrades to "not official" on any error).
+    readListingOfficialForRender(row.id, dbRead),
+    // The Support link (no-type column; degrades to "no link" on any error).
+    readListingIssueTrackerUrlForRender(row.id, dbRead),
+    // The GitHub Actions run that submitted the serving version, public repositories only
+    // (no-type columns; degrades to none on any error). On-site apps only: an off-site
+    // listing has no submitted bundle.
+    row.kind === 'onsite' && row.appBlockId
+      ? readLiveActionsRunSourceForListing(dbRead, row.appBlockId)
+      : Promise.resolve(null),
+  ]);
   // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
   // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
   // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
@@ -1945,6 +2042,7 @@ export async function getListingDetail(
   return {
     ...detail,
     issueTrackerUrl: issueTracker.value,
+    actionsRunSource,
     forkable: row.kind === 'onsite' && forkProvenance.forkable,
     forkOf,
   };

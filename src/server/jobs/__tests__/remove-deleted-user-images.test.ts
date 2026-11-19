@@ -271,6 +271,8 @@ function parseSetClause(sql: string, params: unknown[]) {
     if (value === '?') row[column] = queue.shift();
     else if (/^CASE WHEN "needsReview" = 'csam' THEN 'csam' END$/.test(value))
       row[column] = { keeps: 'csam' };
+    else if (/^CASE WHEN "blockedFor" = \? THEN "blockedFor" ELSE \? END$/.test(value))
+      row[column] = { keeps: queue.shift(), otherwise: queue.shift() };
     else if (value === 'now()') row[column] = new Date();
     else if (value === 'NULL') row[column] = null;
     else if (value.startsWith('"metadata" || jsonb_build_object(')) {
@@ -362,8 +364,13 @@ function applyImageUpdate(sql: string, values: unknown[]) {
       const kept = (row.needsReview as { keeps: string }).keeps;
       recorded.needsReview = fixture.reviewFlags?.[id] === kept ? kept : null;
     }
+    if (row.blockedFor && typeof row.blockedFor === 'object') {
+      const { keeps, otherwise } = row.blockedFor as { keeps: string; otherwise: string };
+      recorded.blockedFor = blockedForOf(fixture, id) === keeps ? keeps : otherwise;
+    }
     if (typeof row.ingestion === 'string') (fixture.ingestion ??= {})[id] = row.ingestion;
-    if (typeof row.blockedFor === 'string') (fixture.blockedFor ??= {})[id] = row.blockedFor;
+    if (typeof recorded.blockedFor === 'string')
+      (fixture.blockedFor ??= {})[id] = recorded.blockedFor;
     fireBlockedDeleteTrigger(fixture, id, before, recorded);
 
     blockedUpdates.push({ id, ...recorded });
@@ -442,6 +449,7 @@ function seed(next: Record<number, Fixture>) {
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
       if (sql.includes('to_regclass')) return Promise.resolve([{ present: markerView.present }]);
+      if (sql.includes('DELETE FROM "Post"')) return Promise.resolve(deletePosts(sql, values));
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
@@ -509,25 +517,29 @@ function seed(next: Record<number, Fixture>) {
         return Promise.resolve(eligible.filter((id) => enqueueBlockedDelete(fixture, id)).length);
       }
 
-      // The id list is the only `Prisma.join` in the statement, and the owner check follows it.
-      const joined = values.findIndex((v) => Array.isArray((v as { values?: number[] })?.values));
-      const ids = ((values[joined] as { values?: number[] })?.values ?? []) as number[];
-      const userId = values[joined + 1] as number;
-      const fixture = fixtures[userId];
-      if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
-      if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
-      if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
-        return Promise.resolve(0);
-      if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve(0);
-
-      deletedPostIds.push(...ids);
-      fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
-      return Promise.resolve(ids.length);
+      throw new Error(`unexpected dbWrite write: ${sql}`);
     }
   );
 
+  /** `deletePostRows`: its id list comes first, then the owner the job's condition names. */
+  function deletePosts(sql: string, values: unknown[]) {
+    const ids = values[0] as number[];
+    const fixture = fixtures[values[1] as number];
+    if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return [];
+    if (!passesPrimaryChoice(sql, fixture)) return [];
+    // The hold arrives inlined in the text, opening `(<id> = <placeholder owner> OR`; what decides
+    // is whether a NOT stands right before it.
+    const hold = sql.lastIndexOf('(', sql.indexOf(' = ? OR '));
+    const negated = /\bNOT\s*$/.test(sql.slice(0, hold));
+    if (keptByOnlyWhere({ sql: `${negated ? 'NOT ' : ''}${sql.slice(hold)}` }, fixture)) return [];
+    const deleted = ids.filter((id) => (fixture.posts ?? []).includes(id));
+    deletedPostIds.push(...deleted);
+    fixture.posts = (fixture.posts ?? []).filter((id) => !deleted.includes(id));
+    return deleted.map((id) => ({ id }));
+  }
+
   mockDeleteImages.mockImplementation(
-    async (ids: number[], _updatePosts?: boolean, opts?: { onlyWhere?: { sql: string } }) => {
+    async (ids: number[], opts?: { onlyWhere?: { sql: string } }) => {
       const deleted: number[] = [];
       for (const fixture of Object.values(fixtures)) {
         if (keptByOnlyWhere(opts?.onlyWhere, fixture)) continue;
@@ -702,7 +714,10 @@ describe('removeDeletedUserImages', () => {
 
     await run();
 
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(3);
+    const postDeletes = mockDbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      (strings as string[]).join('?').includes('DELETE FROM "Post"')
+    );
+    expect(postDeletes).toHaveLength(3);
     expect(deletedPostIds).toHaveLength(250);
   });
 
@@ -761,7 +776,7 @@ describe('removeDeletedUserImages', () => {
     expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
-  it('keeps going when one user fails, and logs the failure with a stack', async () => {
+  it('keeps going when one user fails', async () => {
     seed({
       7: { deletedAt: NEWER, images: [1] },
       8: { deletedAt: OLDER, images: [2] },
@@ -776,34 +791,11 @@ describe('removeDeletedUserImages', () => {
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(2);
     expect(result.deletedImages).toBe(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'remove-deleted-user-images',
-        userId: 7,
-        error: expect.objectContaining({ stack: boom.stack }),
-      })
-    );
     // User 7 may be half-drained, so the cursor must not step over them to reach user 8.
     expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
-  it('logs a success line with the run counts', async () => {
-    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900] } });
-
-    await run();
-
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'info',
-        name: 'remove-deleted-user-images',
-        deletedImages: 10,
-        deletedUsers: 1,
-      })
-    );
-  });
-
-  it('checks for cancellation between image batches without logging it as a failure', async () => {
+  it('checks for cancellation between image batches', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(300) } });
     let checks = 0;
@@ -816,7 +808,6 @@ describe('removeDeletedUserImages', () => {
     await run(checkIfCanceled);
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 });
 
@@ -1364,7 +1355,34 @@ describe('grace mode restore breadcrumbs', () => {
     await run();
 
     // Restoring these to a flat `Scanned` would promote an image past the scan it never had.
-    expect(blockedRows()[0].metadata).toEqual({ [PRIOR_INGESTION_KEY]: 'Pending' });
+    expect(blockedRows()[0].metadata).toEqual({
+      [PRIOR_INGESTION_KEY]: 'Pending',
+      [PRIOR_BLOCKED_FOR_KEY]: null,
+    });
+  });
+
+  it('keeps a CSAM reason a failed rescan left unblocked, and records it for the restore', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1, 2],
+        ingestion: { 1: 'Error', 2: 'Scanned' },
+        blockedFor: { 1: 'CSAM' },
+      },
+    });
+
+    await run();
+
+    const [csam, other] = blockedRows();
+    expect(csam).toMatchObject({
+      id: 1,
+      ingestion: 'Blocked',
+      blockedFor: 'CSAM',
+      metadata: { [PRIOR_INGESTION_KEY]: 'Error', [PRIOR_BLOCKED_FOR_KEY]: 'CSAM' },
+    });
+    // Control: any other unblocked image is hidden as moderated.
+    expect(other).toMatchObject({ id: 2, ingestion: 'Blocked', blockedFor: 'moderated' });
   });
 
   it('records the block reason it overwrote when re-pointing', async () => {

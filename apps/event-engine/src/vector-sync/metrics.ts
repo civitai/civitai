@@ -1,5 +1,5 @@
 import type { ServerResponse } from 'http';
-import { Counter, Histogram } from 'prom-client';
+import { Counter, Gauge, Histogram } from 'prom-client';
 import { register } from '@/metrics';
 import type { Embedder } from './embedder';
 
@@ -24,6 +24,19 @@ export const vectorSyncMetrics = {
   flushErrors: new Counter({
     name: 'vector_sync_flush_errors_total',
     help: 'Flushes that threw and were put back for the next tick',
+    labelNames: ['domain'],
+    registers: [register],
+  }),
+  /** A topic created after start stays unsubscribed, and its events wait, until a restart. */
+  missingTopics: new Gauge({
+    name: 'vector_sync_missing_topics',
+    help: 'Configured topics absent from Kafka when the consumer started (1) and so not subscribed',
+    labelNames: ['topic'],
+    registers: [register],
+  }),
+  orphanBrakes: new Counter({
+    name: 'vector_sync_orphan_brakes_total',
+    help: 'Refresh batches whose points with no row were too many to delete, so none were',
     labelNames: ['domain'],
     registers: [register],
   }),

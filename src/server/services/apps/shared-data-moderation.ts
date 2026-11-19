@@ -10,11 +10,13 @@ import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
   includesMinor,
+  includesNsfw,
   includesPoi,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { stripInvisible } from '~/server/utils/confusable-fold';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import {
   collectSharedDataLeaves,
   type SharedDataLeafKind,
@@ -197,7 +199,9 @@ async function auditLeaf(text: string, budget: { remaining: number }): Promise<A
   const mayBeProfane = getProfanityFilter().analyze(normalizeText(input)).isProfane;
   const fullAudit = mayBeProfane && budget.remaining > 0;
   if (fullAudit) budget.remaining -= 1;
-  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit);
+  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit, {
+    nsfw: !!includesNsfw(normalizeText(text)),
+  });
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
   return {
@@ -239,6 +243,8 @@ export async function classifySharedTexts(
     const leaf = inputs[index];
     if (includesMinor(text))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
+    if (containsPrivateMediaUrl(text))
+      hits.push({ category: 'link', matched: 'private_media', label: 'private_media', leaf });
     const poi = includesPoi(text);
     if (poi) {
       // `includesPoi` (no prompt-edit matching) returns the LIST word, never the input's spelling.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -344,7 +345,7 @@ func newResolveFixture(t *testing.T) *resolveFixture {
 			f.reports = append(f.reports, err)
 		}},
 		Sessions:    &hydrate.PackedReader{Redis: f.cache, Prefix: "ns:"},
-		CookieNames: []string{"__Secure-civ-token", "__Host-civ-token"},
+		CookieNames: FixedCookieNames("__Secure-civ-token", "__Host-civ-token"),
 	}
 	return f
 }
@@ -595,5 +596,26 @@ func TestJWKSMaxStalenessDefaultsToThreeIntervals(t *testing.T) {
 	}
 	if got := (&Verifier{RefreshInterval: time.Minute, MaxStaleness: 7 * time.Minute}).maxStaleness(); got != 7*time.Minute {
 		t.Fatalf("explicit = %v, want 7m", got)
+	}
+}
+
+// Each resolved session reports the slot its cookie was read from; a signed-out request reports none.
+func TestResolveReportsTheCookieSlot(t *testing.T) {
+	f := newResolveFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a"})
+	good := f.token(t, nil)
+	var slots []string
+	f.r.OnSlot = func(slot string) { slots = append(slots, slot) }
+	for _, cookie := range []string{
+		"__Secure-civ-token=" + good,
+		"__Host-civ-token=" + good,
+		"__Secure-civ-token=not.a.token",
+	} {
+		if _, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": cookie}, "/x")); err != nil {
+			t.Fatalf("%s: %v", cookie, err)
+		}
+	}
+	if want := []string{"shared", "host"}; !slices.Equal(slots, want) {
+		t.Fatalf("slots %v, want %v", slots, want)
 	}
 }

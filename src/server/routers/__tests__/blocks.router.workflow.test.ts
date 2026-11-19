@@ -572,7 +572,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     })),
   },
@@ -2415,7 +2415,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -2442,7 +2442,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -3671,11 +3671,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(result.snapshot.autoClaim).toBeUndefined();
     // But the workflow still went through to the real submit.
     expect(result.snapshot.workflowId).toBe('wf_real');
-    // And the failure was logged for ops.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'apply' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim and submit still proceeds when precheck (balance lookup) throws', async () => {
@@ -3691,10 +3686,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(mockDailyBoostApply).not.toHaveBeenCalled();
     expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'precheck' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim when the reward multiplier zeros the award (rewardsIneligible)', async () => {
@@ -3818,7 +3809,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
   }
@@ -3916,7 +3907,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
@@ -4076,52 +4067,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   }
 
-  const BLOB_SOURCE = {
-    url: 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg',
-    width: 768,
-    height: 1024,
-  };
-  /** The host-source rows, each with whether it was written before the orchestrator token. */
-  const hostSourceRows = () => {
-    const tokenAt = mockGetOrchestratorToken.mock.invocationCallOrder[0] ?? Infinity;
-    return mockLogToAxiom.mock.calls
-      .map(([data], i) => ({
-        data: data as Record<string, unknown>,
-        beforeToken: mockLogToAxiom.mock.invocationCallOrder[i] < tokenAt,
-      }))
-      .filter(({ data }) => data.name === 'app-block-host-source');
-  };
-
   describe('estimateWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged estimate', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
-      happyVersionLookup();
-      happyUser();
-      mockSubmitWorkflow.mockResolvedValue({
-        id: '',
-        status: 'succeeded',
-        cost: { total: 12 },
-        steps: [],
-      });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .estimateWorkflow({ blockToken: 'tok', body: validBody({ sourceImage: BLOB_SOURCE }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({
-            reason: 'host-orchestrator-source',
-            count: 1,
-            stepTypes: 'textToImage',
-            phase: 'estimate',
-          }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
       // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
       // page token must NOT.
@@ -4352,33 +4298,6 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
   });
 
   describe('submitWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged submit', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
-      happyVersionLookup();
-      happyUser();
-      mockSysRedis.incrBy.mockResolvedValue(25);
-      mockSubmitWorkflow
-        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
-        .mockResolvedValueOnce({
-          id: 'wf_real',
-          status: 'unassigned',
-          cost: { total: 25 },
-          steps: [],
-        });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .submitWorkflow({ blockToken: 'tok', body: validBody({ sourceImages: [BLOB_SOURCE] }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({ count: 1, stepTypes: 'textToImage', phase: 'submit' }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
       happyVersionLookup();
@@ -4616,7 +4535,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             status: 'approved',
             manifest: { targets: [{ slotId: 'app.page' }] },
             approvedScopes: ['ai:write:budgeted'],
-            app: { allowedScopes: 33554431 },
+            app: { allowedScopes: 33554431n },
           },
         }
       );
@@ -4899,7 +4818,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
       // The block's input urls go through the generation input check as App Blocks input.
-      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      expect(stepArg.inputGate).toEqual(
+        expect.objectContaining({ entry: 'appBlocks', isApiCaller: false })
+      );
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
@@ -7129,7 +7050,8 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
       // Machine-readable, and marked, so the host may offer the viewer the raise.
       expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
-      expect(mockSysRedis.set).toHaveBeenCalledWith(
+      // The refusal record is a 5-minute flag on the cache cluster.
+      expect(mockRedis.set).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
         '100',
         { EX: 300 }
@@ -13383,6 +13305,7 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
   };
   const pageClaims = () =>
     validClaims({
+      appBlockId: 'apb_page',
       blockInstanceId: 'page_apb_page',
       ctx: { slotId: 'app.page', entityType: 'none' },
     });
@@ -13415,7 +13338,12 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
         input: { images?: Array<{ url: string }> };
         inputGate: unknown;
       };
-      expect(opts.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      // The token's app: the per-app source flags are read for it inside the step builder.
+      expect(opts.inputGate).toEqual({
+        entry: 'appBlocks',
+        isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_page', stepTypes: 'textToImage' },
+      });
       expect(opts.input.images?.map((i) => i.url)).toEqual([SOURCE.url]);
     }
   );

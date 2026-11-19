@@ -14,6 +14,7 @@ import {
 import {
   enforceBlockedBrowsingTags,
   enforceBlockedBrowsingTagsForModels,
+  getRequestImageFilter,
   getShowcaseImageFilter,
 } from '~/server/services/blocked-browsing-tags.service';
 
@@ -393,5 +394,25 @@ describe('getShowcaseImageFilter', () => {
     });
     expect(shows({ userId: 2, tags: undefined, minor: true })).toBe(true);
     expect(shows({ userId: 3, tags: [], minor: true })).toBe(false);
+  });
+});
+
+describe('getRequestImageFilter', () => {
+  const ctx = {
+    user: { id: 9, isModerator: false, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+    features: { canViewNsfw: true },
+    req: { headers: {} },
+  } as never;
+
+  it('hides an image whose tags were not read while a tag is excluded, and keeps an untagged one', async () => {
+    const showsImage = await getRequestImageFilter(ctx);
+    expect(showsImage({ userId: 5, tags: undefined })).toBe(false);
+    expect(showsImage({ userId: 5, tags: [] })).toBe(true);
+  });
+
+  it('reads tags given as { id } rows', async () => {
+    const showsImage = await getRequestImageFilter(ctx);
+    expect(showsImage({ userId: 5, tags: [{ id: 5351 }] })).toBe(false);
+    expect(showsImage({ userId: 5, tags: [{ id: 1 }] })).toBe(true);
   });
 });

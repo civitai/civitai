@@ -180,7 +180,7 @@ const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 function retractionFor(id: number) {
   const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
   if (!call) return undefined;
-  return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
+  return Boolean((call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
 /** The images persisted after their delete. */
@@ -203,7 +203,7 @@ afterEach(() => {
   for (const call of mockDeleteImages.mock.calls) {
     const ids = call[0] as number[];
     const retracts = Boolean(
-      (call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
+      (call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
     );
     for (const id of ids)
       expect(persisted().has(id), `persist differs from retraction for image ${id}`).toBe(retracts);
@@ -266,6 +266,14 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** `metadata - keyA - keyB`: a NULL stays NULL. */
+function stripKeys(metadata: Record<string, unknown> | null, keys: string[]) {
+  if (!metadata) return metadata;
+  const next = { ...metadata };
+  for (const k of keys) delete next[k];
+  return next;
+}
+
 /** `writeModeratorBlock`, returning the rows it blocked. */
 function moderatorBlock(values: unknown[]) {
   const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
@@ -321,19 +329,6 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
   if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
-  // `toggleBan`'s pre-block read: the rows its remove-all-media UPDATE is about to block that
-  // still carry a grace breadcrumb. Narrowly scoped on purpose — see the note at that call site.
-  if (sql.includes('SELECT id FROM "Image"') && sql.includes('ingestion <> ')) {
-    const [userId, keyA] = values as [number, string];
-    const present = presenceTest(sql, keyA);
-    return store.images
-      .filter(
-        (i) =>
-          i.userId === userId && i.ingestion !== 'Blocked' && !!i.metadata && present(i.metadata)
-      )
-      .map((i) => ({ id: i.id }));
-  }
-
   // `countPendingAccountDeletionImageRestores` — the read `restoreUser` gates the whole gallery
   // restore on. Its `NOT IN (SELECT unnest(enum_range(...)))` sibling is the unreadable-breadcrumb
   // audit inside `unblockAccountDeletionImages`, which is not driven here.
@@ -383,7 +378,61 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
 
-  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values).length;
+  // `blockImageFromRating`, the orchestrator content-rating block.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
+    // `strip` is the `withoutGraceMarkersSql()` fragment, bound as one value carrying its two keys.
+    const [, ingestion, nsfwLevel, kept, keepAny, reason, strip, id] = values as [
+      unknown,
+      string,
+      number,
+      string,
+      boolean,
+      string | null,
+      { values: string[] },
+      number
+    ];
+    const row = store.images.find((i) => i.id === id);
+    if (!row) return 0;
+    row.ingestion = ingestion;
+    row.nsfwLevel = nsfwLevel;
+    if (!keepAny && row.blockedFor !== kept) row.blockedFor = reason;
+    row.metadata = stripKeys(row.metadata, strip.values);
+    fireQueueTrigger(row);
+    return 1;
+  }
+
+  // `blockBannedUserImages`, the ban's whole-library block: blocks what is not Blocked, and strips
+  // the grace breadcrumbs off every row it matches, including one already Blocked.
+  if (sql.includes('UPDATE "Image"') && sql.includes('AND (ingestion <>')) {
+    const [nsfwLevel, kept, reason, strip, userId, presenceKey] = values as [
+      number,
+      string,
+      string,
+      { values: string[] },
+      number,
+      string
+    ];
+    const present = presenceTest(sql, presenceKey);
+    let count = 0;
+    for (const row of store.images) {
+      if (row.userId !== userId) continue;
+      const wasBlocked = row.ingestion === 'Blocked';
+      if (wasBlocked && !(row.metadata && present(row.metadata))) continue;
+      if (!wasBlocked) {
+        row.ingestion = 'Blocked';
+        row.nsfwLevel = nsfwLevel;
+        if (row.blockedFor !== kept) row.blockedFor = reason;
+        fireQueueTrigger(row);
+      }
+      row.metadata = stripKeys(row.metadata, strip.values);
+      count++;
+    }
+    return count;
+  }
+
+  // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
+    return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
     const [userId, entityType, activity] = values as [number, string, string];
@@ -839,14 +888,9 @@ describe('who can reach blob retraction, driven through the real block writers',
     ).toEqual({ keepMe: 5 });
   });
 
-  // 🔴 F1. The ban's media block is `where: { userId, ingestion: { not: 'Blocked' } }`, and both
-  // of `remove-deleted-user-images`'s statements write the breadcrumb only on a row they leave
-  // `ingestion = 'Blocked'` — the first sets it in the same UPDATE, the second requires it. So
-  // for every row the grace pass marked, the ban's UPDATE matches nothing, and an account-wide
-  // clear there strips the restore record off rows it provably did not block. The loss is silent
-  // twice over: the row no longer remembers its prior `ingestion`, and the count `restoreUser`
-  // gates the whole gallery restore on reads 0.
-  it('leaves the grace breadcrumbs on the rows a ban did not block', async () => {
+  // A ban during the grace period makes the grace block permanent: the ban takes the breadcrumbs
+  // off rows the grace pass already blocked, so a later restore leaves the library blocked.
+  it('takes the grace breadcrumbs off a grace-blocked library when a ban removes its media', async () => {
     // The library as the grace pass leaves it: Blocked, Moderated, breadcrumbed.
     store.images.push(
       image(20, BANNED_USER, {
@@ -878,37 +922,25 @@ describe('who can reach blob retraction, driven through the real block writers',
     } as never);
 
     for (const id of [20, 21]) {
-      const meta = store.images.find((i) => i.id === id)!.metadata;
+      const row = store.images.find((i) => i.id === id)!;
+      expect(row.ingestion, `image ${id} is no longer blocked`).toBe('Blocked');
+      expect(row.blockedFor).toBe(BlockedReason.Moderated);
       expect(
-        meta && PRIOR_INGESTION_KEY in meta,
-        `the ban stripped the restore breadcrumb off image ${id}, a row its own UPDATE cannot ` +
-          'have blocked — the recorded prior ingestion is gone and the library is unrecoverable ' +
-          'from the row'
-      ).toBe(true);
+        row.metadata && PRIOR_INGESTION_KEY in row.metadata,
+        `a later account restore would un-block image ${id} while the ban stands`
+      ).toBe(false);
     }
-    // Nothing else about the row moved either.
-    expect(store.images.find((i) => i.id === 21)!.metadata).toEqual({
-      [PRIOR_INGESTION_KEY]: 'Pending',
-      keepMe: 2,
-    });
-
-    // The half the row cannot show. `restoreUser` calls this and skips `recordPendingImageRestore`
-    // — so `restore-user-images` never runs — when it returns 0, and reports the same number to
-    // the moderator as `imagesPendingRestore`.
+    // The strip names two keys, not the object.
+    expect(store.images.find((i) => i.id === 21)!.metadata).toEqual({ keepMe: 2 });
     expect(
       await countPendingAccountDeletionImageRestores(BANNED_USER),
-      'the restore path was told this library has nothing to bring back'
-    ).toBe(2);
+      'the restore path still sees images to bring back from a banned library'
+    ).toBe(0);
   });
 
-  // The other side of that scope, and the reason the call is narrowed rather than deleted: a row
-  // the ban DOES block still has to lose its breadcrumb. This is the one shape that gets there —
-  // breadcrumbed by the grace pass, then un-blocked by a moderator (`handleUnblockImages` sets
-  // `ingestion = 'Scanned'` and does not strip it), so the ban's UPDATE is what hides it.
-  //
-  // Both breadcrumb shapes, because TWO statements have to agree on the `->` reading for this to
-  // work: the pre-block read that collects the ids, and the strip itself. Narrowing either one to
-  // `->>` loses the JSON-null case alone, so a single-shape fixture cannot see it.
+  // A row breadcrumbed by the grace pass, then un-blocked by a moderator (`handleUnblockImages`
+  // does not strip it), is one the ban blocks itself; it loses its breadcrumb too. Both breadcrumb
+  // shapes, because the strip has to read the `->` arrow to see the JSON-null one.
   for (const [label, marker] of [
     ['a plausible value', 'Scanned'],
     ['JSON null', null],
@@ -944,47 +976,17 @@ describe('who can reach blob retraction, driven through the real block writers',
         store.images.find((i) => i.id === 22)!.metadata,
         'the ban blocked this row and left the breadcrumb that un-does the block'
       ).toEqual({ keepMe: 3 });
-      // …and its neighbour, which the ban did not block, still has its own.
+      // …and its grace-blocked neighbour loses its own, staying blocked.
       expect(
         store.images.find((i) => i.id === 23)!.metadata,
-        'the ban stripped a breadcrumb off a row it did not block'
-      ).toEqual({ [PRIOR_INGESTION_KEY]: marker });
+        'the ban left the breadcrumb that un-does a grace block on a banned library'
+      ).toEqual({});
+      expect(store.images.find((i) => i.id === 23)!.ingestion).toBe('Blocked');
     });
   }
 
-  // The read that collects those ids is new, and it sits in front of the statement that hides a
-  // banned account's media. It must not be able to stop it.
-  it('still blocks the library when the pre-block breadcrumb scan fails', async () => {
-    store.images.push(image(27, BANNED_USER), image(28, BANNED_USER));
-    dbMock.dbWrite.$queryRaw.mockImplementation(((
-      strings: TemplateStringsArray,
-      ...values: unknown[]
-    ) => {
-      if (strings.join('?').includes('SELECT id FROM "Image"'))
-        return Promise.reject(new Error('scan failed'));
-      return Promise.resolve(readQuery(strings, ...values));
-    }) as never);
-
-    await toggleBan({
-      id: BANNED_USER,
-      reasonCode: 'SexualMinor',
-      userId: MOD_ID,
-      isModerator: true,
-      force: true,
-      removeMedia: true,
-    } as never);
-
-    for (const id of [27, 28]) {
-      expect(
-        store.images.find((i) => i.id === id)!.ingestion,
-        `image ${id} stayed up because the breadcrumb scan threw`
-      ).toBe('Blocked');
-    }
-  });
-
-  // `softDeleteUser`'s CSAM block carries NO `ingestion` predicate, so it hides every image the
-  // account owns — which is what makes an account-wide clear the correct scope there and the
-  // wrong one in `toggleBan`. Nothing in the repo named this site before.
+  // `softDeleteUser`'s CSAM block carries NO `ingestion` predicate: it hides every image the
+  // account owns, so the account-wide clear there strips exactly the rows it blocked.
   it('clears the breadcrumbs account-wide when softDeleteUser blocks the library', async () => {
     store.images.push(
       image(24, CSAM_USER, {
@@ -1032,7 +1034,7 @@ describe('who can reach blob retraction, driven through the real block writers',
 
 /**
  * The orchestrator content-rating block, driven through the exported webhook entry point rather
- * than the module-private `blockImageFromRating`. The scan continues past the block into tag
+ * than `blockImageFromRating` itself. The scan continues past the block into tag
  * processing, which this fixture does not model; the throw is swallowed because the block write
  * has already happened by then and is what the assertions read.
  */

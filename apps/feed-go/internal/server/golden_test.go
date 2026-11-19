@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -37,16 +38,17 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 23
+	goldenMinAsPosts  = 32
 	goldenMinV1       = 36
-	goldenMinInfinite = 21
-	goldenMinModels   = 18
+	goldenMinInfinite = 30
+	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -96,6 +98,9 @@ type goldenFixture struct {
 		LoadingOpenToAll bool `json:"loadingOpenToAll"`
 		// FrameCacheNegative is the frame-cache-negative flag the fixture's Node run had.
 		FrameCacheNegative bool `json:"frameCacheNegative"`
+		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
+		// fallback only that state still has).
+		ComputeMissesOff bool `json:"computeMissesOff"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -174,13 +179,20 @@ type goldenImage struct {
 	Minor             bool            `json:"minor"`
 	Poi               bool            `json:"poi"`
 	AcceptableMinor   bool            `json:"acceptableMinor"`
+	Restricted        bool            `json:"restricted"`
 	// Resources are the image's ImageResourceNew rows.
 	Resources []struct {
 		ModelVersionID int  `json:"modelVersionId"`
 		Detected       bool `json:"detected"`
 	} `json:"_resources"`
-	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
+	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures, and a fixture whose query
+	// filters by `tags`: the tag scope).
 	Tags []int `json:"_tags"`
+	// Tools are the image's ImageTool tool ids (only in a fixture whose query filters by `tools`).
+	Tools []int `json:"_tools"`
+	// Techniques are the image's ImageTechnique ids (only in a fixture whose query filters by
+	// `techniques`).
+	Techniques []int `json:"_techniques"`
 	// Meta is the image's `meta` jsonb as Postgres prints it (v1-images/ fixtures only: the
 	// image-meta cache's lookup); null when NULL.
 	Meta *string `json:"_meta"`
@@ -191,7 +203,7 @@ var goldenImageColumns = []string{
 	"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hideMeta", "hasMeta", "hasPositivePrompt",
 	"onSite", "remixOfId", "createdAt", "sortAt", "mimeType", "type", "metadata", "ingestion", "blockedFor",
 	"scannedAt", "needsReview", "userId", "postId", "postTitle", "index", "publishedAt", "unpublishedAt",
-	"modelVersionId", "model3dId", "availability", "minor", "poi", "acceptableMinor", "cursorId",
+	"modelVersionId", "model3dId", "availability", "minor", "poi", "acceptableMinor", "restricted", "cursorId",
 }
 
 func goldenPtr[T any](p *T) any {
@@ -225,7 +237,7 @@ func (g goldenImage) row(cursor any) []any {
 		g.Type, goldenJSONVal(g.Metadata), g.Ingestion, goldenPtr(g.BlockedFor), goldenTimeVal(g.ScannedAt),
 		goldenPtr(g.NeedsReview), g.UserID, g.PostID, goldenPtr(g.PostTitle), goldenPtr(g.Index),
 		goldenTimeVal(g.PublishedAt), goldenPtr(g.UnpublishedAt), goldenPtr(g.ModelVersionID),
-		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, cursor,
+		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, g.Restricted, cursor,
 	}
 }
 
@@ -238,6 +250,8 @@ type goldenDB struct {
 	ModelVersions []struct {
 		ID      int `json:"id"`
 		ModelID int `json:"modelId"`
+		// BaseModel is the version's `baseModel` (only in a fixture whose query filters by `baseModels`).
+		BaseModel string `json:"baseModel"`
 	} `json:"modelVersions"`
 	Models []struct {
 		ID           int             `json:"id"`
@@ -279,13 +293,51 @@ type goldenDB struct {
 	} `json:"users"`
 
 	// model-getall/ fixtures: the page query's answer per call, in order, with the cursor Node sent
-	// for it; the paid-access gates, cover lookups, tags by name and creators by name Node read.
+	// for it; the paid-access gates, cover lookups, tags by name, creators by name and collections
+	// Node read.
 	ModelPages []struct {
 		Cursor *string `json:"cursor"`
 		// Bound is what Node's parseCursor binds for Cursor: a {"$date"} instant or an integer per token.
 		Bound []json.RawMessage `json:"bound"`
 		Rows  []goldenModelRow  `json:"rows"`
+		// Collection is what Node binds into the page's CollectionItem semi-join (absent: no
+		// collection filter): the collection, the viewer whose in-review items it keeps (null signed
+		// out) and the collection tag (null: none).
+		Collection *goldenCollectionFilter `json:"collection"`
+		// OnlyModelIDs / ExcludeModelIDs are the official pin's id filters Node binds into the page
+		// (absent: none), `mm."modelId" IN (…)` and `NOT IN (…)`.
+		OnlyModelIDs    []int `json:"onlyModelIds"`
+		ExcludeModelIDs []int `json:"excludeModelIds"`
 	} `json:"modelPages"`
+	// ModelDataVersions, ModelHashes and TagsOnModels are what dataForModelsCache's and modelTagCache's
+	// lookups read for a fixture's cold keys (the version rows with their modelId, the SHA256 model
+	// hashes, the TagsOnModels rows), in the order the queries returned them.
+	ModelDataVersions []goldenModelVersionRow `json:"modelDataVersions"`
+	ModelHashes       []struct {
+		ModelID int    `json:"modelId"`
+		Hash    string `json:"hash"`
+	} `json:"modelHashes"`
+	TagsOnModels []struct {
+		ModelID int `json:"modelId"`
+		TagID   int `json:"tagId"`
+	} `json:"tagsOnModels"`
+	// OfficialModels are the official, published models getOfficialModelIds' fetchFn reads (a fixture
+	// whose request reads the official-models entry).
+	OfficialModels []struct {
+		ID   int    `json:"id"`
+		Type string `json:"type"`
+	} `json:"officialModels"`
+	// Collections are the Collection rows Node's permission read found, each with the contributor
+	// rows it holds.
+	Collections []struct {
+		ID           int    `json:"id"`
+		Read         string `json:"read"`
+		UserID       int    `json:"userId"`
+		Contributors []struct {
+			UserID      int      `json:"userId"`
+			Permissions []string `json:"permissions"`
+		} `json:"contributors"`
+	} `json:"collections"`
 	PaidAccess []struct {
 		ModelID  int        `json:"modelId"`
 		Deadline goldenTime `json:"deadline"`
@@ -355,6 +407,53 @@ type goldenModelRow struct {
 	Rank            json.RawMessage `json:"rank"`
 	UserID          int             `json:"userId"`
 	CursorID        string          `json:"cursorId"`
+}
+
+// goldenModelVersionRow is one row of dataForModelsCache's versions query.
+type goldenModelVersionRow struct {
+	ModelID              int        `json:"modelId"`
+	ID                   int        `json:"id"`
+	Index                *int       `json:"index"`
+	Name                 string     `json:"name"`
+	EarlyAccessTimeFrame int        `json:"earlyAccessTimeFrame"`
+	BaseModel            string     `json:"baseModel"`
+	BaseModelType        *string    `json:"baseModelType"`
+	CreatedAt            goldenTime `json:"createdAt"`
+	TrainingStatus       *string    `json:"trainingStatus"`
+	PublishedAt          goldenTime `json:"publishedAt"`
+	Status               string     `json:"status"`
+	Flags                int        `json:"flags"`
+	Availability         string     `json:"availability"`
+	NsfwLevel            int        `json:"nsfwLevel"`
+	Description          *string    `json:"description"`
+	TrainedWords         []string   `json:"trainedWords"`
+	VaeID                *int       `json:"vaeId"`
+	Covered              bool       `json:"covered"`
+	CoveredNext          bool       `json:"coveredNext"`
+}
+
+var goldenModelVersionColumns = []string{"id", "index", "modelId", "name", "earlyAccessTimeFrame", "baseModel",
+	"baseModelType", "createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel",
+	"description", "trainedWords", "vaeId", "covered", "coveredNext"}
+
+// row is the version row (int4 as int64, text[] as []any).
+func (g goldenModelVersionRow) row() []any {
+	var index any
+	if g.Index != nil {
+		index = int64(*g.Index)
+	}
+	var vae any
+	if g.VaeID != nil {
+		vae = int64(*g.VaeID)
+	}
+	words := make([]any, len(g.TrainedWords))
+	for i, w := range g.TrainedWords {
+		words[i] = w
+	}
+	return []any{int64(g.ID), index, int64(g.ModelID), g.Name, int64(g.EarlyAccessTimeFrame), g.BaseModel,
+		goldenPtr(g.BaseModelType), goldenTimeVal(g.CreatedAt), goldenPtr(g.TrainingStatus), goldenTimeVal(g.PublishedAt),
+		g.Status, int64(g.Flags), g.Availability, int64(g.NsfwLevel), goldenPtr(g.Description), words, vae, g.Covered,
+		g.CoveredNext}
 }
 
 var goldenModelColumns = []string{"id", "name", "sfwName", "coverImageId", "sfwCoverImageId", "type", "minor", "sfwOnly",
@@ -465,6 +564,9 @@ var (
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
+	goldenReTechnique = regexp.MustCompile(`it\."techniqueId" = ANY\(\$(\d+)::int\[\]\)`)
+	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
+	goldenReBaseMdl   = regexp.MustCompile(`WHERE mv\."baseModel" = ANY\(\$(\d+)::text\[\]\)`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
 	goldenReOffset    = regexp.MustCompile(`OFFSET (\d+)\s+LIMIT`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
@@ -527,11 +629,14 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, the minor exclusion, published-before-now, order, cursor, offset, limit).
+// excluded creators, types, tools, base models, the minor exclusion, published-before-now, order,
+// cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
+	versionBase := map[int]string{}
 	for _, v := range fx.DB.ModelVersions {
 		versionModel[v.ID] = v.ModelID
+		versionBase[v.ID] = v.BaseModel
 	}
 	ids, hasIDs := goldenArg(args, goldenReIDs, sql)
 	postIDs, hasPostIDs := goldenArg(args, goldenRePostIDs, sql)
@@ -544,6 +649,9 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
 	tags, hasTags := goldenArg(args, goldenReTags, sql)
+	techniques, hasTechniques := goldenArg(args, goldenReTechnique, sql)
+	tools, hasTools := goldenArg(args, goldenReTools, sql)
+	baseModels, hasBaseModels := goldenArg(args, goldenReBaseMdl, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
@@ -587,8 +695,44 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				continue
 			}
 		}
+		if hasTechniques {
+			// EXISTS (… "techniqueId" = ANY(<techniques>)): a row for any listed technique.
+			holdsAny := false
+			for _, t := range img.Techniques {
+				holdsAny = holdsAny || goldenHas(goldenInts(techniques), t)
+			}
+			if !holdsAny {
+				continue
+			}
+		}
 		if hasExcl && goldenHas(goldenInts(exclUsers), img.UserID) {
 			continue
+		}
+		if hasTools {
+			// array_agg(toolId) @> <tools>: the image holds every listed tool (none held: no group).
+			holdsAll := len(img.Tools) > 0
+			for _, t := range goldenInts(tools) {
+				holdsAll = holdsAll && goldenHas(img.Tools, t)
+			}
+			if !holdsAll {
+				continue
+			}
+		}
+		if hasBaseModels {
+			// EXISTS (ModelVersion RIGHT JOIN ImageResourceNew … WHERE mv."baseModel" = ANY(<names>)): a
+			// resource row whose version exists and carries one of the names.
+			names, _ := baseModels.([]string)
+			matched := false
+			for _, r := range img.Resources {
+				if b, ok := versionBase[r.ModelVersionID]; ok {
+					for _, n := range names {
+						matched = matched || n == b
+					}
+				}
+			}
+			if !matched {
+				continue
+			}
 		}
 		if hasTypes {
 			list, _ := types.([]string)
@@ -980,6 +1124,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	return goldenSetupMode(t, fx, false)
 }
 
+// goldenWrites is the write-back set of a golden mode: every cache with writeBack, none without.
+func goldenWrites(writeBack bool) hydrate.WriteSet {
+	if writeBack {
+		return hydrate.AllWrites()
+	}
+	return nil
+}
+
 // goldenSetupMode builds the server as main does: misses computed (hydrate.MissCompute), written
 // back only with writeBack.
 func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
@@ -1002,7 +1154,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db, Compute: &hydrate.MissCompute{
-		WriteBack:     writeBack,
+		WriteBack:     goldenWrites(writeBack),
 		FrameNegative: fx.Config.FrameCacheNegative,
 		Now:           nowFn,
 	}}
@@ -1013,7 +1165,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
 		Sessions:    packed,
-		CookieNames: []string{goldenCookieName},
+		CookieNames: auth.FixedCookieNames(goldenCookieName),
 	}
 	events := map[string]bool{}
 	for _, e := range fx.Config.DecorationEvents {
@@ -1028,6 +1180,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Gallery:  &feed.GalleryStore{Cache: cache, DB: db},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Feed:     &feedsvc.Client{BaseURL: feedSrv.URL, HTTP: feedSrv.Client()},
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(fx.Config.CreatorPromotions),
 			LazyPostImages:          fx.Config.LazyPostImages,
@@ -1291,8 +1444,15 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
-	if c.ttl != nil {
-		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
+	// createContext's policy, as for the gallery procedure: the public TTL exactly when signed out.
+	if fx.Expect.Cacheable == nil {
+		t.Fatal("an image.getInfinite fixture without expect.cacheable")
+	}
+	if *fx.Expect.Cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if !*fx.Expect.Cacheable && c.ttl != nil {
+		t.Errorf("a session user: want no cache TTL, got %+v", *c.ttl)
 	}
 	env.feed.check(t, true)
 }
@@ -1305,12 +1465,19 @@ type goldenModelPG struct {
 	*testkit.DB
 	mu    sync.Mutex
 	pages int
+	// collectionReads counts the collection permission reads.
+	collectionReads int
 }
 
 func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 	db := &fx.DB
 	g := &goldenModelPG{}
 	g.DB = &testkit.DB{Routes: []testkit.Route{
+		// The version showcase miss lookup: the fixtures record no showcase rows (only the cache
+		// entries Node read), so it fails rather than answer the cover-image route below.
+		{Match: `AS full_mv(id)`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return nil, errors.New("golden: the fixture records no showcase rows")
+		}},
 		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			g.mu.Lock()
 			defer g.mu.Unlock()
@@ -1326,11 +1493,59 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			} else if err := goldenCheckBound(*page.Cursor, page.Bound, args); err != nil {
 				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
 			}
+			if err := goldenCheckCollectionFilter(page.Collection, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			if err := goldenCheckIDFilter("onlyModelIds", goldenReOnlyIDs, page.OnlyModelIDs, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			if err := goldenCheckIDFilter("excludeModelIds", goldenReExcludeIDs, page.ExcludeModelIDs, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
 			rows := make([][]any, len(page.Rows))
 			for i, r := range page.Rows {
 				rows[i] = r.row()
 			}
 			return testkit.NewRows(goldenModelColumns, rows...), nil
+		}},
+		// dataForModelsCache's lookup (hydrate.MissCompute): the fixture's version rows and hashes of
+		// the ids asked, in the order recorded.
+		{Match: `"RecommendedResource"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, v := range db.ModelDataVersions {
+				if goldenHas(goldenInts(args[0]), v.ModelID) {
+					rows = append(rows, v.row())
+				}
+			}
+			return testkit.NewRows(goldenModelVersionColumns, rows...), nil
+		}},
+		{Match: `FROM "ModelHash"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, h := range db.ModelHashes {
+				if goldenHas(goldenInts(args[0]), h.ModelID) {
+					rows = append(rows, []any{int64(h.ModelID), h.Hash})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "hash"}, rows...), nil
+		}},
+		// getOfficialModelIds' fetchFn: only a copy whose official-models entry was emptied reads it
+		// (probe_test.go), from the fixture's official rows.
+		{Match: `"isOfficial" = true`, Rows: func(_ []any) (*testkit.Rows, error) {
+			rows := make([][]any, 0, len(db.OfficialModels))
+			for _, m := range db.OfficialModels {
+				rows = append(rows, []any{int64(m.ID), m.Type})
+			}
+			return testkit.NewRows([]string{"id", "type"}, rows...), nil
+		}},
+		// modelTagCache's lookup.
+		{Match: `SELECT "modelId", "tagId" FROM "TagsOnModels"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.TagsOnModels {
+				if goldenHas(goldenInts(args[0]), r.ModelID) {
+					rows = append(rows, []any{int64(r.ModelID), int64(r.TagID)})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "tagId"}, rows...), nil
 		}},
 		{Match: `GROUP BY mv."modelId"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -1349,6 +1564,34 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 				}
 			}
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
+		}},
+		// The collection permission read: the fixture's Collection row and the viewer's contributor
+		// row (none: no permissions); a collection the fixture does not hold is no row.
+		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			g.collectionReads++
+			g.mu.Unlock()
+			cols := []string{"read", "userId", "permissions"}
+			viewer := 0
+			if len(args) > 1 {
+				viewer = args[1].(int)
+			}
+			if (viewer != 0) != strings.Contains(sql, `"CollectionContributor"`) {
+				return nil, fmt.Errorf("golden: the collection read joins the contributor row exactly for a viewer (viewer %d)", viewer)
+			}
+			for _, c := range db.Collections {
+				if c.ID != args[0].(int) {
+					continue
+				}
+				perms := []string{}
+				for _, cc := range c.Contributors {
+					if cc.UserID == viewer {
+						perms = cc.Permissions
+					}
+				}
+				return testkit.NewRows(cols, []any{c.Read, c.UserID, perms}), nil
+			}
+			return testkit.NewRows(cols), nil
 		}},
 		// Tag.name and User.username are citext.
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
@@ -1372,9 +1615,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
 		}},
-		// The model frame miss lookup (hydrate.MissCompute), over the fixture's placed cosmetics.
+		// The model frame and decoration miss lookups (hydrate.MissCompute), over the fixture's placed
+		// cosmetics.
 		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, true, []string{"cosmeticId", "equippedToId", "userId"})
 		}},
 	}}
 	g.Routes = append(g.Routes, goldenTagRoutes(db)...)
@@ -1383,6 +1630,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		defer g.mu.Unlock()
 		if !t.Failed() && fx.Expect.Fallback == "" && g.pages != len(db.ModelPages) {
 			t.Errorf("feed-go asked for %d page(s); Node asked for %d", g.pages, len(db.ModelPages))
+		}
+		// Node reads the collection permission on every getModelsRaw call: once per page it queries,
+		// and once for an unreadable collection, which queries no page.
+		if !t.Failed() && fx.Expect.Fallback == "" && db.Collections != nil {
+			if want := max(len(db.ModelPages), 1); g.collectionReads != want {
+				t.Errorf("feed-go read the collection permission %d time(s); Node read it %d", g.collectionReads, want)
+			}
 		}
 	})
 	return g
@@ -1425,21 +1679,125 @@ func goldenCheckBound(cursor string, bound []json.RawMessage, args []any) error 
 	return nil
 }
 
+// goldenCollectionFilter is a model-getall page's CollectionItem semi-join as Node bound it.
+type goldenCollectionFilter struct {
+	CollectionID int  `json:"collectionId"`
+	AddedByID    *int `json:"addedById"`
+	TagID        *int `json:"tagId"`
+}
+
+// goldenCollectionClauses are the CollectionItem semi-join's bound comparisons, each capturing the
+// placeholder it binds.
+var goldenCollectionClauses = []struct {
+	name string
+	re   *regexp.Regexp
+	want func(*goldenCollectionFilter) *int
+}{
+	{`ci."collectionId"`, regexp.MustCompile(`ci\."collectionId" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return &f.CollectionID }},
+	{`ci."addedById"`, regexp.MustCompile(`ci\."addedById" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return f.AddedByID }},
+	{`ci."tagId"`, regexp.MustCompile(`ci\."tagId" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return f.TagID }},
+}
+
+// goldenCheckCollectionFilter checks a page query against the CollectionItem semi-join Node built for
+// the page: no collection clause where Node had none, and otherwise each value Node bound (the
+// collection, the viewer's in-review carve-out, the collection tag) at the placeholder of the
+// clause that binds it in feed-go's query, with no carve-out or tag clause where Node had none.
+func goldenCheckCollectionFilter(want *goldenCollectionFilter, sql string, args []any) error {
+	for _, c := range goldenCollectionClauses {
+		m := c.re.FindAllStringSubmatch(sql, -1)
+		var v *int
+		if want != nil {
+			v = c.want(want)
+		}
+		switch {
+		case want == nil && len(m) > 0:
+			return fmt.Errorf("node filters by no collection; feed-go's page query has %s", m[0][0])
+		case v == nil && len(m) > 0:
+			return fmt.Errorf("node's collection filter has no %s; feed-go's has %s", c.name, m[0][0])
+		case v == nil:
+			continue
+		case len(m) == 0:
+			return fmt.Errorf("node's collection filter binds %s = %d; feed-go's page query has no such clause", c.name, *v)
+		}
+		// A cursor page repeats the WHERE in each keyset branch: every copy must bind Node's value.
+		for _, mm := range m {
+			n, err := strconv.Atoi(mm[1])
+			if err != nil || n < 1 || n > len(args) {
+				return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", c.name, mm[1], len(args))
+			}
+			if got, ok := args[n-1].(int); !ok || got != *v {
+				return fmt.Errorf("node binds %s = %d; feed-go binds $%d = %v", c.name, *v, n, args[n-1])
+			}
+		}
+	}
+	return nil
+}
+
+// goldenReOnlyIDs / goldenReExcludeIDs find the official pin's id filters in a page query.
+var (
+	goldenReOnlyIDs    = regexp.MustCompile(`mm\."modelId" = ANY\(\$(\d+)::int\[\]\)`)
+	goldenReExcludeIDs = regexp.MustCompile(`mm\."modelId" != ALL\(\$(\d+)::int\[\]\)`)
+)
+
+// goldenCheckIDFilter checks a page's id filter against what Node bound: none in Node, none in
+// feed-go's query; else every copy of the clause (each keyset branch repeats the WHERE) binds exactly
+// Node's ids, in Node's order.
+func goldenCheckIDFilter(name string, re *regexp.Regexp, want []int, sql string, args []any) error {
+	m := re.FindAllStringSubmatch(sql, -1)
+	if len(want) == 0 {
+		if len(m) > 0 {
+			return fmt.Errorf("node binds no %s; feed-go's page query has one", name)
+		}
+		return nil
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("node binds %s %v; feed-go's page query has no such clause", name, want)
+	}
+	for _, mm := range m {
+		n, err := strconv.Atoi(mm[1])
+		if err != nil || n < 1 || n > len(args) {
+			return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", name, mm[1], len(args))
+		}
+		if got := goldenInts(args[n-1]); !reflect.DeepEqual(got, want) {
+			return fmt.Errorf("node binds %s %v; feed-go binds $%d = %v", name, want, n, args[n-1])
+		}
+	}
+	return nil
+}
+
 // goldenComputeModels answers a model-getall fixture's request through computeModelGetAll over the
-// fixture's caches and Postgres.
+// fixture's caches and Postgres, with write-back off.
 func goldenComputeModels(t *testing.T, fx *goldenFixture) (*computed, error) {
 	t.Helper()
-	env := goldenSetupModels(t, fx)
+	c, _, err := goldenComputeModelsMode(t, fx, false)
+	return c, err
+}
+
+// goldenComputeModelsMode is goldenComputeModels with write-back on or off; it also returns the cache
+// before and after the request.
+func goldenComputeModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) (*computed, [2]map[string]string, error) {
+	t.Helper()
+	env := goldenSetupModelsMode(t, fx, writeBack)
+	before := goldenCacheState(env.cache)
 	ctx := context.Background()
 	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return env.server.computeModelGetAll(ctx, r)
+	c, err := env.server.computeModelGetAll(ctx, r)
+	return c, [2]map[string]string{before, goldenCacheState(env.cache)}, err
 }
 
-// goldenSetupModels is goldenSetup with the model.getAll deps over the fixture's model tables.
+// goldenSetupModels is goldenSetup with the model.getAll deps over the fixture's model tables
+// (write-back off).
 func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
+	t.Helper()
+	return goldenSetupModelsMode(t, fx, false)
+}
+
+// goldenSetupModelsMode is goldenSetupModels with write-back on or off: on, the miss computation
+// writes what it computes, and the one fixture database stands in for the primary.
+func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
 	t.Helper()
 	env := goldenSetup(t, fx)
 	db := newGoldenModelPG(t, fx)
@@ -1450,9 +1808,16 @@ func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
 	packed := &hydrate.PackedReader{Redis: env.cache, Now: env.now}
 	addons := (&feed.AddonSource{Sys: env.sys}).Addons
 	blocked := &feed.BlockedTags{Cache: env.cache}
-	// As main: the model feed shares the miss computation (write-back off here: these fixtures record
-	// no writes).
-	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons)}
+	// As main: the model feed shares the miss computation.
+	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
+		WriteBack: goldenWrites(writeBack)}
+	if writeBack {
+		compute.Primary = db
+	}
+	if fx.Config.ComputeMissesOff {
+		compute = nil
+		env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+	}
 	env.server.Models = &modelfeed.Deps{
 		DB:      db,
 		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db, Compute: compute},
@@ -1469,8 +1834,18 @@ func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
 	return env
 }
 
+// goldenRunModels runs a fixture with write-back off and on, as goldenRunAsPosts: off, the cache must
+// be untouched; on, it must change by exactly Node's writes (expect.writes).
 func goldenRunModels(t *testing.T, fx *goldenFixture) {
-	c, err := goldenComputeModels(t, fx)
+	for _, writeBack := range []bool{false, true} {
+		t.Run(map[bool]string{false: "writeback-off", true: "writeback-on"}[writeBack], func(t *testing.T) {
+			goldenRunModelsMode(t, fx, writeBack)
+		})
+	}
+}
+
+func goldenRunModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
+	c, state, err := goldenComputeModelsMode(t, fx, writeBack)
 	if want := fx.Expect.Fallback; want != "" {
 		if err == nil {
 			t.Fatalf("served; want fallback %q", want)
@@ -1488,6 +1863,17 @@ func goldenRunModels(t *testing.T, fx *goldenFixture) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	for _, p := range goldenWriteProblems(fx, state[0], state[1], writeBack) {
+		t.Error(p)
+	}
+	// The cache policy computeModelGetAll documents: the public TTL exactly when there is no session,
+	// none for a session.
+	if fx.Request.Session == nil && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if fx.Request.Session != nil && c.ttl != nil {
+		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
+	}
 }
 
 func TestGoldenModelGetAll(t *testing.T) {

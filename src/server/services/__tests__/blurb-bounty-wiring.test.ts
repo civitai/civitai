@@ -73,6 +73,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 });
 
 import { applyBountyContentChange, upsertBounty } from '~/server/services/bounty.service';
+import { NsfwLevel } from '~/server/common/enums';
 
 const BOUNTY_ID = 41;
 const OWNER_ID = 7;
@@ -344,6 +345,26 @@ describe('applyBountyContentChange — the auto-NSFW gate', () => {
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
     expect(data.details).toMatchObject({ profanityMatches: ['x'] });
+  });
+
+  it('🔴 raises a moderator rating below R to R when the gate sets the flag', async () => {
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
+      name: 'a clean bounty',
+      nsfw: false,
+      moderatorNsfwLevel: NsfwLevel.PG13,
+      lockedProperties: [],
+      details: null,
+    });
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    const [{ data }] = dbMock.dbWrite.bounty.update.mock.calls[0];
+    expect(data).toMatchObject({
+      nsfw: true,
+      moderatorNsfwLevel: NsfwLevel.R,
+      moderatorNsfwLevelBasis: null,
+    });
   });
 
   it('records the detection but never overturns a moderator lock', async () => {

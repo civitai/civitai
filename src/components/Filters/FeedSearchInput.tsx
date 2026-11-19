@@ -2,6 +2,7 @@ import { CloseButton, TextInput } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { nextFeedSearchQuery } from '~/components/AutocompleteSearch/autocomplete-query';
 import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
 
 /** The feed's `query` param, normalized, or undefined. */
@@ -11,27 +12,26 @@ export const useFeedSearchQuery = () => {
 };
 
 /**
- * A feed's text search, kept in the page's `query` param. Like the header bar (useFeedSearchSync),
- * it writes the URL only on Enter, blur or clear, never as you type: each applied query is a
- * semantic search.
+ * The text of a box that edits the page's `query` param: committed (a history entry) only on
+ * Enter, blur or clear, and following the URL when Back, a link or another control changes it.
  */
-export function FeedSearchInput({ placeholder }: { placeholder: string }) {
+export function useFeedSearchText() {
   const router = useRouter();
   const current = useFeedSearchQuery();
   const [value, setValue] = useState(current ?? '');
-  // Back, a shared link or another control changed the query: show it.
   useEffect(() => setValue(current ?? ''), [current]);
 
   const commit = (text: string) => {
-    const query = normalizeFeedQuery(text);
-    if (query === current) return;
-    const { query: _drop, ...rest } = router.query;
-    void router.push(
-      { pathname: router.pathname, query: query ? { ...rest, query } : rest },
-      undefined,
-      { shallow: true }
-    );
+    const next = nextFeedSearchQuery(router.query, text);
+    if (next)
+      void router.push({ pathname: router.pathname, query: next }, undefined, { shallow: true });
   };
+  return { value, setValue, commit };
+}
+
+/** A feed's text search box, kept in the page's `query` param (see `useFeedSearchText`). */
+export function FeedSearchInput({ placeholder }: { placeholder: string }) {
+  const { value, setValue, commit } = useFeedSearchText();
 
   return (
     <TextInput

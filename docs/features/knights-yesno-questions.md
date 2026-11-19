@@ -60,7 +60,7 @@ sample-0003,false,1003,sample_axis,observable,Withdrawn question.,,
 
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
-and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`), creates the axis questions once, and upserts items by `externalId` in batches. It never
+and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`) or that the public feeds would not show (`unservable-image`, the `servableImage` test), creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`; the moderation record a moderator's action adds to `meta` is not a change), and closes an open item the file marks inactive
 (`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
 answers, is reopened. It skips an unanswered item a moderator changed (counted as `moderated`), except that a moderated item the file
@@ -70,8 +70,8 @@ reworded copy instead, if the import had closed that copy. It prints counts only
 **Temporary launch page.** The script cannot reach production, so `/admin/yesno-import` in the Knights app runs the same import once at launch.
 It is moderator-only (an explicit `isModerator` check on the page load and on its POST; others get 403), is not linked from any navigation,
 and is to be removed after the Knights v2 launch import. The browser splits the cleaned file into chunks of at most 400 rows (and 256 KB, to stay under the
-node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) and runs `importYesNo`,
-and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
+node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) or cannot be served (`unservable-image`) and runs `importYesNo`,
+and the page sums the counts, showing `moderated` and each skip reason on their own. It is dry-run by default (parse, check the images exist and can be served, and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
 Upload only the cleaned file: a withdrawn id is retired only within its own chunk's run, which is why the file must hold no inactive rows.
 
 ## Moderator cleanup
@@ -91,8 +91,14 @@ votes, never player rows.
 
 ## Serving (`feed.ts`)
 
-- Each feed slot rolls once, per player, against `KNIGHTS_YESNO_SHARE` (default above one half; 0 switches questions off). The roll is
-  fixed until the player answers, so a reload does not change it. With no rating to show, a question is shown whenever there is one.
+- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
+  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+  hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
+  never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
+  left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
+  off; any other value leaves the cadence as it is. The share comes from `yesNoShare` on `system:knights-v2-sources`, set on the
+  moderator app's Knights of New Order Config page (read by Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
+  The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
@@ -148,5 +154,9 @@ question gets its own `rule` row, so the store computes the majority per questio
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
-not depend on the yes/no share.
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+(`KNIGHTS_HIDDEN_CHECK_RATE`).
+
+The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide
+window on `/play` (`apps/knights/src/lib/question-rules.ts`; change the text there). A yes/no question shows the guide button,
+which opens the guide at the rules.

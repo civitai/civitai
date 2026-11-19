@@ -22,7 +22,7 @@ const NOTHING = () => reply([]);
  * The item after the ones named in `after`, which the player has not finished voting on: what the page shows the moment
  * a vote is sent, while the vote itself posts in the background. Served only when the real feed would serve an item (not
  * muted, not paced, no reset pending); otherwise the page waits for the vote like any other. It reads and records nothing.
- * `count` asks for up to BUFFER_TARGET (10) items in order, each picked as if the ones before it were already judged. The
+ * `count` asks for up to BUFFER_TARGET (3) items in order, each picked as if the ones before it were already judged. The
  * roll for hidden checks and yes/no questions comes from the named items (and the ones picked before it), so asking
  * again changes nothing and no two positions share a roll.
  */
@@ -48,15 +48,13 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   const skipped = await skippedFor(skipStore, userId);
   // Yes/no questions already handed out that the player has not recorded a vote on (`after` also names skipped and
   // unloadable items, which never get one, so it cannot stand in for this).
-  const ahead = url.searchParams
+  // The same list, every kind kept, is what the burst cadence counts as served.
+  const handedOut = url.searchParams
     .getAll('ahead')
     .slice(-MAX_EXCLUDED)
     .map((token) => openItem(secret, userId, token))
-    .filter(
-      (ref): ref is ItemRef =>
-        ref !== null && ref.kind === 'yesno' && !skipped.yesno.includes(ref.id)
-    )
-    .map((ref) => ref.id);
+    .filter((ref): ref is ItemRef => ref !== null && !skipped[ref.kind].includes(ref.id));
+  const ahead = handedOut.filter((ref) => ref.kind === 'yesno').map((ref) => ref.id);
 
   const wanted = Number.parseInt(url.searchParams.get('count') ?? '1', 10);
   const count = Math.min(Math.max(Number.isFinite(wanted) ? wanted : 1, 1), BUFFER_TARGET);
@@ -74,10 +72,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
       yesno: [...skipped.yesno],
     };
     for (const ref of taken) leaveOut[ref.kind].push(ref.id);
-    const next = await pickItem(userId, status.rank, leaveOut, digest.readUInt32BE(0), [
-      ...ahead,
-      ...picked,
-    ]);
+    const next = await pickItem(
+      userId,
+      status.rank,
+      leaveOut,
+      digest.readUInt32BE(0),
+      [...ahead, ...picked],
+      [...handedOut, ...taken.slice(named.length)]
+    );
     const ref = next && openItem(secret, userId, next.item.id);
     if (!next || !ref || taken.some((t) => t.kind === ref.kind && t.id === ref.id)) break;
     items.push(next);

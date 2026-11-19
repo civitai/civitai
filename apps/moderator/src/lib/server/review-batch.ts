@@ -1,24 +1,28 @@
 import { sql } from '@civitai/db/kysely';
-import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  type RedisKeyTemplateCache,
+  type RedisKeyTemplateSys,
+} from '@civitai/redis';
 import { reviewSuspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import {
   imageAuditContentHash,
   imageRoutesHeld,
   isReviewBatchId,
-  parseBlockedForPatterns,
   parseReviewBatchRecord,
   reviewBatchHash,
   SCANNER_HITS_SQL,
-  scannerHeldIds,
+  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
 } from '@civitai/shared/review-batch';
-import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
 import { getClickhouse } from './clickhouse';
-import { getSysRedis } from './redis';
+import { getRedis, getSysRedis } from './redis';
 import { HELD_MEDIA_PAGE } from './held-media';
+import { blockedForPatterns } from './blocked-for-patterns';
 
 /** The page whose grant opens a general batch: the image lookup shows any site image already. */
 export const REVIEW_MEDIA_PAGE = '/retool/image-lookup';
@@ -30,7 +34,20 @@ export const TIER_PAGE: Record<ReviewTier, string> = {
 export type LoadedBatch = ReviewBatchRecord & { hash: string };
 
 const batchKey = (hash: string) =>
+  `${REDIS_KEYS.APP.REVIEW_BATCH}:${hash}` as RedisKeyTemplateCache;
+const sysBatchKey = (hash: string) =>
   `${REDIS_SYS_KEYS.APP.REVIEW_BATCH}:${hash}` as RedisKeyTemplateSys;
+
+/**
+ * Until this date a batch the cache cluster does not hold is also read from system Redis, where a
+ * main app released before the move still writes them, so a batch minted on either side of the two
+ * apps' releases opens. A main app released before this app writes batches this app's older build
+ * cannot read: release this app first. A revoke on the main app clears only the cluster's copy;
+ * a batch read here from system Redis is still refused once its minting key is gone
+ * (`mintingKeyLive`). Past the date (every such batch has expired, REVIEW_BATCH_TTL_SECONDS),
+ * delete the fallback and REDIS_SYS_KEYS.APP.REVIEW_BATCH with it.
+ */
+export const REVIEW_BATCH_SYS_FALLBACK_UNTIL = new Date('2027-01-15T00:00:00Z');
 
 /** The live batch an id names, or null when it is malformed, expired or unreadable. */
 export async function getReviewBatch(batchId: string | undefined): Promise<LoadedBatch | null> {
@@ -40,7 +57,9 @@ export async function getReviewBatch(batchId: string | undefined): Promise<Loade
 }
 
 export async function getReviewBatchByHash(hash: string): Promise<LoadedBatch | null> {
-  const record = parseReviewBatchRecord(await getSysRedis().get(batchKey(hash)));
+  let record = parseReviewBatchRecord(await getRedis().get(batchKey(hash)));
+  if (!record && Date.now() < REVIEW_BATCH_SYS_FALLBACK_UNTIL.getTime())
+    record = parseReviewBatchRecord(await getSysRedis().get(sysBatchKey(hash)));
   return record ? { ...record, hash } : null;
 }
 
@@ -61,6 +80,11 @@ export async function mintingKeyLive(keyId: number): Promise<boolean> {
  * rows. A read that fails answers yes, so the general route answers moved and the held route serves.
  */
 export async function scannerHoldsImage(imageId: number): Promise<boolean> {
+  return (await readScannerVerdict(imageId)) !== 'clear';
+}
+
+/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer. */
+export async function readScannerVerdict(imageId: number) {
   try {
     const result = await getClickhouse().query({
       query: SCANNER_HITS_SQL,
@@ -68,9 +92,9 @@ export async function scannerHoldsImage(imageId: number): Promise<boolean> {
       format: 'JSONEachRow',
       clickhouse_settings: { max_execution_time: 3 },
     });
-    return scannerHeldIds([imageId], await result.json()).has(imageId);
+    return scannerVerdict(imageId, await result.json());
   } catch {
-    return true;
+    return null;
   }
 }
 
@@ -113,15 +137,4 @@ export async function getBatchMedia(
     mimeType: row.mimeType,
     held: imageRoutesHeld(signals, blockedForPatterns()),
   };
-}
-
-let patternsRaw: string | undefined;
-let patterns: ReturnType<typeof parseBlockedForPatterns> = null;
-function blockedForPatterns() {
-  const raw = env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS;
-  if (raw !== patternsRaw) {
-    patternsRaw = raw;
-    patterns = parseBlockedForPatterns(raw);
-  }
-  return patterns;
 }

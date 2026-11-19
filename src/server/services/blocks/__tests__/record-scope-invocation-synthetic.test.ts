@@ -59,8 +59,6 @@ describe('recordScopeInvocation — synthetic pre-approval dev spend', () => {
     expect(retry.appBlockId).toBeNull();
     expect(retry.syntheticAppId).toBe('ephemeral-my-app');
     expect(retry.scope).toBe('ai:write:budgeted');
-    // The audit log is NOT fired — the retry succeeded.
-    expect(mockLog).not.toHaveBeenCalled();
   });
 
   it('NON-dev FK orphan does NOT retry — historical "log, no row" behaviour is preserved', async () => {
@@ -87,17 +85,19 @@ describe('recordScopeInvocation — synthetic pre-approval dev spend', () => {
   it.each([
     ['page_local_my-app', 'dev-token.ts no-row local-manifest path'],
     ['pubreq_01HZY0000000000000000000', 'dev-token.ts pending path (AppBlockPublishRequest.id)'],
-  ])('dev token + synthetic %s FK-fails → RETRIES with syntheticAppId (row persists)', async (id) => {
-    mockDbWrite.blockScopeInvocation.create
-      .mockRejectedValueOnce(fkError())
-      .mockResolvedValueOnce({});
-    await recordScopeInvocation({ ...BASE, appBlockId: id, dev: true });
-    expect(mockDbWrite.blockScopeInvocation.create).toHaveBeenCalledTimes(2);
-    const retry = mockDbWrite.blockScopeInvocation.create.mock.calls[1][0].data;
-    expect(retry.appBlockId).toBeNull();
-    expect(retry.syntheticAppId).toBe(id);
-    expect(mockLog).not.toHaveBeenCalled();
-  });
+  ])(
+    'dev token + synthetic %s FK-fails → RETRIES with syntheticAppId (row persists)',
+    async (id) => {
+      mockDbWrite.blockScopeInvocation.create
+        .mockRejectedValueOnce(fkError())
+        .mockResolvedValueOnce({});
+      await recordScopeInvocation({ ...BASE, appBlockId: id, dev: true });
+      expect(mockDbWrite.blockScopeInvocation.create).toHaveBeenCalledTimes(2);
+      const retry = mockDbWrite.blockScopeInvocation.create.mock.calls[1][0].data;
+      expect(retry.appBlockId).toBeNull();
+      expect(retry.syntheticAppId).toBe(id);
+    }
+  );
 
   it('dev token whose synthetic RETRY also fails → best-effort log, never throws', async () => {
     mockDbWrite.blockScopeInvocation.create

@@ -220,7 +220,7 @@ export async function payOutVotes(
       await grantRankBadges(trx, playerId, earned);
       metrics.rankUp(earned, playerId);
     }
-    if (total.correct > 0) await workOffSmites(trx, playerId, now);
+    if (total.correct > 0) await workOffSmites(trx, playerId, now, total.correct);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }
   return { votes: votes.length, xp };

@@ -1,8 +1,8 @@
 import type { MediaRatingOutput } from '@civitai/orchestration-client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -10,7 +10,10 @@ import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -234,6 +237,7 @@ export async function processImageScanWorkflow({
         'webhooks'
       );
       await refreshProfilePicturesForImagesLazy([imageId]);
+      await bustPostOfImage(imageId);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -307,6 +311,8 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
@@ -432,7 +438,7 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
   );
 }
 
-async function blockImageFromRating({
+export async function blockImageFromRating({
   imageId,
   pHash,
   blockedReason,
@@ -441,13 +447,33 @@ async function blockImageFromRating({
   pHash?: bigint;
   blockedReason?: string | null;
 }) {
-  await dbWrite.image.updateMany({
-    where: { id: imageId },
-    data: {
-      pHash,
-      ingestion: ImageIngestionStatus.Blocked,
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: blockedReason,
-    },
-  });
+  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it. The block outlives an
+  // account restore: the grace-block breadcrumbs go in the same write.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      "updatedAt" = NOW(),
+      "pHash" = COALESCE(${pHash ?? null}, "pHash"),
+      ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked}::int,
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
+    blockedReason === undefined
+  }
+        THEN "blockedFor" ELSE ${blockedReason ?? null} END,
+      "metadata" = ${withoutGraceMarkersSql()}
+    WHERE id = ${imageId}
+  `;
+}
+
+/** Never throws: the block it follows has committed, and the rest of the scan failed. */
+async function bustPostOfImage(imageId: number) {
+  try {
+    const row = await dbRead.image.findUnique({
+      where: { id: imageId },
+      select: { postId: true },
+    });
+    if (row?.postId) await bustPostCachesLazy(row.postId);
+  } catch (error) {
+    handleLogError(error as Error);
+  }
 }

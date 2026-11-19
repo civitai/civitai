@@ -792,3 +792,49 @@ export async function checkBlockSubmitUserRateLimit(
     BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS
   );
 }
+
+/**
+ * Standing consents — jobs above an app's per-call budget that run without a per-job confirm
+ * because the viewer opted in — per (viewer, app). The only bound on how fast an opted-in app
+ * can spend inside the viewer's daily limit, so unlike every bucket above it FAILS CLOSED: a
+ * store error or a bad reply refuses. Atomic (`SET NX EX` + `INCR` in one MULTI), so
+ * concurrent claims cannot overshoot. Not `claimRateLimitAttempt`: it exempts moderators, the
+ * first audience of this feature.
+ *
+ * Two buckets of the same size. The SUBMIT bucket is the bound: a consented quote can be
+ * submitted long after its consent, so only a slot taken when the job runs bounds how many run
+ * in a window. The CONSENT bucket is the same bound seen earlier, so in the usual flow (consent,
+ * then submit at once) the host is told before it submits and asks for that job instead.
+ */
+export const BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX = 5;
+export const BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS = 60;
+
+export function claimBlockStandingConsentSlot(
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
+  return claimStandingSlot('standing-consent', userId, appBlockId);
+}
+
+export function claimBlockStandingSubmitSlot(userId: number, appBlockId: string): Promise<boolean> {
+  return claimStandingSlot('standing-submit', userId, appBlockId);
+}
+
+async function claimStandingSlot(
+  bucket: 'standing-consent' | 'standing-submit',
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:${bucket}:${userId}:${appBlockId}` as const;
+  try {
+    const replies = await redis
+      .multi()
+      .set(key as never, '0', { NX: true, EX: BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS })
+      .incr(key as never)
+      .exec();
+    const count = Number(replies?.[1]);
+    return Number.isFinite(count) && count <= BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX;
+  } catch {
+    return false;
+  }
+}

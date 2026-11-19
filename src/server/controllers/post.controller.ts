@@ -29,6 +29,7 @@ import { sendMessagesToCollaborators } from '~/server/services/entity-collaborat
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import {
   getRequestBrowsingLevel,
+  requestServableLevels,
   resolveRequestBrowsingLevels,
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
@@ -44,7 +45,10 @@ import {
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { contentRestriction } from '~/server/common/content-restriction';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -96,8 +100,9 @@ export const getPostsInfiniteHandler = async ({
     // taken-down model's only to its owner, except to moderators, who must see what they may need
     // to remove.
     const selector = { ...input, postIds: input.ids };
-    const moderator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
-    const ownerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    const views = credentialViews(ctx);
+    const moderator = views.asModerator;
+    const ownerId = ctx.user && views.asOwner ? ctx.user.id : undefined;
     const [heldLevel, withheld] = moderator
       ? [undefined, false]
       : await Promise.all([
@@ -111,12 +116,26 @@ export const getPostsInfiniteHandler = async ({
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }
-    return await getPostsInfinite({ ...input, user: ctx.user, asModerator: moderator });
+    return await getPostsInfinite({
+      ...input,
+      user: ctx.user,
+      ...views,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
+
+async function assertCanPostToCollection(collectionId: number, ctx: ProtectedContext) {
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
+  if (!permissions.write && !permissions.writeReview)
+    throw throwAuthorizationError('You cannot post to this collection');
+}
 
 export const createPostHandler = async ({
   input,
@@ -131,6 +150,8 @@ export const createPostHandler = async ({
     // The storyline router's flag, for the one storyline write that goes through posts.
     if ((input.storylineId || input.parentChapterId) && !ctx.features.storylines)
       throw new TRPCError({ code: 'FORBIDDEN' });
+
+    if (input.collectionId != null) await assertCanPostToCollection(input.collectionId, ctx);
 
     const post = await createPost({
       ...input,
@@ -273,7 +294,7 @@ export const createPostWithImagesHandler = async ({
     await deletePost({
       id: post.id,
       isModerator: ctx.user.isModerator,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
     }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -327,14 +348,22 @@ export const updatePostHandler = async ({
       input.publishedAt = today;
     }
 
-    if (post && input.publishedAt && input.collectionId) {
+    // Pointing a post at a collection needs the same access as posting to it; clearing it doesn't.
+    if (post && input.collectionId != null && input.collectionId !== post.collectionId)
+      await assertCanPostToCollection(input.collectionId, ctx);
+
+    // Publishing enters the post into its collection, whether this request names it or the post
+    // already has it.
+    const publishCollectionId =
+      input.collectionId !== undefined ? input.collectionId : post?.collectionId;
+    if (post && input.publishedAt && publishCollectionId) {
       // Confirm & Validate in the case of a contest collection
       // That a submission can be made. We only do this as the user publishes
       // Because images are ready only at this point.
 
       // Check if user has access to the collection
       const permissions = await getUserCollectionPermissionsById({
-        id: input.collectionId,
+        id: publishCollectionId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -344,7 +373,7 @@ export const updatePostHandler = async ({
       }
 
       const collection = await getCollectionById({
-        input: { id: input.collectionId },
+        input: { id: publishCollectionId },
       });
 
       if (collection.type !== CollectionType.Post && collection.type !== CollectionType.Image) {
@@ -453,6 +482,8 @@ export const updatePostHandler = async ({
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
         });
+        if (!permissions.write && !permissions.writeReview)
+          throw throwAuthorizationError('You cannot post to this collection');
 
         if (collection.type === CollectionType.Post) {
           await bulkSaveItems({
@@ -698,7 +729,7 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({
       ...input,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
       viewerIsModerator: ctx.user.isModerator,
     });
     if (result) {
@@ -778,7 +809,11 @@ export const reorderPostImagesHandler = async ({
   // Text items move only with their flag; without it a reorder moves images alone.
   if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
-    return await reorderPostImages({ ...input });
+    return await reorderPostImages({
+      ...input,
+      user: ctx.user,
+      servableLevels: requestServableLevels(ctx),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -921,7 +956,9 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+    const views = credentialViews(ctx);
+    const viewer = views.asOwner ? ctx.user : undefined;
+    const visible = await assertPostVisibleToViewer({ ...input, user: viewer }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
       throw e;
     });
@@ -930,7 +967,8 @@ export const getPostContestCollectionDetailsHandler = async ({
     return await getPostContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator: views.asModerator,
+      ownerView: views.asOwner,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -940,11 +978,17 @@ export const getPostContestCollectionDetailsHandler = async ({
 
 export const updatePostCollectionTagIdHandler = async ({
   input,
+  ctx,
 }: {
   input: UpdatePostCollectionTagIdInput;
+  ctx: ProtectedContext;
 }) => {
   try {
-    return updatePostCollectionTagId({ ...input });
+    return await updatePostCollectionTagId({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

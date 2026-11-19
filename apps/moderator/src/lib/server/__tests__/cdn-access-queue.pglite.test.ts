@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
@@ -15,6 +16,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** What this app hands the main app's takedown CDN sync, on the committed queue function. */
 
+const MODERATOR = { id: 1, isModerator: true };
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
 vi.mock('../db', () => ({
@@ -56,12 +58,9 @@ vi.mock('../axiom', async (importOriginal) => ({
   ...(await importOriginal<typeof Axiom>()),
   logAxiomError: vi.fn(async () => undefined),
 }));
-vi.mock('../storage', () => ({
-  getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
-}));
 
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
-const { deleteImageRows } = await import('../image-deletion');
+const { deleteImages } = await import('../image-deletion');
 const { moderateArticle } = await import('../article-moderation');
 
 const CDN_ACCESS_MIGRATION = path.resolve(
@@ -71,7 +70,7 @@ const CDN_ACCESS_MIGRATION = path.resolve(
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete');
+CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'ImageDelete');
 CREATE TABLE "JobQueue" (
   type "JobQueueType" NOT NULL,
   "entityType" "EntityType" NOT NULL,
@@ -107,7 +106,7 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -132,18 +131,23 @@ CREATE TABLE "Thread" (
   "commentId" INTEGER, "metadata" JSONB
 );
 CREATE TABLE "CommentV2" ("id" INTEGER, "userId" INTEGER, "threadId" INTEGER);
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+-- Rates a restored image as its tags would: an untagged one would go back to the scanner.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL;
+$$;
 `;
 
 const OWNER = 7;
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 let db: PGlite;
-let statements: { sql: string; connection: number }[] = [];
+let statements: { sql: string; params: unknown[]; connection: number }[] = [];
 
 beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
   statements = [];
   let active = 0;
@@ -151,7 +155,7 @@ beforeEach(async () => {
   // tells a transaction's statements from one run beside it on the pool.
   const recording = {
     query: (sql: string, params: unknown[]) => {
-      statements.push({ sql, connection: active });
+      statements.push({ sql, params, connection: active });
       return db.query(sql, params);
     },
   } as unknown as PGlite;
@@ -192,9 +196,7 @@ describe('a moderator delete', () => {
     // Another owner's: image 1 puts its own owner's account on hold.
     await db.query(`UPDATE "Image" SET "userId" = $1 WHERE id = 2`, [OWNER + 1]);
 
-    await (dbHandle.current as Kysely<never>)
-      .transaction()
-      .execute((trx) => deleteImageRows(trx as never, [1, 2]));
+    await deleteImages([1, 2], MODERATOR);
 
     const payload = async (id: number) => {
       const { seq: _seq, ...rest } = (await queueRow('CdnAccessSync', id))?.data ?? {};
@@ -210,37 +212,45 @@ describe('a moderator delete', () => {
   });
 });
 
-const failQueueingFor = (imageId: number) =>
+/**
+ * Refuses every CDN sync row (or only an image's), however it is written: by the delete statement
+ * itself or through `queue_cdn_access_sync`.
+ */
+const refuseCdnQueue = (imageId?: number) =>
   db.exec(`
-    CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
-    RETURNS void AS $$
-    BEGIN
-      IF entity_id = ${imageId} THEN RAISE EXCEPTION 'queue unavailable'; END IF;
-      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
-      VALUES (entity_id, entity_type::"EntityType", 'CdnAccessSync'::"JobQueueType", payload)
-      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-        SET "data" = COALESCE("JobQueue"."data", '{}'::jsonb) || EXCLUDED."data";
-    END; $$ LANGUAGE plpgsql;
+    CREATE OR REPLACE FUNCTION refuse_cdn_queue() RETURNS trigger AS $$
+    BEGIN RAISE EXCEPTION 'queue unavailable'; END; $$ LANGUAGE plpgsql;
+    CREATE TRIGGER refuse_cdn_queue BEFORE INSERT ON "JobQueue" FOR EACH ROW
+      WHEN (NEW.type = 'CdnAccessSync' ${
+        imageId === undefined ? '' : `AND NEW."entityId" = ${imageId}`
+      })
+      EXECUTE FUNCTION refuse_cdn_queue();
   `);
+const failQueueingFor = (imageId: number) => refuseCdnQueue(imageId);
 const connect = (imageId: number, entityId: number, entityType = 'Article') =>
   db.query(
     `INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES ($1, $2, $3)`,
     [imageId, entityId, entityType]
   );
-/** The connection `begin` ran on, and the connections of the statements matching `pattern`. */
+/**
+ * The connection each `begin` ran on, in order, and the connections of the statements matching
+ * `pattern`.
+ */
 const connectionsOf = (pattern: RegExp) => ({
-  transaction: statements.find((s) => s.sql.trim().toLowerCase() === 'begin')?.connection,
+  transactions: statements
+    .filter((s) => s.sql.trim().toLowerCase() === 'begin')
+    .map((s) => s.connection),
   matching: statements.filter((s) => pattern.test(s.sql)).map((s) => s.connection),
 });
-const failQueueing = () =>
-  db.exec(`
-    CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
-    RETURNS void AS $$ BEGIN RAISE EXCEPTION 'queue unavailable'; END; $$ LANGUAGE plpgsql;
-  `);
 const imageExists = async (id: number) =>
   (await db.query(`SELECT 1 FROM "Image" WHERE id = $1`, [id])).rows.length === 1;
+const plainImage = (id: number) =>
+  db.query(
+    `INSERT INTO "Image" ("id", "url", "userId", "ingestion") VALUES ($1, $2, $3, 'Scanned')`,
+    [id, uuid(id), OWNER]
+  );
 const articleWithCover = async (articleId: number, coverId: number) => {
-  await blockedImage(coverId);
+  await plainImage(coverId);
   await db.query(`INSERT INTO "Article" ("id", "coverId", "userId") VALUES ($1, $2, $3)`, [
     articleId,
     coverId,
@@ -254,126 +264,49 @@ const articleWithCover = async (articleId: number, coverId: number) => {
 const articleExists = async (id: number) =>
   (await db.query(`SELECT 1 FROM "Article" WHERE id = $1`, [id])).rows.length === 1;
 
-describe('a delete whose follow-up cannot be queued', () => {
-  it('deletes an article and queues its orphaned cover', async () => {
+describe("a moderator's article delete", () => {
+  const queued = async () =>
+    (
+      await db.query<{ entityId: number; data: unknown }>(
+        `SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageDelete' ORDER BY "entityId"`
+      )
+    ).rows;
+
+  it('queues its orphaned cover and banner for image-deletes, and deletes neither itself', async () => {
     await articleWithCover(10, 1);
-
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
-      ok: true,
-    });
-
-    expect(await articleExists(10)).toBe(false);
-    expect(await imageExists(1)).toBe(false);
-    expect((await queueRow('CdnAccessSync', 1))?.data).toMatchObject({
-      url: uuid(1),
-      moderatorDelete: true,
-    });
-  });
-
-  it('deletes the banner of a deleted article with it', async () => {
-    await articleWithCover(10, 1);
-    await blockedImage(3);
+    await plainImage(3);
     await db.query(`UPDATE "Article" SET "bannerId" = 3 WHERE id = 10`);
 
     expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
       ok: true,
     });
 
-    expect(await imageExists(3)).toBe(false);
-    expect((await queueRow('CdnAccessSync', 3))?.data).toMatchObject({
-      url: uuid(3),
-      moderatorDelete: true,
-    });
-  });
-
-  it("keeps a deleted article's cover that is still another article's banner", async () => {
-    await articleWithCover(10, 1);
-    await db.query(`INSERT INTO "Article" ("id", "userId", "bannerId") VALUES (12, $1, 1)`, [
-      OWNER,
-    ]);
-
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
-      ok: true,
-    });
-
     expect(await articleExists(10)).toBe(false);
-    expect(await imageExists(1)).toBe(true);
-  });
-
-  it('fails an article delete and keeps the article, its connection and its cover', async () => {
-    await articleWithCover(10, 1);
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
-      ok: true,
-    });
-    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBe(true);
-
-    await articleWithCover(11, 2);
-    await failQueueing();
-
-    expect(await moderateArticle({ action: 'delete', articleId: 11, userId: 2 })).toMatchObject({
-      ok: false,
-    });
-    expect(await articleExists(11)).toBe(true);
-    expect(await imageExists(2)).toBe(true);
-    expect(
-      (await db.query(`SELECT 1 FROM "ImageConnection" WHERE "entityId" = 11`)).rows
-    ).toHaveLength(1);
-    expect((await queueRow('CdnAccessSync', 2))?.data?.moderatorDelete).toBeUndefined();
-  });
-});
-
-describe('an article delete in one transaction', () => {
-  it('rolls back the cover already queued when a later image cannot be queued', async () => {
-    await articleWithCover(10, 1);
-    await blockedImage(2);
-    await connect(2, 10);
-    await failQueueingFor(2);
-
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toMatchObject({
-      ok: false,
-    });
-
-    expect(await articleExists(10)).toBe(true);
-    expect(await imageExists(1)).toBe(true);
-    expect(await imageExists(2)).toBe(true);
-    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
-    const { transaction, matching } = connectionsOf(/queue_cdn_access_sync/);
-    expect(transaction).toBeDefined();
-    expect(matching.length).toBeGreaterThan(0);
-    expect(new Set(matching)).toEqual(new Set([transaction]));
-  });
-
-  it('reads the avatars on the transaction', async () => {
-    await articleWithCover(10, 1);
-    await db.query(`INSERT INTO "User" ("id", "profilePictureId") VALUES (5, 1)`);
-
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
-      ok: true,
-    });
-
-    const { transaction, matching } = connectionsOf(/from "User"/);
-    expect(matching.length).toBeGreaterThan(0);
-    expect(new Set(matching)).toEqual(new Set([transaction]));
-  });
-
-  it('fails and changes nothing when the avatar read fails', async () => {
-    await articleWithCover(10, 1);
-    await db.exec(`ALTER TABLE "User" RENAME TO "UserUnavailable"`);
-
-    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toMatchObject({
-      ok: false,
-    });
-
-    expect(await articleExists(10)).toBe(true);
+    expect(await queued()).toEqual([
+      { entityId: 1, data: { moderatorDelete: true } },
+      { entityId: 3, data: { moderatorDelete: true } },
+    ]);
     expect(await imageExists(1)).toBe(true);
     expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
   });
 
-  it('deletes an orphaned content image and keeps one another entity still uses', async () => {
+  it('queues them as an owner delete when the moderator wrote the article', async () => {
     await articleWithCover(10, 1);
-    await blockedImage(2);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: OWNER })).toEqual({
+      ok: true,
+    });
+
+    expect(await queued()).toEqual([{ entityId: 1, data: {} }]);
+  });
+
+  // Which images qualify is queue-image-deletes.pglite.test.ts; this pins that the delete removes only
+  // this article's links before the check, and the lock order.
+  it('queues an orphaned content image and not one another entity still uses', async () => {
+    await articleWithCover(10, 1);
+    await plainImage(2);
     await connect(2, 10);
-    await blockedImage(3);
+    await plainImage(3);
     await connect(3, 10);
     await connect(3, 99, 'Bounty');
 
@@ -381,11 +314,56 @@ describe('an article delete in one transaction', () => {
       ok: true,
     });
 
-    expect(await imageExists(2)).toBe(false);
-    expect(await imageExists(3)).toBe(true);
-    const { transaction, matching } = connectionsOf(/not exists \(select "ImageConnection"/i);
-    expect(matching).toHaveLength(1);
-    expect(matching[0]).toBe(transaction);
+    expect((await queued()).map((row) => row.entityId)).toEqual([1, 2]);
+    // With every candidate locked before anything is deleted: unlocked, two articles deleted
+    // together each see the other's uncommitted links and both skip a shared image; after the
+    // article's delete, it deadlocks against an image delete (the banner foreign key).
+    const lock = statements.findIndex((s) => /for no key update/i.test(s.sql));
+    const removeArticle = statements.findIndex((s) => /delete from "Article"/i.test(s.sql));
+    const check = statements.findIndex((s) =>
+      /insert into "JobQueue"[^]*'ImageDelete'/i.test(s.sql)
+    );
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(statements[lock].params).toEqual([1, 2, 3]);
+    expect(statements[lock].sql).toMatch(/order by "id"/i);
+    expect(lock).toBeLessThan(removeArticle);
+    expect(removeArticle).toBeLessThan(check);
+  });
+});
+
+describe("a moderator's image delete in one transaction", () => {
+  it('rolls back the image already queued when a later one cannot be queued', async () => {
+    await blockedImage(1);
+    await blockedImage(2);
+    await failQueueingFor(2);
+
+    await expect(deleteImages([1, 2], MODERATOR)).rejects.toThrow();
+
+    expect(await imageExists(1)).toBe(true);
+    expect(await imageExists(2)).toBe(true);
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
+    expect(await queueRow('ImageStorageDelete', 1)).toBeUndefined();
+  });
+
+  it("reads the avatars on the images' transaction", async () => {
+    await blockedImage(1);
+    await db.query(`INSERT INTO "User" ("id", "profilePictureId") VALUES (5, 1)`);
+
+    await deleteImages([1], MODERATOR);
+
+    const { transactions, matching } = connectionsOf(/from "User"/i);
+    expect(matching.length).toBeGreaterThan(0);
+    expect(new Set(matching)).toEqual(new Set([transactions[0]]));
+  });
+
+  it('keeps the images when the avatar read fails', async () => {
+    await blockedImage(1);
+    await db.exec(`ALTER TABLE "User" RENAME TO "UserUnavailable"`);
+
+    await expect(deleteImages([1], MODERATOR)).rejects.toThrow();
+
+    expect(await imageExists(1)).toBe(true);
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
   });
 });
 

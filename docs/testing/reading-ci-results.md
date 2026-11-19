@@ -23,14 +23,14 @@ gh run list --branch <branch> --json headSha,name,conclusion
 **A healthy internal PR here has 5 `Lint` check-runs at head and a `success` combined status**
 carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the five are `skipped` by
 design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main`, on
-dispatch and on a PR with the `full-ci` label; skipped, it is one check, not four shards). With the
-`full-ci` label the `Unit tests` check expands to 4 shard check-runs (`Unit tests (1)` .. `(4)`), so
-the PR run has 8 `Lint` check-runs, one of them (`Typecheck`) skipped. Adding the label leaves a
+dispatch and on a PR with the `full-ci` label; skipped, it is one check, not six shards). With the
+`full-ci` label the `Unit tests` check expands to 6 shard check-runs (`Unit tests (1)` .. `(6)`), so
+the PR run has 10 `Lint` check-runs, one of them (`Typecheck`) skipped. Adding the label leaves a
 `Start full CI on label` check; the Lint and App suites runs it dispatches are NOT in the PR's
 checks list (`gh pr checks` lists pull_request runs only). They are on the head commit's check-runs
 and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
 skipped `Start full CI on label`. A PR that touches `apps/`, `packages/` or
-the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
+the root files the app suites read also gets 2 `App suites` check-runs (`App unit tests`, `App typecheck`);
 any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
 `.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
 the PR's paths trigger. A count of

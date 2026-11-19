@@ -49,6 +49,14 @@ type PageQuery struct {
 	OnSale                bool
 	ExcludedUserIDs       []int
 	FileFormats           []string
+	// CollectionID is the collection filter (0 = none), applied only once the viewer may read the
+	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
+	CollectionID    int
+	CollectionTagID int
+	// OnlyModelIDs / ExcludeModelIDs are getModelsRaw's onlyModelIds / excludeModelIds: the browse
+	// feed's official-checkpoint pin (Serve). Neither relaxes the private-model filter.
+	OnlyModelIDs    []int
+	ExcludeModelIDs []int
 }
 
 // SQL is one statement and its arguments.
@@ -58,6 +66,9 @@ type SQL struct {
 }
 
 type builder struct{ args []any }
+
+// withheldViewerSlot stands for the taken-down clause's viewer until Build binds it, last.
+const withheldViewerSlot = "\x00withheld-viewer\x00"
 
 // arg binds v and returns its placeholder.
 func (b *builder) arg(v any) string {
@@ -190,7 +201,7 @@ const (
 func parseCursor(fields []sortField, cursor string) ([]any, error) {
 	toks := strings.Split(cursor, "|")
 	if len(toks) != len(fields) {
-		return nil, fallback.Newf("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
+		return nil, fallback.Safef("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
 	}
 	out := make([]any, len(toks))
 	for i, tok := range toks {
@@ -302,6 +313,15 @@ func (q *PageQuery) Build() (SQL, error) {
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
 	}
+	// Port of modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its
+	// owner's and moderators' alone.
+	if !q.IsModerator {
+		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
+		if q.ViewerID != 0 {
+			withheld += ` OR mm."userId" = ` + withheldViewerSlot
+		}
+		and = append(and, withheld+`)`)
+	}
 	if q.DisablePoi {
 		and = append(and, `(`+p+`."poi" = false OR mm."userId" = `+b.viewer(q.ViewerID)+`)`)
 	}
@@ -369,6 +389,13 @@ func (q *PageQuery) Build() (SQL, error) {
 	if q.AllowNoCredit != nil {
 		and = append(and, `m."allowNoCredit" = `+b.arg(*q.AllowNoCredit))
 	}
+	// `ids` falls back; then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	if len(q.OnlyModelIDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.OnlyModelIDs)+`::int[])`)
+	}
+	if len(q.ExcludeModelIDs) > 0 {
+		and = append(and, `mm."modelId" != ALL(`+b.arg(q.ExcludeModelIDs)+`::int[])`)
+	}
 	if q.CheckpointType != "" && (len(q.Types) == 0 || contains(q.Types, "Checkpoint")) {
 		or := []string{`m."checkpointType" = ` + b.arg(q.CheckpointType) + `::text::"CheckpointType"`}
 		var other []string
@@ -425,6 +452,27 @@ func (q *PageQuery) Build() (SQL, error) {
 	// No availability filter is ported: a non-moderator's feed never holds Private models.
 	if !q.IsModerator {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
+	}
+	if q.CollectionID != 0 {
+		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
+		// items, and for a signed-in viewer also the items they added that are still in review.
+		clause := `EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ` + b.arg(q.CollectionID) + `
+        AND `
+		if q.ViewerID != 0 {
+			clause += `(ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = ` + b.arg(q.ViewerID) + `))`
+		} else {
+			clause += `ci."status" = 'ACCEPTED'::"CollectionItemStatus"`
+		}
+		if q.CollectionTagID != 0 {
+			clause += `
+        AND ci."tagId" = ` + b.arg(q.CollectionTagID)
+		}
+		and = append(and, clause+`
+      )`)
 	}
 	if len(q.ExcludedUserIDs) > 0 {
 		and = append(and, `mm."userId" != ALL(`+b.arg(q.ExcludedUserIDs)+`::int[])`)
@@ -575,6 +623,11 @@ func (q *PageQuery) Build() (SQL, error) {
       ` + order + `
     LIMIT ` + limit + `
   `
+	}
+	// Bound last, so the clause leaves every other placeholder's number as it was. A split cursor
+	// puts the WHERE in both UNION ALL branches: one bind, every occurrence.
+	if strings.Contains(text, withheldViewerSlot) {
+		text = strings.ReplaceAll(text, withheldViewerSlot, b.arg(q.ViewerID))
 	}
 	return SQL{Text: text, Args: b.args}, nil
 }

@@ -13,11 +13,15 @@ import type {
   NotificationCategory,
   NotificationListCursor,
   NotificationRow,
+  UnseenNotificationItem,
+  UnseenNotifications,
 } from '@civitai/notifications';
+import { UNSEEN_COUNT_LIMIT } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
 import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
+import { queryWithRetry } from './db-retry';
 import { countDbFallbackEnabled, countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
@@ -104,7 +108,8 @@ export async function queryNotifications(input: {
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
-  const query = await db.cancellableQuery<NotificationRow>(
+  return queryWithRetry<NotificationRow>(
+    db,
     `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
        to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
@@ -114,7 +119,6 @@ export async function queryNotifications(input: {
      LIMIT $${params.length}`,
     params
   );
-  return await query.result();
 }
 
 // --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
@@ -231,7 +235,8 @@ async function countNotificationsImpl(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  const query = await db.cancellableQuery<NotificationCategoryCount>(
+  const rows = await queryWithRetry<NotificationCategoryCount>(
+    db,
     `SELECT category, COUNT(*) AS count
      FROM (
        SELECT n.category
@@ -243,7 +248,6 @@ async function countNotificationsImpl(input: {
      GROUP BY category`,
     params
   );
-  const rows = await query.result();
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
   if (useCache)
@@ -256,11 +260,67 @@ async function countNotificationsImpl(input: {
 // replica-lag false-negative only risks a duplicate PendingNotification, which the worker collapses via
 // the UNIQUE Notification.key. No per-key lag flag exists to route on, so no primary read is warranted.
 export async function notificationExists(key: string): Promise<boolean> {
-  const query = await notifDbRead().cancellableQuery<{ exists: number }>(
+  const rows = await queryWithRetry<{ exists: number }>(
+    notifDbRead(),
     `SELECT 1 as exists FROM "Notification" WHERE key = $1`,
     [key]
   );
-  return (await query.result()).length > 0;
+  return rows.length > 0;
+}
+
+// Per user: how many notifications they have not seen (`viewed IS FALSE`) since their own `since`, and
+// the newest `limit` of them. One statement per call over the ("userId", "createdAt" DESC) index, each
+// user's scan bounded by their window. Reads the replica: a weekly digest can be a moment behind.
+export async function queryUnseenNotifications(input: {
+  users: { userId: number; since: Date }[];
+  excludeTypes: string[];
+  limit: number;
+}): Promise<UnseenNotifications[]> {
+  const { users, excludeTypes, limit } = input;
+  if (users.length === 0) return [];
+  const unseen = `un."userId" = u."userId" AND un."createdAt" > u.since AND un.viewed IS FALSE
+      AND n.type <> ALL($3::text[])`;
+  const rows = await queryWithRetry<
+    Omit<UnseenNotificationItem, 'id'> & { id: string | number; userId: number; total: number }
+  >(
+    notifDbRead(),
+    `SELECT u."userId", c.total, x.id, x.type, x.category, x.details, x."createdAt"
+     FROM unnest($1::int[], $2::timestamp[]) AS u("userId", since)
+     CROSS JOIN LATERAL (
+       SELECT count(*)::int AS total FROM (
+         SELECT 1 FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+         WHERE ${unseen}
+         LIMIT $5
+       ) capped
+     ) c
+     CROSS JOIN LATERAL (
+       SELECT un.id, n.type, n.category, n.details, un."createdAt"
+       FROM "UserNotification" un JOIN "Notification" n ON n.id = un."notificationId"
+       WHERE ${unseen}
+       ORDER BY un."createdAt" DESC, un.id DESC
+       LIMIT $4
+     ) x
+     ORDER BY u."userId", x."createdAt" DESC, x.id DESC`,
+    [
+      users.map((u) => u.userId),
+      // `createdAt` is a UTC timestamp without a zone, so the window start goes in as UTC wall time.
+      users.map((u) => u.since.toISOString().replace('Z', '')),
+      excludeTypes,
+      limit,
+      UNSEEN_COUNT_LIMIT,
+    ]
+  );
+
+  const byUser = new Map<number, UnseenNotifications>();
+  for (const { userId, total, id, ...item } of rows) {
+    let user = byUser.get(userId);
+    if (!user) {
+      user = { userId, total, floor: total >= UNSEEN_COUNT_LIMIT, items: [] };
+      byUser.set(userId, user);
+    }
+    user.items.push({ ...item, id: Number(id) });
+  }
+  return [...byUser.values()];
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------

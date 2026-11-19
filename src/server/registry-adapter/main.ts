@@ -10,11 +10,17 @@
  *   REGISTRY_ADAPTER_GRPC_PORT     gRPC listen port (default 7131; see `grpc.ts` for why it is
  *                                  a port of its own)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
+ *   KEEP_ALIVE_TIMEOUT             the HTTP/SSE server's idle keep-alive timeout in ms (default
+ *                                  100000, above a fronting proxy's 90 s; `serve.ts`)
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
  *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
  *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
  *                                  accepts), protected resource metadata is served and named by
- *                                  every auth error (`auth.ts`)
+ *                                  every auth error (`auth.ts`). It is also the audience a hub
+ *                                  access token must name; unset, no hub access token is accepted
+ *   AUTH_JWT_ISSUER, AUTH_JWKS_URI the auth hub's issuer (default https://auth.civitai.com) and
+ *                                  signing keys (default {issuer}/.well-known/jwks.json), for its
+ *                                  exchanged access tokens (`auth.jwt.ts`)
  *   REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS, REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS_PER_TOKEN,
  *   REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS_PER_ADDRESS
  *                                  caps on open subscriptions, over both bindings (`limits.ts`)
@@ -23,11 +29,15 @@
  *                                  here (`request-origin.ts`), and logged at startup. Unlike the
  *                                  site, a request with no region (no country header) is held
  *                                  to SFW as well
+ *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
+ *                                  headers; set only once the gateway sets those keys itself
+ *                                  (`request-origin.ts`)
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
- * token is verified as every `/api/v1` route verifies it (`auth.live.ts`). Each document, app and
- * app-release stream is narrowed to the apps whose rating its token's user may read
- * (`audience.ts`; none of the mature ones from a region the site restricts to SFW, or from a
+ * token is verified as every `/api/v1` route verifies it, and an access token the auth hub issued
+ * for this source (a relay's token exchange) against the hub's keys (`auth.live.ts`). Each
+ * document, app and app-release stream is narrowed to the apps whose rating its token's user may
+ * read (`audience.ts`; none of the mature ones from a region the site restricts to SFW, or from a
  * request with no region), each entity still tagged with its rating, and so is the schema
  * stream's set of collection schemas (the fixed entity schemas go to everyone); the `service`
  * stream is the same for everyone.
@@ -43,12 +53,12 @@ import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/do
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import { SERVED_SCHEMAS, buildEntitiesPerRead } from '~/server/registry-adapter/entities';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
-import { verifyCivitaiToken } from '~/server/registry-adapter/auth.live';
+import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
 import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
-import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
 import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
@@ -79,7 +89,18 @@ function main() {
   for (const line of regions.warn) console.warn('registry-adapter: WARNING:', line);
   // One limiter for both bindings, so its total counts every open stream of the process.
   const limiter = createSubscriptionLimiter(subscriptionLimitsFromEnv(process.env));
-  const auth = { verifyToken: verifyCivitaiToken, resource, limiter };
+  const verifyToken = createCivitaiTokenVerifier({
+    resource: resourceUrl,
+    issuer,
+    jwksUri: process.env.AUTH_JWKS_URI,
+  });
+  if (!resourceUrl) {
+    console.warn(
+      'registry-adapter: WARNING: REGISTRY_ADAPTER_RESOURCE_URL is unset; no hub access token is accepted'
+    );
+  }
+  const onRegion = (line: string) => console.log('registry-adapter:', line);
+  const auth = { verifyToken, resource, limiter, onRegion };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
@@ -111,7 +132,11 @@ function main() {
   });
   const adapter = composeAdapter(entities, docs);
 
-  const server = createRegistryServer(adapter, { onError, ...auth });
+  const server = createRegistryServer(adapter, {
+    onError,
+    ...auth,
+    keepAliveTimeoutMs: keepAliveTimeoutFromEnv(process.env),
+  });
   server.listen(port, () =>
     console.log(
       `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`

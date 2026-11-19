@@ -9,6 +9,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
 )
 
 // QueryParam is one key of Next's `req.query`: its values in order (a repeated key collects them).
@@ -17,7 +18,7 @@ type QueryParam struct {
 	Values []string
 }
 
-// V1Input is the `/api/v1/images` query (imagesEndpointSchema in src/pages/api/v1/images/index.ts)
+// V1Input is the `/api/v1/images` query (imagesEndpointSchema in src/server/schema/images-endpoint.schema.ts)
 // for the supported subset, after the schema's defaults and transforms.
 type V1Input struct {
 	Limit          int // 0-200, default 100
@@ -50,12 +51,23 @@ type V1Input struct {
 // batch may name.
 const imageIDsBatchMax = 100
 
-// The schema keys. Any other key is ignored by the schema but kept in nextPage.
-var v1SchemaKeys = map[string]bool{
-	"limit": true, "page": true, "postId": true, "modelId": true, "modelVersionId": true, "imageId": true,
-	"ids": true, "username": true, "userId": true, "period": true, "sort": true, "nsfw": true,
-	"browsingLevel": true, "tags": true, "cursor": true, "type": true, "baseModels": true, "withMeta": true,
-	"requiringMeta": true, "flatMeta": true, "withTags": true,
+// v1Schema is imagesEndpointSchema's allow-list and defaults (why: the inputschema package doc); `token`,
+// the API key Resolve hands to the app, is also allowed.
+var v1Schema = inputschema.Get(inputschema.ImagesEndpoint)
+
+var v1TransportKeys = map[string]bool{"token": true}
+
+// v1Defaults are imagesEndpointSchema's defaults, decoded once at package init.
+var v1Defaults = struct{ period, sort string }{
+	period: v1Schema.DefaultString("period"), sort: v1Schema.DefaultString("sort"),
+}
+
+// v1ParsedKeys are the schema keys ParseV1 reads: every one (TestInputKeyLedger), so a key added to
+// the schema must be ported or made a fallback.
+var v1ParsedKeys = []string{
+	"limit", "page", "postId", "modelId", "modelVersionId", "imageId", "ids", "username", "userId",
+	"period", "sort", "nsfw", "browsingLevel", "tags", "cursor", "type", "baseModels", "withMeta",
+	"requiringMeta", "flatMeta", "withTags",
 }
 
 var (
@@ -194,7 +206,7 @@ func ParseV1(raw string) (*V1Input, error) {
 	}
 	vals := map[string]string{}
 	for _, p := range params {
-		if !v1SchemaKeys[p.Key] {
+		if !v1Schema.Has(p.Key) {
 			continue
 		}
 		if len(p.Values) > 1 {
@@ -214,8 +226,18 @@ func ParseV1(raw string) (*V1Input, error) {
 	case has("baseModels"):
 		return nil, fallback.New("v1-base-models")
 	}
+	// After unsupported keys so the reason names the parity gap (the app's shape counter uses this order).
+	keys := make([]string, 0, len(params))
+	for _, p := range params {
+		keys = append(keys, p.Key)
+	}
+	if k, ok := v1Schema.Unknown(keys, v1TransportKeys); ok {
+		return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
+	}
 
-	in := &V1Input{Limit: 100, Period: "AllTime", Sort: SortMostReactions, Query: params}
+	// The limit's default is not in the projection (numericString's preprocess hides it); it is the
+	// same constants.galleryFilterDefaults.limit as getInfiniteImagesSchema's.
+	in := &V1Input{Limit: imagesDefaults.limit, Period: v1Defaults.period, Sort: v1Defaults.sort, Query: params}
 	num := func(k string, dst *int) error {
 		v, ok := vals[k]
 		if !ok {

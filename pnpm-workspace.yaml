@@ -7,6 +7,8 @@ packages:
   - '!apps/feed-go'
   # apps/beacon-go is a Go module too, excluded for the same reason.
   - '!apps/beacon-go'
+  # apps/app-index-go is a Go module too, excluded for the same reason.
+  - '!apps/app-index-go'
   # apps/registry-adapter holds only the registry adapter's Dockerfile and a package.json that
   # carries its release version; the adapter itself is built from the root package.
   - '!apps/registry-adapter'

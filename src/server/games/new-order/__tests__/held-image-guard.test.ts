@@ -83,13 +83,23 @@ const HELD = 2;
 const HELD_OTHER = 3;
 const SANITY_CLEAN = 10;
 const SANITY_HELD = 11;
+// Blocked by each of the three markers in turn, none of them held for review.
+const BLOCKED = 4;
+const BLOCKED_LEVEL = 5;
+const BLOCKED_REASON = 6;
 
-const rows: Record<number, { needsReview: string | null }> = {
+const rows: Record<
+  number,
+  { needsReview: string | null; ingestion?: string; nsfwLevel?: number; blockedFor?: string }
+> = {
   [CLEAN]: { needsReview: null },
   [HELD]: { needsReview: 'csam' },
   [HELD_OTHER]: { needsReview: 'minor' },
   [SANITY_CLEAN]: { needsReview: null },
   [SANITY_HELD]: { needsReview: 'csam' },
+  [BLOCKED]: { needsReview: null, ingestion: 'Blocked' },
+  [BLOCKED_LEVEL]: { needsReview: null, nsfwLevel: 32 },
+  [BLOCKED_REASON]: { needsReview: null, ingestion: 'Rescan', blockedFor: 'CSAM' },
 };
 // Ids from 100 up are clean filler for the pool-offset case.
 const lookup = (id: number) => rows[id] ?? (id >= 100 ? { needsReview: null } : undefined);
@@ -99,6 +109,8 @@ const row = (id: number, select: Record<string, boolean>) => {
     url: `https://example.test/${id}.jpg`,
     nsfwLevel: 1,
     metadata: {},
+    ingestion: 'Scanned',
+    blockedFor: null,
     ...lookup(id),
   };
   return Object.fromEntries(Object.keys(select).map((key) => [key, full[key]]));
@@ -138,6 +150,17 @@ describe('New Order held-image guard', () => {
 
     const enqueued = poolStub.getCount.mock.calls.map(([id]) => id);
     expect(enqueued).toEqual([CLEAN]);
+  });
+
+  it('(a1) addImageToQueue never enqueues a blocked image, whatever marks it', async () => {
+    const result = await addImageToQueue({
+      imageIds: [CLEAN, BLOCKED, BLOCKED_LEVEL, BLOCKED_REASON],
+      rankType: NewOrderRankType.Knight,
+      priority: 1,
+    });
+
+    expect(poolStub.getCount.mock.calls.map(([id]) => id)).toEqual([CLEAN]);
+    expect(result.heldIds).toEqual([BLOCKED, BLOCKED_LEVEL, BLOCKED_REASON]);
   });
 
   it('(a2) addImageToQueue reports nothing added when every image is held', async () => {

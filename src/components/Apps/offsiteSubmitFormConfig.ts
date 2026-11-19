@@ -109,9 +109,10 @@ export type OffsiteSubmitFormValues = {
    * `allowedScopes` (no longer author-picked). Kept in the view-model so the
    * read-only display + justification inputs iterate it and the client mirror can
    * assert the (now trivial) subset invariant; the SERVER re-snapshots it from the
-   * client's current `allowedScopes` at submit time (authoritative).
+   * client's current `allowedScopes` at submit time (authoritative). A number when it came from
+   * tRPC; a bigint is accepted too. Widened with `BigInt` before any bitwise use.
    */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (only derived scopes get an entry). */
   scopeJustifications: Record<string, string>;
 };
@@ -208,7 +209,7 @@ export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boole
   if (values.category !== blank.category) return true;
   if (values.contentRating !== blank.contentRating) return true;
   if (values.connectClientId !== blank.connectClientId) return true;
-  if (values.requestedScopes !== blank.requestedScopes) return true;
+  if (BigInt(values.requestedScopes) !== BigInt(blank.requestedScopes)) return true;
   return Object.values(values.scopeJustifications ?? {}).some(
     (v) => String(v ?? '').trim().length > 0
   );
@@ -428,15 +429,23 @@ export function isDetailsStepComplete(values: OffsiteSubmitFormValues): boolean 
 // OAuth client). Client-side mirror of the SERVICE checks
 // (`loadConnectClientForListing` / `assertConnectScopesValid`) so the CREATE form
 // surfaces inline errors before the round-trip; the SERVER stays source of truth.
+//
+// The masks here are form state, held as the JSON numbers tRPC carries; each one is widened to a
+// bigint before any bitwise operation (a `number` bitwise operator is 32-bit).
 // ---------------------------------------------------------------------------
 
 /** The enum-key for a scope bit (used as the justification-map key). */
-export function scopeKeyForBit(bit: number): string {
-  return tokenScopeKeyByBit(bit) ?? String(bit);
+export function scopeKeyForBit(bit: number | bigint): string {
+  return tokenScopeKeyByBit(BigInt(bit)) ?? String(bit);
 }
 
 /** One expanded scope row from a mask: `{ bit, key, label }`. */
 export type ScopeEntry = { bit: number; key: string; label: string };
+
+const toScopeEntry = (s: { bit: bigint; key: string; label: string }): ScopeEntry => ({
+  ...s,
+  bit: Number(s.bit),
+});
 
 /**
  * Split a requested-scope mask into SENSITIVE vs NON-SENSITIVE rows (each
@@ -446,14 +455,14 @@ export type ScopeEntry = { bit: number; key: string; label: string };
  * Justified`) and the mod-review `ConnectScopesPanel` use, so the author sees
  * exactly the scopes that will require a justification before approval. PURE.
  */
-export function partitionScopesBySensitivity(mask: number): {
+export function partitionScopesBySensitivity(mask: number | bigint): {
   sensitive: ScopeEntry[];
   nonSensitive: ScopeEntry[];
 } {
-  const scopes = tokenScopeMaskToList(mask);
+  const scopes = tokenScopeMaskToList(BigInt(mask));
   return {
-    sensitive: scopes.filter((s) => isSensitiveTokenScope(s.bit)),
-    nonSensitive: scopes.filter((s) => !isSensitiveTokenScope(s.bit)),
+    sensitive: scopes.filter((s) => isSensitiveTokenScope(s.bit)).map(toScopeEntry),
+    nonSensitive: scopes.filter((s) => !isSensitiveTokenScope(s.bit)).map(toScopeEntry),
   };
 }
 
@@ -477,9 +486,9 @@ export function missingSensitiveJustifications(values: OffsiteSubmitFormValues):
  */
 export function shapeSensitiveJustifications(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  return shapeScopeJustifications(justifications, mask & SENSITIVE_TOKEN_SCOPES);
+  return shapeScopeJustifications(justifications, BigInt(mask) & SENSITIVE_TOKEN_SCOPES);
 }
 
 /**
@@ -508,9 +517,9 @@ export function scopeJustificationError(values: OffsiteSubmitFormValues): string
  */
 export function pruneJustificationsToMask(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     if (keys.has(key)) out[key] = text;
@@ -527,7 +536,7 @@ export function pruneJustificationsToMask(
  */
 export function deriveScopesFromClient(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormValues {
   return {
     ...values,
@@ -544,9 +553,9 @@ export function deriveScopesFromClient(
  */
 export function shapeScopeJustifications(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     const trimmed = text.trim();
@@ -563,7 +572,7 @@ export function shapeScopeJustifications(
  */
 export function validateConnectFields(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormErrors {
   const errors: OffsiteSubmitFormErrors = {};
 
@@ -571,7 +580,7 @@ export function validateConnectFields(
     errors.connectClientId = 'Choose one of your OAuth apps.';
   }
 
-  if (!connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes)) {
+  if (!connectScopesSubsetOfCeiling(BigInt(values.requestedScopes), BigInt(allowedScopes))) {
     errors.requestedScopes = 'A requested scope is not allowed by this OAuth app.';
   }
 
@@ -591,7 +600,7 @@ export function validateConnectFields(
  */
 export function validateExternalCreateForm(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormErrors {
   return { ...validateOffsiteSubmitForm(values), ...validateConnectFields(values, allowedScopes) };
 }
@@ -613,11 +622,11 @@ export function isCreateUrlStepComplete(values: OffsiteSubmitFormValues): boolea
  */
 export function isClientStepComplete(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): boolean {
   return (
     !!values.connectClientId &&
-    connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes) &&
+    connectScopesSubsetOfCeiling(BigInt(values.requestedScopes), BigInt(allowedScopes)) &&
     scopeJustificationError(values) === undefined
   );
 }
@@ -625,7 +634,7 @@ export function isClientStepComplete(
 /** The CREATE wizard Details-step gate: the whole create mirror validates. */
 export function isCreateDetailsStepComplete(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): boolean {
   return Object.keys(validateExternalCreateForm(values, allowedScopes)).length === 0;
 }
@@ -662,7 +671,8 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     slug: values.slug.trim(),
     name: values.name.trim(),
     connectClientId: values.connectClientId ?? '',
-    requestedScopes: values.requestedScopes,
+    // A JSON number on the wire.
+    requestedScopes: Number(values.requestedScopes),
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
     sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,

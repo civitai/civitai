@@ -14,8 +14,15 @@ export const CHALLENGE_ELIGIBLE_SQL = `c."ingestion" = 'Scanned'
   AND c."coverImageId" IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)
   AND (c.source <> 'User' OR EXISTS (
-    SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'))
-  AND c.status <> 'Cancelled'`;
+    SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'
+      AND i."nsfwLevel" != 0))
+  AND c.status <> 'Cancelled'
+  AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId"
+    AND (i."tosViolation" OR i."needsReview" IS NOT NULL OR i.minor OR i."blockedFor" IS NOT NULL
+      OR i.ingestion = 'Blocked' OR i."nsfwLevel" = 32))
+  AND (c.source <> 'User' OR c."createdById" IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = c."createdById"
+    AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL))`;
 
 export type ChallengePayload = {
   /** Exact-title key, see normalizeTitle. */

@@ -2,7 +2,11 @@ import { sql, type Kysely } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import {
+  KNIGHTS_STAGE_RANKS,
+  KNIGHTS_STAGE_TTL_HOURS,
+  knightsLatestStageEnd,
+} from '@civitai/shared/new-order';
 
 export type EnqueueItemInput = {
   imageId: number;
@@ -29,7 +33,9 @@ export type EnqueueRefusal =
   | 'bad-expiry'
   | 'image-not-found'
   | 'held-for-review'
-  | 'not-servable';
+  | 'not-servable'
+  | 'no-post'
+  | 'publishes-after-expiry';
 
 export type EnqueueOptions = {
   /**
@@ -37,6 +43,13 @@ export type EnqueueOptions = {
    * arrive before the post is published.
    */
   servableOnly?: boolean;
+  /**
+   * Refuse images with no post. Intake passes it: an image rarely gains a post after its scan,
+   * while drafts and scheduled posts often publish later, so those still queue. A post scheduled
+   * to publish after the item would close unvoted (`knightsLatestStageEnd`) is refused too
+   * (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still queue.
+   */
+  requirePost?: boolean;
 };
 
 export type EnqueueOutcome = { imageId: number } & (
@@ -60,7 +73,7 @@ export async function enqueueKnightsItems(
   db: Kysely<DB>,
   input: EnqueueInput,
   now: Date = new Date(),
-  { servableOnly = false }: EnqueueOptions = {}
+  { servableOnly = false, requirePost = false }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
     input.items.map((item) => ({ imageId: item.imageId, outcome: 'refused', reason }));
@@ -73,7 +86,10 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  const images = new Map<number, { held: boolean; servable: boolean }>(
+  const images = new Map<
+    number,
+    { held: boolean; servable: boolean; hasPost: boolean; publishesAt: Date | null }
+  >(
     input.items.length === 0
       ? []
       : (
@@ -84,6 +100,11 @@ export async function enqueueKnightsItems(
               'img.id',
               'img.needsReview',
               'img.acceptableMinor',
+              'p.id as postRowId',
+              // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
+              sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
+                'publishedEpoch'
+              ),
               servableImage(eb).as('servable'),
             ])
             .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
@@ -93,6 +114,9 @@ export async function enqueueKnightsItems(
           {
             held: row.needsReview !== null || row.acceptableMinor,
             servable: Boolean(row.servable),
+            hasPost: row.postRowId !== null,
+            publishesAt:
+              row.publishedEpoch === null ? null : new Date(Number(row.publishedEpoch) * 1000),
           },
         ])
   );
@@ -121,6 +145,14 @@ export async function enqueueKnightsItems(
     if (image === undefined) return refuse('image-not-found');
     if (image.held) return refuse('held-for-review');
     if (servableOnly && !image.servable) return refuse('not-servable');
+    if (requirePost && !image.hasPost) return refuse('no-post');
+    if (
+      requirePost &&
+      expiresAt &&
+      image.publishesAt &&
+      image.publishesAt.getTime() > knightsLatestStageEnd(now, expiresAt).getTime()
+    )
+      return refuse('publishes-after-expiry');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;

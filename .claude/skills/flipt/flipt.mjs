@@ -67,12 +67,6 @@ loadEnv();
 const FLIPT_URL = process.env.FLIPT_URL;
 const FLIPT_API_TOKEN = process.env.FLIPT_API_TOKEN;
 
-if (!FLIPT_URL || !FLIPT_API_TOKEN) {
-  console.error('Error: FLIPT_URL and FLIPT_API_TOKEN must be set');
-  console.error('Copy .env.example to .env and configure your credentials');
-  process.exit(1);
-}
-
 // Parse arguments
 const args = process.argv.slice(2);
 let command = '';
@@ -160,7 +154,17 @@ async function flagsPath(key) {
   return key ? `${base}/${encodeURIComponent(key)}` : base;
 }
 
+// Checked here rather than at startup so help and the refused writes still
+// print their guidance on a machine without Flipt credentials.
+function requireCredentials() {
+  if (FLIPT_URL && FLIPT_API_TOKEN) return;
+  console.error('Error: FLIPT_URL and FLIPT_API_TOKEN must be set');
+  console.error('Copy .env.example to .env and configure your credentials');
+  process.exit(1);
+}
+
 async function apiRequest(method, path, body = null) {
+  requireCredentials();
   const url = `${FLIPT_URL}${path}`;
   const options = {
     method,

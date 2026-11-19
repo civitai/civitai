@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 // Pure string helpers, no module graph — safe to import statically above the vi.mock below.
 import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { Availability, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * WHICH MODELS BELONG IN THE MODELS SEARCH INDEX — and every site that decides it agrees.
@@ -30,7 +30,6 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 // to read a predicate.
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: null,
-  metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
 
@@ -39,11 +38,17 @@ const { modelsSearchIndex, prepareModelsBatches, pullModelsData } = await import
 );
 const { CLEANUP_INDEXES } = await import('~/server/meilisearch/cleanup');
 
-const ELIGIBILITY = 'm.status = ?::"ModelStatus" AND m.availability != ?::"Availability"';
-const ELIGIBILITY_VALUES = [ModelStatus.Published, Availability.Unsearchable];
+const ELIGIBILITY =
+  'm.status = ?::"ModelStatus" AND m.availability != ?::"Availability" AND (m.mode IS NULL OR m.mode != ?::"ModelModifier")';
+const ELIGIBILITY_VALUES = [
+  ModelStatus.Published,
+  Availability.Unsearchable,
+  ModelModifier.TakenDown,
+];
 const ELIGIBILITY_WHERE = {
   status: ModelStatus.Published,
   availability: { not: Availability.Unsearchable },
+  OR: [{ mode: null }, { mode: { not: ModelModifier.TakenDown } }],
 };
 
 const READ_BATCH_SIZE = 2000;

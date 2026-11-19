@@ -25,6 +25,9 @@ import {
   newRun,
   nextImgId,
   numberInputValue,
+  labelModeForCard,
+  sweepLabelMode,
+  labelOptions,
   optimizerLrParams,
   teLocked,
   paramDeviations,
@@ -32,6 +35,8 @@ import {
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
+  kohyaSeedCard,
+  cardSupportsKohya,
   runExtraCapabilities,
   runEngine,
   runParamsKey,
@@ -45,6 +50,8 @@ import {
   matchesTagFilter,
   withFilterTags,
   withTags,
+  paramNeedsRefundAck,
+  tagEntryKey,
   withTrigger,
   versionOptions,
   CUSTOM_VERSION_KEY,
@@ -125,8 +132,31 @@ describe('default version', () => {
 });
 
 describe('extra parameter capabilities', () => {
-  it('offers everything to an SDXL tag dataset', () => {
-    const caps = runExtraCapabilities(run('sdxl'), 'tag');
+  it('gates convolution, caption dropout and warmup by model, engine and scheduler', () => {
+    for (const type of ['sd15', 'sdxl', 'pony', 'illustrious']) {
+      const r = run(type);
+      expect(runExtraCapabilities(r, 'tag').trainConv.supported).toBe(true);
+      expect(runExtraCapabilities(r, 'tag').lrWarmupSteps.supported).toBe(false);
+    }
+    expect(runExtraCapabilities(run('minimaxh3'), 'caption').trainConv.supported).toBe(false);
+    expect(runExtraCapabilities(run('yue2'), 'caption').captionDropoutRate.supported).toBe(false);
+    const flux = run('flux2');
+    const caps = runExtraCapabilities(flux, 'caption');
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const)
+      expect(caps[field].supported).toBe(false);
+  });
+
+  it('offers all advanced controls to an SDXL tag dataset with constant learning rate', () => {
+    const r = run('sdxl');
+    const caps = runExtraCapabilities(r, 'tag', {
+      ...defaultRunParams(r),
+      lrScheduler: 'constant',
+    });
     for (const cap of Object.values(caps)) expect(cap.supported).toBe(true);
   });
 
@@ -249,6 +279,26 @@ describe('buildTrainingRuns extra fields', () => {
       ['blue'],
       labelMode
     )[0]!;
+
+  it('preserves backend defaults for blank new fields and sends explicit zeroes', () => {
+    const defaults = build(run('sdxl'), 'tag', { lrScheduler: 'constant' });
+    for (const field of ['lrWarmupSteps', 'captionDropoutRate', 'rankDropout'] as const)
+      expect(defaults).not.toHaveProperty(field);
+    expect(defaults.trainConv).toBe(false);
+    const edited = build(run('sdxl'), 'tag', {
+      lrScheduler: 'constant',
+      lrWarmupSteps: '0',
+      captionDropoutRate: '0',
+      rankDropout: '0',
+      trainConv: true,
+    });
+    expect(edited).toMatchObject({
+      lrWarmupSteps: 0,
+      captionDropoutRate: 0,
+      rankDropout: 0,
+      trainConv: true,
+    });
+  });
 
   it('sends the tag fields as set for a tag dataset on an SD-family model', () => {
     const out = build(run('sdxl'), 'tag', {
@@ -535,6 +585,7 @@ describe('optimizer learning-rate coupling', () => {
     'hunyuan',
     'ltx',
     'minimaxh3',
+    'minimaxh3image',
     'ming',
     'qwen21',
     'yue2',
@@ -634,18 +685,12 @@ describe('stampMature', () => {
     typeof stampMature
   >[0][number];
 
-  it('puts one confirm and the mature count on every run of a sweep', () => {
-    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
-    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
-      [true, 3, 'a'],
-      [true, 3, 'b'],
+  it('puts the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], 3);
+    expect(out.map((r) => [r.meta.matureCount, r.meta.name])).toEqual([
+      [3, 'a'],
+      [3, 'b'],
     ]);
-  });
-
-  it('sends no confirm when the user gave none, but still stamps the count', () => {
-    const [out] = stampMature([run], false, 2);
-    expect('matureAck' in out!).toBe(false);
-    expect(out!.meta.matureCount).toBe(2);
   });
 });
 
@@ -661,6 +706,42 @@ describe('withTags', () => {
   it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
     const tags = ['smile'];
     expect(withTags(tags, ' , smile ')).toBe(tags);
+  });
+  it('skips a tag the image already has in another casing, so typing Dress does not add a second dress', () => {
+    expect(withTags(['dress', 'Smile'], 'Dress, smile, hat')).toEqual(['dress', 'Smile', 'hat']);
+    expect(withTags([], 'Dress, dress')).toEqual(['Dress']);
+  });
+});
+
+describe('tagEntryKey', () => {
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
+    key: k,
+    shiftKey,
+    isComposing,
+    keyCode,
+  });
+  it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
+    expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
+    expect(tagEntryKey(key('Enter', true), '1girl, solo', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, true), 'あ', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, false, 229), 'かみ', 0)).toBeNull();
+  });
+  it('Backspace removes the last tag only when the box is empty', () => {
+    expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
+    expect(tagEntryKey(key('Backspace'), 'so', 2)).toBeNull();
+    expect(tagEntryKey(key('Backspace'), '', 0)).toBeNull();
+  });
+});
+
+describe('paramNeedsRefundAck', () => {
+  it('leaves the sample negative prompt and Checkpoints editable without the refund acknowledgement', () => {
+    expect(paramNeedsRefundAck('negativePrompt')).toBe(false);
+    expect(paramNeedsRefundAck('epochs')).toBe(false);
+  });
+  // The seed is sent to the trainer, not only to the preview samples: editing it is an advanced edit.
+  it('keeps the seed and the training params behind the acknowledgement', () => {
+    expect(paramNeedsRefundAck('seed')).toBe(true);
+    expect(paramNeedsRefundAck('unetLr')).toBe(true);
   });
 });
 
@@ -844,6 +925,20 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
 });
 
 describe('Kohya engine selection and options', () => {
+  it('starts a Kohya run on the first available Kohya model, and none on media Kohya lacks', () => {
+    const none = new Set<string>();
+    const first = kohyaSeedCard('character', 'image', none)!;
+    expect(cardSupportsKohya(first)).toBe(true);
+    const blocked = parseServiceStatus({
+      blockedModels: first.versions.map((v) => v.key),
+      blockedModelReasons: {},
+    });
+    const next = kohyaSeedCard('character', 'image', none, blocked)!;
+    expect(next.type).not.toBe(first.type);
+    expect(cardSupportsKohya(next)).toBe(true);
+    expect(kohyaSeedCard('character', 'video', none)).toBeUndefined();
+  });
+
   it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
     const original = run('sdxl');
     const kohya = { ...original, engine: 'kohya' };
@@ -936,6 +1031,35 @@ describe('Kohya engine selection and options', () => {
       keepTokens: 0,
     });
   });
+
+  it('offers and sends the AI Toolkit-only settings on AI Toolkit runs alone', () => {
+    const aiToolkit = run('sdxl');
+    const kohya = { ...aiToolkit, engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(aiToolkit),
+      lrScheduler: 'constant',
+      lrWarmupSteps: '100',
+      captionDropoutRate: '0.1',
+      rankDropout: '0.2',
+      trainConv: true,
+    };
+    expect(runTrainingParams(aiToolkit, params, 'tag')).toMatchObject({
+      lrWarmupSteps: 100,
+      captionDropoutRate: 0.1,
+      rankDropout: 0.2,
+      trainConv: true,
+    });
+    const caps = runExtraCapabilities(kohya, 'tag', params);
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const) {
+      expect(caps[field].supported).toBe(false);
+      expect(runTrainingParams(kohya, params, 'tag')).not.toHaveProperty(field);
+    }
+  });
 });
 
 describe('per-image repeats on the submit', () => {
@@ -1009,5 +1133,69 @@ describe('per-image repeats on the submit', () => {
       repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
     ).toBe('webp');
     expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
+  });
+});
+
+describe('Krea 2 label modes', () => {
+  it('offers captions and tags, with captions as the default', () => {
+    const krea = cardByType('krea2')!;
+    expect(labelOptions(krea)).toEqual(['caption', 'tag']);
+    expect(krea.label).toBe('caption');
+  });
+
+  it('opens a model on its own default label, but keeps a pick made on the same model', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    // the flow's labelMode starts as 'tag'
+    expect(labelModeForCard(null, krea, 'tag', false)).toBe('caption');
+    expect(labelModeForCard(krea, krea, 'tag', false)).toBe('tag');
+    expect(labelModeForCard(krea, anima, 'caption', false)).toBe('tag');
+  });
+
+  it('keeps the mode when a labeled dataset moves to another model that offers it', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    expect(labelModeForCard(krea, anima, 'caption', true)).toBe('caption');
+    expect(labelModeForCard(anima, cardByType('sdxl')!, 'caption', true)).toBe('tag');
+  });
+
+  it("refuses a caption-only model in a sweep once the lead is on Krea 2's tag mode", () => {
+    const krea = cardByType('krea2')!;
+    const flux = cardByType('flux')!;
+    const sdxl = cardByType('sdxl')!;
+    // Krea 2 on tags (kept: same model), then the caption-only Flux
+    expect(sweepLabelMode([krea, flux], krea, 'tag', false)).toBeNull();
+    expect(sweepLabelMode([krea, sdxl], krea, 'tag', false)).toBe('tag');
+    // fresh on captions
+    expect(sweepLabelMode([krea, flux], null, 'tag', false)).toBe('caption');
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('refuses to mix pairs and single-image models', () => {
+    const krea = cardByType('krea2')!;
+    const pairsCard = MODEL_CARDS.find((c) => c.pairs)!;
+    expect(sweepLabelMode([krea, pairsCard], null, 'caption', false)).toBeNull();
+    expect(sweepLabelMode([pairsCard, krea], null, 'caption', false)).toBeNull();
+  });
+
+  it("refuses the selection left by removing run 1 when the next lead would re-pick a mode a later run can't take", () => {
+    const anima = cardByType('anima')!;
+    const krea = cardByType('krea2')!;
+    const sdxl = cardByType('sdxl')!;
+    expect(sweepLabelMode([anima, krea, sdxl], null, 'tag', false)).toBe('tag');
+    // Krea 2 leading a fresh dataset opens on captions, which SDXL can't take
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('checks every run against the mode a new first run would set', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    const flux = cardByType('flux')!;
+    // swapping run 1 from Krea 2 to Anima would flip a fresh dataset to tags, which Flux can't take
+    expect(sweepLabelMode([anima, flux], null, 'tag', false)).toBeNull();
+    // a swap that stays valid is allowed: Krea 2 on tags -> Flux leads, mode follows to captions
+    expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
+    // a labeled dataset keeps its format across the swap
+    expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
   });
 });

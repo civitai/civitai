@@ -300,7 +300,12 @@ describe('approving a lock review', () => {
   };
 
   it('overturns the listing intent detection when it lifts the nsfw lock, so a .com version is allowed', async () => {
-    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
     storesListing(listing);
     await seed({
       locked: ['nsfw'],
@@ -319,7 +324,12 @@ describe('approving a lock review', () => {
 
   // A review of another lock rules on the rating only, as the model form does.
   it("keeps the detection and suppresses only the re-lock when the lock lifted isn't the intent check's", async () => {
-    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
     storesListing(listing);
     await seed({
       locked: ['nsfw'],
@@ -341,7 +351,12 @@ describe('approving a lock review', () => {
 
   // Edit the listing, have the edit allowed, restore the text: the original detection must still refuse it.
   it('leaves a detection of other text standing, so restoring that text is still refused', async () => {
-    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    const intent = {
+      detected: true,
+      textHash: listingHash,
+      at: '2026-01-01T00:00:00.000Z',
+      promptId: 77,
+    };
     storesListing({ ...listing, description: '<p>Edited for the dispute</p>' });
     await seed({
       locked: ['nsfw'],
@@ -355,7 +370,7 @@ describe('approving a lock review', () => {
 
     const meta = await modelMeta();
     expect(meta.comFaceIntent).toEqual(intent);
-    expect(reusableComFaceIntent(meta, listingHash)).toMatchObject({ detected: true });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toMatchObject({ detected: true });
   });
 
   it('puts back the text-scan rating marker the intent lock replaced', async () => {

@@ -263,7 +263,7 @@ describe('BlockRegistry.resolvePageBlock — the MINT-side approved-only invaria
         manifest: PAGE_MANIFEST(),
         approvedScopes: [],
         currentVersionDeployedAt: new Date('2026-09-01'),
-        app: { allowedScopes: 0 },
+        app: { allowedScopes: 0n },
       });
       expect(
         await BlockRegistry.resolvePageBlock('apb_1'),
@@ -283,7 +283,7 @@ describe('BlockRegistry.resolvePageBlock — the MINT-side approved-only invaria
       manifest: PAGE_MANIFEST(),
       approvedScopes: ['models:read:self'],
       currentVersionDeployedAt: new Date('2026-09-01'),
-      app: { allowedScopes: 0 },
+      app: { allowedScopes: 0n },
     });
     const res = await BlockRegistry.resolvePageBlock('apb_1');
     expect(res?.appBlock.id).toBe('apb_1');

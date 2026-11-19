@@ -55,6 +55,7 @@ import {
   blockClaimsAppLabel,
   markBlockRequestReadMiss,
   recordDocStoreError,
+  recordDocStoreUnchangedWrite,
   recordStorageTallyOp,
   type AppBlockRefusalBucket,
   type DocStoreEndpoint,
@@ -113,8 +114,15 @@ import {
   sharedRefusalField,
   type SharedDataModerationMode,
   type SharedDataSurface,
+  type SharedRefusalField,
+  type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
+import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
@@ -351,6 +359,18 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+}
+
+/**
+ * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
+ * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
+ * resolved store context's app, which is the SOURCE app through an import. The free-write counter
+ * is labelled with the same app (`requestAppLabel`). No claims, no flag.
+ */
+async function isUnchangedWriteFree(req: NextApiRequest): Promise<boolean> {
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, appBlockId);
 }
 
 /** The `app_block_id` label of the request's verified block claims (`other` without any). */
@@ -881,15 +901,60 @@ const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<str
 type AfterCommit = (committedKey?: string) => void;
 const nothingAfterCommit: AfterCommit = () => undefined;
 
+/** Where `input` carries an orchestrator media link, as a refusal names it, or null. */
+function privateMediaField(input: {
+  data?: Record<string, unknown>;
+  key?: string;
+}): SharedRefusalField | null {
+  if (input.data !== undefined) {
+    const collected = collectSharedDataLeaves(input.data);
+    if ('overflow' in collected) {
+      if (valueContainsPrivateMediaUrl(input.data)) return { field: 'data', fieldKind: 'value' };
+    } else {
+      const leaf = collected.leaves.find((l) => containsPrivateMediaUrl(l.raw));
+      if (leaf) {
+        const hit: SharedTextHit = {
+          category: 'link',
+          matched: 'private_media',
+          label: 'private_media',
+          leaf: { raw: leaf.raw, path: leaf.path, segments: leaf.segments, kind: leaf.kind },
+        };
+        const scan = { leafCount: collected.leaves.length, overflow: null, hits: [hit] };
+        return sharedRefusalField(scan, hit, 'data');
+      }
+    }
+  }
+  if (input.key !== undefined && containsPrivateMediaUrl(input.key))
+    return { field: 'key', fieldKind: 'value' };
+  return null;
+}
+
+function refusePrivateMedia(
+  access: StorageAccess,
+  user: SessionUser,
+  at: SharedRefusalField
+): never {
+  const field = at.field === 'key' ? 'key' : 'data';
+  emitSharedBlockAlert(
+    { appBlockId: access.ctx.appId, uid: user.id },
+    { policy: 'link', category: 'link', field }
+  );
+  throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
+    category: 'link',
+    ...at,
+  });
+}
+
 /**
  * Moderation of one shared write — every string leaf and object key of `data` and, when the app
  * chose it, the document key — in the app's shared-data moderation mode
  * (`resolveSharedDataModerationMode`):
  *
- * - `off`: nothing is scanned or recorded.
+ * - `off`: nothing is scanned or recorded; only an orchestrator media link is refused.
  * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
  *   `scheduleSharedDataShadow`, the legacy surface's own shadow path: after the write, off the
- *   request path, recorded with mode `shadow`, never refusing, never alerting. A scanner failure
+ *   request path, recorded with mode `shadow`, never refusing, never alerting (except an
+ *   orchestrator media link, refused as in `off`, with the scans still scheduled). A scanner failure
  *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
  *   write that fails records nothing.
  * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
@@ -909,7 +974,13 @@ async function moderate(
   resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
   const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
-  if (mode === 'off') return nothingAfterCommit;
+  // Refused in every mode; under `enforce` a minor/POI hit in the same write is refused and
+  // recorded first.
+  const privateMedia = privateMediaField(input);
+  if (mode === 'off') {
+    if (privateMedia) refusePrivateMedia(access, user, privateMedia);
+    return nothingAfterCommit;
+  }
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
   const scanOpts = { isModerator: user.isModerator };
   const scans: { field: 'data' | 'key'; run: () => Promise<SharedTextScan> }[] = [];
@@ -922,7 +993,7 @@ async function moderate(
     scans.push({ field: 'key', run: () => scanCounterKey(key, scanOpts) });
   }
   if (mode === 'shadow') {
-    return (committedKey = rowKey) => {
+    const schedule: AfterCommit = (committedKey = rowKey) => {
       for (const { run } of scans) {
         scheduleSharedDataShadow(run, {
           appBlockId: access.ctx.appId,
@@ -931,6 +1002,11 @@ async function moderate(
         });
       }
     };
+    if (privateMedia) {
+      schedule();
+      refusePrivateMedia(access, user, privateMedia);
+    }
+    return schedule;
   }
   for (const { field, run } of scans) {
     let scan: SharedTextScan;
@@ -973,6 +1049,7 @@ async function moderate(
       });
     }
   }
+  if (privateMedia) refusePrivateMedia(access, user, privateMedia);
   return nothingAfterCommit;
 }
 
@@ -1085,6 +1162,9 @@ async function run(
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
           readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
+          // The per-viewer `write` bucket: private writes, every DELETE, each publish and
+          // unpublish call, and — only while `app-blocks-storage-unchanged-writes-free` is on for
+          // the app — every shared PUT, changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
@@ -1180,6 +1260,26 @@ async function run(
         return write(null, () => undefined);
       }
       const user = await assertTrusted(uid);
+      // A shared put that would change no stored row is free of the shared-write budget (FLAG:
+      // `app-blocks-storage-unchanged-writes-free`, per app; off, this block is skipped). After
+      // every check above, so it refuses exactly what any write does. Under the flag every shared
+      // put first spends one `write` token (the per-viewer request bucket, never refunded), as a
+      // publish does, so a loop of identical puts is still bounded. Then, when the store says the
+      // put would change nothing (`putIfUnchanged`: the publish rule plus the index rows), the
+      // answer is the stored document as a write returns it — no shared-write token, no
+      // moderation scan, nothing written — counted per app. Anything else (a change, a stale
+      // `ifVersion`, another author's or a hidden document) takes the ordinary write below. A
+      // create always writes a new key, so it is never unchanged.
+      if (putIn && route.op === 'put' && (await isUnchangedWriteFree(req))) {
+        await charge('write', access, req);
+        const stored = await store.putIfUnchanged(ctx, coll, route.key, putIn.data, {
+          ifVersion: putIn.ifVersion,
+        });
+        if (stored) {
+          recordDocStoreUnchangedWrite(requestAppLabel(req));
+          return ok(await presentDoc(stored, decl));
+        }
+      }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
     case 'increment': {

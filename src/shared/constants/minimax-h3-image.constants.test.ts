@@ -13,25 +13,24 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { minimaxH3ImageVersionId } from '~/shared/form-graph/generation/image/minimax-h3-image.graph';
 
-// MiniMax H3 Image ships for generation only. Uploads, training and LoRAs under this base
-// model are a separate, later change; each case is a surface that would open one early.
-describe('MiniMax H3 Image base model is generation only', () => {
+describe('MiniMax H3 Image base model', () => {
   const NAME = 'MiniMax H3 Image';
 
-  it('is not offered in the model upload base-model pickers', () => {
-    expect(getActiveBaseModels(false).map((m) => m.name)).not.toContain(NAME);
+  it('is offered in the model upload base-model pickers and filters', () => {
+    expect(getActiveBaseModels(false).map((m) => m.name)).toContain(NAME);
     const options = baseModelSelectData.flatMap((g) => g.items.map((i) => i.value));
-    expect(options).not.toContain(NAME);
+    expect(options).toContain(NAME);
   });
 
-  it('is not trainable', () => {
-    expect(getTrainingBaseModels().map((m) => m.name)).not.toContain(NAME);
-    expect(isModelSupported(BM.MiniMaxH3Image, 'training')).toBe(false);
+  it('trains LoRAs only', () => {
+    expect(getTrainingBaseModels().map((m) => m.name)).toContain(NAME);
+    expect(isModelSupported(BM.MiniMaxH3Image, 'training', ModelType.LORA)).toBe(true);
+    expect(isModelSupported(BM.MiniMaxH3Image, 'training', ModelType.Checkpoint)).toBe(false);
   });
 
-  it('generates from a checkpoint only, and takes no LoRAs, not even H3 video ones', () => {
+  it('generates with its own checkpoints and LoRAs, but not H3 video LoRAs', () => {
     expect(isModelSupported(BM.MiniMaxH3Image, 'generation', ModelType.Checkpoint)).toBe(true);
-    expect(isModelSupported(BM.MiniMaxH3Image, 'generation', ModelType.LORA)).toBe(false);
+    expect(isModelSupported(BM.MiniMaxH3Image, 'generation', ModelType.LORA)).toBe(true);
     expect(getGenerationSupport(ECO.MiniMaxH3Image, ECO.MiniMaxH3, ModelType.LORA)).toBeNull();
   });
 

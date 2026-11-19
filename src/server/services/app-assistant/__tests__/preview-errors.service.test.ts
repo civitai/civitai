@@ -35,7 +35,8 @@ const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0MiJ9.c2lnbmF0dXJlLXRlc3Qtb25seQ';
 const SK = 'sk-test0nly0placeholder0key0000';
 
 // The canonical redis mock (registered in src/__tests__/setup.ts): a pipeline of our own on `multi`.
-const { multi, lRange } = redisMock.sysRedis;
+// The log is on the cache cluster client.
+const { multi, lRange } = redisMock.redis;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -368,5 +369,6 @@ describe('readPreviewErrors', () => {
       },
     ]);
     expect(lRange).toHaveBeenCalledWith('system:blocks:dev-preview-errors:41:slideshow', 0, 199);
+    expect(redisMock.sysRedis.lRange).not.toHaveBeenCalled();
   });
 });

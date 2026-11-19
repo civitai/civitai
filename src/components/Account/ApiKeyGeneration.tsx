@@ -7,9 +7,10 @@ const { AIServices, Full, Creator, ReadOnly } = tokenScopePresetLabels;
 export const GENERATION_PRESET_HINT = `Generating (running jobs and spending Buzz) needs the "${AIServices}" or "${Full}" preset. Keys made with "${Creator}" or "${ReadOnly}" can\u2019t generate.`;
 
 // null = legacy key, authorised as Full Access.
-export function canKeyGenerate(tokenScope: number | null | undefined): boolean {
-  const scope = tokenScope ?? TokenScope.Full;
-  return (scope & TokenScope.AIServicesWrite) !== 0;
+export function canKeyGenerate(tokenScope: number | bigint | null | undefined): boolean {
+  // A key's scope arrives from tRPC as a number; widen it before any bitwise test.
+  const scope = tokenScope == null ? TokenScope.Full : BigInt(tokenScope);
+  return (scope & TokenScope.AIServicesWrite) !== 0n;
 }
 
 export function GenerationPresetHint() {
@@ -20,7 +21,11 @@ export function GenerationPresetHint() {
   );
 }
 
-export function ApiKeyGenerationMarker({ tokenScope }: { tokenScope: number | null | undefined }) {
+export function ApiKeyGenerationMarker({
+  tokenScope,
+}: {
+  tokenScope: number | bigint | null | undefined;
+}) {
   const can = canKeyGenerate(tokenScope);
   const text = can ? 'Can generate' : 'Can\u2019t generate';
   const explanation = can

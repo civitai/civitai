@@ -22,7 +22,7 @@ import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
 import { HatTimeLeft } from '~/components/HatTurf/HatTimeLeft';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
-import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatButton } from '~/components/HatTurf/HatButton';
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 import { useReactionNudgeClass } from '~/components/HatTurf/reaction-nudge';
@@ -45,6 +45,8 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
@@ -98,6 +100,7 @@ function ImagesCardContent({
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
   const isModerator = currentUser?.isModerator;
+  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -161,7 +164,14 @@ function ImagesCardContent({
                   })}
                   className="absolute inset-0"
                 >
-                  {safe ? (
+                  {safe && retractedSrc ? (
+                    <RetractedMedia
+                      src={retractedSrc}
+                      type={image.type}
+                      alt={image.name ?? undefined}
+                      className={clsx(cardClasses.image, 'opacity-30')}
+                    />
+                  ) : safe ? (
                     <EdgeMedia2
                       metadata={image.metadata}
                       src={image.url}
@@ -500,7 +510,7 @@ function ImageReactions({
                 )}
                 <div className={cardClasses.tipEnd}>
                   {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
-                  {turf && <HatTurfButton imageId={image.id} />}
+                  {turf && <HatButton imageId={image.id} />}
                 </div>
               </div>
             </div>

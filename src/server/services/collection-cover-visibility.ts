@@ -1,33 +1,24 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { imageNotRestrictedSql, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
-import {
-  nsfwBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * The same base-model rule as images (`getAllImages`): an image on a restricted base model is not
- * shown at R or above. As SQL over `"Image" i`; the SFW arm comes first, as there.
- */
-const baseModelAllowedSql = Prisma.sql`(
-  (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-  OR NOT i."modelRestricted"
-)`;
-
-/**
- * Scanned, not awaiting review, not removed or a ToS violation, allowed by its base model: as SQL
- * over `"Image" i`.
+ * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
+ * as SQL over `"Image" i`.
  */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
+  AND i."nsfwLevel" != 0
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-  AND ${baseModelAllowedSql}
+  AND ${imageNotRestrictedSql()}
+  AND ${minorMatureImageVisibleSql()}
 )`;
 
 /** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */
@@ -130,6 +121,29 @@ export const publishedArticleSql = Prisma.sql`(
   AND a.ingestion = 'Scanned'
 )`;
 
+/** A published, non-private post, as SQL over `"Post" p`. */
+export const publishedPostSql = Prisma.sql`(p."publishedAt" < now() AND p."availability" != 'Private')`;
+
+/**
+ * A published, non-private model that is not deleted or taken down, as SQL over `"Model" m`.
+ * As the add-to-collection gate, stricter than view (getModelIdsVisibleToViewer) for non-owners,
+ * which lets them see Private and taken-down models: collection items are shown to everyone who
+ * sees the collection. Owners may add their own.
+ */
+export const publishedModelSql = Prisma.sql`(
+  m.status = 'Published' AND m."deletedAt" IS NULL AND m.availability != 'Private'
+  AND m.mode IS DISTINCT FROM 'TakenDown'
+)`;
+
+/**
+ * A published, non-private 3D model that is not deleted, as SQL over `"Model3D" m3`. As the add
+ * gate, stricter than view (canViewModel3d, which ignores availability) for non-owners, for the
+ * reason given on publishedModelSql. Owners may add their own.
+ */
+export const publishedModel3dSql = Prisma.sql`(
+  m3.status = 'Published' AND m3."deletedAt" IS NULL AND m3.availability != 'Private'
+)`;
+
 /**
  * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
  * banner image within `imageLevels` and its model's gallery level, on no taken-down model, or, with
@@ -208,8 +222,7 @@ export function collectionItemCoversSql({
           JOIN "Post" p ON p.id = i."postId"
           WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
             AND ${servableImageSql}
-            AND p."publishedAt" < now()
-            AND p."availability" != 'Private'
+            AND ${publishedPostSql}
             AND ${withinItsModelSql}
       ) t
       WHERE t.rn = 1
@@ -225,12 +238,8 @@ export function collectionItemCoversSql({
           JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
               AND ${servableImageSql}
-              AND p."publishedAt" < now()
-              AND p."availability" != 'Private'
-              AND m.status = 'Published'
-              AND m."deletedAt" IS NULL
-              AND m.availability != 'Private'
-              AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND ${publishedPostSql}
+              AND ${publishedModelSql}
               AND ${heldGalleryImageSql()}
               AND mv.status = 'Published'
               AND mv.availability != 'Private'
@@ -264,9 +273,7 @@ export function collectionItemCoversSql({
         JOIN "Image" i ON i.id = m3."thumbnailImageId"
         WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
           AND ${servableImageSql}
-          AND m3.status = 'Published'
-          AND m3."deletedAt" IS NULL
-          AND m3.availability != 'Private'
+          AND ${publishedModel3dSql}
     )
     SELECT
         target."collectionId" id,
@@ -309,8 +316,9 @@ type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
- * The collection ids whose cover may be shown to `viewer`. Staff see any cover; the image's owner
- * sees their own past every rule but the base-model one; everyone else gets
+ * The collection ids whose cover may be shown to `viewer`. Moderators see any cover except a
+ * restricted image someone else uploaded; the image's owner sees their own past every rule except
+ * the gallery level of a minor or SFW-only model they don't own; everyone else gets
  * `servableCollectionCoverSql`. Decided on the image id the caller read,
  * so a cover changed since then can't be judged on the old one. Pass the client the cover was read
  * from, so the image is judged as of that read.
@@ -321,12 +329,20 @@ export async function getServableCoverCollectionIds(
   db: CoverDb = dbRead
 ): Promise<Set<number>> {
   if (candidates.length === 0) return new Set();
-  if (viewer?.isModerator) return new Set(candidates.map((c) => c.collectionId));
 
   const ownImage = viewer?.id ? Prisma.sql`i."userId" = ${viewer.id} OR ` : Prisma.empty;
   // The image's owner sees their own past the rules above, but not past the gallery level of a
   // model they don't own: that is the model owner's alone.
   const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
+  const servable = viewer?.isModerator
+    ? Prisma.sql`TRUE`
+    : Prisma.sql`(${ownImage}${servableCollectionCoverSql({
+        postlessAllowed: coverUploadSql({
+          collectionId: Prisma.sql`v."collectionId"`,
+          collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
+        }),
+        heldExempt: modelOwnerSql,
+      })}) AND ${withinHeldGallerySql(modelOwnerSql)}`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(
@@ -336,15 +352,8 @@ export async function getServableCoverCollectionIds(
     ) AS v("collectionId", "collectionOwnerId", "imageId")
     JOIN "Image" i ON i.id = v."imageId"
     LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE (${ownImage}${servableCollectionCoverSql({
-    postlessAllowed: coverUploadSql({
-      collectionId: Prisma.sql`v."collectionId"`,
-      collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
-    }),
-    heldExempt: modelOwnerSql,
-  })})
-      AND ${baseModelAllowedSql}
-      AND ${withinHeldGallerySql(modelOwnerSql)}
+    WHERE ${servable}
+      AND ${imageNotRestrictedSql({ viewerId: viewer?.id })}
   `;
   return new Set(rows.map((r) => r.collectionId));
 }

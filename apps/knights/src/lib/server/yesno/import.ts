@@ -7,6 +7,7 @@ import {
   MODERATION_META_KEY,
   MODERATOR_RETIRED,
   REWORD_OF_META_KEY,
+  servableImage,
   YESNO_QUESTION_MAX,
 } from '@civitai/db/knights';
 import {
@@ -33,7 +34,14 @@ export type YesNoRow = {
 
 export type Skipped = Partial<
   Record<
-    'inactive' | 'bad-id' | 'bad-image' | 'bad-axis' | 'bad-kind' | 'bad-question' | 'duplicate',
+    | 'inactive'
+    | 'bad-id'
+    | 'bad-image'
+    | 'bad-axis'
+    | 'bad-kind'
+    | 'bad-question'
+    | 'duplicate'
+    | 'unservable-image',
     number
   >
 >;
@@ -79,7 +87,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
   skipped: Skipped;
   /** Ids of rows the producer no longer marks active; an open question with one of these is retired by the import. */
   retire: string[];
-  /** Well-formed later copies of an id, counted as `duplicate`; `dropMissingImages` uses one when the first copy's image is missing. */
+  /** Well-formed later copies of an id, counted as `duplicate`; `dropUnservableImages` uses one when the first copy's image is missing or cannot be served. */
   spares: YesNoRow[];
 } {
   const retire: string[] = [];
@@ -149,11 +157,12 @@ function toYesNoRow(r: Record<string, string>, externalId: string): YesNoRow | k
 }
 
 /**
- * Drops the rows whose image is not in `Image`, counting each under `skipped['bad-image']`. Nothing references `Image`
- * from the queue, so an item for a missing image would be inserted and stay open, never served. A dropped row is
- * replaced by the first of its `spares` whose image exists, which then no longer counts as a `duplicate`.
+ * Drops the rows whose image is not in `Image` (`skipped['bad-image']`) or fails `servableImage`
+ * (`skipped['unservable-image']`). Nothing references `Image` from the queue, so such an item would be inserted and stay
+ * open, never served. A dropped row is replaced by the first of its `spares` whose image can be served, which then no
+ * longer counts as a `duplicate`.
  */
-export async function dropMissingImages(
+export async function dropUnservableImages(
   db: Kysely<DB>,
   rows: YesNoRow[],
   skipped: Skipped,
@@ -161,19 +170,21 @@ export async function dropMissingImages(
 ): Promise<YesNoRow[]> {
   if (rows.length === 0) return rows;
   const found = await db
-    .selectFrom('Image')
-    .select('id')
-    .where('id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
+    .selectFrom('Image as img')
+    .leftJoin('Post as p', 'p.id', 'img.postId')
+    .select((eb) => ['img.id', servableImage(eb).as('servable')])
+    .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
     .execute();
-  const existing = new Set(found.map((f) => f.id));
+  const servable = new Map(found.map((f) => [f.id, f.servable === true]));
   const kept: YesNoRow[] = [];
   for (const row of rows) {
-    if (existing.has(row.imageId)) {
+    if (servable.get(row.imageId)) {
       kept.push(row);
       continue;
     }
-    skipped['bad-image'] = (skipped['bad-image'] ?? 0) + 1;
-    const spare = spares.find((s) => s.externalId === row.externalId && existing.has(s.imageId));
+    const reason = servable.has(row.imageId) ? 'unservable-image' : 'bad-image';
+    skipped[reason] = (skipped[reason] ?? 0) + 1;
+    const spare = spares.find((s) => s.externalId === row.externalId && servable.get(s.imageId));
     if (!spare) continue;
     kept.push(spare);
     skipped.duplicate = (skipped.duplicate ?? 0) - 1;
@@ -378,6 +389,16 @@ async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
       .where('status', '=', 'Closed')
       .where('reason', '=', 'retired')
       .where('voteCount', '=', 0)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('Image as img')
+            .innerJoin('Post as p', 'p.id', 'img.postId')
+            .select('img.id')
+            .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
+            .where(servableImage)
+        )
+      )
       .executeTakeFirst();
     revived += Number(reopened.numUpdatedRows);
   }
@@ -471,7 +492,7 @@ export async function importYesNoChunk(
   const records = parseCsv(csv);
   const parsed = toYesNoRows(records);
   const { skipped, retire } = parsed;
-  const rows = await dropMissingImages(db, parsed.rows, skipped, parsed.spares);
+  const rows = await dropUnservableImages(db, parsed.rows, skipped, parsed.spares);
   const summary: ChunkSummary = {
     read: records.length,
     toImport: rows.length,

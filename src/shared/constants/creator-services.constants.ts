@@ -15,8 +15,39 @@ export const SERVICE_DEAL_OVERDUE_CANCEL_AFTER_MS = 7 * 24 * HOUR;
 export const SERVICE_DEAL_CANCELLATION_RESPONSE_MS = 48 * HOUR;
 /** A delivery the buyer neither accepts nor sends back completes on its own after this. */
 export const SERVICE_DEAL_AUTO_COMPLETE_MS = 72 * HOUR;
+/** Labels for the codes the server writes when it closes a deal itself (event comment, closeReason). */
+export const SERVICE_DEAL_CLOSE_LABELS: Record<string, string> = {
+  withdrawn: 'Request withdrawn by the buyer',
+  late: 'Canceled by the buyer after the due date',
+  buyer_refund: 'Canceled by the buyer with a full refund',
+  overdue: 'Canceled automatically: nothing delivered in time',
+  cancellation_unanswered: 'Canceled automatically: the cancellation request was not answered',
+  payment_refused: 'Canceled: the payment was refused',
+  payment_failed: 'Canceled: the payment could not be confirmed',
+  auto: 'Completed automatically: the buyer did not respond in time',
+};
+
+/** The buyer is reminded this long before an unanswered delivery completes on its own. */
+export const SERVICE_DEAL_AUTO_COMPLETE_NOTICE_MS = 24 * HOUR;
+/** The seller is reminded this long before the due date. */
+export const SERVICE_DEAL_DUE_SOON_NOTICE_MS = 24 * HOUR;
 /** Between completion and payout, so a buyer can report final files that are missing or broken. */
 export const SERVICE_DEAL_DISPUTE_WINDOW_MS = 48 * HOUR;
+
+/** A declined, expired or canceled deal's files are deleted this long after it closed. */
+export const SERVICE_DEAL_FILE_RETENTION_CLOSED_MS = 30 * 24 * HOUR;
+/** A completed deal's files are deleted this long after its dispute window ended. */
+export const SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS = 90 * 24 * HOUR;
+
+/** No deal file's retention clock starts before this, so files on deals that closed before the notice shipped get their full window from then. */
+export const SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT = new Date('2026-11-25T00:00:00Z');
+
+const days = (ms: number) => ms / (24 * HOUR);
+export const SERVICE_DEAL_FILE_RETENTION_NOTICE = `Deal files are deleted ${days(
+  SERVICE_DEAL_FILE_RETENTION_CLOSED_MS
+)} days after a deal is declined, expires or is canceled, and ${days(
+  SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS
+)} days after a completed deal's dispute window ends. Download anything you want to keep.`;
 
 /**
  * When an unconfirmed hold is looked up. Longer than the Buzz call timeout, so a write that was
@@ -73,6 +104,18 @@ export const SERVICE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 /** An animated preview costs a CPU-second per few frames to mark, so it has its own, tighter, caps. */
 export const SERVICE_PREVIEW_ANIMATED_MAX_BYTES = 20 * 1024 * 1024;
 export const SERVICE_PREVIEW_ANIMATED_MAX_FRAMES = 60;
+/**
+ * Accepted only on a deal whose preview kind is Video. The orchestrator transcodes and marks it,
+ * so type and size are bounded by what its blob upload takes.
+ */
+export const SERVICE_PREVIEW_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm'] as const;
+export const SERVICE_PREVIEW_VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+export const SERVICE_PREVIEW_VIDEO_WIDTH = 480;
+export const SERVICE_PREVIEW_VIDEO_MAX_SECONDS = 15;
+/** A video preview not yet transcoded this long after upload is failed rather than retried. */
+export const SERVICE_PREVIEW_VIDEO_GIVE_UP_MS = 45 * 60_000;
+export const isVideoPreviewMime = (mime: string | null | undefined) =>
+  !!mime && (SERVICE_PREVIEW_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
 /** Previews a seller may upload per round, by the deal's preview kind. */
 export const SERVICE_PREVIEW_MAX_FILES = {
   Image: 1,
@@ -93,9 +136,30 @@ export const SERVICE_PREVIEW_PROCESSING_STALE_MS = 10 * 60_000;
 /** A preview still not Ready this long after its upload is failed, so a delivery never hangs on it. */
 export const SERVICE_PREVIEW_GIVE_UP_MS = 6 * HOUR;
 
+/** A video Final is delivered bare: the scan reads the video file itself, never one inside a .zip. */
+export const SERVICE_FINAL_VIDEO_EXTENSIONS = ['mp4', 'webm'] as const;
+/**
+ * The scan samples one frame a second and stops at 50 frames, and nothing shows those 50 are spread
+ * over a longer video, so a longer one could carry content the scan never saw.
+ */
+export const SERVICE_FINAL_VIDEO_MAX_SECONDS = 50;
+/** The whole video is read into memory for its scan copy. */
+export const SERVICE_FINAL_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
+export const SERVICE_FINAL_VIDEO_HELP = `Videos: .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds and ${
+  SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)
+} MB, uploaded as the video file itself.`;
+export const SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR =
+  "This video's stated length doesn't match what it contains. Export it again and upload the new file.";
+export const SERVICE_FINAL_VIDEO_TOO_LONG = `Videos over ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds can't be delivered yet: they can't be checked in full.`;
+export const SERVICE_FINAL_VIDEO_IN_ZIP =
+  "Video can't be delivered inside a .zip. Upload the video file directly.";
+/** Why a Final rated above its deal's content level was refused. */
+export const SERVICE_FINAL_OVER_LEVEL_REASON =
+  "This file is rated above this deal's content level.";
+
 /**
  * What a seller may deliver as a Final. Everything else is refused up front: a file type we cannot
- * inspect is not delivered, and video is refused outright until it can be moderated. Archives are limited to .zip, the one format the unpack step reads;
+ * inspect is not delivered. Archives are limited to .zip, the one format the unpack step reads;
  * the rest (rar, 7z, tar and its compressions) cannot be enumerated here, so they are refused.
  */
 export const SERVICE_FINAL_EXTENSIONS = [
@@ -122,12 +186,11 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yaml',
   'yml',
   'csv',
+  ...SERVICE_FINAL_VIDEO_EXTENSIONS,
 ] as const;
-/**
- * The highest scan rating a preview may carry (PG-13). Services are SFW-only in v1; a preview above
- * this fails, and so does one the scan left unrated. Relaxing it is this one number.
- */
-export const SERVICE_PREVIEW_MAX_NSFW_LEVEL = 2;
+/** Why a preview rated above its deal's content level was refused. Shown to the seller and to moderators. */
+export const SERVICE_PREVIEW_OVER_LEVEL_REASON =
+  "This preview is rated above this deal's content level.";
 
 /**
  * The structured reasons a party may give when leaving a deal, one list per action. A muted party
@@ -175,7 +238,7 @@ export const SERVICE_ZIP_MAX_RATIO = 100;
 export const SERVICE_ZIP_RATIO_FLOOR_BYTES = 1024 * 1024;
 /** Image extensions inside a final. Anything else is judged by content, not by its name. */
 export const SERVICE_ZIP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'] as const;
-/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one is not content-sniffed. */
+/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one must be that format. */
 export const SERVICE_ZIP_MODEL_EXTENSIONS = [
   'safetensors',
   'ckpt',

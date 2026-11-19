@@ -30,8 +30,8 @@ where it loads on demand:
 - `packages/civitai-*` — shared workspace packages. `event-engine-common/` is a git submodule.
 - **Use X for Y** (`.claude/rules/server.md`) names the one helper per need (HTTP, rate limit, lock, cache, DB client, new query, feature flag, …); follow it over nearby code.
   Store choice: cache and rate-limit data go on `redis` with a TTL; `sysRedis` is durable state, not a cache, and takes no new key without sign-off; new durable data goes in Postgres.
-- Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed —
-  `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
+- Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed — `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
+- **Node→Go ports** (`ports/manifest.json`): before changing Node code run `node scripts/ports/touched.mjs <files>`; if the change alters what a touched endpoint returns, change its Go handler in the same PR (`AGENTS.md` → Endpoints ported to Go).
 
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
@@ -71,13 +71,13 @@ pnpm run test:packages:run # packages/*      pnpm run test:apps:run   # apps/*
 pnpm run test:component    # browser mode    pnpm run test:lint-rules # convention guards
 pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 ```
-- A test earns its place only if it can catch a bug a caller would notice; what that rules out is in
-  `.claude/rules/testing.md` → What earns a test.
+- A test earns its place only if it can catch a bug a caller would notice, and mocks only what crosses the
+  process boundary, never this repo's own modules: `.claude/rules/testing.md` → What earns a test.
 - The suites cover disjoint directories; `test:unit:run` runs nothing under `packages/` or `apps/`.
 - Select the unit suite as **`--project 'unit*'`** — `--project unit` silently skips the `unit-native`
   files and exits 0.
 - Run the suites covering your change while iterating (find them with
-  `grep -rln '<symbol>' src --include=*.test.ts`), then the full suite once before committing.
+  `grep -rln '<symbol>' src --include=*.test.ts`); the full suite runs in CI (`full-ci` label).
   `vitest related` does **not** narrow this codebase.
 - Run `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope
   constant — those convention guards are tests, not eslint rules.
@@ -121,7 +121,7 @@ anything committed counts as disclosed and must be fixed and rotated.
 1. `pnpm run prettier:write`
 2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
    and `pnpm run lint` locally — PR CI runs both on every PR to `main` (on a draft, ESLint only). (Typecheck can't be scoped to files.)
-3. The unit suite (`pnpm run test:unit:run`; PR CI does not run it unless the PR has the `full-ci` label: adding it starts the full
+3. The covering test files (the full unit suite runs only in CI, and PR CI runs it only with the `full-ci` label: adding it starts the full
    suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Add it only when needed (the change touches code the unit/component suites cover and the PR is near
    merge-ready), never on every PR: `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally

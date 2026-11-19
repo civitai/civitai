@@ -137,6 +137,7 @@
                 size={14}
                 class="mt-0.5 shrink-0 text-muted-foreground transition-transform {isOpen ? 'rotate-90' : ''}"
               />
+              {#if r.subject}<Badge variant="secondary" class="shrink-0">{r.subject}</Badge>{/if}
               <span class="min-w-0 wrap-break-word font-medium">
                 {reportReasonLabel(r.details, r.reason)}
               </span>

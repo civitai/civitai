@@ -23,6 +23,7 @@ const entry = (over: Partial<SemanticAuditEntry> = {}): SemanticAuditEntry => ({
   withholdIds: false,
   withholdComputedIds: false,
   resultsServed: true,
+  searchPath: 'served',
   guard: { outcome: 'pass', rules: [], mode: 'shadow', version: 'v1' },
   cacheHit: false,
   resultIds: SERVED,
@@ -59,6 +60,29 @@ describe('buildSemanticAuditRow', () => {
     expect(r.query).toBe('fox');
   });
 
+  it.each(['minor', 'minor-safe'] as const)(
+    'records the served ids of a search a %s verdict narrowed',
+    (wordVerdict) => {
+      const r = row(entry({ wordVerdict, searchPath: 'narrowed' }));
+      expect(r.resultIds).toEqual(SERVED.slice(0, 20));
+      expect(r.searchPath).toBe('narrowed');
+    }
+  );
+
+  it.each(['served', 'refused_query', 'refused_own_images'] as const)(
+    'stores no ids for a minor verdict on the %s path',
+    (searchPath) => {
+      expect(row(entry({ wordVerdict: 'minor', searchPath })).resultIds).toEqual([]);
+    }
+  );
+
+  it.each(['poi-minor', 'not-yet-a-verdict' as QueryRefusal] as const)(
+    'stores no ids for a search a %s verdict narrowed',
+    (wordVerdict) => {
+      expect(row(entry({ wordVerdict, searchPath: 'narrowed' })).resultIds).toEqual([]);
+    }
+  );
+
   it('stores no ids when an earlier verdict of the same search withheld them', () => {
     expect(row(entry({ wordVerdict: 'blocked', withholdIds: true })).resultIds).toEqual([]);
   });
@@ -77,6 +101,17 @@ describe('buildSemanticAuditRow', () => {
 
   it('stores no ids for any rule when the withheld list is unknown', () => {
     expect(row(entry({ guard: flag(['block:rule_b']) }), null).resultIds).toEqual([]);
+  });
+
+  it.each([
+    ['flag', flag([])],
+    ['unknown', GUARD_UNKNOWN],
+  ])('stores no ids for a %s guard that names no rule', (_, guard) => {
+    expect(row(entry({ guard }), []).resultIds).toEqual([]);
+  });
+
+  it('keeps the ids for a passing guard that names no rule', () => {
+    expect(row(entry({ guard: PASS }), []).resultIds).toEqual(SERVED.slice(0, 20));
   });
 
   describe('a refused search, run for review and never served', () => {
@@ -116,10 +151,6 @@ describe('buildSemanticAuditRow', () => {
 
     it('stores the ids past a known guard with no rule hit', () => {
       expect(row(computed({ wordVerdict: 'blocked' })).resultIds).toEqual(SERVED.slice(0, 20));
-    });
-
-    it('leaves a served row with an unknown guard as it was', () => {
-      expect(row(entry({ guard: GUARD_UNKNOWN })).resultIds).toEqual(SERVED.slice(0, 20));
     });
 
     it('sends no resultsServed key on a served row, so it works before the column exists', () => {
@@ -282,14 +313,16 @@ describe('semanticSearchAudit row ↔ DDL parity', () => {
       .filter((l) => l && !l.startsWith('--'))
       .map((l) => l.split(/\s+/)[0]);
     const added = [
-      ...migration('2026-11-15-semantic-search-audit-results-served.sql').matchAll(
-        /ADD COLUMN IF NOT EXISTS `(\w+)`/g
-      ),
-    ].map((m) => m[1]);
+      '2026-11-15-semantic-search-audit-results-served.sql',
+      '2026-11-18-semantic-search-audit-search-path.sql',
+    ].flatMap((name) =>
+      [...migration(name).matchAll(/ADD COLUMN IF NOT EXISTS `(\w+)`/g)].map((m) => m[1])
+    );
     expect(columns.length).toBeGreaterThan(10);
-    expect(added).toEqual(['resultsServed']);
-    // A served row writes the original columns only; a computed row adds the later one.
-    expect(new Set(Object.keys(row(entry())))).toEqual(new Set(columns));
+    expect(added).toEqual(['resultsServed', 'searchPath']);
+    // Every row writes searchPath, so its column goes in before the deploy; only a computed row
+    // writes resultsServed.
+    expect(new Set(Object.keys(row(entry())))).toEqual(new Set([...columns, 'searchPath']));
     const computedRow = row(entry({ resultsServed: false, wordVerdict: 'blocked' }));
     expect(new Set(Object.keys(computedRow))).toEqual(new Set([...columns, ...added]));
   });

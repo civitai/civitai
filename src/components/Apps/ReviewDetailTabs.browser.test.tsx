@@ -121,6 +121,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       }),
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
         previewRequest: { useMutation: mutation('preview') },
@@ -235,8 +236,8 @@ beforeEach(() => {
   router.pathname = '/apps/review/[publishRequestId]';
 });
 
-describe('the six tabs', () => {
-  test('🔴 all six render, in the ledger order', async () => {
+describe('the seven tabs', () => {
+  test('🔴 all seven render, in the ledger order', async () => {
     render();
     await expect.element(page.getByTestId('apps-review-detail-tabs')).toBeInTheDocument();
     const labels = Array.from(document.querySelectorAll('[role="tab"]')).map((el) =>

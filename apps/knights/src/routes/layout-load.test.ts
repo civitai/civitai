@@ -23,6 +23,7 @@ const feedbackEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
 const rankBadgeUrls = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => ({}) }));
 
 const { load } = await import('./+layout.server');
 

@@ -11,8 +11,9 @@ import {
 import {
   useImageFeedSearchQuery,
   useImageFeedSearchSort,
+  useImageFeedSimilarTo,
 } from '~/components/Image/Infinite/useImageFeedSearch';
-import { Tooltip } from '~/components/MantineOverlays';
+import { SearchLock, SearchSortLock } from '~/components/Search/SearchSortLock';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SortFilter } from '../SortFilter';
@@ -30,18 +31,25 @@ export function ImageFeedFilters({
 }: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
   const currentUser = useCurrentUser();
   const searchQuery = useImageFeedSearchQuery();
+  const similarTo = useImageFeedSimilarTo();
+  const searching = !!searchQuery || !!similarTo;
   const searchSort = useImageFeedSearchSort();
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser &&
-        (searchQuery ? (
-          // The search doesn't narrow by audience, so the selector waits until it's cleared.
-          <Tooltip label="Clear the search to filter by who posted" withArrow>
-            <div>
-              <FollowedFilter type="images" variant="button" buttonProps={{ disabled: true }} />
-            </div>
-          </Tooltip>
+        (searching ? (
+          // The search doesn't narrow by audience, so it reads Everyone, whatever the feed's saved
+          // audience is; that comes back once the search is cleared.
+          <SearchLock reason="Clear the search to filter by who posted">
+            <FollowedFilter
+              type="images"
+              variant="button"
+              value="false"
+              onChange={() => undefined}
+              buttonProps={{ disabled: true }}
+            />
+          </SearchLock>
         ) : (
           <FollowedFilter type="images" variant="button" />
         ))}
@@ -52,20 +60,10 @@ export function ImageFeedFilters({
           options={searchSortOptions}
           onClick={(value) => searchSort.setSort(value === 'newest' ? value : undefined)}
         />
-      ) : searchQuery ? (
-        // Without the Newest flag the search ranks by match only; a feed sort would be a promise it
+      ) : searching ? (
+        // Without the Newest flag (and always for "more like this") the search ranks by match only; a feed sort would be a promise it
         // can't keep.
-        <Tooltip label="Clear the search to sort the feed" withArrow>
-          <div>
-            <SelectMenuV2
-              label="Best match"
-              value="best-match"
-              options={[{ label: 'Best match', value: 'best-match' }]}
-              onClick={() => undefined}
-              disabled
-            />
-          </div>
-        </Tooltip>
+        <SearchSortLock />
       ) : (
         <SortFilter type="images" />
       )}
@@ -75,7 +73,7 @@ export function ImageFeedFilters({
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}
         unavailable={
-          searchQuery
+          searching
             ? {
                 title: 'Not available while searching',
                 reason: IMAGE_FEED_SEARCH_UNAVAILABLE_REASON,

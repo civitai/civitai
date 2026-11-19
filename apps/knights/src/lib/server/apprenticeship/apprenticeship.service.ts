@@ -20,7 +20,7 @@ import {
 } from '../smites/smites.service';
 import { YESNO_ANSWERS } from '../yesno/keys';
 import { answerImageJoin, answerQuestionKey, pairPrompt } from './answer-snapshot';
-import { APPRENTICE } from './config';
+import { APPRENTICE, type ApprenticeSettings } from './config';
 import {
   accuracyOf,
   chooseSource,
@@ -38,6 +38,8 @@ export type ApprenticeDeps = {
   mirrorXp?: XpMirror;
   /** Starts the career reset an answer's third smite makes due; without it the tick does. */
   resetPlayer?: ResetDeps['resetPlayer'];
+  /** Without it, smites are on. */
+  settings?: () => ApprenticeSettings | Promise<ApprenticeSettings>;
 };
 
 export type ItemKind = 'rating' | 'yesno';
@@ -279,18 +281,25 @@ async function findNext(db: Executor, playerId: number): Promise<NextItem | null
         .executeTakeFirstOrThrow()
     ).n
   );
-  const [core, rating, yesNo] = await Promise.all([
+  const [core, yesNo] = await Promise.all([
     nextRating(db, playerId, position, true),
-    nextRating(db, playerId, position, false),
     nextYesNo(db, playerId, position),
   ]);
+  // Harvested references only once the player has answered every core one.
+  const rating = core ? null : await nextRating(db, playerId, position, false);
   const source: Source | null = chooseSource({
     position,
     core: !!core,
     rating: !!rating,
     yesNo: !!yesNo,
   });
-  return source === 'core' ? core : source === 'rating' ? rating : source === 'yesno' ? yesNo : null;
+  return source === 'core'
+    ? core
+    : source === 'rating'
+    ? rating
+    : source === 'yesno'
+    ? yesNo
+    : null;
 }
 
 const labelOf = (options: QuestionOption[], value: string) =>
@@ -383,6 +392,7 @@ export async function answerApprentice(
 ): Promise<AnswerResult> {
   const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
+  const smites = (await deps.settings?.())?.smites ?? true;
 
   const result = await db.transaction().execute(async (trx): Promise<TxResult> => {
     // The player row lock serialises one player's answers, so the item check below and the insert cannot interleave.
@@ -470,7 +480,7 @@ export async function answerApprentice(
       }
     }
     let resetDue = false;
-    if (!correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
+    if (smites && !correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
       const active = await issueSmite(trx, {
         playerId: userId,
         reason: ACOLYTE_WRONG_ANSWER_SMITE,

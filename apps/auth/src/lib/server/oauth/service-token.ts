@@ -105,12 +105,12 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid) return refuse('invalid_scope', 'unparseable scope');
-      if ((requested.scope & ~entry.scopes) !== 0) {
+      if ((requested.scope & ~entry.scopes) !== 0n) {
         return refuse('invalid_scope', 'scope outside entry');
       }
       scope = requested.scope;
     }
-    if (scope === 0) return refuse('invalid_scope', 'empty scope');
+    if (scope === 0n) return refuse('invalid_scope', 'empty scope');
     ctx.scope = scopeNames(scope);
 
     const issuer = env.AUTH_JWT_ISSUER;

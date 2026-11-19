@@ -87,7 +87,7 @@ import { buildReport } from '@civitai/cybertipline-tools';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport } from '~/server/services/csam.service-new';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents, foldContextText } from '~/server/services/csam-context-text';
 import { logToAxiom } from '~/server/logging/client';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -123,6 +123,18 @@ const contextText: CsamContextText[] = [
     authorIsReportedUser: false,
     postedAt: '2026-10-03T14:05:00.000Z',
     text: 'a & b',
+    capturedAt: '2026-10-08T14:05:00.000Z',
+    capturedById: 10,
+  },
+  {
+    source: 'postText',
+    id: 7,
+    postId: 100,
+    index: 1,
+    authorId: 20,
+    authorIsReportedUser: true,
+    postedAt: '2026-10-02T08:31:00.000Z',
+    text: 'held <i>words</i> & more',
     capturedAt: '2026-10-08T14:05:00.000Z',
     capturedById: 10,
   },
@@ -217,6 +229,9 @@ describe('attached text on an image report', () => {
     const received = incidents.map((i) => ({ url: i.url[0], additionalInfo: i.additionalInfo[0] }));
     expect(received).toEqual(contextWebPageIncidents(contextText));
     expect(received[0].additionalInfo).toContain('R&D <b>bold</b> > less');
+    expect(received[0].additionalInfo).toContain(
+      'Text item 7 of this post, posted 10/02/2026 08:31 UTC by the reported account. Not reviewed by Civitai:\n"held <i>words</i> & more"'
+    );
     // XML cannot carry the NUL, bell or lone surrogate: they arrive as U+FFFD.
     expect(received[0].additionalInfo).toContain('nul\uFFFD bell\uFFFD lone\uFFFD surrogate');
     expect(incidents.every((i) => i.$.thirdPartyHostedContent === 'false')).toBe(true);
@@ -234,6 +249,41 @@ describe('attached text on an image report', () => {
         .mocked(logToAxiom)
         .mock.calls.some(([line]) => (line as { subType?: string }).subType === 'send-xml')
     ).toBe(true);
+  });
+
+  it('sends both captures of an item edited between two filings that folded together', async () => {
+    const held = contextText.find((c) => c.source === 'postText')!;
+    const edited = { ...held, text: 'the edited words', capturedAt: '2026-10-12T09:00:00.000Z' };
+    await send({ contextText: foldContextText([held], [edited]) });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const doc = await parsed(buildReport(submitReport.mock.calls[0][0]));
+    const infos = (
+      doc.report.internetDetails.flatMap(
+        (d: { webPageIncident: unknown[] }) => d.webPageIncident
+      ) as {
+        additionalInfo: string[];
+      }[]
+    ).map((i) => i.additionalInfo[0]);
+    expect(infos).toHaveLength(2);
+    expect(infos.filter((info) => info.includes('held <i>words</i> & more'))).toHaveLength(1);
+    expect(infos.filter((info) => info.includes('the edited words'))).toHaveLength(1);
+  });
+
+  it('never sends the internal record of identical re-files', async () => {
+    const marker = 'refile-marker-item:99';
+    await send({
+      contextText,
+      identicalRefiles: [{ filedById: 10, at: '2026-10-12T09:00:00.000Z', item: marker }],
+    });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const sent = submitReport.mock.calls[0][0];
+    const xml = buildReport(sent);
+    expect(JSON.stringify(sent)).not.toContain(marker);
+    expect(JSON.stringify(sent)).not.toContain('identicalRefiles');
+    expect(xml).not.toContain(marker);
+    expect(xml).toContain('held &lt;i&gt;words');
   });
 
   it('adds no page incident to a report with no attached text', async () => {

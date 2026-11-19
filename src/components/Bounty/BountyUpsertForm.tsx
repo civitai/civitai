@@ -270,7 +270,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     const filteredImages = bounty ? [...bountyImages, ...completedUploads] : completedUploads;
     const { startsAt, expiresAt, ...rest } = data;
 
-    if (filteredImages.length === 0) {
+    if (!bounty && filteredImages.length === 0) {
       return setImagesError('At least one example image must be uploaded');
     }
 
@@ -283,6 +283,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           startsAt: stripTime(startsAt),
           expiresAt: stripTime(expiresAt),
           images: filteredImages,
+          shownImageIds: bounty?.images.map((image) => image.id),
         };
         // A new Buzz bounty: one key per submission (its content), held across a failure that
         // may have charged, so submitting it again is the same bounty, charged once. The key's

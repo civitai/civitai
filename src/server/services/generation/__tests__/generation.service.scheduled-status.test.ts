@@ -76,6 +76,16 @@ const mod = { id: 123, isModerator: true };
 const normalUser = { id: 123, isModerator: false };
 const owner = { id: OWNER_ID, isModerator: false };
 
+describe('getResourceCanGenerate — unpublished training versions (epochs)', () => {
+  it.each(['Training', 'Draft'])('lets the owner generate with a %s version', (status) => {
+    expect(canGenerate(status, owner)).toBe(true);
+  });
+
+  it.each(['Training', 'Draft'])("refuses another user's %s version", (status) => {
+    expect(canGenerate(status, normalUser)).toBe(false);
+  });
+});
+
 describe('getResourceCanGenerate — Scheduled status', () => {
   it('lets a moderator generate with a scheduled version', () => {
     expect(canGenerate('Scheduled', mod)).toBe(true);

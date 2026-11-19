@@ -19,8 +19,14 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListing: { updateMany: ReturnType<typeof vi.fn> };
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
+  appBlock: {
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appBlockPublishRequest: { create: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
 };
@@ -32,8 +38,17 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListing: { updateMany: vi.fn(async () => ({ count: 1 })) },
-    appBlock: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlock: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-reset', status: 'suspended' })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
@@ -53,6 +68,9 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));
@@ -124,6 +142,13 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite));
   mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockWrite.$queryRaw.mockReset().mockResolvedValue([]);
+  mockWrite.appBlock.findUnique
+    .mockReset()
+    .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
+  mockWrite.appBlock.count.mockReset().mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockReset().mockResolvedValue([{ userId: 7 }]);
+  mockWrite.apiKey.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlockPublishRequest.create
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
@@ -146,11 +171,20 @@ describe('resetOnsiteListingToPending', () => {
       where: { id: 'apl_1', kind: 'onsite', status: 'approved' },
       data: { status: 'pending' },
     });
-    // (2) backing block approved → suspended (the real runtime stop).
+    // (2) backing block approved → suspended (the real runtime stop), and its app tokens go.
     expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
       where: { id: 'apb_1', status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-reset', type: { in: ['Access', 'Refresh'] } },
+    });
+    // The client's block rows are locked before the flip, so a concurrent suspension waits on it.
+    expect(mockWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    const orchestrator = await import('~/server/services/orchestrator/civitai');
+    expect(orchestrator.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 7 });
     // (3) fresh pending block publish request cloned from the last approved (owner-owned).
     const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
     expect(reqArg).toMatchObject({

@@ -20,6 +20,7 @@ import {
   sanitizeImageUploadRelayProducer,
   type ImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // FALLBACK upload path, for clients that cannot reach the storage host directly.
 //
@@ -314,7 +315,10 @@ export async function authorizeRelayRequest(
     return { outcome: 'forbidden_origin' };
   }
 
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+  );
   if (session === false) return { outcome: 'unauthorized' };
   const userId = session?.user?.id;
   if (!userId) {

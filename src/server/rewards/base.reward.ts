@@ -804,9 +804,11 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
       name: 'buzz-rewards',
       type: 'error',
       message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
-      clampedEvents: clamped,
-      batchSize: events.length,
-      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
+      payload: {
+        clampedEvents: clamped,
+        batchSize: events.length,
+        clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
+      },
     });
   }
 

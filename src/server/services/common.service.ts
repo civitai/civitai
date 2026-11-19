@@ -3,7 +3,9 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { isPaidAccessActive } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { REVOCATIONS_KEY } from '~/server/services/model-version-access.service';
 import { getPaidAccess } from '~/server/services/paid-access.service';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { lookupModelVersionAccess, modelVersionAccessCache } from '~/server/redis/caches';
 import type { SupportedAvailabilityResources } from '../schema/base.schema';
 
@@ -191,7 +193,15 @@ export const hasEntityAccess = async ({
     SELECT
       ea."accessToId" "entityId",
       ${
-        !!permissions ? Prisma.sql`(${permissions} & ea."permissions") != 0` : Prisma.sql`true`
+        !!permissions
+          ? Prisma.sql`(${permissions} & ea."permissions") != 0`
+          : entityType === 'ModelVersion'
+          ? // A moderator's revoke keeps the row, with no permissions, as the purchase record. Only
+            // such a row is refused: grants from before permissions existed hold 0 and still count.
+            Prisma.sql`(ea."permissions" != 0 OR NOT (${asJsonbObjectSql(
+              'ea."meta"'
+            )} ? ${REVOCATIONS_KEY}::text))`
+          : Prisma.sql`true`
       } as "hasAccess",
       ea."permissions",
       ea."meta"

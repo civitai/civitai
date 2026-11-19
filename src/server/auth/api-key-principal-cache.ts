@@ -61,7 +61,14 @@ const CACHE_NAME = 'api-key-principal';
 export type CachedApiKey = {
   id: number;
   userId: number;
+  /** `ApiKey.tokenScope`, the low 31 bits of the scope. */
   tokenScope: number;
+  /**
+   * `ApiKey.tokenScopeWide` as a number (every scope bit is below 2^53, so this is lossless), so the
+   * entry keeps the shape a pod on the previous build reads. Absent from entries such a pod wrote.
+   * Read the scope with `readApiKeyScope`.
+   */
+  tokenScopeWide?: number | null;
   lastUsedAt: Date | null;
   buzzLimit: unknown;
   clientId: string | null;

@@ -2,6 +2,44 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { ChatDmPolicy } from '~/server/schema/chat.schema';
 import { inboxStatuses } from '~/shared/utils/chat';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
+
+type ReadWindowMember = {
+  status: ChatMemberStatus;
+  leftAt?: Date | null;
+  kickedAt?: Date | null;
+  clearedAt?: Date | null;
+};
+export type ReadWindow = { lt?: Date; gt?: Date };
+
+/**
+ * The messages a member may read: up to when they left or were kicked, after
+ * their delete watermark. Ignored reads nothing until they unarchive; someone
+ * not in the chat reads nothing.
+ */
+export function memberReadWindow(member: ReadWindowMember | undefined): ReadWindow {
+  const window: ReadWindow = {};
+  const never = new Date(0);
+  if (!member) window.lt = never;
+  else if (member.status === ChatMemberStatus.Left) window.lt = member.leftAt ?? never;
+  else if (member.status === ChatMemberStatus.Kicked) window.lt = member.kickedAt ?? never;
+  else if (member.status === ChatMemberStatus.Ignored) window.lt = never;
+  if (member?.clearedAt) window.gt = member.clearedAt;
+  return window;
+}
+
+/**
+ * The window for a chat-list preview. As the history, except an Ignored member
+ * keeps their preview: archiving is their own choice and Unarchive reverses it.
+ */
+export function memberPreviewWindow(member: ReadWindowMember | undefined): ReadWindow {
+  return member?.status === ChatMemberStatus.Ignored
+    ? memberReadWindow({ ...member, status: ChatMemberStatus.Joined })
+    : memberReadWindow(member);
+}
+
+export const inReadWindow = ({ lt, gt }: ReadWindow, createdAt: Date) =>
+  (!lt || createdAt < lt) && (!gt || createdAt > gt);
 
 export type DmRouting = 'accept' | 'filter' | 'refuse';
 

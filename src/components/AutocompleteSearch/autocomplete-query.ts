@@ -149,16 +149,22 @@ export function nextFeedSearchQuery(
   current: ParsedUrlQuery,
   search: string,
   /** The user filter this bar's own `@user` token set last, if it is still on the URL. */
-  typedUsername?: string
+  typedUsername?: string,
+  /** `username` is the route's (a creator's profile): an `@user` token can't move the page off it. */
+  usernameInRoute = false
 ) {
   const { query, username } = parseFeedSearch(search);
   const currentQuery = typeof current.query === 'string' ? current.query : undefined;
   const currentUsername = typeof current.username === 'string' ? current.username : undefined;
   // A user filter the bar set goes when its token is deleted; one set anywhere else stays.
-  const nextUsername =
-    username ?? (typedUsername && currentUsername === typedUsername ? undefined : currentUsername);
+  const nextUsername = usernameInRoute
+    ? currentUsername
+    : username ??
+      (typedUsername && currentUsername === typedUsername ? undefined : currentUsername);
   if (query === currentQuery && nextUsername === currentUsername) return null;
-  return removeEmpty({ ...current, query, username: nextUsername }) as ParsedUrlQuery;
+  // A typed query replaces a "more like this".
+  const similarTo = query ? undefined : current.similarTo;
+  return removeEmpty({ ...current, query, username: nextUsername, similarTo }) as ParsedUrlQuery;
 }
 
 /** The feed URL a header search lands on, given the feed that answers `?query=` for its index. */

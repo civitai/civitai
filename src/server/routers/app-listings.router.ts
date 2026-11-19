@@ -461,6 +461,8 @@ function mapSubListingError(err: unknown): TRPCError {
  */
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'PublishRequestHeldError')
+    return new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message, cause: err });
   if (
     err instanceof Error &&
     (err.name === 'OffsiteRequestError' ||
@@ -936,6 +938,7 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           userId: ctx.user.id,
           isModerator: actsAsModerator(ctx),
+          readOnly: input.readOnly,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -1452,6 +1455,8 @@ export const appListingsRouter = router({
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
           mediaSplit: input.mediaSplit,
+          holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -2042,20 +2047,22 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listAvailableListings } = await import(
-        '~/server/services/blocks/app-listing.service'
+      const { listStoreGrid } = await import('~/server/services/blocks/app-index-search.service');
+      return listStoreGrid(
+        input,
+        {
+          redCapable: isRedCapableRequest(ctx),
+          scope,
+          floor,
+          viewer: listingViewerFromCtx(ctx),
+          // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
+          // `SubListingCard` just because the viewer has the flag.
+          includeSubListings:
+            input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        },
+        { indexSearch: !!ctx.features?.appIndexSearch }
       );
-      return listAvailableListings(input, {
-        redCapable: isRedCapableRequest(ctx),
-        scope,
-        floor,
-        viewer: listingViewerFromCtx(ctx),
-        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
-        // `SubListingCard` just because the viewer has the flag.
-        includeSubListings:
-          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
-        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-      });
     }),
 
   /**

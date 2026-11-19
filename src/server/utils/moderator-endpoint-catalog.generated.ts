@@ -41,6 +41,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/creator-services/resolve-dispute': () =>
     import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
+  '/api/mod/feedback/ticket-bug': () => import('~/pages/api/mod/feedback/ticket-bug'),
+  '/api/mod/feedback/triage': () => import('~/pages/api/mod/feedback/triage'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
   '/api/mod/homeblock/reorder': () => import('~/pages/api/mod/homeblock/reorder'),
@@ -80,6 +82,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
   '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
+  '/api/mod/post-text/moderate': () => import('~/pages/api/mod/post-text/moderate'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review-batches': () => import('~/pages/api/mod/review-batches'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
@@ -93,8 +96,13 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/strike/get-user-strikes': () => import('~/pages/api/mod/strike/get-user-strikes'),
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),
   '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
+  '/api/mod/text-scan/csam-hold/mark-reported': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/mark-reported'),
+  '/api/mod/text-scan/csam-hold/refer': () => import('~/pages/api/mod/text-scan/csam-hold/refer'),
   '/api/mod/text-scan/csam-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
+  '/api/mod/text-scan/csam-hold/set-report-choice': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/set-report-choice'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),

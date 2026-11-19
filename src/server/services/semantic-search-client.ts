@@ -9,13 +9,16 @@ export const MAX_HITS_PER_USER = 3;
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
-const MAX_HYDRATION_BATCH = 100;
+// The search service's page maximum (a larger `limit` is an error, not a short page), and so the
+// most candidates hydrated per round: each round is one id-list query on the page's fetch path.
+export const MAX_CANDIDATE_LIMIT = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
+// Above the search service's own orchestrator wait, so a slow image embed is not paid twice.
+const SIMILAR_IMAGE_TIMEOUT_MS = 35_000;
 
 /**
  * The viewer's content gate, which every query carries. Challenges and crucibles rate the entity
@@ -41,13 +44,15 @@ const GATE_KIND = {
   comics: 'level',
   models3d: 'level',
   storylines: 'level',
+  collections: 'level',
+  bounties: 'level',
   challenges: 'challenge',
   crucibles: 'crucible',
 } as const satisfies Record<string, ViewerGate['kind']>;
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number };
+export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -60,9 +65,13 @@ export type CandidateFilter = {
   excludedTagIds?: number[];
   userIds?: number[];
   excludedUserIds?: number[];
+  // Only these points: the viewer's own short list, so the ranking is within it.
+  ids?: number[];
   excludedIds?: number[];
   // Payload key → the point matches any of the values.
   anyOf?: Record<string, PayloadValue[] | undefined>;
+  // A full-text payload index on `key` holds every word of `text` (Qdrant's text match).
+  allWords?: { key: string; text: string };
   range?: { key: string; gte?: string | number; lte?: string | number };
   mustNot?: QdrantCondition[];
 };
@@ -120,6 +129,8 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   const { must, must_not } = gateConditions(collection, f.gate);
   for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
   if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
+  if (f.ids?.length) must.push({ has_id: f.ids });
+  if (f.allWords?.text.trim()) must.push({ key: f.allWords.key, match: { text: f.allWords.text } });
   for (const [key, values] of Object.entries(f.anyOf ?? {}))
     if (values?.length) must.push({ key, match: { any: values } });
   if (f.range && (f.range.gte !== undefined || f.range.lte !== undefined))
@@ -192,13 +203,14 @@ async function searchServiceRequest<T>(
   path: string,
   body: unknown,
   notFound: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  timeoutMs = SEARCH_SERVICE_TIMEOUT_MS
 ): Promise<T> {
   const res = await fetch(searchServiceUrl(path), {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...searchServiceAuth(), ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((err) => {
     throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Search is unavailable', cause: err });
   });
@@ -218,7 +230,8 @@ function requestIdHeader(): Record<string, string> {
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
- * the index lags Postgres, so hydration decides what is shown.
+ * the index lags Postgres, so hydration decides what is shown. `limit` is at most
+ * MAX_CANDIDATE_LIMIT; the candidate cache in front of it pages larger ranges in blocks of that size.
  */
 export function searchServiceSource(
   collection: SearchCollection,
@@ -247,6 +260,24 @@ export function searchServiceSource(
         headers
       );
       return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
+    }
+    if ('imageUrl' in query) {
+      // The caller has scanned and rated the image (the search upload gate) before sending it.
+      const { hits } = await searchServiceRequest<{ hits: { id: number | string }[] }>(
+        '/v1/similar',
+        {
+          collection,
+          image_url: query.imageUrl,
+          filter: qdrantFilter,
+          offset,
+          limit,
+          ...(audit ? { browsing_levels: filter.gate.nsfwLevels } : {}),
+        },
+        notFoundMessage,
+        headers,
+        SIMILAR_IMAGE_TIMEOUT_MS
+      );
+      return { ids: hits.map((h) => Number(h.id)), guard: GUARD_NONE };
     }
 
     const { corrected, changes, hits, guard } = await searchServiceRequest<{
@@ -277,6 +308,61 @@ export function searchServiceSource(
       guard: readGuard(guard),
     };
   };
+}
+
+// Cap on the matches ranked ahead of the rest of a text search.
+const MAX_FIRST_MATCHES = 200;
+
+/**
+ * Text candidates with the points `narrow` admits first (in their own similarity order), then the
+ * rest of the semantic ranking without them. The matches are fetched once per source and reused
+ * for every later block, so make one per request.
+ */
+function withMatchesFirst(
+  source: CandidateSource,
+  narrow: (filter: CandidateFilter, text: string) => CandidateFilter
+): CandidateSource {
+  let matches: ReturnType<CandidateSource> | undefined;
+  return async (args) => {
+    if (!('text' in args.query) || !args.query.text.trim()) return source(args);
+    matches ??= source({
+      ...args,
+      filter: narrow(args.filter, args.query.text),
+      offset: 0,
+      limit: MAX_FIRST_MATCHES,
+    });
+    const first = await matches;
+    const rest = (offset: number, limit: number) =>
+      source({
+        ...args,
+        filter: { ...args.filter, excludedIds: [...(args.filter.excludedIds ?? []), ...first.ids] },
+        offset,
+        limit,
+      });
+    if (args.offset >= first.ids.length) return rest(args.offset - first.ids.length, args.limit);
+    const head = first.ids.slice(args.offset, args.offset + args.limit);
+    const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
+    return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
+  };
+}
+
+/**
+ * The points holding every query word in `key` first. Embeddings rank meaning, so a query that is a
+ * model's name, or a word of it, otherwise loses to look-alike names and spellings.
+ */
+export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+  return withMatchesFirst(source, (filter, text) => ({ ...filter, allWords: { key, text } }));
+}
+
+/**
+ * The points carrying `tagId` first. A rare term embeds as its nearest common concept (a tiefling
+ * as horns), so the images tagged with it lose to unrelated ones that share that concept.
+ */
+export function withTagMatchesFirst(source: CandidateSource, tagId: number): CandidateSource {
+  return withMatchesFirst(source, (filter) => ({
+    ...filter,
+    tagIds: [...new Set([...(filter.tagIds ?? []), tagId])],
+  }));
 }
 
 /** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */
@@ -361,7 +447,7 @@ export async function collectPage<T extends { id: number }>({
   for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {

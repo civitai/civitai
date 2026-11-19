@@ -736,8 +736,12 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
+  confirmedStepSubmitTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
   mediaVerdictTotal: Counter<string>;
+  mediaServingDegradedTotal: Counter<string>;
+  mediaInputRefusedTotal: Counter<string>;
+  unlockChargedNotReleasedTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -751,6 +755,7 @@ type Bundle = {
   docStoreEnabled: Gauge<string>;
   postSubjectRefusalsTotal: Counter<string>;
   rateLimitRefusalsTotal: Counter<string>;
+  docStoreUnchangedWritesTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1080,6 +1085,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['kind']
   );
 
+  const confirmedStepSubmitTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_confirmed_step_submit_total',
+    'Confirmed pass-through step submits that reached the orchestrator, per app (app_block_id, `dev` for dev tokens) and by how the viewer consented: consent=click (the per-job confirm) or consent=standing (their per-app opt-in, within their daily limit).',
+    ['app_block_id', 'consent']
+  );
+
   // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
   // One increment per App Blocks workflow whose terminal poll first observed
   // `succeeded` while at least one bridge-submitted MEDIA step succeeded with no
@@ -1120,6 +1132,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_media_verdict_total',
     'App Block workflow media decisions, one per item judged for a viewer: at the media route (each fetch) and in GET_WORKFLOW_MEDIA (each ref). verdict = served | pending | hidden. reason = the hidden reason (blocked, above_level, unknown_rating, unrated, owner_only, private, paused, unrecognised_url, invalid), or none. Its own denominator: the share hidden is hidden / sum over verdicts.',
     ['surface', 'verdict', 'reason']
+  );
+
+  // Expected flat zero for eval_failed: a nonzero rate is a pod restricting every App Block media
+  // output because it has no flag answer (an evaluation error, or no Flipt client). Closed labels,
+  // published at 0 by seedAppBlockMediaMetrics.
+  const mediaServingDegradedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_serving_degraded_total',
+    'App Block host media serve decisions made without a full answer, one per decision. reason = eval_failed (no flag evaluation: an error, or a Flipt client that never started; every media output is restricted and unlocks are refused) | no_session (the viewer session did not resolve; judged as signed out). eval_failed is expected to be zero. Every reason is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['reason']
+  );
+
+  // The workflow-input guard's refusals (block-media-input-guard.ts), beside its log line.
+  const mediaInputRefusedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_input_refused_total',
+    'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['phase']
+  );
+
+  // Beside the `app-block-unlock-charged-not-released` WARN: an unlock that charged and did not
+  // release the output. Expected flat zero; published at 0 by seedAppBlockMediaMetrics.
+  const unlockChargedNotReleasedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_charged_not_released_total',
+    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the read-back after the lift succeeded and the output was not released | failed = the read-back itself failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['read_back']
   );
 
   const outputTruncatedTotal = getOrCreateCounter(
@@ -1348,6 +1387,20 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['app_block_id', 'surface', 'bucket']
   );
 
+  // ── DOC STORE: UNCHANGED SHARED WRITES ──────────────────────────────────────
+  // One increment per shared PUT answered for free because it would change no stored row
+  // (`putIfUnchanged`, behind `app-blocks-storage-unchanged-writes-free`): no shared-write token,
+  // no moderation scan. Read it against the shared writes that did land to see what the flag saves.
+  // ONE recorder (`recordDocStoreUnchangedWrite`), called from the route's free path only.
+  // Cardinality: app (approved apps + 'dev' via `blockClaimsAppLabel`, 'other' without claims); no
+  // other label, nothing from request input.
+  const docStoreUnchangedWritesTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_unchanged_writes_total',
+    'App Blocks document-store shared PUTs answered without writing because they would change no stored row (same content hash and index rows as the caller\'s own stored document), by app. Each spent no shared-write budget token and ran no moderation scan. Only while app-blocks-storage-unchanged-writes-free is on for the app. app_block_id="dev" is every dev token. Each child is born at 1 on its pod\'s first free write, so increase()/rate() miss it: read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['app_block_id']
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1573,8 +1626,12 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
+    confirmedStepSubmitTotal,
     succeededWithoutMediaTotal,
     mediaVerdictTotal,
+    mediaServingDegradedTotal,
+    mediaInputRefusedTotal,
+    unlockChargedNotReleasedTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1588,6 +1645,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     docStoreEnabled,
     postSubjectRefusalsTotal,
     rateLimitRefusalsTotal,
+    docStoreUnchangedWritesTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -1828,6 +1886,20 @@ export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind)
   }
 }
 
+export function recordConfirmedStepSubmit(
+  appBlockIdLabel: string,
+  consent: 'click' | 'standing'
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().confirmedStepSubmitTotal.inc({
+      app_block_id: appBlockIdLabel,
+      consent,
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
 /**
  * Fail-soft emit of one succeeded-without-media workflow (see the counter). Called
  * from `blocks.pollWorkflow` only when the transition-only status write reported
@@ -1857,6 +1929,61 @@ export function recordBlockMediaVerdict(
     ensureRegisterAppBlockRuntimeMetrics().mediaVerdictTotal.inc({ surface, verdict, reason });
   } catch {
     /* instrument-only */
+  }
+}
+
+export const BLOCK_MEDIA_SERVING_DEGRADED_REASONS = ['eval_failed', 'no_session'] as const;
+export const BLOCK_MEDIA_INPUT_REFUSED_PHASES = ['estimate', 'submit'] as const;
+export const BLOCK_UNLOCK_READ_BACK_OUTCOMES = ['ok', 'failed'] as const;
+
+/** Fail-soft emit of one degraded App Block serve decision (see the counter). */
+export function recordBlockMediaServingDegraded(
+  reason: (typeof BLOCK_MEDIA_SERVING_DEGRADED_REASONS)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaServingDegradedTotal.inc({ reason });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of one refused workflow body (see the counter). */
+export function recordBlockMediaInputRefused(
+  phase: (typeof BLOCK_MEDIA_INPUT_REFUSED_PHASES)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaInputRefusedTotal.inc({ phase });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of one unlock that charged and did not release the output (see the counter). */
+export function recordBlockUnlockChargedNotReleased(readBackFailed: boolean): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockChargedNotReleasedTotal.inc({
+      read_back: readBackFailed ? 'failed' : 'ok',
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * Publishes the host-media safety counters at 0 for every label, so a series that never fired is
+ * distinguishable from one that is not deployed. Idempotent; /api/metrics calls it on every scrape.
+ */
+export function seedAppBlockMediaMetrics(reg: Registry = client.register): void {
+  try {
+    const { mediaServingDegradedTotal, mediaInputRefusedTotal, unlockChargedNotReleasedTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
+    for (const reason of BLOCK_MEDIA_SERVING_DEGRADED_REASONS)
+      mediaServingDegradedTotal.inc({ reason }, 0);
+    for (const phase of BLOCK_MEDIA_INPUT_REFUSED_PHASES) mediaInputRefusedTotal.inc({ phase }, 0);
+    for (const read_back of BLOCK_UNLOCK_READ_BACK_OUTCOMES)
+      unlockChargedNotReleasedTotal.inc({ read_back }, 0);
+  } catch {
+    // Seeding is a readability nicety; losing it must not cost the scrape.
   }
 }
 
@@ -2023,6 +2150,17 @@ export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApi
     ensureRegisterAppBlockRuntimeMetrics().docStoreErrorsTotal.inc({ endpoint, code });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/** One shared PUT answered without writing (`putIfUnchanged`). Total. */
+export function recordDocStoreUnchangedWrite(appBlockIdLabel: string): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().docStoreUnchangedWritesTotal.inc({
+      app_block_id: appBlockIdLabel,
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a write's reply */
   }
 }
 

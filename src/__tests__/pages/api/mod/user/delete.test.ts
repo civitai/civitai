@@ -471,7 +471,7 @@ describe('user.delete — API keys', () => {
   // The refusals here come from `defineModeratorEndpoint`'s credential rule, pinned in
   // `moderator-rest-wrappers.credential-requirements.test.ts`. These cases hold this route to it.
   const MODERATOR = { id: 990000007, isModerator: true, permissions: [], bannedAt: null };
-  const asBearer = (tokenScope: number) => {
+  const asBearer = (tokenScope: bigint) => {
     bearerSession.value = { user: MODERATOR, ...PERSONAL_KEY, tokenScope };
     return call({ userId: TARGET, username: NAME }, { authorization: 'Bearer key' });
   };

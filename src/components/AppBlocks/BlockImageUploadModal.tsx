@@ -60,6 +60,10 @@ export type BlockUploadedImageInfo = {
   url: string;
 };
 
+/** Shown for shared and unshared uploads alike: the server scans and SFW-gates both. */
+const SCAN_COPY =
+  'Civitai scans every image you upload here, shared or not, so it must be safe-for-work.';
+
 type UploadStatus = 'idle' | 'uploading' | 'scanning' | 'ready' | 'error';
 
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -74,16 +78,23 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
 export default function BlockImageUploadModal({
   onResolved,
   onAccepted,
+  share,
 }: {
   /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands.
    *  BLOCKING mode only (ignored when `onAccepted` is provided). */
-  onResolved: (result: BlockUploadedImageInfo) => void;
+  onResolved: (result: BlockUploadedImageInfo, meta: { shared: boolean }) => void;
   /** ASYNC (non-blocking) mode. When provided, the modal resolves EARLY — the
    *  instant the image is persisted (imageId known) — with a pending handle and
    *  closes, SKIPPING the in-modal poll gate. The scan verdict is streamed later
    *  by a host-mounted poller. The `url` is the author's OWN just-uploaded edge
    *  URL (unguessable UUID key), for author preview only. */
-  onAccepted?: (handle: { imageId: number; url: string }) => void;
+  onAccepted?: (handle: { imageId: number; url: string; shared: boolean }) => void;
+  /** Present ONLY when the app asked to share this upload (`OPEN_IMAGE_UPLOAD { share: true }`).
+   *  The modal tells the viewer, before they pick, that the image will be visible to the app's
+   *  other viewers, and sends `share` + the block token with the persist so the server stamps
+   *  the row with that app's verified id (`blockSharedUploadAppId`). Absent ⇒ a private, unstamped
+   *  upload, and the dialog says it is kept private. */
+  share?: { blockToken: string; appName: string };
 }) {
   const dialog = useDialogContext();
   const { uploadToCF } = useCFImageUpload();
@@ -116,7 +127,7 @@ export default function BlockImageUploadModal({
     };
   }, []);
 
-  async function pollGate(imageId: number, attempt: number, epoch: number) {
+  async function pollGate(imageId: number, shared: boolean, attempt: number, epoch: number) {
     let ready: BlockUploadedImageInfo | null = null;
     try {
       const res = await gateMutation.mutateAsync({ imageId });
@@ -141,7 +152,7 @@ export default function BlockImageUploadModal({
       clearTimer();
       setStatus('ready');
       setMessage(null);
-      onResolved(ready);
+      onResolved(ready, { shared });
       dialog.onClose();
       return;
     }
@@ -154,7 +165,10 @@ export default function BlockImageUploadModal({
       return;
     }
     setStatus('scanning');
-    timerRef.current = setTimeout(() => void pollGate(imageId, attempt + 1, epoch), delayMs);
+    timerRef.current = setTimeout(
+      () => void pollGate(imageId, shared, attempt + 1, epoch),
+      delayMs
+    );
   }
 
   function showPreview(file: File | null) {
@@ -189,13 +203,14 @@ export default function BlockImageUploadModal({
       const { width, height } = await prepStage('decode', () => readImageDimensions(file));
       const uploaded = await uploadToCF(file);
       if (epoch !== epochRef.current) return;
-      const { imageId } = await persistMutation.mutateAsync({
+      const { imageId, shared } = await persistMutation.mutateAsync({
         url: uploaded.id,
         name: file.name,
         width,
         height,
         mimeType: file.type || undefined,
         sizeBytes: file.size,
+        ...(share ? { share: true, blockToken: share.blockToken } : {}),
       });
       if (epoch !== epochRef.current) return;
       // ASYNC (non-blocking) mode: the caller wants the modal to resolve the
@@ -205,11 +220,11 @@ export default function BlockImageUploadModal({
       // CF key), hand back the pending handle, and close — SKIP the poll gate.
       if (onAccepted) {
         const url = getEdgeUrl(uploaded.id, { width: 1200 });
-        onAccepted({ imageId, url });
+        onAccepted({ imageId, url, shared });
         dialog.onClose();
         return;
       }
-      await pollGate(imageId, 0, epoch);
+      await pollGate(imageId, shared, 0, epoch);
     } catch (err) {
       if (epoch !== epochRef.current) return;
       clearTimer();
@@ -225,10 +240,22 @@ export default function BlockImageUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            This image is <strong>public</strong>, so it&apos;s scanned and must be safe-for-work.
-            Upload a PNG, JPEG or WebP.
+            {/* Unshared only: a shared upload's visibility is the share notice below. */}
+            {!share && (
+              <>
+                This image is kept <strong>private</strong>: Civitai won&apos;t show it to other people
+                using this app.{' '}
+              </>
+            )}
+            {SCAN_COPY} Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
+
+        {share && (
+          <Text size="sm" data-testid="block-image-upload-share-notice">
+            {shareNoticeCopy(share.appName)}
+          </Text>
+        )}
 
         {previewUrl && (
           <Image
@@ -279,6 +306,11 @@ export default function BlockImageUploadModal({
       </Stack>
     </Modal>
   );
+}
+
+/** What the viewer is told before picking a file the app will share. */
+export function shareNoticeCopy(appName: string) {
+  return `This image will be visible to other viewers of ${appName} once Civitai has scanned it.`;
 }
 
 function StatusBadge({ status }: { status: UploadStatus }) {

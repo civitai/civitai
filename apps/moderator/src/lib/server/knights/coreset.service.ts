@@ -1,3 +1,5 @@
+import type { Transaction } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import {
   REFERENCE_POOL,
@@ -181,8 +183,11 @@ const keepCountsIf = (answer: string) =>
   } as const);
 
 /** Returns an error message unless Acolytes would be shown the image. */
-export async function unservableReason(imageId: number): Promise<string | null> {
-  const servable = await dbWrite
+export async function unservableReason(
+  imageId: number,
+  db: typeof dbWrite | Transaction<DB> = dbWrite
+): Promise<string | null> {
+  const servable = await db
     .selectFrom('Image as img')
     .innerJoin('Post as p', 'p.id', 'img.postId')
     .select('img.id')
@@ -191,15 +196,20 @@ export async function unservableReason(imageId: number): Promise<string | null> 
     .executeTakeFirst();
   if (servable) return null;
 
-  const image = await dbWrite
+  const image = await db
     .selectFrom('Image as img')
     .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select(['img.ingestion', 'img.blockedFor', 'p.publishedAt'])
+    .select(['img.ingestion', 'img.blockedFor', 'img.poi', 'img.minor', 'p.publishedAt'])
     .where('img.id', '=', imageId)
     .executeTakeFirst();
   if (!image) return `Image ${imageId} was not found.`;
   if (image.ingestion === 'Blocked' || image.blockedFor !== null) {
     return `Image ${imageId} is blocked and cannot be used.`;
+  }
+  if (image.poi || image.minor) {
+    return `Image ${imageId} is flagged as ${
+      image.poi ? 'a real person' : 'a minor'
+    }, so Knights does not show it.`;
   }
   if (!image.publishedAt || image.publishedAt > new Date()) {
     return `Image ${imageId} is not published, so Acolytes could not see it.`;

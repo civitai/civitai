@@ -41,7 +41,7 @@ async function servedFlags(user: { id: number; isModerator: boolean } | undefine
     status: 'Published',
     flags: STORED,
     recommendedResources: [],
-    model: { id: 1, poi: false, type: 'LORA', meta: null, user: { id: 7 } },
+    model: { id: 1, poi: false, status: 'Published', type: 'LORA', meta: null, user: { id: 7 } },
   });
   const version = await getModelVersionHandler({
     input: { id: 100 },

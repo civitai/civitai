@@ -16,7 +16,7 @@ vi.mock('$lib/server/standing', async (original) => ({
 vi.mock('$lib/server/skip-runtime', () => ({
   skipStore: { add: vi.fn(), list: vi.fn(async () => []) },
 }));
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
 vi.mock('$lib/server/daily/daily.service', () => ({}));
@@ -24,6 +24,7 @@ vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', reset
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   answerHiddenCheck,
   pickHiddenCheck: vi.fn(),
   readHiddenNotices: vi.fn(),

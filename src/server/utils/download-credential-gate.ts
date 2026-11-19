@@ -1,14 +1,17 @@
 import type { NextApiRequest } from 'next';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import { env } from '~/env/server';
+import {
+  isFullScopeUserKey,
+  withholdsModerator,
+  type BearerCredential,
+} from '~/server/auth/full-user-credential';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
-import { constants } from '~/server/common/constants';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { countDownloadScopeRefused } from '~/server/prom/download-scope.metrics';
 import { matchWebhookToken } from '~/server/utils/webhook-token';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 export type DownloadScopeMode = 'off' | 'log' | 'enforce';
@@ -25,7 +28,7 @@ export const DOWNLOAD_SCOPE_REFUSED = {
 };
 
 type Context = BearerCredential & { apiKeyId?: number | null };
-type Requirement = { requiredScope: number } | { anyOfScopes: number[] };
+type Requirement = { requiredScope: bigint } | { anyOfScopes: bigint[] };
 
 export async function getDownloadScopeGateMode(): Promise<DownloadScopeMode> {
   const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.DOWNLOAD_SCOPE_GATE);
@@ -72,17 +75,14 @@ export function downloadCredentialGate(
   if (!presentedBearer(req, context)) return { outcome: 'session', effectiveUser: user };
 
   let effectiveUser = user;
-  if (user?.isModerator && !isFullScopeUserKey(context)) {
-    if (user.id === constants.system.user.id && context?.subject?.type === 'apiKey')
-      logInternalModeratorKey(context);
-    else effectiveUser = { ...user, isModerator: false };
-  }
+  if (user && withholdsModerator(user, context)) effectiveUser = { ...user, isModerator: false };
+  else if (user?.isModerator && !isFullScopeUserKey(context)) logInternalModeratorKey(context);
   const scope = context?.tokenScope;
   const required =
     'requiredScope' in requirement ? [requirement.requiredScope] : requirement.anyOfScopes;
   const allowed =
-    typeof scope === 'number' &&
-    (scope === TokenScope.Full || required.some((bit) => Flags.hasFlag(scope, bit)));
+    typeof scope === 'bigint' &&
+    (scope === TokenScope.Full || required.some((bit) => hasScope(scope, bit)));
   return { outcome: allowed ? 'allowed' : 'refused', effectiveUser };
 }
 
@@ -91,9 +91,9 @@ function logInternalModeratorKey(context: Context | undefined) {
   logToAxiom({
     name: 'download-internal-moderator-key',
     type: 'info',
-    apiKeyId: context?.apiKeyId ?? null,
     apiKeyType: context?.apiKeyType ?? null,
     client: context?.subject?.type ?? null,
+    payload: { apiKeyId: context?.apiKeyId ?? null },
   });
 }
 
@@ -106,7 +106,11 @@ export async function scopeRefusalMode(
   route: DownloadRoute,
   requirement: Requirement
 ): Promise<DownloadScopeMode> {
-  const mode = await getDownloadScopeGateMode().catch((): DownloadScopeMode => 'off');
+  // REST_SCOPE_ENFORCE=enforce enforces these routes too, whatever their own flag says.
+  const mode: DownloadScopeMode =
+    env.REST_SCOPE_ENFORCE === 'enforce'
+      ? 'enforce'
+      : await getDownloadScopeGateMode().catch((): DownloadScopeMode => 'off');
   if (mode === 'off') return mode;
   const context = (req as NextApiRequest & { context?: Context }).context;
   const fields = credentialLogFields(getRequestCredential(req));
@@ -117,12 +121,13 @@ export async function scopeRefusalMode(
     type: 'info',
     mode,
     route,
-    requiredScope:
+    requiredScope: Number(
       'requiredScope' in requirement
         ? requirement.requiredScope
-        : requirement.anyOfScopes.reduce((all, bit) => all | bit, 0),
+        : requirement.anyOfScopes.reduce((all, bit) => all | bit, 0n)
+    ),
     ...fields,
-    tokenScope: context?.tokenScope ?? null,
+    tokenScope: context?.tokenScope == null ? null : Number(context.tokenScope),
     apiKeyId: context?.apiKeyId ?? null,
   });
   return mode;

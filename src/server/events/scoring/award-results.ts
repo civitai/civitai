@@ -39,6 +39,9 @@ export const flagRaceConfigSchema = z.object({
       on: z.boolean(),
       // The Collection the home block shows. Only the swap writes to it.
       homeCollectionId: z.number().int().positive(),
+      // Every day's flags, kept: each swap adds the flags not in it yet and removes none. Only the swap
+      // writes to it.
+      allTimeCollectionId: z.number().int().positive().optional(),
       size: z.number().int().min(1).max(10).default(10),
       // The pot per distinct participant: the step whose `from` is latest at or before the flag's cut
       // applies, read once at its freeze, so a new step never reprices a frozen flag.

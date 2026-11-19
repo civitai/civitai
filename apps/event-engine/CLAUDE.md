@@ -9,12 +9,11 @@ This is a high-performance microservice that maintains real-time metrics for the
 - Process ClickHouse events via Kafka
 - Update entity metrics in ClickHouse (batched)
 - Maintain Redis caches (real-time)
-- Update Meilisearch indexes (batched)
 
 ### Architecture
 - **Event-Driven**: Kafka consumer with Debezium for PostgreSQL CDC
 - **Parallel Processing**: Worker pool for concurrent event handling
-- **Batching**: Efficient batching for ClickHouse (30s) and Meilisearch (5min)
+- **Batching**: Efficient batching for ClickHouse (30s)
 - **Handler Pattern**: Factory-based handlers for different entity types
 
 ## Project Structure
@@ -32,13 +31,11 @@ metric-event-watcher/
 │   │   ├── redis-cache.ts         # Redis cache updates
 │   │   ├── metric-excluded-users.ts # Reaction-farm exclusion list, mirrored from ClickHouse
 │   │   ├── metric-event-batcher.ts # ClickHouse batch inserts
-│   │   ├── index-update-queue.ts  # Meilisearch updates
 │   │   └── health-check.ts        # Health monitoring
 │   ├── handlers/
 │   │   ├── base.ts               # Handler factories & helpers
 │   │   ├── index.ts              # Handler registry
 │   │   ├── outbox/               # Outbox pattern handlers
-│   │   │   ├── model.ts
 │   │   │   ├── model-version.ts
 │   │   │   └── post.ts
 │   │   └── [entity-handlers].ts  # Entity-specific handlers
@@ -77,7 +74,6 @@ metric-event-watcher/
 - **WorkerPool**: Multi-threaded parallel processing
 - **DebeziumManager**: PostgreSQL CDC connector management
 - **MetricEventBatcher**: ClickHouse batch inserts
-- **IndexUpdateQueue**: Meilisearch index updates
 - **RedisCache**: Real-time metric cache updates
 - **MetricExcludedUsers**: Mirrors the ClickHouse `metricExcludedUsers` reaction-farm list into memory (refreshed every `METRIC_EXCLUSION_REFRESH_MS`). `RedisCache` and the live signal path skip events from users in it, matching what the ClickHouse metric aggregates already filter
 
@@ -92,7 +88,6 @@ metric-event-watcher/
 3. WorkerPool processes → Updates metrics:
    - ClickHouse: Batched entity events
    - Redis: Immediate cache updates
-   - Meilisearch: Batched index updates
 
 ## Quick Reference
 

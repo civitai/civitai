@@ -1,7 +1,9 @@
 import { ActionIcon, Button, Group, Select, Stack, Text, Textarea } from '@mantine/core';
 import { closeAllModals, openModal } from '@mantine/modals';
-import { IconDots, IconFlag, IconTrash } from '@tabler/icons-react';
+import { IconCopy, IconDots, IconFlag, IconTrash } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { Menu } from '~/components/MantineOverlays';
@@ -11,6 +13,12 @@ import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpe
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const ServiceOfferingFormModal = dynamic(() =>
+  import('~/components/CreatorShop/Services/ServiceOfferingFormModal').then(
+    (m) => m.ServiceOfferingFormModal
+  )
+);
 
 function TakedownForm({ id, title }: { id: number; title: string }) {
   const utils = trpc.useUtils();
@@ -82,6 +90,24 @@ export function ServiceOfferingMenu({
   isModerator: boolean;
 }) {
   const { remove } = useMutateMyServices();
+  const utils = trpc.useUtils();
+  // The card carries only part of the offering; the form copies from the owner's full row.
+  const duplicate = async () => {
+    try {
+      const [{ items }, eligibility] = await Promise.all([
+        utils.creatorService.getMine.fetch(),
+        utils.creatorService.getSellEligibility.fetch(),
+      ]);
+      // Checked on click, so the card loads no eligibility until the owner asks to duplicate.
+      if (!eligibility.canSell)
+        throw new Error('You can list new services once you meet the requirements to sell.');
+      const copyOf = items.find((item) => item.id === offering.id);
+      if (!copyOf) throw new Error('This service is no longer in your list.');
+      dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+    } catch (error) {
+      showErrorNotification({ title: 'Could not duplicate the service', error: error as Error });
+    }
+  };
   return (
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
@@ -111,6 +137,11 @@ export function ServiceOfferingMenu({
               Report this service
             </Menu.Item>
           </LoginRedirect>
+        )}
+        {isOwner && (
+          <Menu.Item leftSection={<IconCopy size={14} />} onClick={duplicate}>
+            Duplicate
+          </Menu.Item>
         )}
         {isOwner && (
           <Menu.Item

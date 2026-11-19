@@ -194,14 +194,13 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "username" text, "image" text,
-      "bannedAt" timestamptz, "deletedAt" timestamptz
-    );
+      "bannedAt" timestamptz, "deletedAt" timestamptz, "profilePictureId" int);
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "url" text NOT NULL, "userId" integer NOT NULL,
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "poi" boolean NOT NULL DEFAULT false, "minor" boolean NOT NULL DEFAULT false,
       "tosViolation" boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
-      "blockedFor" text, "postId" integer
+      "blockedFor" text, "postId" integer, "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "publishedAt" timestamptz, "availability" text NOT NULL DEFAULT 'Public'

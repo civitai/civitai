@@ -25,6 +25,7 @@ export const JUDGMENT_FILTERS = [
   'pending',
   'inconclusive',
   'forfeited',
+  'smites',
 ] as const;
 export type JudgmentFilter = (typeof JUDGMENT_FILTERS)[number];
 
@@ -40,8 +41,12 @@ export type Judgment = {
   imageKey: string | null;
   prompt: string;
   answerLabel: string;
-  /** The settled answer, only for a vote that turned out wrong. */
+  /** The settled answer, for a vote that turned out wrong or a skill check that was close. */
   verdictLabel: string | null;
+  /** A skill check answered one level off its known answer: inconclusive, no reward and no penalty. */
+  close: boolean;
+  /** A failed skill check that cost the player a smite. */
+  smite: boolean;
   status: JudgmentStatus;
   xp: number;
   gold: number;
@@ -64,7 +69,7 @@ export const statusOf = (verdict: string): JudgmentStatus =>
 export const forfeitedByReset = (castAt: Date, startAt: Date | null, status: JudgmentStatus) =>
   startAt !== null && castAt < startAt && (status === 'pending' || status === 'correct');
 
-/** The status filter as SQL over the columns `statusOf` and `forfeitedByReset` read; keep the three in step. */
+/** The filter as SQL over the columns `statusOf`, `forfeitedByReset` and `smite` read; keep them in step. */
 function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
   const unsettled = sql<SqlBool>`(j."settledAt" IS NULL OR j."verdict" NOT IN ('correct', 'failed', 'inconclusive'))`;
   const isCorrect = sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'correct')`;
@@ -80,6 +85,8 @@ function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
       return sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'failed')`;
     case 'inconclusive':
       return sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'inconclusive')`;
+    case 'smites':
+      return sql<SqlBool>`j."smite"`;
   }
 }
 
@@ -92,11 +99,14 @@ export async function listJudgments(
     filter = 'all',
   }: { page: number; pageSize?: number; filter?: JudgmentFilter }
 ): Promise<{ judgments: Judgment[]; hasMore: boolean }> {
-  // Hidden checks have no queue item, so they carry no settled answer and read like any other vote.
+  // A hidden check (negative item id) has no queue item: its settled answer is its reference image's.
   const votes = db
     .selectFrom('KnightsVote as v')
     .innerJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
     .leftJoin('KnightsQueueItem as it', 'it.id', 'v.itemId')
+    .leftJoin('KnightsReferenceImage as ref', (join) =>
+      join.on(sql<SqlBool>`v."itemId" < 0 AND ref.id = -v."itemId"`)
+    )
     .leftJoin('Image as img', 'img.id', 'v.imageId')
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .leftJoin('NewOrderPlayer as pl', 'pl.userId', 'v.playerId')
@@ -110,13 +120,16 @@ export async function listJudgments(
       'v.xp',
       sql<number>`COALESCE(v.gold, 0)`.as('gold'),
       'v.createdAt',
+      sql<boolean>`v."consequence" IS NOT DISTINCT FROM 'close'`.as('close'),
+      sql<boolean>`v."consequence" IS NOT DISTINCT FROM 'smite'`.as('smite'),
       'pl.startAt',
       'q.prompt',
       'it.prompt as itemPrompt',
       'q.options',
+      // Closed carries a value only when a moderator ruled it; an expired item has none.
       sql<
         string | null
-      >`CASE WHEN it.status IN ('Resolved', 'Consensus') THEN it."resolvedValue" END`.as(
+      >`CASE WHEN it.status IN ('Resolved', 'Consensus', 'Closed') THEN it."resolvedValue" ELSE ref.answer END`.as(
         'resolved'
       ),
       'img.url as imageKey',
@@ -144,6 +157,8 @@ export async function listJudgments(
       'a.xp',
       sql<number>`0`.as('gold'),
       'a.createdAt',
+      sql<boolean>`false`.as('close'),
+      sql<boolean>`false`.as('smite'),
       sql<Date | null>`NULL`.as('startAt'),
       'q.prompt',
       ownPairPrompt.as('itemPrompt'),
@@ -184,7 +199,9 @@ export async function listJudgments(
         // A yes/no question carries its own words; the question row only holds the generic ones.
         prompt: r.itemPrompt ?? r.prompt,
         answerLabel: labelOf(r.answer),
-        verdictLabel: status === 'wrong' && r.resolved ? labelOf(r.resolved) : null,
+        verdictLabel: (status === 'wrong' || r.close) && r.resolved ? labelOf(r.resolved) : null,
+        close: r.close,
+        smite: r.smite,
         status: forfeited ? 'forfeited' : status,
         xp: r.xp,
         gold: forfeited ? 0 : r.gold,

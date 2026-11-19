@@ -74,6 +74,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL REFERENCES "User"(id),
       "updatedAt" timestamp(3),
       "pHash" bigint,
@@ -130,7 +131,8 @@ beforeEach(async () => {
       if (holder.holdReadFails) throw new Error('hold read failed');
       return (await runOnPglite(strings, values)).rows;
     }
-    if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
+    if (text.includes('FROM "Image" i WHERE i.id'))
+      return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   holder.holdReadFails = false;

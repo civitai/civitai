@@ -92,11 +92,11 @@ const defaults: Required<UserAppCapsDeps> = {
   isOptInEnabled: async (user) =>
     (await import('~/server/services/app-blocks-flag')).isAppLimitsUpgradePromptEnabled({ user }),
   readOptIn: async (userId) => {
-    const [{ sysRedis }, { buzzOptInRedisKey }] = await Promise.all([
+    const [{ redis }, { buzzOptInRedisKey }] = await Promise.all([
       import('~/server/redis/client'),
       import('~/server/services/blocks/block-buzz-cap'),
     ]);
-    return (await sysRedis.get(buzzOptInRedisKey(userId))) === '1';
+    return (await redis.get(buzzOptInRedisKey(userId))) === '1';
   },
 };
 

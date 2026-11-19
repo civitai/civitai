@@ -3,8 +3,8 @@ import { escape as escapeHtml } from 'he';
 import * as z from 'zod';
 import { notificationSettingsUrl } from '~/server/email/templates/notification.email';
 import {
-  isEmailNotificationType,
-  notificationProcessors,
+  emailOptOutDisplayName,
+  isEmailOptOutType,
 } from '~/server/notifications/utils.notifications';
 import {
   optOutOfNotificationEmail,
@@ -33,7 +33,7 @@ export default PublicEndpoint(
     const parsed = query.safeParse(req.query);
     const valid =
       parsed.success &&
-      isEmailNotificationType(parsed.data.t) &&
+      isEmailOptOutType(parsed.data.t) &&
       verifyEmailUnsubscribe(parsed.data.u, parsed.data.t, parsed.data.s);
     if (!valid) {
       res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -41,7 +41,7 @@ export default PublicEndpoint(
     }
 
     const { u, t } = parsed.data;
-    const name = escapeHtml(notificationProcessors[t]?.displayName ?? t);
+    const name = escapeHtml(emailOptOutDisplayName(t));
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (req.method === 'POST') {
       await optOutOfNotificationEmail(u, t);

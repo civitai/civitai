@@ -245,6 +245,15 @@ func TestIntegrationModelPageFilters(t *testing.T) {
 	integWant(t, "poi owner", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisablePoi: true, ViewerID: 3101901})),
 		[]int{3101001, 3101002})
 	integWant(t, "minor", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisableMinor: true})), []int{3101002})
+	// A taken-down model is its owner's and moderators' alone (modelNotWithheldSql).
+	integtest.Exec(t, pool, `UPDATE "ModelMetric" SET mode = 'TakenDown' WHERE "modelId" = 3101002`)
+	takenDown := func(viewer int, mod bool) []int {
+		return integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: viewer, IsModerator: mod}))
+	}
+	integWant(t, "taken down, signed out", takenDown(0, false), []int{3101001})
+	integWant(t, "taken down, another viewer", takenDown(3101901, false), []int{3101001})
+	integWant(t, "taken down, its owner", takenDown(3101902, false), []int{3101001, 3101002})
+	integWant(t, "taken down, a moderator", takenDown(3101903, true), []int{3101001, 3101002, 3101004})
 }
 
 // The lookups next to the page query: paid-access gates, a tag by name (citext).
@@ -265,4 +274,118 @@ func TestIntegrationModelLookups(t *testing.T) {
 			t.Fatalf("tag %q: %d %v, want %d", name, id, err, want)
 		}
 	}
+}
+
+// integSeedCollections adds collections over integSeedModels' models:
+//
+//	3102001 Public   owner 3101901  items: 3101001 ACCEPTED, 3101002 REVIEW added by 3101903, 3101005 REJECTED
+//	3102002 Private  owner 3101902  items: 3101001 ACCEPTED tag 3101811, 3101002 ACCEPTED tag 3101812;
+//	                                contributors 3101903 {VIEW,ADD}, 3101904 {ADD}
+//	3102003 Unlisted owner 3101902  items: 3101002 ACCEPTED
+func integSeedCollections(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	integtest.Exec(t, pool, `
+		DELETE FROM "Collection" WHERE id BETWEEN 3102000 AND 3102999;
+		DELETE FROM "CollectionItem" WHERE id BETWEEN 3102000 AND 3102999;
+		DELETE FROM "CollectionContributor" WHERE "collectionId" BETWEEN 3102000 AND 3102999;
+		INSERT INTO "Collection" (id, "userId", read) VALUES
+		  (3102001, 3101901, 'Public'),
+		  (3102002, 3101902, 'Private'),
+		  (3102003, 3101902, 'Unlisted');
+		INSERT INTO "CollectionItem" (id, "collectionId", "modelId", "addedById", status, "tagId") VALUES
+		  (3102101, 3102001, 3101001, 3101901, 'ACCEPTED', NULL),
+		  (3102102, 3102001, 3101002, 3101903, 'REVIEW', NULL),
+		  (3102103, 3102001, 3101005, 3101901, 'REJECTED', NULL),
+		  (3102104, 3102002, 3101001, 3101902, 'ACCEPTED', 3101811),
+		  (3102105, 3102002, 3101002, 3101902, 'ACCEPTED', 3101812),
+		  (3102106, 3102003, 3101002, 3101902, 'ACCEPTED', NULL);
+		INSERT INTO "CollectionContributor" ("userId", "collectionId", permissions) VALUES
+		  (3101903, 3102002, '{VIEW,ADD}'),
+		  (3101904, 3102002, '{ADD}');
+	`)
+}
+
+// Who may read each collection: the configuration, the owner, a contributor row with VIEW; a moderator
+// has no branch here (getModelsRaw passes no isModerator), and a missing collection reads for no one.
+func TestIntegrationCollectionReadable(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integSeedCollections(t, pool)
+	for _, c := range []struct {
+		collection, viewer int
+		want               bool
+	}{
+		{3102001, 0, true},
+		{3102003, 0, true},
+		{3102003, 3101904, true},
+		{3102002, 0, false},
+		{3102002, 3101902, true},  // the owner
+		{3102002, 3101903, true},  // VIEW
+		{3102002, 3101904, false}, // ADD only
+		{3102002, 3101905, false}, // no row
+		{3102999, 3101902, false}, // no such collection
+	} {
+		got, err := collectionReadable(integtest.Ctx(t), pool, c.collection, c.viewer)
+		if err != nil {
+			t.Fatalf("collection %d viewer %d: %v", c.collection, c.viewer, err)
+		}
+		if got != c.want {
+			t.Errorf("collection %d viewer %d: read %v, want %v", c.collection, c.viewer, got, c.want)
+		}
+	}
+}
+
+// The semi-join: accepted items only signed out, the viewer's own in-review items for them, never a
+// rejected one; the collection tag narrows; the split cursor pages through a collection as through
+// the feed.
+func TestIntegrationModelPageCollection(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integSeedCollections(t, pool)
+	base := func() PageQuery { return PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 31} }
+	for _, c := range []struct {
+		name string
+		set  func(*PageQuery)
+		want []int
+	}{
+		{"public, signed out", func(q *PageQuery) { q.CollectionID = 3102001 }, []int{3101001}},
+		{"public, the adder of the in-review item", func(q *PageQuery) { q.CollectionID = 3102001; q.ViewerID = 3101903 }, []int{3101001, 3101002}},
+		{"public, another viewer", func(q *PageQuery) { q.CollectionID = 3102001; q.ViewerID = 3101904 }, []int{3101001}},
+		{"private", func(q *PageQuery) { q.CollectionID = 3102002; q.ViewerID = 3101902 }, []int{3101001, 3101002}},
+		{"private, one tag", func(q *PageQuery) { q.CollectionID = 3102002; q.ViewerID = 3101902; q.CollectionTagID = 3101812 }, []int{3101002}},
+		// SDXL 1.0's own counts: 3101002 50 thumbs up, 3101001 5.
+		{"a base model", func(q *PageQuery) { q.CollectionID = 3102002; q.BaseModels = []string{"SDXL 1.0"} }, []int{3101002, 3101001}},
+		{"several base models", func(q *PageQuery) { q.CollectionID = 3102002; q.BaseModels = []string{"Pony", "SDXL 1.0"} }, []int{3101001, 3101002}},
+		{"empty", func(q *PageQuery) { q.CollectionID = 3102999 }, []int{}},
+	} {
+		q := base()
+		c.set(&q)
+		integWant(t, c.name, integIDs(integPage(t, pool, q)), c.want)
+	}
+	// Pagination: one model per page, the lookahead row its cursor, the next page from it.
+	page1 := integPage(t, pool, PageQuery{Take: 1, Sort: SortHighestRated, BrowsingLevel: 31, CollectionID: 3102002})
+	integWant(t, "page 1 + lookahead", integIDs(page1), []int{3101001, 3101002})
+	integWant(t, "page 1 cursors", integCursors(page1), []string{"50|10|3101001", "50|10|3101002"})
+	integWant(t, "page 2", integIDs(integPage(t, pool, PageQuery{Take: 1, Sort: SortHighestRated, BrowsingLevel: 31, CollectionID: 3102002, Cursor: "50|10|3101002"})),
+		[]int{3101002})
+}
+
+// The official pin's id filters against the real schema, on every base-model path and without one,
+// composed with the other filters and with a split keyset cursor (each branch carries them).
+func TestIntegrationModelPageOfficialPinFilters(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integWant(t, "only, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, OnlyModelIDs: []int{3101005, 3101003, 3101999}})), []int{3101005})
+	integWant(t, "exclude, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{3101001}})), []int{3101005})
+	integWant(t, "only, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, OnlyModelIDs: []int{3101001}})), []int{3101001})
+	integWant(t, "exclude, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, ExcludeModelIDs: []int{3101001}})), []int{3101002})
+	// The private 3101004 stays out: neither filter relaxes the private-model filter.
+	integWant(t, "only, no base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		OnlyModelIDs: []int{3101002, 3101004}})), []int{3101002})
+	integWant(t, "exclude, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		Cursor: "9|3101001", ExcludeModelIDs: []int{3101002}})), []int{3101001, 3101005})
 }

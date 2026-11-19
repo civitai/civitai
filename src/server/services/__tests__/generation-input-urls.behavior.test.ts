@@ -63,6 +63,7 @@ const {
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
+  classifyGenerationInputUrl,
   opaqueInputUrlsIn,
   keySetSizeBucket,
   TOO_MANY_IDS_MESSAGE,
@@ -88,6 +89,8 @@ const PAGE_LINK_MESSAGE =
   'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
 
 const CALLER = 7;
+/** The app an App Blocks entry names; `isFlipt` here answers the same for every app. */
+const APP_LOG = { appBlockId: 'apb_1' };
 const OTHER = 8;
 const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
@@ -343,6 +346,7 @@ describe('an App Blocks generation source', () => {
       entry,
       isApiCaller: false,
       opaqueInput,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -556,14 +560,6 @@ describe('an App Blocks generation source', () => {
     expect(await check([KEY], 'generateFromGraph', true)).toBe('accepted');
   });
 
-  it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
-    loggingMock.logToAxiom.mockClear();
-    await check(['https://example.com/a.png'], 'appBlocksPassThrough');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'external', mode: 'refuse' })
-    );
-  });
-
   it('logs external urls once per host bucket in one call', async () => {
     holder.refuseExternalApp = false;
     loggingMock.logToAxiom.mockClear();
@@ -613,9 +609,14 @@ describe('an App Blocks generation source', () => {
       registered.calls.findIndex(([def]) => def.name === 'app_block_host_source_total')
     ]?.value as { inc: ReturnType<typeof vi.fn> };
 
+    const acceptedCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'app_block_source_accepted_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+
     beforeEach(() => {
       loggingMock.logToAxiom.mockClear();
       hostSourceCounter.inc.mockClear();
+      acceptedCounter.inc.mockClear();
     });
 
     it('counts a consumer blob and any other orchestrator path, refusing neither', async () => {
@@ -635,6 +636,57 @@ describe('an App Blocks generation source', () => {
       const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
       expect(logged).not.toContain('ABC123');
       expect(logged).not.toContain('orchestration.civitai.com');
+    });
+
+    // A videoGen pass-through body as an app sends it: the same frame url as first and last frame.
+    const videoGenBody = (frame: string) => ({
+      engine: 'ltx2',
+      prompt: 'a walk',
+      firstFrame: frame,
+      lastFrame: frame,
+      duration: 5,
+    });
+    const acceptedCalls = () => acceptedCounter.inc.mock.calls.map(([labels]) => labels);
+
+    it('an orchestrator blob frame with a signed query is counted as a host source and accepted', async () => {
+      const frame =
+        'https://orchestration-new.civitai.com/v2/consumer/blobs/AAAAAAAAAAAAAAAAAAAAbbbbbbbbbbbbbbbbbbbbCd12?sig=abc%2Bdef&exp=1763535180';
+      const { urls } = opaqueInputUrlsIn(videoGenBody(frame));
+      expect(urls).toEqual([frame]);
+      expect(await check(urls, 'appBlocksPassThrough', true)).toBe('accepted');
+      expect(hostRows()).toEqual([
+        expect.objectContaining({
+          entry: 'appBlocksPassThrough',
+          reason: 'host-orchestrator-source',
+          count: 1,
+        }),
+      ]);
+      expect(acceptedCalls()).toEqual([{ entry: 'appBlocksPassThrough', class: 'orchestrator' }]);
+    });
+
+    it('a gated-read edge url frame is accepted as cdn, and is not a host source', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      // The production shape of the gated read's getEdgeUrl(row.url, { width: 450 }).
+      const edge = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/width=450/${KEY}.jpeg`;
+      expect(classifyGenerationInputUrl(edge)).toBe('cdn');
+      const { urls } = opaqueInputUrlsIn(videoGenBody(edge));
+      expect(await check(urls, 'appBlocksPassThrough', true)).toBe('accepted');
+      expect(hostRows()).toEqual([]);
+      expect(acceptedCalls()).toEqual([{ entry: 'appBlocksPassThrough', class: 'cdn' }]);
+    });
+
+    it('a refused edge url frame counts no accepted source', async () => {
+      await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+      const edge = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/width=450/${KEY}.jpeg`;
+      const { urls } = opaqueInputUrlsIn(videoGenBody(edge));
+      expect(await check(urls, 'appBlocksPassThrough', true)).toMatch(/^refused: /);
+      expect(acceptedCalls()).toEqual([]);
+    });
+
+    it('a site entry counts no accepted source', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      expect(await check([CDN()], 'generateFromGraph')).toBe('accepted');
+      expect(acceptedCalls()).toEqual([]);
     });
 
     it('writes one row per reason with its count', async () => {
@@ -693,7 +745,7 @@ describe('an App Blocks generation source', () => {
       ]);
       holder.scannedRows = true;
       hostSourceCounter.inc.mockClear();
-      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: {} });
+      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: APP_LOG });
       expect(hostSourceCounter.inc).not.toHaveBeenCalled();
     });
 
@@ -741,6 +793,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     await givenImage({ url, blockedFor: 'moderated' });
     expect(await stored([url])).toBe('refused');
   });
+
+  it('refuses a url that names no stored object', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    expect(await stored([KEY])).toBe('accepted');
+    expect(await stored([KEY, `blob:https://civitai.com/${KEY}`])).toBe('refused');
+    expect(await stored(['data:image/png;base64,iVBORw0KGgo'])).toBe('refused');
+  });
 });
 
 describe('assertGenerationInputsUsable', () => {
@@ -759,6 +818,7 @@ describe('assertGenerationInputsUsable', () => {
       userId: CALLER,
       entry,
       isApiCaller: false,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -923,6 +983,7 @@ describe('assertGenerationInputsUsable', () => {
         entry: 'appBlocksPassThrough',
         isApiCaller: false,
         opaqueInput: true,
+        appBlockLog: APP_LOG,
         now: AFTER,
       }).then(
         () => 'accepted',
@@ -1015,6 +1076,7 @@ describe('assertGenerationInputsUsable', () => {
           entry: 'appBlocksPassThrough',
           isApiCaller: false,
           opaqueInput: true,
+          appBlockLog: APP_LOG,
           now: AFTER,
         })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
@@ -1068,7 +1130,14 @@ describe('assertGenerationInputsUsable', () => {
 
   it('refuses an external host with its own message, and anything else with the unavailable one', async () => {
     const message = (urls: string[], entry: 'iterateGenerate' | 'appBlocksPassThrough') =>
-      assertGenerationInputsUsable({ urls, userId: CALLER, entry, isApiCaller: false, now: AFTER })
+      assertGenerationInputsUsable({
+        urls,
+        userId: CALLER,
+        entry,
+        isApiCaller: false,
+        appBlockLog: APP_LOG,
+        now: AFTER,
+      })
         .then(() => 'accepted')
         .catch((e: TRPCError) => `${e.code}: ${e.message}`);
     holder.refuseExternal = true;
@@ -1778,6 +1847,7 @@ describe('a chat App Block step, with the external-host refusal on', () => {
       entry,
       isApiCaller: false,
       opaqueInput: true,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',

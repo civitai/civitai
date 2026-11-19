@@ -42,9 +42,8 @@ vi.mock('~/server/services/article.service', async (importOriginal) => ({
 }));
 
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyCsamHold, CSAM_HOLD_TEXT_CHARS, CsamHoldBusyError } = await import(
-  '~/server/services/text-scan/actions/csam-hold'
-);
+const { applyCsamHold, CSAM_HOLD_TEXT_CHARS, CsamHoldBusyError, pendingCsamHoldFields } =
+  await import('~/server/services/text-scan/actions/csam-hold');
 const { composeUserText } = await import('~/server/services/text-scan/segment');
 const { getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
 const { createReport } = await import('~/server/services/report.service');
@@ -220,6 +219,23 @@ describe('csam verdicts through the registered adapters', () => {
     vi.mocked(getTextScanCsamMode).mockResolvedValueOnce('off');
     await getModerationAdapter('CommentV3')!.applyTextScan!(args() as never);
     expect(await rows()).toHaveLength(1);
+  });
+
+  // The moderator's hold (holdPostTextForCsam) stores the same fields; post-text-moderation.pglite pins it.
+  it('stores the author and text pendingCsamHoldFields builds: capped, NUL-free', async () => {
+    const subject = {
+      fields: [{ heading: 'Comment', text: `a\u0000b${'x'.repeat(CSAM_HOLD_TEXT_CHARS)}` }],
+      declared: {},
+      userId: 5,
+    };
+    await getModerationAdapter('CommentV3')!.applyTextScan!(args({ subject }) as never);
+    const {
+      rows: [row],
+    } = await db.pg.query<{ userId: number | null; text: string }>(
+      'SELECT "userId", "text" FROM "TextScanHold"'
+    );
+    expect(row).toEqual(pendingCsamHoldFields(subject));
+    expect(row.text).toHaveLength(CSAM_HOLD_TEXT_CHARS - 1);
   });
 
   it('records nothing for a verdict without csam', async () => {

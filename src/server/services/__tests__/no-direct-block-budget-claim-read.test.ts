@@ -63,9 +63,9 @@ import {
  * cannot hide one.
  *
  * ── WHY THIS FILE LIVES HERE ────────────────────────────────────────────────
- * `no-lint-rules-script-drift` scans only `src/server/services/__tests__` for
- * only this `no-*.test.ts` name shape. A guard of this class parked beside the
- * module it protects is invisible to that ratchet and is not run by the fast
+ * `docs/dev/convention-guards.md` lists only `src/server/services/__tests__` guards
+ * of this `no-*.test.ts` name shape. A guard of this class parked beside the
+ * module it protects is missing from that list and is not run by the fast
  * `pnpm run test:lint-rules` selector — it would surface only in a full unit
  * suite, minutes later, in a file nobody was looking at.
  */

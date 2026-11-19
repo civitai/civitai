@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -1454,6 +1454,7 @@ export interface Report {
   crucible?: CrucibleReport | null;
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
+  postText?: PostTextReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -1687,6 +1688,7 @@ export interface Post {
   tagsComposite?: PostTag[];
   tagVotes?: TagsOnPostVote[];
   reports?: PostReport[];
+  textReports?: PostTextReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
@@ -1747,6 +1749,7 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   tags?: TagsOnImageDetails[];
@@ -2221,6 +2224,7 @@ export interface ApiKey {
   key: string;
   name: string;
   tokenScope: number;
+  tokenScopeWide: bigint | null;
   userId: number;
   user?: User;
   createdAt: Date;
@@ -2243,7 +2247,7 @@ export interface OauthClient {
   redirectUris: string[];
   allowedOrigins: string[];
   grants: string[];
-  allowedScopes: number;
+  allowedScopes: bigint;
   isConfidential: boolean;
   accessMode: string;
   skipConsent: boolean;
@@ -2941,6 +2945,7 @@ export interface AppUserScopeGrant {
   revokedScopes: string[];
   revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
+  confirmWithinLimitMaxJob: number | null;
 }
 
 export interface AppBlockUploadBatch {
@@ -2979,7 +2984,7 @@ export interface OauthConsent {
   user?: User;
   clientId: string;
   client?: OauthClient;
-  scope: number;
+  scope: bigint;
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
@@ -7034,8 +7039,20 @@ export interface PostText {
   nsfwLevel: number;
   refused: boolean;
   csamHeld: boolean;
+  refusedByModerator: boolean;
+  refusedByScan: boolean;
   createdAt: Date;
   updatedAt: Date;
+  reports?: PostTextReport[];
+}
+
+export interface PostTextReport {
+  reportId: number;
+  report?: Report;
+  postTextId: number | null;
+  postText?: PostText | null;
+  postId: number;
+  post?: Post;
 }
 
 export interface StorylineCollaborator {
@@ -7211,6 +7228,15 @@ export interface ServiceDealEvent {
   createdAt: Date;
 }
 
+export interface ServiceDealFilePurge {
+  id: number;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Date;
+}
+
 export interface ServiceDealFile {
   id: number;
   dealId: number;
@@ -7239,6 +7265,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
   attestedAt: Date | null;
   removedAt: Date | null;
   createdAt: Date;

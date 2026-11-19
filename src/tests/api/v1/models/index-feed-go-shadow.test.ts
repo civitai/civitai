@@ -100,7 +100,7 @@ describe('/api/v1/models — feed-go shadow sampling', () => {
     expect(mockBegin).toHaveBeenCalledWith(expect.anything(), 'list');
     expect(mockCapture).toHaveBeenCalledWith(SAMPLE, res.body);
     expect(mockFinish).toHaveBeenCalledTimes(1);
-    expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 200);
+    expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 200, res);
   });
 
   it('a sampled request that errors is finished with its status (skipped_status), not dropped', async () => {
@@ -109,7 +109,7 @@ describe('/api/v1/models — feed-go shadow sampling', () => {
     expect(res.statusCode).toBe(500);
     expect(mockCapture).not.toHaveBeenCalled();
     expect(mockFinish).toHaveBeenCalledTimes(1);
-    expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 500);
+    expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 500, res);
   });
 
   it('a text query is never sampled (feed-go falls back on every one: v1-models-query)', async () => {

@@ -160,7 +160,7 @@ export type RateLimitOptions = {
  */
 export function rateLimit<TInput = any>(
   rateLimits?: RateLimit | RateLimit[] | UsageLimitRef,
-  condition?: (input: TInput) => boolean,
+  condition?: (input: TInput, ctx: Context) => boolean,
   options?: RateLimitOptions
 ) {
   const rules: RateLimit[] | UsageLimitRef = isUsageLimitRef(rateLimits)
@@ -172,7 +172,7 @@ export function rateLimit<TInput = any>(
     : [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
-    if (condition && !condition(input as TInput)) return await next();
+    if (condition && !condition(input as TInput, ctx)) return await next();
 
     // options.sharedKey lets multiple procedures share one quota; otherwise key on the tRPC path.
     const recordAttempt = await claimRateLimitAttempt({

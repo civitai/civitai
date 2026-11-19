@@ -2,6 +2,7 @@ import superjson from 'superjson';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as NotificationsMod from '@mantine/notifications';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -41,7 +42,21 @@ const mocks = vi.hoisted(() => ({
   pending: false,
   assets: { data: undefined as unknown, isError: false },
   assetsQuery: vi.fn(),
+  holds: [] as unknown[],
+  approveResult: undefined as unknown,
 }));
+
+const notified = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock('@mantine/notifications', async (importOriginal) => {
+  const real = await importOriginal<typeof NotificationsMod>();
+  return {
+    ...real,
+    showNotification: (n: Parameters<typeof real.showNotification>[0]) => {
+      notified.push(n as unknown as Record<string, unknown>);
+      return real.showNotification(n);
+    },
+  };
+});
 
 const showError = vi.fn();
 vi.mock('~/utils/notifications', () => ({
@@ -52,11 +67,11 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: { onSuccess?: (r?: unknown) => void; onError?: (e: { message: string }) => void }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(name === 'approve' ? mocks.approveResult : undefined);
       },
       mutateAsync: vi.fn(),
       isPending: mocks.pending,
@@ -67,7 +82,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       listPendingRequests: inert,
       listApprovedRequests: inert,
       listRejectedRequests: inert,
+      listPublishRequestHolds: inert,
     },
+    appListings: { listPendingRequests: inert },
   };
   return {
     ...(await importOriginal<typeof TrpcMod>()),
@@ -75,6 +92,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         'blocks.approveRequest': { useMutation: mutation('approve') },
         'blocks.rejectRequest': { useMutation: mutation('reject') },
+        'blocks.listPublishRequestHolds': { useQuery: () => ({ data: mocks.holds }) },
+        'blocks.clearPublishRequestHold': { useMutation: mutation('clearHold') },
+        'blocks.placePublishRequestHold': { useMutation: mutation('placeHold') },
         'appListings.getAssets': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.assetsQuery(input, opts);
@@ -96,7 +116,79 @@ beforeEach(() => {
   mocks.pending = false;
   mocks.assets = { data: undefined, isError: false };
   mocks.assetsQuery.mockClear();
+  mocks.holds = [];
   showError.mockClear();
+});
+
+describe('ReviewActionBar — review holds', () => {
+  const HOLD = {
+    id: 7,
+    slug: 'my-block',
+    publishRequestId: 'req-1',
+    requestKind: 'onsite',
+    placedByUserId: 3,
+    placedByUsername: 'mod-agent',
+    placedByLabel: 'code-check',
+    reason: 'security check still running',
+    createdAt: new Date(),
+    clearedAt: null,
+    clearedByUserId: null,
+    clearedKind: null,
+    clearedReason: null,
+  };
+
+  test('an open hold is shown, and Approve stays disabled until an override reason is typed, which it then sends', async () => {
+    mocks.holds = [HOLD];
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByText('1 open review hold')).toBeInTheDocument();
+    await expect.element(page.getByText('code-check')).toBeInTheDocument();
+    await expect.element(page.getByText(/mod-agent/)).toBeInTheDocument();
+    await expect.element(page.getByText('security check still running')).toBeInTheDocument();
+
+    const approve = page.getByRole('button', { name: 'Approve + build' });
+    await expect.element(approve).toBeDisabled();
+    const reason = page.getByTestId('apps-review-hold-override-reason');
+    await reason.fill('too short');
+    await expect.element(approve).toBeDisabled();
+    await reason.fill('  checked by hand, a false alarm  ');
+    await expect.element(approve).toBeEnabled();
+    await approve.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', {
+      publishRequestId: 'req-1',
+      holdOverrideReason: 'checked by hand, a false alarm',
+      holdOverrideIds: [7],
+    });
+  });
+
+  test('with no open hold there is no override field and approve sends no override', async () => {
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+    await expect
+      .element(page.getByTestId('apps-review-hold-override-reason'))
+      .not.toBeInTheDocument();
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('approve', { publishRequestId: 'req-1' });
+  });
+
+  test('clearing a hold needs a reason', async () => {
+    mocks.holds = [HOLD];
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    const confirm = page.getByTestId('apps-review-hold-clear-confirm-7');
+    await expect.element(confirm).toBeDisabled();
+    await page.getByTestId('apps-review-hold-clear-reason-7').fill('check finished, all clean');
+    await confirm.click();
+    expect(mocks.mutate).toHaveBeenCalledWith('clearHold', {
+      holdId: 7,
+      reason: 'check finished, all clean',
+    });
+  });
 });
 
 describe('ReviewActionBar — approve', () => {
@@ -324,6 +416,30 @@ describe('ReviewActionBar — modal busyRef + page onStatusChange observers', ()
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(onStatusChange).toHaveBeenCalledWith('error');
+  });
+
+  test('🔴 an approve a late hold re-suspended reports "error", not "approved", and says why', async () => {
+    const onStatusChange = vi.fn();
+    mocks.approveResult = { lateHoldIds: [5] };
+    try {
+      await renderWithProviders(
+        <ReviewActionBar
+          selection={{ request: PENDING, mode: 'pending' }}
+          onClose={vi.fn()}
+          onStatusChange={onStatusChange}
+        />
+      );
+      await page.getByRole('button', { name: 'Approve + build' }).click();
+      expect(onStatusChange).toHaveBeenCalledWith('error');
+      expect(onStatusChange).not.toHaveBeenCalledWith('approved');
+      expect(showError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'App suspended: a review hold was placed during the approve',
+        })
+      );
+    } finally {
+      mocks.approveResult = undefined;
+    }
   });
 
   test('the sticky variant wraps the controls in a labelled action group', async () => {
@@ -573,6 +689,44 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
       const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
       await vi.waitFor(() =>
         expect(reviewApprovalQueue.get('req-keepalive')?.status).toBe('committed')
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('🔴 a late hold found on commit shows "App suspended", never "Build started"', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes('/api/trpc/')) return realFetch(input, init);
+      return new Response(
+        JSON.stringify({
+          result: { data: { json: { publishRequestId: 'req-late', lateHoldIds: [5] } } },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    });
+    try {
+      notified.length = 0;
+      const request = { ...PENDING, id: 'req-late' };
+      renderWithProviders(
+        <ReviewActionBar
+          selection={{ request, mode: 'pending' }}
+          onClose={vi.fn()}
+          approveAndNext
+        />
+      );
+      await page.getByTestId('apps-review-approve-next').click();
+      const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
+      await reviewApprovalQueue.commitNow('req-late');
+      await vi.waitFor(() =>
+        expect(notified.map((n) => n.title)).toContain(
+          'App suspended: a review hold was placed during the approve'
+        )
+      );
+      expect(notified.map((n) => String(n.message))).not.toContain(
+        `Approved ${request.slug} v${request.version}. Build started.`
       );
     } finally {
       spy.mockRestore();

@@ -1,4 +1,6 @@
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -8,7 +10,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -681,8 +685,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -704,6 +710,16 @@ export const updateUserHandler = async ({
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -737,10 +753,20 @@ export const updateUserHandler = async ({
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
+    // An unchanged image stays out of the write, so a moderation clear committed since the read stands.
+    // A new picture replaces an upload key left in `User.image`: only the profile picture may carry one.
+    const imageChanged = data.image !== undefined && data.image !== user.image;
+    const image = imageChanged
+      ? data.image
+      : newPicture && keysIn(user.image).length
+      ? null
+      : undefined;
+
     const updatedUser = await updateUserById({
       id,
       data: {
         ...data,
+        image,
         username,
         profilePicture: newPicture
           ? {
@@ -765,7 +791,7 @@ export const updateUserHandler = async ({
 
     // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
     //
-    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // This used to be an inline image delete, which destroyed the row and the stored
     // object the instant the new picture saved. The write is instant; the references are
     // not — the image CDN caches its redirect for 24h, the account-switcher roster in
     // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
@@ -791,10 +817,8 @@ export const updateUserHandler = async ({
 
     // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
     // The modal sends the field on every user-level save, so this recomputes on cosmetic
-    // saves too. That is deliberate: comparing against the stored value would have to read
-    // it back, and the only cheap read is the replica — an A->B->A save inside the
-    // replication window would then compare equal and skip the recompute it needs. The
-    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    // saves too. That is deliberate: the upsert is cheap and idempotent, cheaper than
+    // reading the stored value back to compare.
     if (input.leaderboardShowcase !== undefined)
       postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
 
@@ -1127,6 +1151,15 @@ export async function toggleFavoriteHandler({
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
 
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
     modelId,
@@ -1150,6 +1183,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {
@@ -1381,7 +1415,7 @@ export const getUserCosmeticsHandler = async ({
       .filter(isDefined);
     const coverImages = await getEntityCoverImage({
       entities: inUseCosmeticEntities,
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
     });
     const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 

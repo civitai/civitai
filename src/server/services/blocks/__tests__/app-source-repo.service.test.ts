@@ -83,6 +83,11 @@ class FakeGit {
       new Response(data === undefined ? null : JSON.stringify(data), { status });
     let m: RegExpMatchArray | null;
 
+    if ((m = path.match(/^\/api\/v1\/orgs\/([^/]+)$/)) && method === 'GET') {
+      return this.orgs.has(decodeURIComponent(m[1]))
+        ? json(200, {})
+        : json(404, { message: 'no org' });
+    }
     if (method === 'POST' && path === '/api/v1/orgs') {
       if (this.orgs.has(body.username)) return json(422, { message: 'exists' });
       this.orgs.add(body.username);
@@ -376,6 +381,15 @@ function installRedis() {
     return 'OK';
   });
   redisMock.sysRedis.del.mockImplementation(async (k: string) => (redisStore.delete(k) ? 1 : 0));
+  // The writer lock is on the cache cluster: SET NX, released by a compare-and-delete script.
+  redisMock.redis.set.mockImplementation(redisMock.sysRedis.set.getMockImplementation()!);
+  redisMock.redis.eval.mockImplementation(
+    async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+      if (redisStore.get(keys[0]) !== args[0]) return 0;
+      redisStore.delete(keys[0]);
+      return 1;
+    }
+  );
   (redisMock.sysRedis as unknown as { scanIterator: unknown }).scanIterator = vi.fn(
     async function* () {
       yield [] as string[];

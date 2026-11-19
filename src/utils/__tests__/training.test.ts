@@ -3,6 +3,7 @@ import {
   isValidRapid,
   isInvalidRapid,
   isInvalidAiToolkit,
+  canGenerateWithEpochs,
   paidMemberHostFlag,
   networkDimSizeHint,
 } from '~/utils/training';
@@ -82,6 +83,18 @@ describe('isInvalidAiToolkit', () => {
   it('never flags when the engine is not ai-toolkit', () => {
     expect(isInvalidAiToolkit('flux2', 'rapid')).toBe(false);
     expect(isInvalidAiToolkit('sdxl', 'kohya')).toBe(false);
+  });
+});
+
+describe('canGenerateWithEpochs', () => {
+  it('is true for any signed-in user, member or not', () => {
+    const nonMember = { id: 1, isMember: false, isModerator: false };
+    expect(canGenerateWithEpochs(nonMember)).toBe(true);
+  });
+
+  it('is false with no user', () => {
+    expect(canGenerateWithEpochs(null)).toBe(false);
+    expect(canGenerateWithEpochs(undefined)).toBe(false);
   });
 });
 

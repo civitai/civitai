@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import type * as AppAssistantService from '~/server/services/app-assistant/app-assistant.service';
@@ -212,6 +213,21 @@ beforeEach(() => {
   sys.sRem.mockImplementation((k: string, v: string) =>
     lua.eval("return redis.call('SREM', KEYS[1], ARGV[1])", { keys: [k], arguments: [v] })
   );
+  // The cache cluster, where the per-user keys are (the pointer, the ban index, a start's client
+  // keys): the same store and harness, and an EVAL that refuses keys spanning hash slots, as the
+  // cluster does.
+  const cluster = redisMock.redis;
+  cluster.get.mockImplementation(sys.get.getMockImplementation()!);
+  cluster.set.mockImplementation(sys.set.getMockImplementation()!);
+  cluster.del.mockImplementation(sys.del.getMockImplementation()!);
+  cluster.sRem.mockImplementation(sys.sRem.getMockImplementation()!);
+  cluster.sMembers.mockImplementation(async (k: string) => lua.set(k) ?? []);
+  cluster.eval.mockImplementation(
+    (script: string, opts: { keys: string[]; arguments: string[] }) => {
+      rejectCrossSlot(opts.keys);
+      return lua.eval(script, opts);
+    }
+  );
 });
 
 describe('the runner’s secret and run grant, on every endpoint', () => {
@@ -300,7 +316,7 @@ describe('POST dev-tunnel/start', () => {
       blockId: OWNED_APP,
       host: json!.host,
     });
-    expect(store.get(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(json!.sessionId);
+    expect(store.get(`${PREFIX}:user:{${OWNER}}:${OWNED_APP}`)).toBe(json!.sessionId);
     expect(runnerUserMock).toHaveBeenCalledWith(OWNER);
     expect(resolveMock).toHaveBeenCalledWith(OWNED_APP, OWNER, { db: 'write' });
     // The approved/owned path does not spend the unsubmitted-app start budget.
@@ -553,7 +569,7 @@ describe('POST dev-tunnel/stop', () => {
     expect(await stop(OWNER, sessionId)).toMatchObject({ status: 200, json: { stopped: true } });
     expect(sessionRecord(sessionId)).toBeNull();
     expect(store.has(`${PREFIX}:host:${json!.host}`)).toBe(false);
-    expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+    expect(store.has(`${PREFIX}:user:{${OWNER}}:${OWNED_APP}`)).toBe(false);
     // Idempotent: a second stop finds nothing.
     expect(await stop(OWNER, sessionId)).toMatchObject({ status: 200, json: { stopped: false } });
   });
@@ -628,7 +644,7 @@ describe('a start the runner gave up on, closed by its client key', () => {
     held.release!();
     expect(await starting).toMatchObject({ status: 409, json: { code: 'cancelled' } });
     expect(sessionKeys()).toEqual([]);
-    expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+    expect(store.has(`${PREFIX}:user:{${OWNER}}:${OWNED_APP}`)).toBe(false);
   });
 
   it('a stop that comes after the start answered closes the tunnel it opened', async () => {
@@ -673,7 +689,7 @@ describe('a start the runner gave up on, closed by its client key', () => {
         expect(sessionsWritten()).toHaveLength(1);
         expect(sessionKeys()).toEqual([]);
       });
-      expect(store.has(`${PREFIX}:user:${OWNER}:${OWNED_APP}`)).toBe(false);
+      expect(store.has(`${PREFIX}:user:{${OWNER}}:${OWNED_APP}`)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -684,8 +700,8 @@ describe('a start the runner gave up on, closed by its client key', () => {
     // and owns the (user, app) pointer. Then A's apply finishes, and A closes what it opened: it
     // must not take B's pointer, or B's ban-index entry, with it. Otherwise B's live tunnel is
     // invisible to a ban (its token is not revoked) and to the next start (it is not replaced).
-    const pointer = `${PREFIX}:user:${OWNER}:${OWNED_APP}`;
-    const banIndex = `${PREFIX}:user-index:${OWNER}`;
+    const pointer = `${PREFIX}:user:{${OWNER}}:${OWNED_APP}`;
+    const banIndex = `${PREFIX}:user-index:{${OWNER}}`;
     const held = await holdApply();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -737,8 +753,9 @@ describe('a start the runner gave up on, closed by its client key', () => {
     /** A key whose read (or any script naming it) fails once A is released. */
     failCancelCheck?: string;
   }): Promise<{ lateA: Awaited<ReturnType<typeof call>>; sessionB: string }> {
-    const pointer = `${PREFIX}:user:${OWNER}:${OWNED_APP}`;
-    const sys = redisMock.sysRedis;
+    const pointer = `${PREFIX}:user:{${OWNER}}:${OWNED_APP}`;
+    // The pointer and the cancel mark are on the cache cluster.
+    const sys = redisMock.redis;
     const baseSet = sys.set.getMockImplementation()!;
     const baseGet = sys.get.getMockImplementation()!;
     const baseEval = sys.eval.getMockImplementation()!;
@@ -779,10 +796,10 @@ describe('a start the runner gave up on, closed by its client key', () => {
 
   function expectBStillListed(sessionB: string) {
     expect(
-      store.get(`${PREFIX}:user:${OWNER}:${OWNED_APP}`),
+      store.get(`${PREFIX}:user:{${OWNER}}:${OWNED_APP}`),
       'B dropped off its (user, app) pointer'
     ).toBe(sessionB);
-    expect(lua.set(`${PREFIX}:user-index:${OWNER}`), 'B dropped out of the ban index').toEqual([
+    expect(lua.set(`${PREFIX}:user-index:{${OWNER}}`), 'B dropped out of the ban index').toEqual([
       OWNED_APP,
     ]);
     expect(sessionKeys()).toEqual([`${PREFIX}:session:${sessionB}`]);
@@ -806,7 +823,7 @@ describe('a start the runner gave up on, closed by its client key', () => {
       whileHeld: async () => {
         expect(await stopKeyed(OWNER)).toMatchObject({ status: 200, json: { stopped: false } });
       },
-      failCancelCheck: `${PREFIX}:client-cancelled:${OWNER}:${CLIENT_KEY}`,
+      failCancelCheck: `${PREFIX}:client-cancelled:{${OWNER}}:${CLIENT_KEY}`,
     });
     expect(lateA.status).not.toBe(200);
     expectBStillListed(sessionB);

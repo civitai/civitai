@@ -5,6 +5,7 @@ import {
   readDeviceId,
   sessionCookieNameForSlot,
   type CookieSlot,
+  registrableDomain,
 } from './cookies';
 import { hubBaseUrl } from './hub';
 import { hubLogoutUrl } from './providers';
@@ -18,13 +19,7 @@ export interface SpokeLogoutOptions {
   sessionTokenClient?: Pick<SessionTokenClient, 'revoke'>;
 }
 
-// Same 2-label registrable domain the hub and the main app scope the shared cookie to.
-export function registrableDomain(hostname: string): string | undefined {
-  const h = hostname.toLowerCase();
-  if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
-  const parts = h.split('.');
-  return parts.length >= 2 ? parts.slice(-2).join('.') : undefined;
-}
+export { registrableDomain };
 
 /** Set-Cookie values that expire this spoke's session and device cookies under every name and scope. */
 export function spokeLogoutCookies(hostname: string): string[] {
@@ -62,7 +57,7 @@ export async function spokeLogout(
   );
   if (tokens.size) {
     const client = opts.sessionTokenClient ?? createSessionTokenClient();
-    const deviceId = readDeviceId(cookies)?.value;
+    const deviceId = readDeviceId(cookies, { host: null })?.value;
     for (const token of tokens) await client.revoke(token, { deviceId });
   }
 

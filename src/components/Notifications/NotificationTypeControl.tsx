@@ -53,14 +53,27 @@ export function NotificationTypeControl({
   );
 }
 
-/** Bell-off users are never fanned out to, so email is unavailable while the type is Off. */
-function EmailToggle({ type, disabled }: { type: string; disabled?: boolean }) {
+/**
+ * The one email opt-out checkbox: it reads and writes the same opt-out row as the email's one-click
+ * unsubscribe. Bell-off users are never fanned out to, so callers disable it while the type is Off.
+ */
+export function EmailToggle({
+  type,
+  disabled,
+  label = 'Email',
+  size = 'xs',
+}: {
+  type: string;
+  disabled?: boolean;
+  label?: string;
+  size?: 'xs' | 'sm';
+}) {
   const { emailTypes, isLoading } = useEmailNotificationSettings();
   const emailMutation = useToggleEmailSetting();
   return (
     <Checkbox
-      size="xs"
-      label="Email"
+      size={size}
+      label={label}
       checked={!disabled && emailTypes.includes(type)}
       disabled={disabled || isLoading}
       onChange={(e) => emailMutation.mutate({ type: [type], enabled: e.target.checked })}

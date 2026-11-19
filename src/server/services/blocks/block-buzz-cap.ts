@@ -1,4 +1,4 @@
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { calendarWindow } from '~/server/services/usage-limit-counters';
 
 /** UTC calendar day, e.g. '2026-06-02': the window every per-day block Buzz counter keys on. */
@@ -22,8 +22,8 @@ export function buzzCapRedisKey(
  */
 export function buzzOptInRedisKey(
   userId: number
-): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${userId}:${buzzCapWindowKey()}`;
+): `${typeof REDIS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${string}` {
+  return `${REDIS_KEYS.BLOCKS.BUZZ_CAP_OPT_IN}:${userId}:${buzzCapWindowKey()}`;
 }
 
 /** Outlives the UTC day it names, like the cap counter; the day in the key is what expires it. */
@@ -32,8 +32,8 @@ export const BUZZ_OPT_IN_TTL_SECONDS = 25 * 60 * 60;
 /** Set for the UTC day once a spend is refused at the viewer's daily cap (`markDailyCapRefused`). */
 export function buzzCapRefusedRedisKey(
   userId: number
-): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_REFUSED}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP_REFUSED}:${userId}:${buzzCapWindowKey()}`;
+): `${typeof REDIS_KEYS.BLOCKS.BUZZ_CAP_REFUSED}:${string}` {
+  return `${REDIS_KEYS.BLOCKS.BUZZ_CAP_REFUSED}:${userId}:${buzzCapWindowKey()}`;
 }
 
 /**
@@ -54,7 +54,7 @@ export function secondsToUtcReset(now = Date.now()): number {
  */
 export async function markDailyCapRefused(userId: number, cap: number): Promise<void> {
   try {
-    await sysRedis.set(buzzCapRefusedRedisKey(userId), String(cap), { EX: secondsToUtcReset() });
+    await redis.set(buzzCapRefusedRedisKey(userId), String(cap), { EX: secondsToUtcReset() });
   } catch {
     // the notice is an affordance, not a control: the refusal already happened
   }
@@ -67,7 +67,7 @@ export async function markDailyCapRefused(userId: number, cap: number): Promise<
  */
 export async function clearDailyCapRefusal(userId: number): Promise<void> {
   try {
-    await sysRedis.del(buzzCapRefusedRedisKey(userId));
+    await redis.del(buzzCapRefusedRedisKey(userId));
   } catch {
     // an affordance, not a control
   }
@@ -101,8 +101,8 @@ export const CONSENT_LIMIT_REFUSED_TTL_SECONDS = 5 * 60;
 function consentLimitRefusedRedisKey(
   userId: number,
   appBlockId: string
-): `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_LIMIT_REFUSED}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.CONSENT_LIMIT_REFUSED}:${userId}:${appBlockId}`;
+): `${typeof REDIS_KEYS.BLOCKS.CONSENT_LIMIT_REFUSED}:${string}` {
+  return `${REDIS_KEYS.BLOCKS.CONSENT_LIMIT_REFUSED}:${userId}:${appBlockId}`;
 }
 
 /**
@@ -116,7 +116,7 @@ export async function markConsentLimitRefused(
   limit: number
 ): Promise<void> {
   try {
-    await sysRedis.set(consentLimitRefusedRedisKey(userId, appBlockId), String(limit), {
+    await redis.set(consentLimitRefusedRedisKey(userId, appBlockId), String(limit), {
       EX: CONSENT_LIMIT_REFUSED_TTL_SECONDS,
     });
   } catch {
@@ -135,7 +135,7 @@ export async function wasConsentLimitRefusedRecently(
 ): Promise<boolean> {
   try {
     return (
-      (await sysRedis.get(consentLimitRefusedRedisKey(userId, appBlockId))) === String(currentLimit)
+      (await redis.get(consentLimitRefusedRedisKey(userId, appBlockId))) === String(currentLimit)
     );
   } catch {
     return false;

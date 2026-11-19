@@ -53,12 +53,16 @@ import {
   getUserMetricPrivacyDefaults,
   resolveVersionHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
+import { restModeratorViewer, restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: MODEL_VIEW_SCOPE });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -69,7 +73,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
-  const status = user?.isModerator ? undefined : ModelStatus.Published;
+  const status = restModeratorViewer(req, user)?.isModerator ? undefined : ModelStatus.Published;
 
   const allowedBrowsingLevels = apiBrowsingLevel(req);
 
@@ -172,12 +176,22 @@ export default MixedAuthEndpoint(async function handler(
         ) as model
       FROM "ModelVersion" mv
       WHERE mv.id = ${id}
-        ${status ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"` : Prisma.empty}
+        ${
+          status
+            ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
+              AND EXISTS (
+                SELECT 1 FROM "Model" m WHERE m.id = mv."modelId" AND m.status = ${status}::"ModelStatus"
+              )`
+            : Prisma.empty
+        }
         AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion, async () => user);
+    await resModelVersionDetails(req, res, modelVersion, async () =>
+      restOwnerOrModeratorViewer(req, user)
+    );
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -190,7 +204,7 @@ export default MixedAuthEndpoint(async function handler(
 
     return res.status(500).json({ error: 'Failed to fetch model version details' });
   }
-});
+}
 
 /**
  * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. What is

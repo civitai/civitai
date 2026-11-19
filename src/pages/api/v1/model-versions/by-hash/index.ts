@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
@@ -19,6 +20,7 @@ import {
 } from '~/server/services/model-visibility.service';
 import { getPublicPaidAccessForModelVersions } from '~/server/services/paid-access.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const schema = z
   .array(
@@ -55,7 +57,16 @@ export default PublicEndpoint(
     const atLevel = matched.filter((file) => (file.modelVersion.nsfwLevel & browsingLevel) !== 0);
     const hidden = await getHiddenModelVersionIds(
       atLevel.map((file) => file.modelVersion),
-      async () => (await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }))?.user
+      async () =>
+        restOwnerOrModeratorViewer(
+          req,
+          (
+            await getApiAuthSession(
+              { req, res },
+              { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+            )
+          )?.user
+        )
     );
     const files = atLevel.filter((file) => !hidden.has(file.modelVersion.id));
 

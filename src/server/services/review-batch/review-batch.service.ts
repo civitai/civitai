@@ -6,13 +6,13 @@ import {
   imageAuditContentHash,
   imageRoutesHeld,
   newReviewBatchId,
-  parseBlockedForPatterns,
   REVIEW_BATCH_TTL_SECONDS,
   REVIEW_MEDIA_ORIGIN,
   reviewBatchHash,
   reviewBatchLink,
   SCANNER_HITS_SQL,
   scannerHeldIds,
+  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
@@ -23,11 +23,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 import type { SessionUser } from '~/types/session';
-import { batchKey, deleteBatch, keySetKey } from './review-batch.store';
+import { batchKey, deleteBatch, keySetKey, reviewBatchCall } from './review-batch.store';
+import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 
 const CLICKHOUSE_TIMEOUT_SECONDS = 3;
 /** Longer than any mint takes, so a lock only outlives a crashed one. */
@@ -35,9 +36,9 @@ const IDEMPOTENCY_LOCK_SECONDS = 120;
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url');
 const idemKey = (keyId: number, key: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_BATCH_IDEM}:${keyId}:${sha256(key)}` as const;
+  `${REDIS_KEYS.APP.REVIEW_BATCH_IDEM}:${keyId}:${sha256(key)}` as const;
 const idemLockKey = (keyId: number, key: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_BATCH_IDEM_LOCK}:${keyId}:${sha256(key)}` as const;
+  `${REDIS_KEYS.APP.REVIEW_BATCH_IDEM_LOCK}:${keyId}:${sha256(key)}` as const;
 
 export const holdsHeldGrant = (user: SessionUser) => !!getFeatureFlags({ user }).csamReports;
 
@@ -52,15 +53,10 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-/**
- * The ids the scanner's ClickHouse rows mark CSAM or minor, or that have no rows yet; a completed,
- * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
- * the caller holds every image.
- */
-export async function readScannerHits(
-  ids: number[],
-  { absentHolds = true } = {}
-): Promise<Set<number> | null> {
+type ScannerRow = { contentHash: string; hit: number };
+
+/** The scanner's ClickHouse rows for `ids`; null when ClickHouse cannot answer in time. */
+async function readScannerRows(ids: number[]): Promise<ScannerRow[] | null> {
   if (!clickhouse) return null;
   const abort = AbortSignal.timeout((CLICKHOUSE_TIMEOUT_SECONDS + 1) * 1000);
   try {
@@ -71,11 +67,7 @@ export async function readScannerHits(
       abort_signal: abort,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
     });
-    return scannerHeldIds(
-      ids,
-      await result.json<{ contentHash: string; hit: number }>(),
-      absentHolds
-    );
+    return await result.json<ScannerRow>();
   } catch (e) {
     void logToAxiom({
       name: 'review-batch-scanner-read-failed',
@@ -86,14 +78,23 @@ export async function readScannerHits(
   }
 }
 
-let patternsRaw: string | undefined;
-let patterns: ReturnType<typeof parseBlockedForPatterns> = null;
-function blockedForPatterns() {
-  if (env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS !== patternsRaw) {
-    patternsRaw = env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS;
-    patterns = parseBlockedForPatterns(patternsRaw);
-  }
-  return patterns;
+/**
+ * The ids the scanner's ClickHouse rows mark CSAM or minor, or that have no rows yet; a completed,
+ * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
+ * the caller holds every image.
+ */
+export async function readScannerHits(
+  ids: number[],
+  { absentHolds = true } = {}
+): Promise<Set<number> | null> {
+  const rows = await readScannerRows(ids);
+  return rows ? scannerHeldIds(ids, rows, absentHolds) : null;
+}
+
+/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer in time. */
+export async function readScannerVerdict(imageId: number) {
+  const rows = await readScannerRows([imageId]);
+  return rows ? scannerVerdict(imageId, rows) : null;
 }
 
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */
@@ -142,7 +143,9 @@ export async function mintReviewBatch(
 
   const lock = input.idempotencyKey ? idemLockKey(keyId, input.idempotencyKey) : null;
   if (lock) {
-    const taken = await sysRedis.set(lock, '1', { NX: true, EX: IDEMPOTENCY_LOCK_SECONDS });
+    const taken = await reviewBatchCall('mint.lock', () =>
+      redis.set(lock, '1', { NX: true, EX: IDEMPOTENCY_LOCK_SECONDS })
+    );
     if (!taken)
       throw new TRPCError({
         code: 'CONFLICT',
@@ -151,7 +154,8 @@ export async function mintReviewBatch(
   }
   try {
     if (input.idempotencyKey) {
-      const previous = await sysRedis.get(idemKey(keyId, input.idempotencyKey));
+      const idem = idemKey(keyId, input.idempotencyKey);
+      const previous = await reviewBatchCall('mint.previous', () => redis.get(idem));
       if (previous) await deleteBatch(previous, keyId);
     }
 
@@ -170,14 +174,23 @@ export async function mintReviewBatch(
       seat: input.seat ?? null,
       createdAt: Date.now(),
     };
-    const multi = sysRedis
-      .multi()
-      .set(batchKey(hash), JSON.stringify(record), { EX: REVIEW_BATCH_TTL_SECONDS })
-      .sAdd(keySetKey(keyId), hash)
-      .expire(keySetKey(keyId), REVIEW_BATCH_TTL_SECONDS);
-    if (input.idempotencyKey)
-      multi.set(idemKey(keyId, input.idempotencyKey), hash, { EX: REVIEW_BATCH_TTL_SECONDS });
-    await multi.exec();
+    // One key per write (each MULTI is on one key): the key's set entry before the batch, so a
+    // batch that opens can always be revoked with its key; then the idempotency record.
+    await reviewBatchCall('mint.keySet', () =>
+      redis
+        .multi()
+        .sAdd(keySetKey(keyId), hash)
+        .expire(keySetKey(keyId), REVIEW_BATCH_TTL_SECONDS)
+        .exec()
+    );
+    await reviewBatchCall('mint.batch', () =>
+      redis.set(batchKey(hash), JSON.stringify(record), { EX: REVIEW_BATCH_TTL_SECONDS })
+    );
+    const idempotencyKey = input.idempotencyKey;
+    if (idempotencyKey)
+      await reviewBatchCall('mint.idempotency', () =>
+        redis.set(idemKey(keyId, idempotencyKey), hash, { EX: REVIEW_BATCH_TTL_SECONDS })
+      );
 
     return {
       batchId,
@@ -185,6 +198,6 @@ export async function mintReviewBatch(
       link: reviewBatchLink(tier, batchId, env.REVIEW_SHEET_ORIGIN ?? REVIEW_MEDIA_ORIGIN),
     };
   } finally {
-    if (lock) await sysRedis.del(lock).catch(() => null);
+    if (lock) await reviewBatchCall('mint.unlock', () => redis.del(lock)).catch(() => null);
   }
 }

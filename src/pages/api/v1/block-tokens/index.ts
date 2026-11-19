@@ -49,6 +49,7 @@ import {
   CONSENT_SPEND_SCOPE,
 } from '~/server/services/blocks/scope-grant.service';
 import {
+  isAppTokenRefusedError,
   isConsentRequiredError,
   manifestCanMintOauthToken,
   manifestWantsOauthToken,
@@ -749,12 +750,16 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const wantsOauth = tunnel.declaredAuth
     ? tunnel.declaredAuth === 'oauth'
     : manifestWantsOauthToken(app.manifest);
+  // The hub mints nothing for a suspended app's client; its owner keeps the dev-scoped token below.
   const oauth =
     wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await mintDevTunnelOauth({
           userId,
           clientId: app.appId,
           scopes: granted,
+        }).catch((err) => {
+          if (isAppTokenRefusedError(err)) return null;
+          throw err;
         })
       : null;
 
@@ -1412,7 +1417,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // useless-but-valid token is the right graceful outcome, not a 403.
   const knownManifestScopes = rawManifestScopes.filter(isKnownBlockScope);
 
-  const oauthAllowed = block.app?.allowedScopes ?? 0;
+  const oauthAllowed = block.app?.allowedScopes ?? 0n;
   const scopeCheck = validateBlockScopesAgainstOauthClient(knownManifestScopes, oauthAllowed);
   if (!scopeCheck.valid) {
     res.status(403).json({

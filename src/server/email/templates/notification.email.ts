@@ -15,7 +15,7 @@ export const notificationSettingsUrl = () => `${getBaseUrl()}/user/account#notif
 
 const subjectFor = (typeName: string) => typeName.replace(/^Services:\s*/, '');
 
-const absoluteUrl = (url?: string) =>
+export const absoluteUrl = (url?: string) =>
   !url ? undefined : /^https?:\/\//.test(url) ? url : `${getBaseUrl()}${url}`;
 
 export const notificationEmail = createEmail({

@@ -337,10 +337,9 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
    * the only thing standing between this loop and unbounded storage.
    */
   it('cannot be walked past the per-user byte ceiling by wire-non-increasing writes', async () => {
-    const KEYS = 30;
-    // Seeded so the whole population starts well inside the ceiling: 30 keys x
-    // 6,000 stored bytes = 180,000, under a tenth of the 2 MiB budget. Every seed
-    // is an INSERT and is correctly gated either way.
+    const KEYS = 24;
+    // Seeded well inside the ceiling (24 x 6,000 stored bytes); every seed is an INSERT.
+    // 24 keys saturated at the per-value cap (24 x 98,301) overshoot the 2 MiB ceiling.
     for (let k = 0; k < KEYS; k++) {
       expect(await trySet(`walk_${k}`, ones(2000))).toBe(true);
     }
@@ -350,10 +349,9 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
 
     let accepted = 0;
     let refused = 0;
-    // 12 passes is comfortably more than the ~8 needed for every key to saturate
-    // at the per-value cap; the loop is bounded so a broken gate produces a
-    // failed assertion rather than a hang.
-    for (let pass = 0; pass < 12; pass++) {
+    // Stored size grows ~1.5x per pass, so 9 passes saturate every key at the per-value cap;
+    // the bound makes a broken gate fail an assertion rather than hang.
+    for (let pass = 0; pass < 9; pass++) {
       for (let k = 0; k < KEYS; k++) {
         const key = `walk_${k}`;
         const stored = await storedSizeOf(key);
@@ -379,7 +377,7 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
     await expect(recomputedBytes()).resolves.toBe(used);
     // 🔴 The claim, asserted before the remaining controls so a regression fails
     // with the actual overrun in the message rather than with a control's `0 > 0`.
-    // Measured against the pre-fix router (wire-unit netDelta): this walk reached
+    // Measured against the pre-fix router (wire-unit netDelta), a 30-key walk reached
     // 2,949,030 stored bytes against the 2,097,152-byte ceiling with `refused`
     // still 0. 2,949,030 is exactly 30 x 98,301, i.e. every key saturated at the
     // per-value cap's stored size — the walk was stopped by the per-value cap and

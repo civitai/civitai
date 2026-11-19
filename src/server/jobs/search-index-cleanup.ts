@@ -179,9 +179,11 @@ export const searchIndexCleanupJob = createJob(
         message:
           `run ENDED BEFORE ${missed.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
           `were attempted: ${missed.join(', ')}`,
-        indexesConfigured: CLEANUP_INDEXES.length,
-        indexesAttempted: results.length,
-        indexesMissed: missed,
+        payload: {
+          indexesConfigured: CLEANUP_INDEXES.length,
+          indexesAttempted: results.length,
+          indexesMissed: missed,
+        },
       });
     }
 

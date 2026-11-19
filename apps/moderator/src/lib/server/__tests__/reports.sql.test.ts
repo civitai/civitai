@@ -45,6 +45,8 @@ const EXPECTED: [string, string, string][] = [
   ['image', 'ImageReport', 'imageId'],
   ['model', 'ModelReport', 'modelId'],
   ['post', 'PostReport', 'postId'],
+  // Worked in the post queue, keyed by the text's post.
+  ['postText', 'PostTextReport', 'postId'],
   ['article', 'ArticleReport', 'articleId'],
   ['commentV3', 'CommentV3Report', 'commentId'],
   ['bounty', 'BountyReport', 'bountyId'],

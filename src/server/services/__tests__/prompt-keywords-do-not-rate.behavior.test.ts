@@ -111,8 +111,22 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
+    );
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "userId" int,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",
@@ -153,8 +167,6 @@ beforeEach(async () => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
       return [...holder.tags.entries()].map(([id, t]) => ({ id, ...t }));
-    if (text.includes('bannedAt'))
-      return [{ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1, ownerBanned: false }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);

@@ -14,39 +14,44 @@ export type ArticleCategoryBackfillStatus =
   | 'not-public'
   | TextCategorySubmitOutcome;
 
-export async function runArticleCategoryBackfill({
+type ArticleCategoryResult = { entityId: number; status: ArticleCategoryBackfillStatus };
+
+export function countByStatus(results: ArticleCategoryResult[]) {
+  return results.reduce<Record<string, number>>((acc, r) => {
+    acc[r.status] = (acc[r.status] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+export async function selectUncategorizedArticles({
   afterId,
   limit,
-  concurrency,
-  dryRun,
   includeMature,
+  publishedBefore = new Date(),
+  client = dbWrite,
 }: {
   afterId: number;
   limit: number;
-  concurrency: number;
-  dryRun: boolean;
   includeMature: boolean;
+  publishedBefore?: Date;
+  // dbWrite by default: a lagging replica would reselect articles an earlier chunk just classified.
+  client?: Pick<typeof dbWrite, '$queryRawUnsafe'>;
 }) {
-  // dbWrite: a replica lagging behind an earlier chunk's writes would reselect classified articles.
-  const rows = await dbWrite.$queryRawUnsafe<{ id: number }[]>(
+  const rows = await client.$queryRawUnsafe<{ id: number }[]>(
     ARTICLE_CATEGORY_BACKFILL_SQL,
     afterId,
     limit,
-    includeMature
+    includeMature,
+    publishedBefore
   );
-  const ids = rows.map((r) => r.id);
-  const nextAfterId = ids.length ? ids[ids.length - 1] : null;
-  const summary = (results: { entityId: number; status: ArticleCategoryBackfillStatus }[]) => {
-    const byStatus = results.reduce<Record<string, number>>((acc, r) => {
-      acc[r.status] = (acc[r.status] ?? 0) + 1;
-      return acc;
-    }, {});
-    return { dryRun, includeMature, selected: ids.length, nextAfterId, byStatus, results };
-  };
+  return rows.map((r) => r.id);
+}
 
-  if (dryRun || !ids.length)
-    return summary(ids.map((entityId) => ({ entityId, status: 'dry-run' as const })));
-
+/** One category call per public article; each submitted one is billed. */
+export async function submitArticleCategoryCalls(
+  ids: number[],
+  concurrency: number
+): Promise<ArticleCategoryResult[]> {
   const profile = getTextScanProfile('Article');
   const hook = profile?.category;
   if (!profile || !hook) throw new Error('Article text-scan profile has no category hook');
@@ -54,7 +59,7 @@ export async function runArticleCategoryBackfill({
   const scanCallbackUrl = textScanCallbackUrl();
 
   const run = pLimit(concurrency);
-  const results = await Promise.all(
+  return Promise.all(
     ids.map((entityId) =>
       run(async () => {
         const subject = subjects.get(entityId);
@@ -84,16 +89,50 @@ export async function runArticleCategoryBackfill({
       })
     )
   );
-  const result = summary(results);
+}
+
+export async function runArticleCategoryBackfill({
+  afterId,
+  limit,
+  concurrency,
+  dryRun,
+  includeMature,
+}: {
+  afterId: number;
+  limit: number;
+  concurrency: number;
+  dryRun: boolean;
+  includeMature: boolean;
+}) {
+  const ids = await selectUncategorizedArticles({ afterId, limit, includeMature });
+  const nextAfterId = ids.length ? ids[ids.length - 1] : null;
+  const summary = (results: ArticleCategoryResult[]) => ({
+    dryRun,
+    includeMature,
+    selected: ids.length,
+    nextAfterId,
+    byStatus: countByStatus(results),
+    results,
+  });
+
+  if (dryRun || !ids.length)
+    return summary(ids.map((entityId) => ({ entityId, status: 'dry-run' as const })));
+
+  const result = summary(await submitArticleCategoryCalls(ids, concurrency));
+  // `failed` is an existing Axiom field; the other statuses are not, so they go under payload.
+  const { failed, ...otherStatuses } = result.byStatus;
   logToAxiom({
     name: 'text-category',
     type: 'info',
     message: 'backfill chunk',
-    afterId,
-    includeMature,
-    selected: result.selected,
-    nextAfterId,
-    ...result.byStatus,
+    failed,
+    payload: {
+      afterId,
+      includeMature,
+      selected: result.selected,
+      nextAfterId,
+      ...otherStatuses,
+    },
   });
   return result;
 }

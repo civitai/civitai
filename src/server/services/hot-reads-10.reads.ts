@@ -1,5 +1,9 @@
 import type { Prisma } from '@prisma/client';
-import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import {
+  fallbackUserImage,
+  servableProfilePicture,
+} from '~/server/services/profile-picture.servable';
+import { fallbackPictureOf } from '~/server/services/user-creator.reads';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getCollectionByIdRow } from '@civitai/db-queries/hot-reads-10';
@@ -73,6 +77,7 @@ export async function readCollectionByIdViaKysely(
             scannedAt: row.coverScannedAt,
             ingestion: row.coverIngestion,
             blockedFor: row.coverBlockedFor,
+            modelRestricted: row.coverModelRestricted,
             postId: row.coverPostId,
             type: row.coverType,
             metadata: row.coverMetadata,
@@ -104,7 +109,7 @@ export async function readCollectionByIdViaKysely(
       id: row.ownerId,
       username: row.ownerUsername,
       deletedAt: row.ownerDeletedAt,
-      image: row.ownerImage,
+      image: fallbackUserImage(row.ownerImage, fallbackPictureOf(row)),
       // One payload for every viewer: no owner exception.
       profilePicture: servableProfilePicture(
         row.profilePictureId !== null
@@ -122,7 +127,9 @@ export async function readCollectionByIdViaKysely(
               metadata: row.profilePictureMetadata,
             }
           : null,
-        row.profilePictureNeedsReview
+        row.profilePictureNeedsReview,
+        row.profilePictureModelRestricted,
+        row.profilePictureBlockedFor
       ),
       cosmetics: row.cosmetics.map((cosmetic) => ({
         data: cosmetic.data,

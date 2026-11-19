@@ -1,8 +1,9 @@
 /**
- * Unclassified articles the Story Writers board could score: its eligibility filters (migration
- * 20261112170000_story_writer_leaderboard) minus the category one. $1 = id to page after, $2 = limit,
- * $3 = also select articles rated R and above (20271116120000_story_writer_count_mature).
- * Keep in step with that query's WHERE.
+ * Unclassified articles the Story Writers board could score: the eligibility filters of its live query
+ * (Leaderboard row 'story-writer', last changed by 20271116120000_story_writer_count_mature) minus the
+ * category one. $1 = id to page after, $2 = limit, $3 = also select articles rated R and above, which
+ * the board counts from that migration on, $4 = published and last edited before (the retry job's settle).
+ * Keep in step with that query's WHERE, apart from $3 and $4.
  */
 export const ARTICLE_CATEGORY_BACKFILL_SQL = `
 SELECT a.id
@@ -13,6 +14,7 @@ WHERE
   AND a.id > $1
   AND a.status = 'Published'
   AND a."publishedAt" BETWEEN current_date - INTERVAL '30 days' AND now()
+  AND a."publishedAt" < $4 AND a."updatedAt" < $4
   AND a.ingestion = 'Scanned'
   AND NOT a."tosViolation"
   AND NOT a.unlisted

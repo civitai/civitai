@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const answerApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -22,7 +22,9 @@ vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
-vi.mock('$lib/server/hidden/hidden.service', () => ({}));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed: vi.fn() }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));

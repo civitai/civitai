@@ -61,6 +61,8 @@ const h = vi.hoisted(() => ({
   moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
   /** `app-blocks-shared-doc-levels` for every app; off unless a case turns it on. */
   docLevels: false,
+  /** The app ids `app-blocks-storage-unchanged-writes-free` is on for; none unless a case sets it. */
+  unchangedWritesApps: new Set<string>(),
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -71,17 +73,22 @@ const h = vi.hoisted(() => ({
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const DOC_LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const UNCHANGED_WRITES_FLAG = 'app-blocks-storage-unchanged-writes-free';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
     if (flag === DOC_LEVELS_FLAG) return h.docLevels;
+    if (flag === UNCHANGED_WRITES_FLAG) return h.unchangedWritesApps.has(entityId ?? '');
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
     ...real,
     isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+      h.isFlipt(flag, entityId, context),
+    // The levels flag is read through this one (`doc-levels.ts` fails closed on `null`).
+    readFliptBoolean: (flag: string, entityId?: string, context?: unknown) =>
       h.isFlipt(flag, entityId, context),
   };
 });
@@ -673,7 +680,7 @@ async function runCase(c: Case) {
 async function mintDevReal(app: AppRow, uid: number, scopeSource: string[]): Promise<string> {
   const granted = clampDevScopes({
     scopeSource,
-    oauthAllowed: 0,
+    oauthAllowed: 0n,
     spendEntitled: false,
     spendRequested: false,
     allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
@@ -2960,6 +2967,44 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     });
   });
 
+  it("the unchanged-writes flag is the REQUESTING app's: an identical put through an import follows the consumer's flag, not the source's", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = (key: string) =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: `/board/${key}`,
+        query: { from: S.blockId },
+        body: { data: { title: 'same' } },
+      });
+    const evaluated = () =>
+      h.isFlipt.mock.calls.filter(([flag]) => flag === UNCHANGED_WRITES_FLAG).map(([, e]) => e);
+    try {
+      // On for the consumer only: the second identical put is answered without writing.
+      h.unchangedWritesApps = new Set([C.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u1')).status).toBe(200);
+      const free = await put('u1');
+      expect(free.status).toBe(200);
+      expect((free.body as { version: number }).version).toBe(1);
+      expect(evaluated()).toEqual([C.id, C.id]);
+
+      // On for the source only: the consumer's flag is off, so the identical put writes.
+      h.unchangedWritesApps = new Set([S.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u2')).status).toBe(200);
+      const written = await put('u2');
+      expect(written.status).toBe(200);
+      expect((written.body as { version: number }).version).toBe(2);
+      expect(evaluated()).toEqual([C.id, C.id]);
+    } finally {
+      h.unchangedWritesApps = new Set();
+    }
+  });
+
   it('without a grant: 403 consent_required naming the scope and the source', async () => {
     const { S, C } = importApps();
     const r = await call({
@@ -4239,5 +4284,149 @@ describe('per-app refusal attribution: which limit, for which app', () => {
       status: 409,
       userId: VIEWER_IDS.v1,
     });
+  });
+});
+
+describe('orchestrator media links in shared data are refused in every moderation mode', () => {
+  const BLOB =
+    'https://orchestration.civitai.com/v2/consumer/blobs/ABC123DEF.png?sig=s1&exp=2099-01-01';
+  const PUBLIC = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc-123/width=450/1.jpeg';
+
+  const CONTENT_REDIRECT = 'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk9x2Q';
+
+  async function put(data: Record<string, unknown>, key = 'p1') {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    return call({ token: t, method: 'PUT', path: `/posts/${key}`, body: { data } });
+  }
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a consumer-blob url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ caption: 'mine', img: BLOB });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'link',
+        field: 'data.img',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain('ABC123DEF');
+    }
+  );
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a resolved blob content redirect url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ img: CONTENT_REDIRECT });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toMatchObject({
+        category: 'link',
+        field: 'data.img',
+      });
+    }
+  );
+
+  it('a percent-encoded orchestrator link is refused', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ img: encodeURIComponent(BLOB) });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'content_rejected' });
+  });
+
+  it('a create carrying a consumer-blob url is refused', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'POST',
+      path: '/posts',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'data.img',
+    });
+  });
+
+  it.each([
+    ['a document key', 'PUT', '/posts/orchestration.civitai.com', { data: { caption: 'fine' } }],
+    [
+      'a counter key that creates a document',
+      'POST',
+      '/plays/orchestration.civitai.com/counters/plays',
+      undefined,
+    ],
+  ] as const)('an orchestrator host as %s is refused', async (_label, method, path, body) => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({ token: t, method, path, ...(body ? { body } : {}) });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'key',
+    });
+  });
+
+  it('a refused write stores nothing', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'PUT',
+      path: '/posts/p9',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((await call({ token: t, method: 'GET', path: '/posts/p9' })).status).toBe(404);
+  });
+
+  it.each([
+    ['tab', 'https://orches\ttration.civitai.com/x'],
+    ['newline', 'https://orchestration.civitai\n.com/x'],
+    ['carriage return', 'https://orchestration.civi\rtai.com/x'],
+  ])('a host split by a %s is refused', async (_label, url) => {
+    h.moderationMode = 'off';
+    const r = await put({ img: url });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('a link in a document too large for the leaf walk is still refused', async () => {
+    h.moderationMode = 'off';
+    const pad = Array.from({ length: 1200 }, (_, i) => `p${i}`);
+    const r = await put({ pad, img: 'https://orchestration.civitai\n.com/x' });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('names the nested field that holds the link', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ a: 'ok', b: { c: BLOB } });
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.b.c' });
+  });
+
+  it('enforce: a minor hit in the same write still takes precedence over the link', async () => {
+    h.moderationMode = 'enforce';
+    const r = await put({ t: 'contract-minor-term', img: BLOB });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.t' });
+    expect((r.body as { details: { category: string } }).details.category).not.toBe('link');
+  });
+
+  it('a public image url saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ img: PUBLIC })).status).toBe(200);
+  });
+
+  it('plain text saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ caption: 'a cat on a windowsill' })).status).toBe(200);
   });
 });

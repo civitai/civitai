@@ -55,6 +55,7 @@ import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
   type BulkPanelItem,
+  notifyIfReferenceImagesSkipped,
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
 import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
@@ -528,7 +529,8 @@ function ProjectWorkspace() {
   };
 
   const createPanelMutation = trpc.comics.createPanel.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setPrompt('');
       setRegeneratingPanelId(null);
@@ -539,7 +541,8 @@ function ProjectWorkspace() {
   });
 
   const enhancePanelMutation = trpc.comics.enhancePanel.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setPrompt('');
       setInsertAtPosition(null);
@@ -701,6 +704,7 @@ function ProjectWorkspace() {
 
   const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
     onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closeSmartModal();
       goToChapter(data.position);
       invalidateProjectQueries();
@@ -709,7 +713,8 @@ function ProjectWorkspace() {
   });
 
   const bulkCreateMutation = trpc.comics.bulkCreatePanels.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      notifyIfReferenceImagesSkipped(data);
       closePanelModal();
       setInsertAtPosition(null);
       invalidateProjectQueries();

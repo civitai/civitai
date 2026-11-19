@@ -43,7 +43,7 @@ const routes: { name: string; method: string; path: string; handler: Handler }[]
 const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null };
 const MEMBER = { ...MODERATOR, isModerator: false };
 
-const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = MODERATOR) => ({
+const nonOauthKey = (apiKeyType: string | undefined, tokenScope: bigint, user = MODERATOR) => ({
   user,
   apiKeyId: 11,
   ...(apiKeyType ? { apiKeyType } : {}),
@@ -51,7 +51,7 @@ const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = 
   tokenScope,
   buzzLimit: null,
 });
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 12,
   apiKeyType: 'Access',

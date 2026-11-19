@@ -127,6 +127,7 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -225,6 +226,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const handleSettle = (settledIndex: number) => {
@@ -542,7 +544,11 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                     <IconShare3 {...sharedIconProps} />
                                   </LegacyActionIcon>
                                 </ShareButton>
-                                <TextSlideMenu postId={text.postId}>
+                                <TextSlideMenu
+                                  postId={text.postId}
+                                  textId={text.id}
+                                  authorId={textPost?.user.id}
+                                >
                                   <LegacyActionIcon {...sharedActionIconProps}>
                                     <IconDotsVertical {...sharedIconProps} />
                                   </LegacyActionIcon>
@@ -843,6 +849,23 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                       </AlertWithIcon>
                     )}
                     {!text && isOwner && <OwnerBlockedImageNotice image={image} />}
+                    {!text &&
+                      (isOwner || currentUser?.isModerator) &&
+                      'restricted' in image &&
+                      image.restricted === true && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="orange"
+                          iconColor="orange"
+                          title="Restricted"
+                          radius={0}
+                          px="md"
+                        >
+                          {isOwner
+                            ? `Hidden from everyone else, because ${RESTRICTED_IMAGE_REASON}. You still see it on pages built for you, such as your profile.`
+                            : `Hidden from feeds, galleries and search (its uploader still sees it where the page is built for them), because ${RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.`}
+                        </AlertWithIcon>
+                      )}
                     {!text && image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

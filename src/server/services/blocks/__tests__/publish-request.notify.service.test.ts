@@ -58,7 +58,13 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
     oauthClient: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // Only the late-hold ceiling read (select: allowedScopes) finds the client.
+      findUnique: vi.fn(
+        async (...a: unknown[]): Promise<unknown> =>
+          (a[0] as { select?: { allowedScopes?: boolean } } | undefined)?.select?.allowedScopes
+            ? { allowedScopes: 0n }
+            : null
+      ),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
     },
@@ -74,6 +80,15 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
     },
   });
   const db = { read: makeDb(), write: makeDb() };
+  // approveRequest's final step runs in a transaction that writes the request and the block.
+  db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    fn({
+      ...db.write,
+      $queryRaw: async () => [],
+      $executeRaw: async () => 0,
+      $executeRawUnsafe: async () => 0,
+    })
+  );
   const s3 = {
     send: vi.fn(async () => ({
       Body: { transformToByteArray: async () => holder.zipBytes },
@@ -178,7 +193,7 @@ function existingAppBlock() {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   };
 }
 

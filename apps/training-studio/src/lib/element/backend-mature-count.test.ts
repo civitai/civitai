@@ -24,7 +24,7 @@ vi.mock('@civitai/orchestration-client', () => ({
   invokeImageScanningStepTemplate: vi.fn(),
 }));
 
-const rating = vi.hoisted(() => ({ stored: {} as Record<string, { s: number; r: boolean }> }));
+const rating = vi.hoisted(() => ({ stored: {} as Record<string, { mature: boolean }> }));
 vi.mock('$lib/server/dataset-rating', () => ({
   datasetRatingFor: async () => ({
     matureLevel: 3,
@@ -45,7 +45,7 @@ vi.mock('$lib/server/signals', () => ({ workflowSignalCallbacks: () => undefined
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: () => undefined, safeError: (e: unknown) => e }));
 
 import { elementBackend, type StudioElementHost } from './backend';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { MatureRepriceError } from '$lib/mature-charge';
 import type { TrainingRunPayload } from '$lib/backend';
 import { POST as trainPost } from '../../routes/api/train/+server';
 
@@ -104,16 +104,16 @@ describe('embed training submit, mature count', () => {
     }));
   });
 
-  it('refuses an unconfirmed Green run whose dataset the v2 rating calls mature, before anything is submitted', async () => {
-    rating.stored = { 'nude-1': { s: 4, r: false } };
+  it('refuses a Green run priced as not mature whose dataset the v2 rating calls mature, before anything is submitted', async () => {
+    rating.stored = { 'nude-1': { mature: true } };
     await expect(elementBackend(host).submitTraining([greenRun('nude-1')])).rejects.toBeInstanceOf(
-      MatureAckRequiredError
+      MatureRepriceError
     );
     expect(orch.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('submits a Green run whose dataset the v2 rating calls safe', async () => {
-    rating.stored = { 'portrait-1': { s: 0, r: false } };
+    rating.stored = { 'portrait-1': { mature: false } };
     await expect(
       elementBackend(host).submitTraining([greenRun('portrait-1')])
     ).resolves.toMatchObject({ workflowIds: ['wf-1'] });
@@ -123,7 +123,9 @@ describe('embed training submit, mature count', () => {
   it('submits nothing on a host page without the Studio server', async () => {
     rating.stored = {};
     const { studioServer: _omit, ...bare } = host;
-    await expect(elementBackend(bare).submitTraining([greenRun('portrait-1')])).rejects.toThrow();
+    await expect(elementBackend(bare).submitTraining([greenRun('portrait-1')])).rejects.toThrow(
+      'Training is unavailable on this page right now. Reload and try again.'
+    );
     expect(orch.submitWorkflow).not.toHaveBeenCalled();
   });
 });

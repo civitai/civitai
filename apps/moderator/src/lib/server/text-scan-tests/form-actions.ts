@@ -6,8 +6,10 @@ import { jsonField, parseForm } from '$lib/server/query';
 import { promptChangesField, validatePromptChanges } from '$lib/server/text-scan-lab/try';
 import { requestCookie } from '$lib/server/user-actions.service';
 import type { Workspace } from '$lib/text-scan-tests/types';
+import { composeComFaceIntent } from '$lib/server/text-scan-lab/harness-client';
 import { runsDeps } from './deps';
-import { idField as id, refusal, requireWorkspace } from './guard';
+import { importIntentCases, parseIntentRows } from './intent-import';
+import { idField as id, refusal, requireIntentSetGrant, requireWorkspace } from './guard';
 import { refreshSetTotals } from './totals';
 import { cancelRun, quoteRun, rerunErrors, startRun, type DraftInput, type RunsDeps } from './runs';
 import {
@@ -47,6 +49,12 @@ function draftOf(input: RunForm): DraftInput | null {
 
 async function openSetFor(event: RequestEvent, db: Db, setId: number) {
   requireWorkspace(event.locals.user, (await requireSet(db, setId)).workspace);
+}
+
+/** `openSetFor` for an action that changes the set or its cases. */
+async function openSetForChange(event: RequestEvent, db: Db, setId: number) {
+  await openSetFor(event, db, setId);
+  await requireIntentSetGrant(setId);
 }
 
 export async function quoteAction(event: RequestEvent, workspace: Workspace) {
@@ -104,7 +112,7 @@ export async function editCaseAction(event: RequestEvent) {
   const userId = event.locals.user.id;
   try {
     const db = getModeratorDb();
-    await openSetFor(event, db, input.setId);
+    await openSetForChange(event, db, input.setId);
     const updated = await updateExpectation(
       db,
       input.setId,
@@ -132,7 +140,7 @@ export async function removeCaseAction(event: RequestEvent) {
   const userId = event.locals.user.id;
   try {
     const db = getModeratorDb();
-    await openSetFor(event, db, input.setId);
+    await openSetForChange(event, db, input.setId);
     const existing = await getCase(db, input.setId, input.caseId);
     if (!existing) throw new TestSetError(`Test case ${input.caseId} not found in this set.`, 404);
     await removeCase(db, input.setId, input.caseId);
@@ -154,7 +162,7 @@ export async function archiveSetAction(event: RequestEvent) {
   if (typeof input === 'string') return fail(400, { error: input });
   try {
     const db = getModeratorDb();
-    await openSetFor(event, db, input.setId);
+    await openSetForChange(event, db, input.setId);
     await archiveSet(db, input.setId);
     await recordModActivity({
       userId: event.locals.user.id,
@@ -176,6 +184,39 @@ export async function rerunAction(event: RequestEvent) {
     await openSetFor(event, deps.db, input.setId);
     const started = await rerunErrors(deps, input.setId, input.runId, event.locals.user.id);
     return { started };
+  } catch (e) {
+    return refusal(e);
+  }
+}
+
+export async function importIntentAction(event: RequestEvent) {
+  const input = parseForm(
+    z.object({ setId: id, rows: z.string().max(50_000, 'Paste fewer rows at a time.') }),
+    await event.request.formData()
+  );
+  if (typeof input === 'string') return fail(400, { error: input });
+  const rows = parseIntentRows(input.rows);
+  if (typeof rows === 'string') return fail(400, { error: rows });
+  const userId = event.locals.user.id;
+  try {
+    const db = getModeratorDb();
+    await openSetForChange(event, db, input.setId);
+    const imported = await importIntentCases(
+      { db, compose: composeComFaceIntent },
+      input.setId,
+      rows,
+      userId
+    );
+    if (imported.created || imported.updated) {
+      await recordModActivity({
+        userId,
+        entityType: 'textScanTestSet',
+        entityId: input.setId,
+        activity: 'textScan.testCase.import',
+      });
+      await refreshSetTotals(db, input.setId);
+    }
+    return { imported };
   } catch (e) {
     return refusal(e);
   }

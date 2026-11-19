@@ -532,6 +532,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     const detail = projectListingDetail(hydratedRow() as never);
     expect(Object.keys(detail).sort()).toEqual(
       [
+        // The submitting GitHub Actions run, public repositories only. `null` from the
+        // projection; `getListingDetail` fills it from the no-type columns.
+        'actionsRunSource',
         'category',
         // App Listing COLLABORATORS: the PUBLIC BYLINE (accepted + displayed seats),
         // projected through the SAME {id, username, image} allowlist as `creator`.

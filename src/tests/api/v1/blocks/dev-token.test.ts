@@ -209,7 +209,7 @@ function pageApp(over: Partial<Record<string, unknown>> = {}) {
       'apps:storage:read',
     ],
     // 0x1FFFFFF = all 25 bits → no OAuth-ceiling stripping in these tests.
-    app: { allowedScopes: 0x1ffffff, userId: OWNER_ID },
+    app: { allowedScopes: 0x1ffffffn, userId: OWNER_ID },
     ...over,
   };
 }
@@ -472,7 +472,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
   it('404 when the caller does NOT own the app (no probe oracle)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(
-      pageApp({ app: { allowedScopes: 0x1ffffff, userId: 999 } })
+      pageApp({ app: { allowedScopes: 0x1ffffffn, userId: 999 } })
     );
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
@@ -802,7 +802,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     mockAppBlockFindUnique.mockResolvedValueOnce(
       pageApp({
         approvedScopes: ['models:read:self', 'apps:storage:read'],
-        app: { allowedScopes: 0, userId: OWNER_ID },
+        app: { allowedScopes: 0n, userId: OWNER_ID },
       })
     );
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
@@ -1171,7 +1171,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
         pageApp({
           blockId: 'contested-slug',
           appId: 'appblk-contested-slug',
-          app: { allowedScopes: 0x1ffffff, userId: 999 },
+          app: { allowedScopes: 0x1ffffffn, userId: 999 },
         })
       );
       // The caller DOES own a pending request for the SAME slug.
@@ -1264,7 +1264,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
         pageApp({
           blockId: 'owned-by-someone',
           appId: 'appblk-owned-by-someone',
-          app: { allowedScopes: 0x1ffffff, userId: 999 },
+          app: { allowedScopes: 0x1ffffffn, userId: 999 },
         })
       );
       // No caller-owned pending request either.

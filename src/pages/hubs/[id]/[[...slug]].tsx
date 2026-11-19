@@ -3,6 +3,7 @@ import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
+import type { NextApiRequest } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -46,6 +47,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getUserHubForRoute, hubRouteIsDark } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
+import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -74,7 +76,8 @@ export const getServerSideProps = createServerSideProps({
     const hub = await getUserHubForRoute({
       id,
       userId: session?.user?.id,
-      isModerator: session?.user?.isModerator,
+      isModerator:
+        !!session?.user?.isModerator && isFullScopeSession(ctx.req as unknown as NextApiRequest),
     });
     if (!hub) return { notFound: true };
 

@@ -283,7 +283,15 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
+    //   the eight `app_block_publish_requests.actions_run_*` columns:
+    //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
+    //     `actions-run-source.service.ts`, which degrades while it is unapplied.
+    //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
     const inFlightColumns = new Set([
+      'ServiceDealFile.scannedEtag',
+      'ServiceDealFile.scannedVersionId',
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
       'ModActivity.reviewBatchId',
@@ -343,6 +351,15 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
+      'app_user_scope_grants.confirm_within_limit_max_job',
+      'app_block_publish_requests.actions_run_repository',
+      'app_block_publish_requests.actions_run_repository_id',
+      'app_block_publish_requests.actions_run_repository_owner_id',
+      'app_block_publish_requests.actions_run_sha',
+      'app_block_publish_requests.actions_run_ref',
+      'app_block_publish_requests.actions_run_workflow_ref',
+      'app_block_publish_requests.actions_run_repository_visibility',
+      'app_block_publish_requests.actions_run_id',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

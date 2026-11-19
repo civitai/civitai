@@ -67,7 +67,7 @@ import { GET, POST } from '../+server';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 
 function approve(
-  scope: number,
+  scope: bigint,
   headers: Record<string, string> = { origin: 'https://auth.civitai.com' }
 ) {
   const body = new URLSearchParams({
@@ -163,8 +163,17 @@ describe('authorize — client_credentials-only scopes', () => {
   it('stores the consent for an ordinary scope (positive control)', async () => {
     h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
     await Promise.resolve(approve(TokenScope.UserRead)).catch(() => undefined);
+    // The bigint column is written as its decimal string.
     expect(h.inserts).toEqual([
-      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: TokenScope.UserRead }),
+      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: '1' }),
+    ]);
+  });
+
+  it('stores the consent for AppsRead and AppDataRead (bits 31, 32) whole', async () => {
+    h.authorize.mockRejectedValueOnce(new Error('stop after consent'));
+    await Promise.resolve(approve(1n | 2147483648n | 4294967296n)).catch(() => undefined);
+    expect(h.inserts).toEqual([
+      expect.objectContaining({ userId: 7, clientId: 'game-frame', scope: '6442450945' }),
     ]);
   });
 });

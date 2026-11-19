@@ -31,6 +31,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
 const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
@@ -1248,6 +1249,7 @@ export async function getHiddenImagesForUser({
             // spreads it), and swaps the tile for the ToS notice on `tosViolation`.
             tosViolation: true,
             needsReview: true,
+            modelRestricted: true,
             post: { select: { publishedAt: true, availability: true, userId: true } },
           },
         },
@@ -1271,7 +1273,8 @@ export async function getHiddenImagesForUser({
 
   return {
     items: engagements.slice(0, limit).map(({ image, createdAt }) => {
-      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, ...rest } = image;
+      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, modelRestricted, ...rest } =
+        image;
       const isProfileCover = coverImageIds.has(image.id);
       const isOwner = image.userId === userId;
 
@@ -1292,6 +1295,7 @@ export async function getHiddenImagesForUser({
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&
           !rest.needsReview &&
+          !isRestrictedImage({ nsfwLevel: rest.nsfwLevel, modelRestricted }) &&
           (post
             ? !!post.publishedAt &&
               post.publishedAt <= now &&

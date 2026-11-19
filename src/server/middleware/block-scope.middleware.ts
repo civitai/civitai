@@ -580,7 +580,8 @@ export interface WithBlockScopeOpts {
    * per-app OauthClient.allowedScopes bit) with no security value. They need a
    * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
    * maturity ceiling source — NOT for authorization. Token validity + the
-   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * clamp (the viewer's level held to the domain cap,
+   * resolveCatalogViewerBrowsingLevel, fail-closed PG) is the whole authority
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;
@@ -1462,6 +1463,7 @@ async function resolveDevTunnelHubClaims(args: {
     parseManifestBuzzBudget,
     resolveDevBuzzBudget,
     FORCED_SFW_CEILING,
+    forcedSfwViewerLevel,
   } = await import('~/server/services/blocks/dev-scoped-mint.service');
   const source = dev
     ? tunnel.grantedScopes ?? []
@@ -1489,16 +1491,19 @@ async function resolveDevTunnelHubClaims(args: {
     dev: true,
     ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(userId),
   };
 }
 
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
+/** A hub OAuth token of a suspended app block's own client. */
+const HUB_TOKEN_REFUSED = 'refused' as const;
+
 async function resolveHubTokenClaims(
   bearer: string,
   req: NextApiRequest
-): Promise<BlockTokenClaims | null> {
+): Promise<BlockTokenClaims | typeof HUB_TOKEN_REFUSED | null> {
   const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
   const session = await getSessionFromBearerToken(bearer);
   if (!session || session.subject.type !== 'oauth') return null;
@@ -1517,7 +1522,20 @@ async function resolveHubTokenClaims(
     manifest: unknown;
     approvedScopes: string[];
   } | null;
-  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
+  if (!block) {
+    const devClaims = await resolveDevTunnelHubClaims({
+      userId,
+      clientId,
+      apiKeyId: session.apiKeyId,
+    });
+    if (devClaims) return devClaims;
+    // A suspended app's token is refused here rather than handed on as an ordinary OAuth session.
+    const suspended = await dbRead.appBlock.findFirst({
+      where: { appId: clientId, status: 'suspended' },
+      select: { id: true },
+    });
+    return suspended ? HUB_TOKEN_REFUSED : null;
+  }
 
   const { getGrantedScopes, partitionByConsent } = await import(
     '~/server/services/blocks/scope-grant.service'
@@ -1621,13 +1639,14 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // that point — the approval verdict, the required-scope check, context binding, the
     // handler and the invocation audit row — must see the narrowed set, which is the whole
     // reason the strip happens here rather than at each gate.
-    let claims = isJwt
+    const resolved = isJwt
       ? await verifyBlockToken(bearer)
       : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await resolveHubTokenClaims(bearer, req)
       : null;
+    let claims = resolved === HUB_TOKEN_REFUSED ? null : resolved;
     if (!claims) {
-      if (!isJwt) return handler(req, res);
+      if (!isJwt && resolved !== HUB_TOKEN_REFUSED) return handler(req, res);
       sendRefusal(req, res, opts, {
         kind: 'invalid_token',
         status: 401,

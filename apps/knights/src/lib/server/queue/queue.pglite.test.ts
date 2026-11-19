@@ -1,14 +1,20 @@
 import type { PGlite } from '@electric-sql/pglite';
-import type { Kysely } from 'kysely';
+import type { Kysely, KyselyPlugin } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { lockImage } from '../../../test/seed';
+import { PROGRESSION } from '../progression/config';
+import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
 import {
   castVote,
   applyPendingResolutions,
+  closeModeratorRuledItems,
+  closeUnservableItems,
   closeWithoutOutcome,
   enqueueItem,
   ensureVotePartitions,
@@ -18,6 +24,7 @@ import {
   type QueueDeps,
   bucketLevelSql,
   servableItems,
+  STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 
@@ -88,6 +95,57 @@ async function item(
     },
     NOW
   );
+}
+
+/**
+ * Open priority-1 Knight items, one per level given (each on its own published image), all enqueued at the same instant,
+ * which has milliseconds, so only the id orders them and a scan cursor must carry that instant exactly. Returns the item
+ * ids in serving order.
+ */
+async function sameAgeStage(levels: number[], firstImage = 100_000) {
+  const params = [`{${levels.join(',')}}`, firstImage];
+  const rows = `unnest($1::int[]) WITH ORDINALITY AS t(level, n)`;
+  await pg.query(
+    `INSERT INTO "Post" ("id","publishedAt") SELECT $2::int + n, '2020-01-01'::timestamp FROM ${rows}`,
+    params
+  );
+  await pg.query(
+    `INSERT INTO "Image" ("id","url","nsfwLevel","postId")
+     SELECT $2::int + n, 'key-' || ($2::int + n), level, $2::int + n FROM ${rows}`,
+    params
+  );
+  const items = await pg.query<{ id: number }>(
+    `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","priority","createdAt","updatedAt")
+     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, 1, '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
+     FROM ${rows} ORDER BY n RETURNING id`,
+    [...params, Q]
+  );
+  return items.rows.map((r) => r.id).sort((a, b) => a - b);
+}
+
+/**
+ * `db`, recording the ids each read returns: `rounds` for the stage-scan rounds (the rows carrying a `createdAtKey`),
+ * `fullReads` for the reads of served columns (rows carrying an `imageKey`). A read that returns no rows is not seen.
+ * `onRound` runs after each round's rows come back and before the next round starts.
+ */
+function watchFeedReads(onRound?: (ids: number[]) => Promise<void>) {
+  const rounds: number[][] = [];
+  const fullReads: number[][] = [];
+  const plugin: KyselyPlugin = {
+    transformQuery: ({ node }) => node,
+    async transformResult({ result }) {
+      const rows = result.rows as Record<string, unknown>[];
+      const ids = rows.map((r) => r.id as number);
+      if (rows.some((r) => 'createdAtKey' in r)) {
+        rounds.push(ids);
+        await onRound?.(ids);
+      } else if (rows.some((r) => 'imageKey' in r)) {
+        fullReads.push(ids);
+      }
+      return result;
+    },
+  };
+  return { db: db.withPlugin(plugin), rounds, fullReads };
 }
 
 const itemRow = async (id: number) =>
@@ -274,6 +332,57 @@ describe('getFeed', () => {
 
     const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
     expect(served.filter((id) => nsfw.includes(id)).length).toBeGreaterThan(0);
+  });
+
+  it('serves a bucket whose first item sits behind a whole scan round of another bucket', async () => {
+    await player(1, 'Knight');
+    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round. Every
+    // item shares a priority and enqueue time, so only the id puts the X item after the round's last row.
+    for (let n = 0; n < STAGE_SCAN_FIRST_ROUND; n++) {
+      await image(1000 + n, 1);
+      await item(1000 + n, { priority: 1 });
+    }
+    await image(5000, 8);
+    const x = await item(5000, { priority: 1 });
+
+    const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+  });
+
+  it('scans a stage whose buckets cannot fill in doubling rounds, and fetches the full rows of the kept items only', async () => {
+    await player(1, 'Knight');
+    // 350 PG items then one X item: only the PG bucket can fill, so the scan reads the whole stage. 351 rows overshoot
+    // the first two rounds (100, then 200), so the third round (400) is the partial one that ends the scan.
+    const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
+    const x = ids[350];
+    const watched = watchFeedReads();
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+    expect(STAGE_SCAN_FIRST_ROUND).toBe(100);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 51]);
+    // Each round starts right after the last row of the one before: every row once, in serving order.
+    expect(watched.rounds.flat()).toEqual(ids);
+    // The served columns are read once, for the first 10 PG items and the X item, not for the 340 PG items left out.
+    expect(watched.fullReads.map((r) => [...r].sort((a, b) => a - b))).toEqual([
+      [...ids.slice(0, 10), x],
+    ]);
+  });
+
+  it('continues the scan after the last row read even when that row is gone by the next round', async () => {
+    await player(1, 'Knight');
+    const ids = await sameAgeStage([...Array<number>(150).fill(1), 8]);
+    const x = ids[150];
+    const watched = watchFeedReads(async (round) => {
+      if (round.length === STAGE_SCAN_FIRST_ROUND) {
+        await pg.query(`DELETE FROM "KnightsQueueItem" WHERE id = $1`, [round[round.length - 1]]);
+      }
+    });
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 51]);
+    expect(watched.rounds[1][0]).toBe(ids[100]);
+    expect(served).toContain(x);
   });
 
   it('reads each level bucket by the same rule as itemBucket', async () => {
@@ -845,12 +954,6 @@ describe('writing a settled rating back', () => {
   });
 
   describe('when the image is no longer the one the players judged', () => {
-    const lock = (id: number, reason: string, level: number) =>
-      pg.query(
-        `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
-        [id, level, reason]
-      );
-
     it('sends a blocked image to the Inquisitors without calling the main app', async () => {
       const id = await settledItem();
       await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=10`);
@@ -869,7 +972,7 @@ describe('writing a settled rating back', () => {
 
     it('closes against a moderator ruling and grades the votes by it', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 8);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 8 });
       applyConsensus.mockClear();
 
       expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
@@ -878,9 +981,46 @@ describe('writing a settled rating back', () => {
       expect((await verdicts(id)).every((v) => v.verdict === 'failed')).toBe(true);
     });
 
+    it('settles on the moderator level, so a voter graded wrong sees that level as the verdict', async () => {
+      await fiveKnights();
+      await image(10, 2);
+      const id = await item(10);
+      applyConsensus.mockRejectedValueOnce(new Error('main app down'));
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const [u, answer] of [
+        [1, '2'],
+        [2, '2'],
+        [3, '2'],
+        [4, '1'],
+        [5, '2'],
+      ] as const) {
+        await vote(u, id, answer);
+      }
+      expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '2' });
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({
+        status: 'Closed',
+        reason: 'moderator-ruled',
+        resolvedValue: '1',
+      });
+      expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+        'failed',
+        'failed',
+        'failed',
+        'correct',
+        'failed',
+      ]);
+      const [wrong] = (await listJudgments(db, 1, { page: 1 })).judgments;
+      expect(wrong).toMatchObject({ answerLabel: 'PG-13', status: 'wrong', verdictLabel: 'PG' });
+      const [right] = (await listJudgments(db, 4, { page: 1 })).judgments;
+      expect(right).toMatchObject({ answerLabel: 'PG', status: 'correct' });
+    });
+
     it('grades the votes that match the moderator as correct', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 4);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
       await pendingRun(10);
       expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
     });
@@ -897,7 +1037,7 @@ describe('writing a settled rating back', () => {
 
     it('counts an image already at the settled level and Knights-locked as written, without calling the main app', async () => {
       const id = await settledItem();
-      await lock(10, 'Knights Vote', 4);
+      await lockImage(pg, 10, { reason: 'Knights Vote', level: 4 });
       applyConsensus.mockClear();
       expect(await pendingRun(10)).toEqual({ applied: 1, failed: 0, rerouted: 0 });
       expect(applyConsensus).not.toHaveBeenCalled();
@@ -909,7 +1049,7 @@ describe('writing a settled rating back', () => {
       await image(10, 8);
       const id = await item(10);
       applyConsensus.mockImplementationOnce(async () => {
-        await lock(10, 'Knights Vote', 4);
+        await lockImage(pg, 10, { reason: 'Knights Vote', level: 4 });
         throw new Error('timed out after the main app wrote');
       });
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -925,7 +1065,7 @@ describe('writing a settled rating back', () => {
 
     it('hands a moderator-locked image with no usable level to the Inquisitors as moderator-locked', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 0);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 0 });
       expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
       expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'moderator-locked' });
     });
@@ -999,6 +1139,12 @@ describe('what the feed serves', () => {
       'an acceptable-minor image',
       () => pg.query(`UPDATE "Image" SET "acceptableMinor"=true WHERE id=10`),
     ],
+    // These go to the moderators' own queues.
+    [
+      'an image flagged as a real person',
+      () => pg.query(`UPDATE "Image" SET "poi"=true WHERE id=10`),
+    ],
+    ['an image flagged as a minor', () => pg.query(`UPDATE "Image" SET "minor"=true WHERE id=10`)],
   ])('hides %s and refuses a vote on it', async (_label, hide) => {
     await player(1, 'Knight');
     await image(10);
@@ -1401,6 +1547,232 @@ describe('escalation with empty ranks', () => {
   });
 });
 
+describe('closeModeratorRuledItems', () => {
+  const exp = async (userId: number) =>
+    (
+      await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [
+        userId,
+      ])
+    ).rows[0].exp;
+  const settled = async (id: number) =>
+    (
+      await pg.query<{ settledAt: Date | null }>(
+        `SELECT "settledAt" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+        [id]
+      )
+    ).rows.map((v) => v.settledAt !== null);
+  const sweep = () => closeModeratorRuledItems(db, { now: NOW });
+
+  it('closes an open item on a moderator-locked image against the moderator level, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    const id = await item(10);
+    await vote(1, id, '4');
+    await vote(2, id, '8');
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
+    const before = { right: await exp(1), wrong: await exp(2) };
+
+    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '4',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['correct', 'failed']);
+    expect(await settled(id)).toEqual([true, true]);
+    expect(await exp(1)).toBe(before.right + PROGRESSION.correctXp);
+    expect(await exp(2)).toBe(before.wrong);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 0 });
+    expect(await vote(3, id, '4')).toEqual({ status: 'rejected', reason: 'not-open' });
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves settled items, Knights-locked images, and locks with no level or a block alone', async () => {
+    await fiveKnights();
+    for (const imageId of [11, 12, 13, 14, 15, 16]) await image(imageId, 2);
+    const closed = await item(11);
+    await vote(1, closed, '2');
+    await closeWithoutOutcome(db, closed, NOW);
+    const resolved = await item(12);
+    applyConsensus.mockResolvedValue(APPLIED);
+    for (const u of [1, 2, 3, 4]) await vote(u, resolved, '2');
+    const knightsLocked = await item(13);
+    const noLevel = await item(14);
+    const blocked = await item(15);
+    const otherQuestion = await item(16, { question: 'knights.test.bool' });
+    await lockImage(pg, 11, { reason: 'Moderator review', level: 4 });
+    await lockImage(pg, 12, { reason: 'Moderator review', level: 8 });
+    await lockImage(pg, 13, { reason: 'Knights Vote', level: 4 });
+    await lockImage(pg, 14, { reason: 'Moderator review', level: 0 });
+    await lockImage(pg, 15, { reason: 'Moderator review', level: 4 });
+    await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=15`);
+    await lockImage(pg, 16, { reason: 'Moderator review', level: 4 });
+    const ids = [closed, resolved, knightsLocked, noLevel, blocked, otherQuestion];
+    const snapshot = async () =>
+      Promise.all(ids.map(async (id) => ({ item: await itemRow(id), votes: await verdicts(id) })));
+    const before = await snapshot();
+    expect(before.map((s) => s.item.status)).toEqual([
+      'Closed',
+      'Resolved',
+      'Open',
+      'Open',
+      'Open',
+      'Open',
+    ]);
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe('closeUnservableItems', () => {
+  const at = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
+  const sweep = (limit?: number) => closeUnservableItems(db, { now: NOW, limit });
+  /** An item queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
+  async function queued(
+    id: number,
+    {
+      publishedAt = at(-1000),
+      createdAt = NOW,
+      expiresAt = at(72) as Date | null,
+    }: { publishedAt?: Date | null; createdAt?: Date; expiresAt?: Date | null } = {}
+  ) {
+    await image(id, 4, publishedAt === null ? null : publishedAt.toISOString());
+    const itemId = await item(id, { expires: expiresAt ?? undefined });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2 WHERE id=$3`, [
+      createdAt,
+      expiresAt,
+      itemId,
+    ]);
+    return itemId;
+  }
+  async function countedVote(itemId: number, playerId: number, imageId: number) {
+    await player(playerId, 'Knight');
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold")
+       VALUES ($1,$2,$3,$4,$5,'Knight','8',1,5)`,
+      [itemId, playerId, NOW, Q, imageId]
+    );
+  }
+  const statusOf = async (ids: number[]) =>
+    Promise.all(ids.map(async (id) => [(await itemRow(id)).status, (await itemRow(id)).reason]));
+
+  it('closes items on a deleted image or post, and on a post publishing after the item would expire, with no outcome', async () => {
+    await active(1, 'Knight');
+    const servable = await queued(10);
+    const imageGone = await queued(11);
+    await pg.query(`DELETE FROM "Image" WHERE id=11`);
+    const postGone = await queued(12);
+    await pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=12`);
+    const draft = await queued(13, { publishedAt: null });
+    // Default window: the item can be open until 144h after it was queued.
+    const publishesInTime = await queued(14, { publishedAt: at(100) });
+    const publishesTooLate = await queued(15, { publishedAt: at(150) });
+    // Already extended: the current window is the last one, so it closes at `expiresAt` (here 144.5h after queueing).
+    const extended = { createdAt: at(-80), expiresAt: at(64.5) };
+    const extendedInTime = await queued(16, { ...extended, publishedAt: at(64.25) });
+    const extendedTooLate = await queued(17, { ...extended, publishedAt: at(64.75) });
+    // A custom short first window can be extended twice: open until at most 216h after queueing.
+    const shortWindow = await queued(18, { expiresAt: at(10), publishedAt: at(150) });
+    // A vote on a gone image is left over: it becomes inconclusive and settles unpaid.
+    await countedVote(imageGone, 3, 11);
+    const before = {
+      unservable: await counterValue('knights_escalations_total', { reason: 'unservable' }),
+      late: await counterValue('knights_escalations_total', {
+        reason: 'publishes-after-expiry',
+      }),
+    };
+
+    expect(await sweep()).toEqual({ unservable: 2, publishesAfterExpiry: 2 });
+
+    expect(
+      await statusOf([
+        servable,
+        imageGone,
+        postGone,
+        draft,
+        publishesInTime,
+        publishesTooLate,
+        extendedInTime,
+        extendedTooLate,
+        shortWindow,
+      ])
+    ).toEqual([
+      ['Open', null],
+      ['Closed', 'unservable'],
+      ['Closed', 'unservable'],
+      ['Open', null],
+      ['Open', null],
+      ['Closed', 'publishes-after-expiry'],
+      ['Open', null],
+      ['Closed', 'publishes-after-expiry'],
+      ['Open', null],
+    ]);
+    expect(await itemRow(postGone)).toMatchObject({ resolvedValue: null, escalationReason: null });
+    expect(await counterValue('knights_escalations_total', { reason: 'unservable' })).toBe(
+      before.unservable + 2
+    );
+    expect(
+      await counterValue('knights_escalations_total', { reason: 'publishes-after-expiry' })
+    ).toBe(before.late + 2);
+    expect(await verdicts(imageGone)).toEqual([
+      { playerId: 3, verdict: 'inconclusive', stage: 'Knight' },
+    ]);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 1, failed: 0 });
+    expect(
+      (await pg.query(`SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=3`)).rows[0]
+    ).toEqual({ goldEarned: 0 });
+    expect(await applyPendingResolutions(db, deps())).toMatchObject({ applied: 0 });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await sweep()).toEqual({ unservable: 0, publishesAfterExpiry: 0 });
+  });
+
+  it('leaves hidden checks, yes/no items, voted, escalated and never-expiring items alone, but closes any stage on a gone image', async () => {
+    await active(1, 'Knight');
+    await image(20);
+    const hidden = await item(20, { hidden: true });
+    await image(21);
+    const yesNo = await item(21, { question: 'knights.test.bool' });
+    await pg.query(`UPDATE "KnightsQueueItem" SET audience='players' WHERE id=$1`, [yesNo]);
+    await pg.query(`DELETE FROM "Image" WHERE id IN (20, 21)`);
+    const voted = await queued(22, { publishedAt: at(150) });
+    await countedVote(voted, 3, 22);
+    const escalated = await queued(23, { publishedAt: at(150) });
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "minRank"='Templar', "escalatedAt"=$1 WHERE id=$2`,
+      [NOW, escalated]
+    );
+    const neverExpires = await queued(24, { publishedAt: at(150), expiresAt: null });
+    const escalatedGone = await queued(25);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "minRank"='Templar', "escalatedAt"=$1 WHERE id=$2`,
+      [NOW, escalatedGone]
+    );
+    await pg.query(`DELETE FROM "Image" WHERE id=25`);
+
+    expect(await sweep()).toEqual({ unservable: 1, publishesAfterExpiry: 0 });
+    expect(await statusOf([hidden, yesNo, voted, escalated, neverExpires, escalatedGone])).toEqual([
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Closed', 'unservable'],
+    ]);
+  });
+
+  it('closes at most the batch limit per call', async () => {
+    const ids: number[] = [];
+    for (const id of [31, 32, 33, 34, 35]) ids.push(await queued(id));
+    await pg.query(`DELETE FROM "Image" WHERE id IN (31, 32, 33, 34, 35)`);
+
+    expect(await sweep(3)).toEqual({ unservable: 3, publishesAfterExpiry: 0 });
+    expect((await statusOf(ids)).filter(([status]) => status === 'Closed')).toHaveLength(3);
+    expect(await sweep(3)).toEqual({ unservable: 2, publishesAfterExpiry: 0 });
+    expect((await statusOf(ids)).every(([status]) => status === 'Closed')).toBe(true);
+  });
+});
+
 describe('closeWithoutOutcome', () => {
   it('marks pending votes inconclusive and closes the item', async () => {
     await fiveKnights();
@@ -1596,5 +1968,21 @@ describe('held players', () => {
     await vote(1, other, '4');
     await escalateExpired(db, { now: NOW });
     expect(await itemRow(other)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+});
+
+describe('countOpenServableKnightItems', () => {
+  it('counts open Knight-stage rating items players can be served, up to the limit', async () => {
+    for (const id of [21, 22, 23, 24, 25, 26]) {
+      await image(id);
+      await item(id);
+    }
+    await pg.query(`UPDATE "Post" SET "publishedAt"=NULL WHERE id=22`);
+    await pg.query(`UPDATE "Image" SET "poi"=true WHERE id=23`);
+    await pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=24`);
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"='Templar' WHERE "imageId"=25`);
+
+    expect(await countOpenServableKnightItems(db, 100)).toBe(2);
+    expect(await countOpenServableKnightItems(db, 1)).toBe(1);
   });
 });

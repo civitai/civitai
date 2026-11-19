@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import * as z from 'zod';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
@@ -9,6 +10,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const schema = z.object({
   hash: z.string().transform((hash) => hash.toUpperCase()),
@@ -53,7 +55,9 @@ export default PublicEndpoint(
         : null;
 
     await resModelVersionDetails(req, res, servable, async () =>
-      getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }).then((session) => session?.user)
+      getApiAuthSession({ req, res }, { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }).then(
+        (session) => restOwnerOrModeratorViewer(req, session?.user)
+      )
     );
   },
   ['GET'],

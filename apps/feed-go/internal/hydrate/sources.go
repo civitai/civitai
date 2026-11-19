@@ -37,7 +37,7 @@ const (
 	KeyBasicUsers      = "packed:caches:basic-users"
 	KeyUserCosmetics   = "packed:caches:user-cosmetics"
 	KeyCosmetics       = "packed:caches:cosmetics2"
-	KeyProfilePictures = "packed:caches:profile-pictures:v2"
+	KeyProfilePictures = "packed:caches:profile-pictures:v4"
 	KeyImageFrames     = "packed:caches:cosmetics2:Image"
 	KeyImageEvents     = "packed:caches:cosmetics2:event:v2:Image"
 	KeyThumbnails      = "packed:caches:thumbnails"

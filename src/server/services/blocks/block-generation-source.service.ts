@@ -8,7 +8,7 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules } from '~/server/services/blocks/block-output-mint';
 import {
   BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_GENERATION_SOURCE_REF_META_KEY,
@@ -114,13 +114,18 @@ export async function findBlockGenerationSourceImage(input: {
  * it does, `false` while the scan is still pending. Any other refusal (blocked, held for review,
  * unscannable) is thrown as the gate threw it.
  */
-export async function isGenerationSourceUsable(url: string, userId: number): Promise<boolean> {
+export async function isGenerationSourceUsable(
+  url: string,
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
   try {
     await assertGenerationInputsUsable({
       urls: [url],
       userId,
       entry: 'appBlocksSourcePersist',
       isApiCaller: false,
+      appBlockLog: { appBlockId },
     });
     return true;
   } catch (error) {
@@ -138,10 +143,11 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export async function waitForGenerationSource(input: {
   url: string;
   userId: number;
+  appBlockId: string;
   deadline: number;
 }): Promise<boolean> {
   for (;;) {
-    if (await isGenerationSourceUsable(input.url, input.userId)) return true;
+    if (await isGenerationSourceUsable(input.url, input.userId, input.appBlockId)) return true;
     const left = input.deadline - Date.now();
     if (left <= 0) return false;
     await sleep(Math.min(GENERATION_SOURCE_POLL_MS, left));
@@ -156,10 +162,11 @@ export async function persistBlockGenerationSource(input: {
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
   /**
-   * The token's output ceiling (`blockOutputCeilingFromClaims(claims)`): decides which
-   * output positions are restricted. `imageIndex` is a position in `AppWorkflow.outputs`.
+   * The token's output rules (`resolveBlockOutputRules(claims)`): decide which output
+   * positions are restricted, as the poll does. `imageIndex` is a position in
+   * `AppWorkflow.outputs`.
    */
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
   budgetMs?: number;
 }): Promise<PersistedGenerationSource> {
@@ -182,6 +189,9 @@ async function withinGenerationSourceBudget<T>(
   const ms = budgetMs ?? GENERATION_SOURCE_DEADLINE_MS;
   const deadline = Date.now() + ms;
   const expiry = new AbortController();
+  // A spent budget aborts now: the timer fires only after the current task, by which time the
+  // request may already have passed every check that reads the signal.
+  if (ms <= 0) expiry.abort();
   const timer = setTimeout(() => expiry.abort(), ms);
   try {
     return await run({ deadline, signal: expiry.signal });
@@ -197,7 +207,7 @@ async function persistWithin(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   deadline: number;
   signal: AbortSignal;
 }): Promise<PersistedGenerationSource> {
@@ -246,6 +256,7 @@ async function persistWithin(input: {
   return keepGenerationSource({
     userId: input.userId,
     appId: input.appId,
+    appBlockId: input.appBlockId,
     ref: `${input.workflowId}#${input.imageIndex}`,
     imageUrl: output.url,
     width: output.width,
@@ -265,6 +276,7 @@ async function persistWithin(input: {
 async function keepGenerationSource(input: {
   userId: number;
   appId: string;
+  appBlockId: string;
   ref: string;
   imageUrl: string;
   width: number | null;
@@ -301,7 +313,12 @@ async function keepGenerationSource(input: {
   }
 
   const url = generationSourceUrl(image.key);
-  const ready = await waitForGenerationSource({ url, userId, deadline });
+  const ready = await waitForGenerationSource({
+    url,
+    userId,
+    appBlockId: input.appBlockId,
+    deadline,
+  });
   return { url, width: image.width, height: image.height, imageId: image.imageId, ready };
 }
 
@@ -346,6 +363,8 @@ export function uploadedSourceBlobId(raw: string): string | null {
 export async function persistUploadedGenerationSource(input: {
   userId: number;
   appId: string;
+  /** The block token's `appBlockId` claim, for the gate the scan wait asks. */
+  appBlockId: string;
   url: string;
   /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
   budgetMs?: number;
@@ -356,6 +375,7 @@ export async function persistUploadedGenerationSource(input: {
     keepGenerationSource({
       userId: input.userId,
       appId: input.appId,
+      appBlockId: input.appBlockId,
       ref: `upload:${blobId}`,
       imageUrl: input.url,
       // Measured from the bytes: a blob carries no dimensions we trust.

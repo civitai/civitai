@@ -95,6 +95,16 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
+// Non-test sources, read once. A call naming `needle` must contain it, so only those files are parsed.
+let sources: { rel: string; text: string }[] | undefined;
+function sourcesNaming(needle: RegExp) {
+  sources ??= walk(SRC)
+    .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
+    .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    .map((rel) => ({ rel, text: readFileSync(join(SRC, rel), 'utf8') }));
+  return sources.filter((s) => needle.test(s.text)).map((s) => s.rel);
+}
+
 describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', () => {
   it('is FROZEN, so the export cannot be widened by reference', () => {
     // 🔴 The guard that closes the one-line leak, and it is behavioural rather than textual.
@@ -133,10 +143,9 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // `~/server/search-index/__tests__/models-index-insight-projection.test.ts`.
     const MUTATOR =
       /^(modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES|modelsSearchableAttributes)\.(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/;
-    const offenders = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
-      .filter((rel) => callsIn(rel).some((c) => MUTATOR.test(c.callee)));
+    const offenders = sourcesNaming(
+      /modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES|modelsSearchableAttributes/
+    ).filter((rel) => callsIn(rel).some((c) => MUTATOR.test(c.callee)));
 
     expect(offenders).toEqual([]);
   });
@@ -278,9 +287,7 @@ describe('the writer seam', () => {
     // 🔴 Excluding tests is load-bearing, not tidiness: this file names the very string it
     // searches for, so without the filter the scan matches ITSELF and the ledger can never be
     // satisfied. Same shape as `pgrep -f` matching the shell that ran it.
-    const writers = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    const writers = sourcesNaming(/updateDisplayedAttributes/)
       .filter((rel) =>
         callsIn(rel).some((c) => c.callee.split('.').pop() === 'updateDisplayedAttributes')
       )
@@ -299,7 +306,7 @@ describe('the writer seam', () => {
     }
   });
 
-  it('has exactly eight writers of searchableAttributes, tree-wide', () => {
+  it('has exactly seven writers of searchableAttributes, tree-wide', () => {
     // 🔴 THE MISSING THIRD GUARD, AND THE ONLY TREE-WIDE ONE. The displayed list is protected by
     // three guards of different SHAPES — this writer ledger, the write-argument pin, and the
     // no-local ban — and when the same protection was built for the searchable whitelist in
@@ -327,17 +334,14 @@ describe('the writer seam', () => {
     // MUTATOR regex above covers `modelsSearchableAttributes`: the tree-wide walks have ONE home,
     // so `walk`/`callsIn` are not duplicated and a reviewer finds every tree-wide ledger together.
     //
-    // 🔴 AND WHY THE SET IS THE EIGHT INDEX FILES RATHER THAN "the models index's writers". Which
+    // 🔴 AND WHY THE SET IS THE SEVEN INDEX FILES RATHER THAN "the models index's writers". Which
     // index a `*.search-index.ts` writes is decided by a runtime `indexName`, so no syntactic walk
     // can scope this ledger to the models index — the honest scope is every caller of the setter,
     // anywhere. The cost is that it also moves when an unrelated index gains or loses a searchable
     // write, which is the review event we want: a NEW writer is the hazard, and a writer
     // DISAPPEARING means an index stopped having its whitelist applied at all and silently fell
     // back to Meili's `["*"]`.
-    // Eight since the retired images index (`images.search-index.ts`) was deleted with its writer.
-    const writers = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    const writers = sourcesNaming(/updateSearchableAttributes/)
       .filter((rel) =>
         callsIn(rel).some((c) => c.callee.split('.').pop() === 'updateSearchableAttributes')
       )
@@ -348,16 +352,15 @@ describe('the writer seam', () => {
       'server/search-index/bounties.search-index.ts',
       'server/search-index/collections.search-index.ts',
       'server/search-index/comics.search-index.ts',
-      'server/search-index/metrics-images.search-index.ts',
       'server/search-index/models.search-index.ts',
       'server/search-index/tools.search-index.ts',
       'server/search-index/users.search-index.ts',
     ]);
 
     // 🔴 ONLY the models index is required to read the shared export, and that asymmetry is
-    // DELIBERATE and documented: the other seven index files each declare their own inline
+    // DELIBERATE and documented: the other six index files each declare their own inline
     // `searchableAttributes` literal, which is out of scope here and not a defect to be swept up.
-    // Asserting the shared read across all eight would be a redesign of seven unrelated indexes
+    // Asserting the shared read across all seven would be a redesign of six unrelated indexes
     // dressed up as a guard.
     // Note `~/server/search-index/searchable-attributes.ts` is correctly ABSENT from the ledger
     // above: it names `updateSearchableAttributes` in a prose comment, and a comment is not a call

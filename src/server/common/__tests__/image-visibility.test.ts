@@ -3,6 +3,7 @@ import {
   imageReviewedSql,
   isImageReviewed,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  withServableImage,
 } from '~/server/common/image-visibility';
 
 const render = (alias?: string) => {
@@ -115,5 +116,42 @@ describe('isImageReviewed', () => {
     ['a mod lock on missing media', { ingestion: 'NotFound', ...locked }, false],
   ] as const)('%s → %s', (_label, input, expected) => {
     expect(isImageReviewed({ nsfwLevelReason: null, scanJobs: null, ...input })).toBe(expected);
+  });
+});
+
+describe('withServableImage', () => {
+  const UPLOADER = 5;
+  const image = (nsfwLevel: number, modelRestricted = true) => ({
+    id: 1,
+    nsfwLevel,
+    modelRestricted,
+    userId: UPLOADER,
+  });
+  const row = (cover: ReturnType<typeof image> | null, hero = image(4)) => ({
+    id: 9,
+    name: 'n',
+    meta: { a: 1 },
+    cover,
+    hero,
+  });
+
+  it('withholds a mature restricted image from anyone but its uploader, leaving the rest alone', () => {
+    const input = row(image(4));
+    for (const viewerId of [6, null, undefined]) {
+      expect(withServableImage(input, 'cover', viewerId)).toEqual({ ...input, cover: null });
+    }
+    expect(withServableImage(input, 'cover', UPLOADER)).toEqual(input);
+    expect(input.cover).toEqual(image(4));
+  });
+
+  it('serves a SFW or unflagged image to anyone, and keeps a missing one missing', () => {
+    expect(withServableImage(row(image(1)), 'cover').cover).toEqual(image(1));
+    expect(withServableImage(row(image(4, false)), 'cover').cover).toEqual(image(4, false));
+    expect(withServableImage(row(null), 'cover').cover).toBeNull();
+  });
+
+  it('judges each key on its own when nested', () => {
+    const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
+    expect([served.cover, served.hero]).toEqual([image(1), null]);
   });
 });

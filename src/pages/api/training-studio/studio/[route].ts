@@ -28,7 +28,7 @@ export default AuthedEndpoint(
 
     if (!(await allowTrainingStudio(req, res, user))) return;
 
-    const sessionCookies = sessionCookiesOf(req.headers.cookie);
+    const sessionCookies = sessionCookiesOf(req.headers.cookie, req.headers.host);
     if (!sessionCookies) return res.status(401).json({ message: 'Sign in again to continue.' });
 
     // The query minus the route segment Next adds to it.
