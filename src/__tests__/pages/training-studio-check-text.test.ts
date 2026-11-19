@@ -187,7 +187,9 @@ describe('/api/training-studio/license', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ ok: true });
 
+    expect(patchUserSettings).toHaveBeenCalledWith(7, expect.anything());
     expect((await license('GET')).body).toEqual({ pending: [] });
+    expect(getUserSettings).toHaveBeenLastCalledWith(7);
     await expect(
       assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3image', userId: 7 })
     ).resolves.toBeUndefined();

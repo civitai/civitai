@@ -71,7 +71,7 @@ vi.mock('~/server/services/training.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
-  getUserSettings: () => h.userSettings(),
+  getUserSettings: (...a: unknown[]) => h.userSettings(...(a as [])),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => null),
@@ -489,6 +489,8 @@ describe('the base model licence of a pass-through `kind:step` training step', (
       code: 'FORBIDDEN',
       message: expect.stringMatching(NOT_ACCEPTED),
     });
+    // The viewer's own acceptances are the ones read.
+    expect(h.userSettings).toHaveBeenCalledWith(VIEWER);
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

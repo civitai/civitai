@@ -148,6 +148,7 @@ describe('createTrainingWorkflow rollout flags', () => {
     dbMock.dbWrite.modelFile.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.updateMany.mockReset();
+    vi.mocked(getUserSettings).mockClear();
     dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
     givenVersion();
   });
@@ -218,6 +219,16 @@ describe('createTrainingWorkflow rollout flags', () => {
       message: expect.stringMatching(/licence terms before training/),
     });
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  // The licence binds the weights, so an engine other than AI Toolkit is asked too.
+  it('refuses a non-AI Toolkit run on the MiniMax H3 Image base while its licence is not accepted', async () => {
+    givenVersion({ baseModel: 'minimaxh3image', baseModelType: 'sdxl', params: kohyaParams });
+    await expect(submitWith({})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/licence terms before training/),
+    });
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 

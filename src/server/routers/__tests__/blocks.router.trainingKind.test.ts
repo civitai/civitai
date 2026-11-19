@@ -102,7 +102,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
-  getUserSettings: () => h.userSettings(),
+  getUserSettings: (...a: unknown[]) => h.userSettings(...(a as [])),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => null),
@@ -1497,6 +1497,7 @@ describe('training SUBMIT — the base model licence', () => {
       code: 'FORBIDDEN',
       message: expect.stringMatching(/Accept the MiniMax-H3-Image licence terms before training/),
     });
+    expect(h.userSettings).toHaveBeenCalledWith(VIEWER);
     expect(realSubmits()).toHaveLength(0);
     expect(h.reserveAppSpend).not.toHaveBeenCalled();
   });
