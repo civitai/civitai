@@ -6,13 +6,17 @@ import {
   getJudgingStatuses,
   getJudgingSuggestions,
 } from '~/server/services/crucible.service';
+import { getVotedPairsKey } from '~/server/services/crucible-redis-keys';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY as CAP } from '~/shared/constants/crucible.constants';
 
 const JUDGE = 42;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
-/** Redis state per crucible for JUDGE: votes per entry and voted pair keys. */
+/**
+ * Redis state per crucible for JUDGE: votes per entry (sysRedis) and voted pair keys (the cache
+ * cluster). Only the exact voted-pairs key the vote path writes answers.
+ */
 function judgeState(state: Record<number, { votes?: Record<number, number>; voted?: string[] }>) {
   const crucibleOf = (key: string) => Number(key.split(':').at(-2));
   redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) =>
@@ -20,9 +24,14 @@ function judgeState(state: Record<number, { votes?: Record<number, number>; vote
       Object.entries(state[crucibleOf(key)]?.votes ?? {}).map(([id, n]) => [id, String(n)])
     )
   );
-  redisMock.sysRedis.sMembers.mockImplementation(
-    async (key: string) => state[crucibleOf(key)]?.voted ?? []
-  );
+  redisMock.redis.sMembers.mockImplementation(async (key: string) => {
+    const id = Object.keys(state)
+      .map(Number)
+      .find((crucibleId) => key === getVotedPairsKey(crucibleId, JUDGE));
+    return id === undefined ? [] : state[id].voted ?? [];
+  });
+  // No dismissed pairs unless a test says otherwise.
+  redisMock.sysRedis.sMembers.mockResolvedValue([]);
 }
 
 /** Every value a tagged-template `$queryRaw` call binds, nested Prisma fragments flattened. */
@@ -137,8 +146,8 @@ describe('countJudgingPairs', () => {
     const counts = await countJudgingPairs({ crucibleIds: [1, 1], userId: JUDGE, viewerLevel: 1 });
 
     expect(counts.size).toBe(1);
-    const votedPairReads = redisMock.sysRedis.sMembers.mock.calls.filter(([key]) =>
-      String(key).startsWith(`${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:`)
+    const votedPairReads = redisMock.redis.sMembers.mock.calls.filter(
+      ([key]) => key === getVotedPairsKey(1, JUDGE)
     );
     expect(votedPairReads).toHaveLength(1);
   });

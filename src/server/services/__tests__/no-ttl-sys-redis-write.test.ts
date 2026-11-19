@@ -73,7 +73,7 @@ const BASELINE: Counts = {
   'src/server/services/crucible-entry-accepted.ts': 1,
   'src/server/services/crucible-judging-session.ts': 2,
   'src/server/services/crucible-theme-review.ts': 1,
-  'src/server/services/crucible.service.ts': 5,
+  'src/server/services/crucible.service.ts': 4,
   'src/server/services/download-link/download-link.store.ts': 4,
   'src/server/services/games/new-order.service.ts': 1,
   'src/server/services/generation-input-hosts.ts': 1,

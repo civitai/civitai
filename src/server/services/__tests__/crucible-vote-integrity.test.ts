@@ -12,6 +12,7 @@ import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { dismissJudgingPairSchema, submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
+import { rejectCrossSlot } from './crucible-cross-slot';
 
 const processVote = vi.fn();
 
@@ -72,14 +73,37 @@ const fakeSetCommands = (client: typeof redisMock.sysRedis, sets: Map<string, Se
 
 /**
  * In-memory stand-in for the Redis commands the vote path uses, with Redis semantics. The cache
- * cluster (`redis`) gets its own sets, so a key written to one client is never read from the other.
+ * cluster (`redis`) gets its own sets and hashes, so a key written to one client is never read
+ * from the other, and it refuses a script whose keys are not in one slot (CROSSSLOT).
  */
 const useFakeRedis = () => {
   const strings = new Map<string, string>();
   const sets = new Map<string, Set<string>>();
   const hashes = new Map<string, Map<string, number>>();
+  const clusterHashes = new Map<string, Map<string, string>>();
   const { sysRedis } = redisMock;
-  fakeSetCommands(redisMock.redis, new Map<string, Set<string>>());
+  const clusterSets = new Map<string, Set<string>>();
+  fakeSetCommands(redisMock.redis, clusterSets);
+  redisMock.redis.hGetAll.mockImplementation(async (key: string) =>
+    Object.fromEntries(clusterHashes.get(key) ?? [])
+  );
+  redisMock.redis.eval.mockImplementation(
+    async (script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+      rejectCrossSlot(keys);
+      if (script !== RECORD_VOTED_PAIR_SCRIPT) throw new Error('unexpected cluster script');
+      // The voted record: SADD the pair, and only when added, HSET its anchor.
+      const set = clusterSets.get(keys[0]) ?? new Set<string>();
+      clusterSets.set(keys[0], set);
+      if (set.has(args[0])) return 0;
+      set.add(args[0]);
+      if (args[1]) {
+        const hash = clusterHashes.get(keys[1]) ?? new Map<string, string>();
+        clusterHashes.set(keys[1], hash);
+        hash.set(args[0], args[1]);
+      }
+      return 1;
+    }
+  );
   sysRedis.set.mockImplementation(async (key: string, value: string) => {
     sets.delete(key);
     strings.set(key, value);
@@ -87,19 +111,6 @@ const useFakeRedis = () => {
   });
   sysRedis.eval.mockImplementation(
     async (script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
-      // The voted record: SADD the pair, and only when added, HSET its anchor.
-      if (script === RECORD_VOTED_PAIR_SCRIPT) {
-        const set = sets.get(keys[0]) ?? new Set<string>();
-        sets.set(keys[0], set);
-        if (set.has(args[0])) return 0;
-        set.add(args[0]);
-        if (args[1]) {
-          const hash = hashes.get(keys[1]) ?? new Map<string, number>();
-          hashes.set(keys[1], hash);
-          hash.set(args[0], Number(args[1]));
-        }
-        return 1;
-      }
       // The dismissal: claims the served pair (with or without its anchor) into the dismissed set.
       if (script === DISMISS_SERVED_PAIR_SCRIPT) {
         const served = strings.get(keys[0]);
@@ -193,6 +204,7 @@ describe('submitVote — a creator who blocked the judge', () => {
     ).rejects.toThrow('Crucible not found');
     expect(processVote).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect(redisMock.redis.eval).not.toHaveBeenCalled();
   });
 });
 
@@ -230,6 +242,7 @@ describe('submitVote — only a pair this judge was served', () => {
     await expect(vote()).rejects.toThrow('no longer available');
     expect(processVote).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
+    expect(redisMock.redis.eval, 'voted record').not.toHaveBeenCalled();
   });
 });
 
@@ -320,6 +333,7 @@ describe('submitVote — per-judge cap on each entry', () => {
     expect(processVote).not.toHaveBeenCalled();
     // Refused before the served pair is claimed, so it is not burned.
     expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect(redisMock.redis.eval).not.toHaveBeenCalled();
     expect([judgeVotes('10'), judgeVotes('20')], 'counts after the refusal').toEqual([
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
@@ -490,7 +504,8 @@ describe('submitVote — per-judge cap on each entry', () => {
   it('gives the counts back when the pair was already voted', async () => {
     const { judgeVotes } = useFakeRedis();
     // The served-pair claim succeeds; the voted record finds the pair already there.
-    redisMock.sysRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
 
     await expect(vote()).rejects.toThrow('already voted');
 
@@ -672,8 +687,8 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
   it('skips a pair from outcomes read off the cache cluster', async () => {
     withEntries(10, 20, 30);
     // Voted 10-20 and 20-30, with both outcomes on the cache cluster.
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '10>20');
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
 
@@ -684,8 +699,8 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
   const beforeCutoff = () => atTime(VOTE_OUTCOMES_SYS_FALLBACK_UNTIL.getTime() - 1);
   /** Voted 10-20 and 20-30, with both outcomes on sysRedis and none on the cache cluster. */
   const withSysOnlyOutcomes = async () => {
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
     await redisMock.sysRedis.sAdd(sysOutcomesKey, '10>20');
     await redisMock.sysRedis.sAdd(sysOutcomesKey, '20>30');
   };
@@ -706,8 +721,8 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     beforeCutoff();
     withEntries(10, 20, 30);
     // Voted 10-20 with its outcome on sysRedis, and 20-30 with its outcome on the cache cluster.
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
-    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
     await redisMock.sysRedis.sAdd(sysOutcomesKey, '10>20');
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
 
@@ -741,7 +756,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     // Voted A>B>C>D>A; D>A's outcome is on neither, and A>B is on both. Counted twice, A>B would
     // make the set look whole and the chain would decide A-C and B-D, which the cycle leaves open.
     for (const pair of ['10:20', '20:30', '30:40', '10:40'])
-      await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), pair);
+      await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), pair);
     for (const outcome of ['10>20', '20>30', '30>40'])
       await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), outcome);
     await redisMock.sysRedis.sAdd(sysOutcomesKey, '10>20');
@@ -792,7 +807,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     // Voted A>B>C>D>A, but D>A's outcome is missing (written before the key moved, or evicted).
     // The full set is a cycle that leaves A-C and B-D open; the partial chain would decide them.
     for (const pair of ['10:20', '20:30', '30:40', '10:40'])
-      await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), pair);
+      await redisMock.redis.sAdd(getVotedPairsKey(1, JUDGE), pair);
     for (const outcome of ['10>20', '20>30', '30>40'])
       await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), outcome);
 
@@ -816,7 +831,11 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     await judge(10, 20);
     await judge(20, 30);
     redisMock.redis.sCard.mockRejectedValue(new Error('redis down'));
-    redisMock.redis.sMembers.mockRejectedValue(new Error('redis down'));
+    // Only the outcomes: the voted pairs are read from the same client.
+    const sMembers = redisMock.redis.sMembers.getMockImplementation()!;
+    redisMock.redis.sMembers.mockImplementation(async (key: string) =>
+      key === getVoteOutcomesKey(1, JUDGE) ? Promise.reject(new Error('redis down')) : sMembers(key)
+    );
 
     // Without the outcomes nothing is decided, so the one unvoted pair is served again.
     expect(await serve(), 'pair served without outcomes').toEqual([10, 30]);
@@ -876,7 +895,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     }
     const eloFrozen = processVote.mock.calls.map((call) => call[4]);
     expect(eloFrozen.filter(Boolean).length, 'anchor votes judged').toBeGreaterThan(0);
-    const recorded = await redisMock.sysRedis.hGetAll(getAnchorVotesKey(1, JUDGE));
+    const recorded = await redisMock.redis.hGetAll(getAnchorVotesKey(1, JUDGE));
     const recordedFrozen = cast.map(([winner, loser]) => {
       const anchor = recorded[`${Math.min(winner, loser)}:${Math.max(winner, loser)}`];
       return anchor === String(winner) ? 'winner' : anchor === String(loser) ? 'loser' : undefined;
@@ -909,7 +928,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     await judge(30, 20);
 
     // The guard reads these same helpers (pinned on its side in crucible-bradley-terry.test).
-    expect(await redisMock.sysRedis.sCard(getVotedPairsKey(1, JUDGE))).toBe(2);
+    expect(await redisMock.redis.sCard(getVotedPairsKey(1, JUDGE))).toBe(2);
     expect(await redisMock.sysRedis.sMembers(getJudgesKey(1))).toEqual([String(JUDGE)]);
   });
 
@@ -927,7 +946,49 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     await vote(10, 20);
 
     expect(processVote.mock.calls[0][4], 'Elo froze').toBe('loser');
-    expect(await redisMock.sysRedis.hGetAll(getAnchorVotesKey(1, JUDGE))).toEqual({
+    expect(await redisMock.redis.hGetAll(getAnchorVotesKey(1, JUDGE))).toEqual({
+      '10:20': '20',
+    });
+  });
+
+  it('keeps the voted pairs and anchors on the cache cluster, never on sysRedis', async () => {
+    withEntries(10, 20);
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '20',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+    await redisMock.sysRedis.set(
+      `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`,
+      '10:20|anchor:20'
+    );
+    await vote(10, 20);
+    await serve();
+
+    const judgeKeys = [getVotedPairsKey(1, JUDGE), getAnchorVotesKey(1, JUDGE)];
+    /** Commands on `client` whose arguments name either key, as the command names. */
+    const callsNaming = (client: typeof redisMock.sysRedis) =>
+      Object.entries({
+        eval: client.eval,
+        sAdd: client.sAdd,
+        sCard: client.sCard,
+        sMembers: client.sMembers,
+        hGetAll: client.hGetAll,
+        hSet: client.hSet,
+        expire: client.expire,
+      }).flatMap(([command, fn]) =>
+        fn.mock.calls
+          .filter((args: unknown[]) => judgeKeys.some((key) => JSON.stringify(args).includes(key)))
+          .map(() => command)
+      );
+    // The cluster side shows the filter sees the vote's write and the serve's read, so the empty
+    // sysRedis side means none went there.
+    expect(callsNaming(redisMock.redis), 'cache cluster commands').toEqual(
+      expect.arrayContaining(['eval', 'sMembers'])
+    );
+    expect(callsNaming(redisMock.sysRedis), 'sysRedis commands').toEqual([]);
+    expect(await redisMock.redis.sMembers(judgeKeys[0]), 'voted on the cluster').toEqual(['10:20']);
+    expect(await redisMock.redis.hGetAll(judgeKeys[1]), 'anchor on the cluster').toEqual({
       '10:20': '20',
     });
   });
@@ -995,7 +1056,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
       const after = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
       expect(after.judgedPairs, 'judged').toBe(before.judgedPairs);
       expect(after.remainingPairs, 'pairs left').toBe(before.remainingPairs - 1);
-      expect(await redisMock.sysRedis.sCard(getVotedPairsKey(1, JUDGE)), 'voted set').toBe(0);
+      expect(await redisMock.redis.sCard(getVotedPairsKey(1, JUDGE)), 'voted set').toBe(0);
     });
 
     it('still keeps a dismissed pair out past the closure cap', async () => {

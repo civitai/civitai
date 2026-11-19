@@ -97,15 +97,16 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     { userId: 8, winnerEntryId: 1, loserEntryId: 2 },
   ];
   /**
-   * Two judges whose voted-pairs sets hold `a` and `b` pairs. Only the exact keys the vote path
-   * writes answer (the writer side is pinned in crucible-vote-integrity), so a guard that reads
-   * any other key counts 0 and these tests fail.
+   * Two judges whose voted-pairs sets hold `a` and `b` pairs: the judges set on sysRedis, the
+   * voted-pairs sets on the cache cluster. Only the exact keys on the client the vote path writes
+   * answer (the writer side is pinned in crucible-vote-integrity), so a guard that reads any other
+   * key or client counts 0 and these tests fail.
    */
   const withRedisPairs = (a: number, b: number) => {
     redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
       key === getJudgesKey(1) ? ['7', '8'] : []
     );
-    redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
+    redisMock.redis.sCard.mockImplementation(async (key: string) =>
       key === getVotedPairsKey(1, 7) ? a : key === getVotedPairsKey(1, 8) ? b : 0
     );
   };
@@ -152,7 +153,7 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     redisMock.sysRedis.sMembers.mockResolvedValue(judges.map(String));
     let inFlight = 0;
     let maxInFlight = 0;
-    redisMock.sysRedis.sCard.mockImplementation(async () => {
+    redisMock.redis.sCard.mockImplementation(async () => {
       maxInFlight = Math.max(maxInFlight, ++inFlight);
       await new Promise((resolve) => setTimeout(resolve, 0));
       inFlight--;
@@ -162,7 +163,7 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
       judges.map((userId) => ({ userId, winnerEntryId: 1, loserEntryId: 2 }))
     );
     expect(await fit(), 'fit over 250 judges').not.toBeNull();
-    expect(redisMock.sysRedis.sCard).toHaveBeenCalledTimes(250);
+    expect(redisMock.redis.sCard).toHaveBeenCalledTimes(250);
     expect(maxInFlight, 'SCARDs in flight at once').toBe(100);
   });
 
@@ -176,10 +177,10 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
     redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
       key === getJudgesKey(1) ? ['9'] : []
     );
-    redisMock.sysRedis.sCard.mockImplementation(async (key: string) =>
+    redisMock.redis.sCard.mockImplementation(async (key: string) =>
       key === getVotedPairsKey(1, 9) ? 8 : 0
     );
-    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) =>
+    redisMock.redis.hGetAll.mockImplementation(async (key: string) =>
       key === getAnchorVotesKey(1, 9) ? { '6:10': '10', '7:10': '10', '8:10': '10' } : {}
     );
     chQuery.mockResolvedValue(rows);
@@ -193,6 +194,13 @@ describe('fitCrucibleScoresForPrizes — the prize-ranking guard', () => {
 
   it('falls back to Elo when Redis is unreachable', async () => {
     redisMock.sysRedis.sMembers.mockRejectedValue(new Error('redis down'));
+    expect(await fit(endedAgo(60_000))).toBeNull();
+  });
+
+  it('falls back to Elo when the cache cluster cannot be read', async () => {
+    withRedisPairs(2, 1);
+    expect(await fit(), 'control: the fit with the cluster up').not.toBeNull();
+    redisMock.redis.sCard.mockRejectedValue(new Error('cluster down'));
     expect(await fit(endedAgo(60_000))).toBeNull();
   });
 });
