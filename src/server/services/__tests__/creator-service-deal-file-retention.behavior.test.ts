@@ -41,7 +41,9 @@ vi.mock('~/utils/s3-utils', () => ({
   headObject: vi.fn(),
   uploadImageBufferToStore: vi.fn(),
 }));
-vi.mock('~/utils/s3-purge-versions', () => ({ purgeObjectVersions: s3.purgeObjectVersions }));
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
+  purgeObjectVersions: s3.purgeObjectVersions,
+}));
 
 type Raw = ReturnType<typeof pgliteRaw>;
 const bridge = (db: { query: PGlite['query'] }) => {

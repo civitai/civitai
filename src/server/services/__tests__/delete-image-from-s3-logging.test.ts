@@ -121,7 +121,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 }));
 
 const { deleteImageFromS3, queueImageStorageDelete } = await import('../image.service');
-const { fakeVersionedBucket } = await import('~/__tests__/mocks/fake-versioned-bucket');
+const { fakeVersionedBucket } = await import('@civitai/storage/testing/fake-versioned-bucket');
 const { imageStorageDeletePayloadSchema } = await import('~/server/schema/job-queue.schema');
 
 const invalidateCalls = () =>
