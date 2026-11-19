@@ -131,7 +131,8 @@ beforeEach(async () => {
       if (holder.holdReadFails) throw new Error('hold read failed');
       return (await runOnPglite(strings, values)).rows;
     }
-    if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
+    if (text.includes('FROM "Image" i WHERE i.id'))
+      return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   holder.holdReadFails = false;

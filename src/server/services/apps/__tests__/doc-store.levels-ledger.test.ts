@@ -66,6 +66,8 @@ const EXEMPT: Record<string, string> = {
     'server-side publish: only a content hash and the author of each shared copy, never a body',
   SQL_PUBLISH_LOCK_OWN_TARGETS:
     "server-side publish: the content hash of the caller's own copies, locked, never a body",
+  SQL_VIEWER_RECORDS:
+    "the record export: only the CALLER'S OWN documents (private, and visible shared ones they created), returned to that caller",
 };
 
 describe('content-level seam ledger', () => {

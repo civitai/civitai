@@ -72,8 +72,9 @@ const isBlocked = (picture: BlockFields) =>
 /**
  * A user's `User.image` as a fallback avatar: null when it names `picture` (the user's profile
  * picture) while that picture is under an owner-hidden review hold or carries a block marker. The
- * TS form of `fallbackUserImageColumn`. The block fields are required so a read that does not
- * select them fails to compile.
+ * profile-picture half of `fallbackUserImageColumn` only: it does not see another own upload that
+ * `User.image` names. The block fields are required so a read that does not select them fails to
+ * compile.
  */
 export function fallbackUserImage<T extends string | null | undefined>(
   image: T,

@@ -22,6 +22,8 @@ const BUZZ_OUTCOMES = ['paid', 'failed', 'retry'] as const;
 const ESCALATION_REASONS = [
   'next-stage',
   'expired',
+  'unservable',
+  'publishes-after-expiry',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;

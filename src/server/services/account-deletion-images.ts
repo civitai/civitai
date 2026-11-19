@@ -50,6 +50,9 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * it was actually in. The exception is a CSAM reason, current or recorded: it is kept, and the row
  * stays `Blocked`.
  *
+ * Each claim re-checks that the owner is neither deleted nor banned, so either landing mid-reversal
+ * stops it at the next pass.
+ *
  * The largest account holds ~785K images, so the reversal claims a bounded batch per pass instead
  * of returning the whole gallery to Node in one statement. The breadcrumb check lives in the claim
  * rather than in the UPDATE's own `WHERE`: a row the enum cast would reject has to be left
@@ -84,6 +87,7 @@ export async function unblockAccountDeletionImages(userId: number) {
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+          AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
         LIMIT ${RESTORE_BATCH_SIZE}
       )
       RETURNING id, "postId", ingestion, "blockedFor"
