@@ -35,8 +35,11 @@ import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
  *      for a single query, `JSON.stringify({ result: { data: <transformer output> } })`, with the
  *      transformer's write (`responseWriteSerialize`).
  *
- * It skips Next's request handling and tRPC's request parsing and middleware chain by design: that
- * gap is what the benchmark measures.
+ * By design it skips what the tRPC arm pays around the procedure, and that gap is what the benchmark
+ * measures: Next's request handling, tRPC's request parsing and middleware chain, and the work
+ * `src/pages/api/trpc/[trpc].ts` wraps the route in (request logging and instrumentation, and the
+ * feed-go shadow capture and go-first probe when their flags are on). Bench the Next arm with feed-go
+ * shadowing off, or that capture's CPU is booked as tRPC cost.
  *
  * Deliberately narrower than the route:
  *   - an API credential (an `Authorization` header or `?token=`) is refused with 400: tRPC would
