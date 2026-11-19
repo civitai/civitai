@@ -12,7 +12,7 @@ import {
  * module has no network path at all. A reload, or opening another submission, starts empty.
  *
  * How the reports get here: the review host lists `blockErrors:v1` in `BLOCK_INIT.capabilities`
- * (`BLOCK_HOST_ERROR_REPORTS`), and `@civitai/sdk` from {@link REVIEW_CONSOLE_MIN_SDK} then
+ * (`BLOCK_HOST_ERROR_REPORTS`), and an SDK at or above its {@link REVIEW_CONSOLE_MIN_SDKS} entry then
  * forwards uncaught errors, unhandled rejections and `console.error` as non-fatal
  * `BLOCK_ERROR`s. A fatal crash (`host.reportError(…, { fatal: true })`) arrives from any SDK.
  *
@@ -20,11 +20,14 @@ import {
  * the view.
  */
 
-/** The SDK release that first forwards non-fatal errors to a review preview. */
-export const REVIEW_CONSOLE_MIN_SDK = {
-  name: 'sdk',
-  packageName: '@civitai/sdk',
-  version: '0.29.0',
+/**
+ * Each SDK's first release that forwards non-fatal errors to a review preview, keyed by the
+ * `sdkName` it sends in `BLOCK_READY`: `@civitai/sdk` from 0.29.0 and `@civitai/blocks-react` from
+ * 0.85.0, both published. An SDK not named here forwards none.
+ */
+export const REVIEW_CONSOLE_MIN_SDKS: Record<string, { packageName: string; version: string }> = {
+  sdk: { packageName: '@civitai/sdk', version: '0.29.0' },
+  'blocks-react': { packageName: '@civitai/blocks-react', version: '0.85.0' },
 };
 
 /** Entries kept at most. A fatal one is never the one dropped. */
@@ -78,15 +81,20 @@ function parseVersion(version: string): [number, number, number, boolean] | null
 }
 
 /**
- * Does this SDK forward non-fatal errors to a review preview? Only `@civitai/sdk` (`sdkName:
- * 'sdk'`) at or above {@link REVIEW_CONSOLE_MIN_SDK}. `@civitai/blocks-react`, an SDK that names
- * no version, and an unparseable version all answer `false`. A prerelease OF the cut-off version
+ * Does this SDK forward non-fatal errors to a review preview? Only an SDK named in
+ * {@link REVIEW_CONSOLE_MIN_SDKS}, at or above ITS OWN entry. An unknown SDK, one that names no
+ * version, and an unparseable version all answer `false`. A prerelease OF the cut-off version
  * sorts below it, as semver orders it.
  */
 export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
-  if (sdk.name !== REVIEW_CONSOLE_MIN_SDK.name || !sdk.version) return false;
+  // `hasOwn`, so a name like `constructor` cannot reach an inherited property.
+  const cutoff =
+    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
+      ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]
+      : undefined;
+  if (!cutoff || !sdk.version) return false;
   const have = parseVersion(sdk.version);
-  const min = parseVersion(REVIEW_CONSOLE_MIN_SDK.version);
+  const min = parseVersion(cutoff.version);
   if (!have || !min) return false;
   for (let i = 0; i < 3; i += 1) {
     if (have[i] !== min[i]) return (have[i] as number) > (min[i] as number);
@@ -107,15 +115,18 @@ export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
 
 /**
  * The Console's notice when the app's SDK cannot forward non-fatal errors, or `null` when it can
- * (or before `BLOCK_READY` says which SDK it is). `@civitai/blocks-react` forwards none at any
- * version, so it is not called "too old"; every other case is.
+ * (or before `BLOCK_READY` says which SDK it is). It names the app's own package's cut-off, or,
+ * for an SDK it does not know, every package's.
  */
 export function reviewConsoleSdkNotice(sdk: ReviewConsoleSdk | null): string | null {
   if (!sdk || sdkForwardsReviewErrors(sdk)) return null;
   const label = sdkPackageLabel(sdk);
-  const min = `${REVIEW_CONSOLE_MIN_SDK.packageName} ${REVIEW_CONSOLE_MIN_SDK.version}`;
-  if (sdk.name === 'blocks-react')
-    return `This app uses ${label}, which does not report other errors, so only fatal crashes show here. Apps on ${min} or later report every error.`;
+  // Its own package's cut-off when it names one we know; otherwise every package's.
+  const own =
+    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
+      ? [REVIEW_CONSOLE_MIN_SDKS[sdk.name]!]
+      : Object.values(REVIEW_CONSOLE_MIN_SDKS);
+  const min = own.map((c) => `${c.packageName} ${c.version}`).join(' or ');
   return `This app's SDK (${label}) is too old to report other errors, so only fatal crashes show here. Apps report every error from ${min}.`;
 }
 
