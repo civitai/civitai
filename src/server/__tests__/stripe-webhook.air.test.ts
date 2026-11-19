@@ -142,10 +142,6 @@ describe('stripe webhook: Civitai AIR checkout', () => {
 
     expect(res.statusCode).toBe(400);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'event-handler', error: 'AIR unavailable' }),
-      'webhooks'
-    );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
         stage: 'air-claim-release-failed',

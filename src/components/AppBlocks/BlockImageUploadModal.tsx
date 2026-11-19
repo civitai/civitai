@@ -60,6 +60,10 @@ export type BlockUploadedImageInfo = {
   url: string;
 };
 
+/** Shown for shared and unshared uploads alike: the server scans and SFW-gates both. */
+const SCAN_COPY =
+  'Civitai scans every image you upload here, shared or not, so it must be safe-for-work.';
+
 type UploadStatus = 'idle' | 'uploading' | 'scanning' | 'ready' | 'error';
 
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -89,7 +93,7 @@ export default function BlockImageUploadModal({
    *  The modal tells the viewer, before they pick, that the image will be visible to the app's
    *  other viewers, and sends `share` + the block token with the persist so the server stamps
    *  the row with that app's verified id (`blockSharedUploadAppId`). Absent ⇒ a private, unstamped
-   *  upload and an unchanged dialog. */
+   *  upload, and the dialog says it is kept private. */
   share?: { blockToken: string; appName: string };
 }) {
   const dialog = useDialogContext();
@@ -236,8 +240,14 @@ export default function BlockImageUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            This image is <strong>public</strong>, so it&apos;s scanned and must be safe-for-work.
-            Upload a PNG, JPEG or WebP.
+            {/* Unshared only: a shared upload's visibility is the share notice below. */}
+            {!share && (
+              <>
+                This image is kept <strong>private</strong>: Civitai won&apos;t show it to other people
+                using this app.{' '}
+              </>
+            )}
+            {SCAN_COPY} Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
 
