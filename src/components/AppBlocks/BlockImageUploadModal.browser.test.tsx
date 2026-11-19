@@ -406,10 +406,10 @@ describe('BlockImageUploadModal — what the dialog says about who sees the imag
   // Literal, not built from the component's constant: a reword must fail here.
   const UNSHARED_COPY =
     "This image is kept private: Civitai won't show it to other people using this app. " +
-    'Civitai scans every image you upload for an app, shared or not, so it must be ' +
+    'Civitai scans every image you upload here, shared or not, so it must be ' +
     'safe-for-work. Upload a PNG, JPEG or WebP.';
   const SHARED_COPY =
-    'Civitai scans every image you upload for an app, shared or not, so it must be ' +
+    'Civitai scans every image you upload here, shared or not, so it must be ' +
     'safe-for-work. Upload a PNG, JPEG or WebP.';
 
   const normalised = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();

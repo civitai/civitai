@@ -65,7 +65,7 @@ export type BlockUploadedImageInfo = {
  * every upload, and `gate` holds every upload to the same SFW ceiling — neither reads `share`.
  */
 const SCAN_COPY =
-  'Civitai scans every image you upload for an app, shared or not, so it must be safe-for-work.';
+  'Civitai scans every image you upload here, shared or not, so it must be safe-for-work.';
 
 type UploadStatus = 'idle' | 'uploading' | 'scanning' | 'ready' | 'error';
 
