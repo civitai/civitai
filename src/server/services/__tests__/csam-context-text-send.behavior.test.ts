@@ -87,7 +87,7 @@ import { buildReport } from '@civitai/cybertipline-tools';
 import type { CsamReportProps } from '~/server/services/csam.service-new';
 import { processCsamReport } from '~/server/services/csam.service-new';
 import type { CsamContextText } from '~/server/services/csam-context-text';
-import { contextWebPageIncidents } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents, foldContextText } from '~/server/services/csam-context-text';
 import { logToAxiom } from '~/server/logging/client';
 
 const stored = Buffer.from('the bytes the user uploaded');
@@ -249,6 +249,41 @@ describe('attached text on an image report', () => {
         .mocked(logToAxiom)
         .mock.calls.some(([line]) => (line as { subType?: string }).subType === 'send-xml')
     ).toBe(true);
+  });
+
+  it('sends both captures of an item edited between two filings that folded together', async () => {
+    const held = contextText.find((c) => c.source === 'postText')!;
+    const edited = { ...held, text: 'the edited words', capturedAt: '2026-10-12T09:00:00.000Z' };
+    await send({ contextText: foldContextText([held], [edited]) });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const doc = await parsed(buildReport(submitReport.mock.calls[0][0]));
+    const infos = (
+      doc.report.internetDetails.flatMap(
+        (d: { webPageIncident: unknown[] }) => d.webPageIncident
+      ) as {
+        additionalInfo: string[];
+      }[]
+    ).map((i) => i.additionalInfo[0]);
+    expect(infos).toHaveLength(2);
+    expect(infos.filter((info) => info.includes('held <i>words</i> & more'))).toHaveLength(1);
+    expect(infos.filter((info) => info.includes('the edited words'))).toHaveLength(1);
+  });
+
+  it('never sends the internal record of identical re-files', async () => {
+    const marker = 'refile-marker-item:99';
+    await send({
+      contextText,
+      identicalRefiles: [{ filedById: 10, at: '2026-10-12T09:00:00.000Z', item: marker }],
+    });
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    const sent = submitReport.mock.calls[0][0];
+    const xml = buildReport(sent);
+    expect(JSON.stringify(sent)).not.toContain(marker);
+    expect(JSON.stringify(sent)).not.toContain('identicalRefiles');
+    expect(xml).not.toContain(marker);
+    expect(xml).toContain('held &lt;i&gt;words');
   });
 
   it('adds no page incident to a report with no attached text', async () => {

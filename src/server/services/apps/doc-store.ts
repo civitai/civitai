@@ -112,6 +112,7 @@ import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
+  DocAuthor,
   DocCollection,
   DocIndexType,
   DocListQuery,
@@ -1181,6 +1182,22 @@ const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
 const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
   WHERE vu.user_id = $1::int AND vu.ns = 'prod' AND vu.docs > 0 AND vu.app_id > $2::text
   ORDER BY vu.app_id LIMIT $3::int`;
+// One page of the documents ONE user owns in one app's production namespace, for their export
+// (`viewerRecords`): their private documents (`scope_uid` = the user) and the visible shared
+// documents they created (`author_kind = 'user'`), the two cells of the record core's owner rule
+// that name a user (`recordOwner` in `app-record.ts`). Never another user's private key space,
+// never a counter or app document, never a document moderation hid. In (coll, scope_uid, key)
+// order after a keyset cursor. $1 app, $2 ns, $3 the user, $4 coll, $5 scope_uid and $6 key of
+// the cursor (exclusive), $7 limit.
+const SQL_VIEWER_RECORDS = `SELECT d.coll, d.scope_uid, d.key, d.data, d.version, d.author_kind,
+    d.author_uid, d.last_writer_uid, d.record_id::text AS record_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2
+    AND (d.scope_uid = $3::int
+      OR (d.scope_uid = 0 AND d.author_kind = 'user' AND d.author_uid = $3::int AND ${VISIBLE}))
+    AND (d.coll, d.scope_uid, d.key) > ($4::text COLLATE "C", $5::int, $6::text COLLATE "C")
+  ORDER BY d.coll, d.scope_uid, d.key
+  LIMIT $7::int`;
 
 // Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
 // $3 the viewer.
@@ -1607,6 +1624,24 @@ export type ViewerDataEmptyResult = {
   /** Zero unless the shared documents were asked for. */
   sharedDocs: number;
   sharedBytes: number;
+};
+
+/** Where a page of `viewerRecords` ends: the last (collection, key space, key) it read. */
+export type ViewerRecordCursor = { coll: string; scopeUid: number; key: string };
+
+/**
+ * One document a user owns, as `viewerRecords` reads it: the record core's source row
+ * (`RecordSourceRow` in `app-record.ts`) with its collection.
+ */
+export type ViewerRecordRow = {
+  coll: string;
+  scopeUid: number;
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  author: DocAuthor;
+  lastWriterUid: number | null;
+  recordId: string | null;
 };
 
 /** Where a schema migration's page of documents ends: the last (key space, key) it read. */
@@ -3050,6 +3085,59 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * One page of the documents `userId` OWNS in one app's production namespace, for their export
+   * (`SQL_VIEWER_RECORDS`): their private documents and the visible shared documents they
+   * created, in (collection, key space, key) order after `after` (exclusive). Never another
+   * user's private document, a counter or app document, or a document moderation hid. Reads the
+   * rows as they are, whatever the app's status.
+   */
+  async function viewerRecords(
+    userId: number,
+    appId: string,
+    opts: { after?: ViewerRecordCursor | null; limit: number }
+  ): Promise<ViewerRecordRow[]> {
+    assertWipeUserId(userId);
+    if (!Number.isSafeInteger(opts.limit) || opts.limit < 1 || opts.limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    const after = opts.after ?? { coll: '', scopeUid: -1, key: '' };
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_VIEWER_RECORDS, [
+            appId,
+            PUBLISHED_NS,
+            userId,
+            after.coll,
+            after.scopeUid,
+            after.key,
+            opts.limit,
+          ])
+        ).rows
+    );
+    return rows.map((r) => {
+      const authorUid = r.author_uid === null ? null : Number(r.author_uid);
+      return {
+        coll: r.coll as string,
+        scopeUid: Number(r.scope_uid),
+        key: r.key as string,
+        data: r.data as Record<string, unknown>,
+        version: Number(r.version),
+        author:
+          r.author_kind === 'counter'
+            ? { kind: 'counter' as const }
+            : r.author_kind === 'app' || authorUid === null
+            ? { kind: 'app' as const }
+            : { kind: 'user' as const, uid: authorUid, isViewer: authorUid === userId },
+        lastWriterUid: r.last_writer_uid === null ? null : Number(r.last_writer_uid),
+        recordId: r.record_id === null || r.record_id === undefined ? null : String(r.record_id),
+      };
+    });
+  }
+
+  /**
    * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
    *   - always: their private documents (index rows with them), each refunded to their own usage
    *     (the app's never carried them, `appDelta`) and tombstoned, as `remove` does;
@@ -3648,7 +3736,7 @@ function buildDocStore(deps: DocStoreDeps) {
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
-    viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
+    viewerData: { listViewerUsage, viewerHoldings, viewerRecords, emptyViewerData, limits },
   };
 }
 

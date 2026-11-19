@@ -19,6 +19,7 @@ import {
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
+import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
@@ -316,12 +317,21 @@ export const ingestionAfterVerdictSql = (verdict: string) => Prisma.sql`(CASE
 END)`;
 
 /**
- * The `ingestion` a failed scan writes: Error, except that a NotFound image stays NotFound. An Error
- * row with a locked rating counts as reviewed (`imageReviewedSql`) and the retry cron re-sends it,
- * so a failure result would republish a hidden image.
+ * The row still holds an account-deletion grace block, which `unblockAccountDeletionImages` reverts
+ * on restore. A write that would lift it leaves the row alone; a write that lands strips the
+ * breadcrumbs (`withoutGraceMarkersSql`), so a restore leaves what it wrote in place.
  */
+export const graceBlockedSql = Prisma.sql`("ingestion" = 'Blocked'::"ImageIngestionStatus"
+  AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)`;
+
+/** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
+export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
+  Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
+    THEN (${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text
+    ELSE ${metadata} END)`;
+
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
-  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" THEN "ingestion"
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"
   ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
 END)`;
 

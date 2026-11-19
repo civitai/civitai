@@ -547,6 +547,8 @@ type UpdateDecision =
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
   | 'raw-server-keys'
+  /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus two fixed server keys. */
+  | 'raw-grace-marker-strip'
   /**
    * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
    * string under a fixed key cannot add or replace any other key.
@@ -635,6 +637,14 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-mod-rule-metadata',
     sites: 1,
   },
+  'src/server/services/image-scan-result.service.ts#blockImageFromRating': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
+  'src/server/services/user.service.ts#blockBannedUserImages': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#toggleImageFlag': {
     decision: 'boolean-flag-key',
     sites: 1,
@@ -679,6 +689,12 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       if (PROVENANCE_TOKEN.test(literal)) return 'merged keys name a provenance key';
       return null;
     }
+    case 'raw-grace-marker-strip': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      if (expr !== '${withoutGraceMarkersSql()}')
+        return 'metadata is no longer the stored value minus the grace-block breadcrumbs';
+      return null;
+    }
     case 'raw-server-keys': {
       const expr = rawMetadataAssignment(region);
       if (expr === null) return 'no longer assigns metadata';
@@ -710,10 +726,15 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
     }
     case 'raw-mod-rule-metadata': {
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const metadataSet = /const metadataSet\s*=\s*Prisma\.sql`([^`]*)`/
+        .exec(body)?.[1]
+        .replace(/\s+/g, ' ');
       if (
-        expr !==
-        // A stored CSAM block keeps the stored value: the rule did not decide it.
-        `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
+        // A block also strips the grace-block breadcrumbs (two fixed server keys) off the result.
+        expr !== '${withoutGraceMarkersSql(metadataSet)}' ||
+        metadataSet !==
+          // A stored CSAM block keeps the stored value: the rule did not decide it.
+          `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (

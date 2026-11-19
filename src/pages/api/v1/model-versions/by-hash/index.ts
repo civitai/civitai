@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
@@ -57,12 +58,15 @@ export default PublicEndpoint(
     const hidden = await getHiddenModelVersionIds(
       atLevel.map((file) => file.modelVersion),
       async () =>
-        (
-          await getApiAuthSession(
-            { req, res },
-            { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
-          )
-        )?.user
+        restOwnerOrModeratorViewer(
+          req,
+          (
+            await getApiAuthSession(
+              { req, res },
+              { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+            )
+          )?.user
+        )
     );
     const files = atLevel.filter((file) => !hidden.has(file.modelVersion.id));
 
