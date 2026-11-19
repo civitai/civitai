@@ -228,4 +228,25 @@ describe('a moderator on a scoped API key', () => {
     expect(await visit(scopedKey)).toBe(false);
     expect(await visit()).toBe(true);
   });
+
+  it('the image page-data route evaluates its flags for that user; a session keeps moderator rights', async () => {
+    const { default: pageData } = await import('~/pages/api/page-data/images/[imageId]');
+    const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
+    // Flags off for everyone: the route answers 404 straight after evaluating them.
+    guard.perRequest = true;
+    const flaggedAs = async (context?: Record<string, unknown>) => {
+      state.session = { user: MOD };
+      vi.mocked(getFeatureFlagsAsync).mockClear();
+      const { req, res } = request(context);
+      Object.assign(req, { method: 'GET', query: { imageId: '1' } });
+      Object.assign(res, { status: vi.fn(() => res), json: vi.fn(() => res) });
+      await pageData(req, res);
+      const [args] = vi.mocked(getFeatureFlagsAsync).mock.calls[0] as unknown as [
+        { user?: { isModerator?: boolean } }
+      ];
+      return args.user?.isModerator;
+    };
+    expect(await flaggedAs(scopedKey)).toBe(false);
+    expect(await flaggedAs()).toBe(true);
+  });
 });
