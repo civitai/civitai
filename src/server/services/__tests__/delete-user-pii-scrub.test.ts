@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userFollowsCache } from '~/server/redis/caches';
 
+const flipt = vi.hoisted(() => ({ isFlipt: vi.fn<(flag?: string) => Promise<boolean>>(async () => false) }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isFlipt: flipt.isFlipt,
+}));
+
 // No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -316,5 +322,44 @@ describe('deleteUser — the User row survives', () => {
     expect(dbMock.dbWrite.user.delete).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.deleteMany).not.toHaveBeenCalled();
     expect(dbWriteCallsMentioning('DELETE FROM "User"')).toEqual([]);
+  });
+
+  // The statement itself runs as SQL in creator-service-deal-file-retention.behavior.test.ts.
+  const dealUploadsCall = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([sql]) => {
+      const { text, values } = sql as unknown as { text: string; values: unknown[] };
+      return (
+        text?.includes('UPDATE "ServiceDealFile" f SET "removedAt"') && values.includes(USER_ID)
+      );
+    });
+
+  const withRetentionOn = async (fn: () => Promise<unknown>) => {
+    flipt.isFlipt.mockImplementation(
+      async (flag?: string) => flag === 'service-deal-file-retention'
+    );
+    try {
+      await fn();
+    } finally {
+      flipt.isFlipt.mockImplementation(async () => false);
+    }
+  };
+
+  it("marks the user's own deal uploads removed, in the same transaction", async () => {
+    await withRetentionOn(deleteUser);
+    const rawCall = dealUploadsCall();
+    expect(rawCall).toBeGreaterThanOrEqual(0);
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[rawCall].value);
+  });
+
+  it('leaves deal uploads alone while retention is off, or when images are kept for restore', async () => {
+    await deleteUser();
+    expect(dealUploadsCall()).toBe(-1);
+    await withRetentionOn(() =>
+      UserService.deleteUser({ id: USER_ID, username: 'gone', removeImages: false } as Parameters<
+        typeof UserService.deleteUser
+      >[0])
+    );
+    expect(dealUploadsCall()).toBe(-1);
   });
 });
