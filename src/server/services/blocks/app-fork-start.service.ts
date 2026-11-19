@@ -7,7 +7,9 @@
  *   1. a new block slug for the fork (`<parent>-fork-<4 hex>`, unique, a valid blockId);
  *   2. a SEED — the parent's LATEST APPROVED source, zipped with its files at the root, secrets,
  *      dependencies and build output left out, its manifest's `blockId` rewritten to the fork's
- *      slug, uploaded to the dedicated seed store and presigned for 10 minutes;
+ *      slug, `storage.imports` pre-filled to reach the viewer's data in the parent
+ *      (`prefillParentStorageImports`), and the parent's `repository` and server-owned
+ *      `iframe.src` removed; uploaded to the dedicated seed store and presigned;
  *   3. a server-side FORK SESSION recording who forked what, at which commit.
  *
  * 🔴 THE FORK SESSION IS THE ONLY SOURCE OF A FORK'S PROVENANCE. When the fork's first version is
@@ -20,10 +22,12 @@
  * `forgejoCommitSha`: the commit the platform itself wrote on approve. Never a branch HEAD, which
  * an unreviewed push can move.
  *
- * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row at all: no approvals, no
+ * 🔴 NOTHING ELSE IS INHERITED. This module writes no database row of its own: no approvals, no
  * scopes, no goods catalog, no entitlements, no fee accruals. Paid goods stay in the fork's CODE
  * and can sell only after the fork's own publish review approves them. Pinned by the
- * "no database writes" test.
+ * "no database writes" test. The one row a start leads to is the fork's SOURCE REPO record,
+ * written by `app-source-repo.service.ts` (`createForkSourceRepo`): the fork's own git repo,
+ * seeded with the same files as the sandbox seed, which builds nothing and grants nothing.
  *
  * The session lives in sysRedis (`REDIS_SYS_KEYS.BLOCKS.FORK_SESSION`) for 30 days — longer than
  * the sandbox service keeps an unused app (14 days) — so a fork published within its life gets
@@ -37,7 +41,9 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 import {
@@ -60,6 +66,16 @@ import {
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
 import type { SessionUser } from '~/types/session';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_COLLECTION_NAME_RE,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_IMPORT_SCOPE,
+  APP_STORAGE_MAX_IMPORT_COLLECTIONS,
+  APP_STORAGE_MAX_IMPORTS,
+  isCollectionExportable,
+  type DeclaredStorageCollection,
+} from '~/shared/constants/block-storage.constants';
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -67,6 +83,14 @@ import type { SessionUser } from '~/types/session';
 
 /** How long a fork session (and so a fork's claim to its parent) is kept. */
 export const FORK_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** The longest a fork start waits for the fork's source repo to be created. */
+export const FORK_SOURCE_REPO_WAIT_MS = 5_000;
+let forkSourceRepoWaitMs = FORK_SOURCE_REPO_WAIT_MS;
+/** Tests only: a shorter wait, so the bound is exercised with real timers. */
+export function __setForkSourceRepoWaitMsForTests(ms: number = FORK_SOURCE_REPO_WAIT_MS) {
+  forkSourceRepoWaitMs = ms;
+}
 
 /** The sandbox service's own seed caps (`SEED_MAX_BYTES`, `SEED_MAX_ENTRIES`). */
 export const FORK_SEED_MAX_BYTES = 25 * 1024 * 1024;
@@ -84,59 +108,9 @@ const MANIFEST_PATH = 'block.manifest.json';
 // The seed's contents
 // ---------------------------------------------------------------------------
 
-/** Top-level directories that hold dependencies or build output, never source. */
-const BUILD_OUTPUT_DIRS = new Set([
-  'dist',
-  'build',
-  'out',
-  '.next',
-  '.turbo',
-  '.vercel',
-  '.cache',
-  '.output',
-  'coverage',
-]);
-
-const SSH_KEY_RE = /^id_(rsa|dsa|ecdsa|ed25519)(_sk)?(\.pub)?$/;
-const KEY_FILE_RE = /\.(pem|key|p12|pfx|p8|ppk|jks|keystore)$/i;
-/** Files that commonly hold a registry token, a password or a cloud credential. */
-const CREDENTIAL_FILES = new Set([
-  '.npmrc',
-  '.yarnrc',
-  '.yarnrc.yml',
-  '.netrc',
-  '.pypirc',
-  '.git-credentials',
-  '.dev.vars',
-  '.pgpass',
-  '.htpasswd',
-  'credentials.json',
-]);
-/** Directories that hold credentials wholesale. */
-const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.docker', '.gnupg', '.kube']);
-
-/**
- * Why `path` is left out of a fork's seed, or `null` to keep it. Secrets (`.env*`, keys,
- * the common credential files and directories), git metadata, dependencies (`node_modules` at any
- * depth) and top-level build output. A superset of what the sandbox service itself skips.
- *
- * ⚠ A DENYLIST, SO NOT A GUARANTEE: a secret in a file with an ordinary name (a hard-coded token
- * in `src/config.ts`) is copied like any other source. What the fork receives is the parent's
- * APPROVED source, which a moderator has reviewed; this list only removes the usual places a
- * credential sits beside it.
- */
-export function forkSeedExclusionReason(path: string): string | null {
-  const segments = path.split('/').filter(Boolean);
-  const base = segments[segments.length - 1] ?? '';
-  if (segments.some((s) => s === '.git')) return 'git';
-  if (segments.some((s) => s.startsWith('.env'))) return 'env';
-  if (segments.some((s) => s === 'node_modules')) return 'dependencies';
-  if (segments.length > 1 && BUILD_OUTPUT_DIRS.has(segments[0])) return 'build-output';
-  if (KEY_FILE_RE.test(base) || SSH_KEY_RE.test(base)) return 'key';
-  if (CREDENTIAL_FILES.has(base) || segments.some((s) => CREDENTIAL_DIRS.has(s)))
-    return 'credentials';
-  return null;
-}
+// The exclusion list lives in its own module (no I/O) so the source-repo writer applies the same
+// one; re-exported here for this module's existing callers and tests.
+export { forkSeedExclusionReason };
 
 export type ForkSeedZip = {
   buffer: Buffer;
@@ -145,13 +119,16 @@ export type ForkSeedZip = {
   files: string[];
   /** Paths left out. */
   excluded: string[];
+  /** The kept files themselves, in archive order: what the fork's source repo is seeded with. */
+  entries: Array<{ path: string; content: Buffer }>;
 };
 
 /**
  * Build the seed archive from the parent's files: files at the archive ROOT (no wrapper
  * directory — the sandbox service extracts as-is into `/workspace/<fork slug>`), exclusions
  * dropped, and `block.manifest.json`'s `blockId` set to the fork's slug so the copy publishes as
- * a NEW app rather than as an update of the parent. Deterministic (sorted, zero timestamps).
+ * a NEW app rather than as an update of the parent; the parent's `repository` and `iframe.src`
+ * are removed. Deterministic (sorted, zero timestamps).
  *
  * Throws {@link TRPCError} PRECONDITION_FAILED when there is no manifest to rewrite.
  */
@@ -179,10 +156,20 @@ export async function buildForkSeedZip(
   } catch {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
+  prefillParentStorageImports(manifest);
   manifest.blockId = forkSlug;
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
   delete manifest.repository;
+  // Same for the issue-tracker / support link: the parent author's tracker is not the fork's.
+  delete manifest.bugs;
+  // `iframe.src` is PLATFORM-OWNED: the parent's is its own stamped URL, which the server
+  // re-stamps for the fork on submit anyway, and `civitai app validate` refuses an authored one.
+  // Only `src` goes; the rest of `iframe` (heights, resizable, sandbox) is the author's to keep.
+  const iframe = manifest.iframe;
+  if (iframe && typeof iframe === 'object' && !Array.isArray(iframe)) {
+    delete (iframe as Record<string, unknown>).src;
+  }
   kept[manifestIndex] = {
     path: MANIFEST_PATH,
     content: Buffer.from(JSON.stringify(manifest, null, 2) + '\n', 'utf8'),
@@ -199,7 +186,78 @@ export async function buildForkSeedZip(
     sha256: createHash('sha256').update(buffer).digest('hex'),
     files: kept.map((f) => f.path),
     excluded,
+    entries: kept,
   };
+}
+
+export function defaultForkImportJustification(parentName: string): string {
+  return `This app is a fork of ${parentName}. It reads and updates the data you already keep in ${parentName}, so your entries carry over instead of starting empty.`;
+}
+
+/**
+ * Pre-fill a fork's manifest so it can reach the viewer's data in its PARENT, in place (the
+ * manifest still carries the parent's `blockId` when this runs):
+ *   - `storage.imports` gains `{ from: <parent blockId>, collections: <every exportable parent
+ *     collection>, access: "readwrite" }` (an existing import from the parent is replaced, and
+ *     nothing is added when the manifest already holds the most imports allowed);
+ *   - `scopes` gains `apps:storage` and `apps:storage:import`;
+ *   - `scopeJustifications` gains a default entry for `apps:storage:import`, unless one is set.
+ * The fork author can edit or remove all of it before publishing; the fork's own review then
+ * decides it. A parent with no exportable collection gets nothing. Only the manifest's SHAPE is
+ * read here; the parent's declaration was validated when it was approved.
+ */
+export function prefillParentStorageImports(manifest: Record<string, unknown>): void {
+  const parentBlockId = manifest.blockId;
+  if (typeof parentBlockId !== 'string' || !APP_STORAGE_IMPORT_FROM_RE.test(parentBlockId)) return;
+  const storage = manifest.storage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return;
+  const store = storage as Record<string, unknown>;
+  const collections = store.collections;
+  if (!collections || typeof collections !== 'object' || Array.isArray(collections)) return;
+  const exportable = Object.entries(collections as Record<string, unknown>)
+    .filter(
+      ([name, decl]) =>
+        APP_STORAGE_COLLECTION_NAME_RE.test(name) &&
+        // Only the shape is read here (see above); the opt-out rule is the parser's own.
+        !(
+          decl &&
+          typeof decl === 'object' &&
+          !isCollectionExportable(decl as DeclaredStorageCollection)
+        )
+    )
+    .map(([name]) => name)
+    .slice(0, APP_STORAGE_MAX_IMPORT_COLLECTIONS);
+  if (exportable.length === 0) return;
+
+  const existing = Array.isArray(store.imports)
+    ? (store.imports as unknown[]).filter(
+        (i) => !(i && typeof i === 'object' && (i as { from?: unknown }).from === parentBlockId)
+      )
+    : [];
+  if (existing.length >= APP_STORAGE_MAX_IMPORTS) return;
+  store.imports = [
+    ...existing,
+    { from: parentBlockId, collections: exportable, access: 'readwrite' },
+  ];
+
+  const scopes = Array.isArray(manifest.scopes) ? [...(manifest.scopes as unknown[])] : [];
+  for (const scope of [APP_STORAGE_BASE_SCOPE, APP_STORAGE_IMPORT_SCOPE]) {
+    if (!scopes.includes(scope)) scopes.push(scope);
+  }
+  manifest.scopes = scopes;
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? { ...(manifest.scopeJustifications as Record<string, unknown>) }
+      : {};
+  const current = justifications[APP_STORAGE_IMPORT_SCOPE];
+  if (!(typeof current === 'string' && current.trim().length > 0)) {
+    const parentName =
+      typeof manifest.name === 'string' && manifest.name ? manifest.name : parentBlockId;
+    justifications[APP_STORAGE_IMPORT_SCOPE] = defaultForkImportJustification(parentName);
+  }
+  manifest.scopeJustifications = justifications;
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */
@@ -331,13 +389,10 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
  */
 async function consumeForkStart(userId: number): Promise<void> {
   for (const { windowSeconds, max } of FORK_START_LIMITS) {
-    const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
+    const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysReadDeadline(
-        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-      );
-      count = Number((result as unknown[] | null)?.[1]);
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds);
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
@@ -368,6 +423,11 @@ export type StartAppForkInput = {
   scope: StoreVisibilityScope;
   /** Whether this request may see mature listings (a red-capable host). */
   redCapable: boolean;
+  /**
+   * The viewer's browsing level: an R/X parent must be visible to them. Required (nullable;
+   * `null`/`undefined` read as PG).
+   */
+  viewerBrowsingLevel: number | null | undefined;
   /** The request, for the App Assistant feature gate. */
   req?: NextApiRequest | IncomingMessage;
 };
@@ -424,7 +484,12 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   );
   const parent = await getStoreVisibleListingSummary(
     { id: input.listingId },
-    { redCapable: input.redCapable, scope: input.scope, floor: 'public' }
+    {
+      redCapable: input.redCapable,
+      scope: input.scope,
+      floor: 'public',
+      viewerBrowsingLevel: input.viewerBrowsingLevel,
+    }
   );
   if (!parent) {
     throw new TRPCError({ code: 'NOT_FOUND', message: FORK_PARENT_UNAVAILABLE_MESSAGE });
@@ -522,6 +587,30 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
         EX: FORK_SESSION_TTL_SECONDS,
       })
     );
+    // The fork's own git repo, seeded with exactly the files its sandbox starts from. The parent
+    // named in its trailers is THIS session's (server-resolved), never anything in the manifest.
+    // Best-effort and never throws: the fork starts whether or not the repo could be made, and
+    // the source-repo backfill makes one that is missing.
+    // Waited on for at most FORK_SOURCE_REPO_WAIT_MS: a slow git host must not hold the start (the
+    // creation carries on, and the backfill covers one that never finishes).
+    const sourceRepo = import('~/server/services/blocks/app-source-repo.service')
+      .then(({ createForkSourceRepo }) =>
+        createForkSourceRepo({
+          forkSlug,
+          userId: user.id,
+          files: seedZip.entries,
+          lineage: {
+            parentSlug: parentBlock.blockId,
+            parentCommitSha,
+            parentAppBlockId: parentBlock.id,
+          },
+        })
+      )
+      .catch(() => undefined);
+    await Promise.race([
+      sourceRepo,
+      new Promise((resolve) => setTimeout(resolve, forkSourceRepoWaitMs).unref?.()),
+    ]);
     return { forkSlug, parentName: parent.name, parentListingId: parent.id, seed };
   } catch (err) {
     // Release the reservation: nothing will ever be created under it. And the seed object, if it
@@ -533,7 +622,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       name: 'app-fork-start-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
 }
@@ -609,7 +698,7 @@ export async function applyForkSessionToFirstPublishRequest(args: {
         name: 'app-fork-session-provenance-failed',
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }).catch(() => null);
+      });
     }
     return false;
   }

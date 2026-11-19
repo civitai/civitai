@@ -4,7 +4,11 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
-export function GenerationDetails({ params, label, controlProps, ...descriptionTableProps }: Props) {
+/** The generation's parameters as a table, without the accordion around it. */
+export function GenerationDetailsTable({
+  params,
+  ...descriptionTableProps
+}: Omit<DescriptionTableProps, 'items'> & { params: Record<string, unknown> }) {
   const detailItems = Object.entries(params ?? {})
     .filter(([key, value]) => {
       if (Array.isArray(value) || typeof value === 'object' || key === 'priority') return false;
@@ -20,6 +24,15 @@ export function GenerationDetails({ params, label, controlProps, ...descriptionT
       };
     });
 
+  return <DescriptionTable {...descriptionTableProps} items={detailItems} />;
+}
+
+export function GenerationDetails({
+  params,
+  label,
+  controlProps,
+  ...descriptionTableProps
+}: Props) {
   if (!params) return null;
 
   return (
@@ -47,7 +60,7 @@ export function GenerationDetails({ params, label, controlProps, ...descriptionT
           </Text>
         </Accordion.Control>
         <Accordion.Panel>
-          <DescriptionTable {...descriptionTableProps} items={detailItems} />
+          <GenerationDetailsTable {...descriptionTableProps} params={params} />
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>

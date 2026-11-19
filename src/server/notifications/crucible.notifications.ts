@@ -40,14 +40,18 @@ export const crucibleNotifications = createNotificationProcessor({
       };
     },
   },
-  // Sent to the entrant when a moderator, or the crucible's owner (with a reason), removes their entry
+  // Sent to the entrant when a moderator, the crucible's owner or the theme review removes their entry
   'crucible-entry-removed': {
     displayName: 'Crucible Entry Removed',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `${
-        details.removedBy === 'owner' ? "The crucible's owner" : 'A moderator'
+        details.removedBy === 'owner'
+          ? "The crucible's owner"
+          : details.removedBy === 'review'
+          ? "The crucible's theme review"
+          : 'A moderator'
       } removed your entry from the crucible${quotedName(details.crucibleName)}.${
         details.reason ? ` Reason: ${details.reason}.` : ''
       }${
@@ -175,8 +179,10 @@ export const crucibleNotifications = createNotificationProcessor({
           c."userId" "hostId",
           -- getCruciblePublishableName, which a processor query cannot call.
           CASE WHEN c.ingestion = 'Scanned' AND NOT c."textNsfw" THEN c.name END "crucibleName",
-          -- isCrucibleHiddenByScan: until both scans pass, only the host can open the crucible.
-          (c.ingestion = 'Scanned' AND i.ingestion = 'Scanned') "visible"
+          -- isCrucibleHiddenByScan: until both scans pass, and while the cover is unrated, in
+          -- review or a ToS violation, only the host can open the crucible.
+          (c.ingestion = 'Scanned' AND i.ingestion = 'Scanned' AND i."nsfwLevel" != 0
+            AND i."needsReview" IS NULL AND NOT i."tosViolation") "visible"
         FROM "Crucible" c
         LEFT JOIN "Image" i ON i.id = c."imageId"
         WHERE

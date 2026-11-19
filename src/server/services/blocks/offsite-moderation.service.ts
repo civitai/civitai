@@ -2,6 +2,15 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+// Light (its heavy dependencies are dynamic imports), so imported statically.
+import {
+  restoreLiveAppSoon,
+  takeDownLiveApp,
+} from '~/server/services/blocks/live-unpublish.service';
+import {
+  assertAcceptedAppDeveloperTermsTrpc,
+  assertListingOwnerAcceptedAppDeveloperTerms,
+} from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   APP_LISTING_REPORT_REASONS,
@@ -25,6 +34,13 @@ import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
+import {
+  forgetRevokedAppTokens,
+  lockAppBlockClientRows,
+  revokeAppBlockOauthTokens,
+  type RevokedAppTokens,
+} from '~/server/services/blocks/app-block-token-revoke.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -539,17 +555,89 @@ async function classifyListingForAction(appListingId: string): Promise<{
  */
 async function flipBackingBlockStatus(
   tx: Prisma.TransactionClient,
-  opts: { isOnsite: boolean; appBlockId: string | null; from: string; to: string }
+  opts: {
+    isOnsite: boolean;
+    appBlockId: string | null;
+    from: string;
+    to: string;
+    /** The owner, not a moderator, is restoring: refusals must not reveal moderation state. */
+    ownerFacing?: boolean;
+    /** A suspension puts the tokens it revoked here, for the caller's post-commit cleanup. */
+    revoked?: { value: RevokedAppTokens | null };
+  }
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
+  if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId, opts.ownerFacing);
+  if (opts.to === 'suspended') await lockAppBlockClientRows(tx, opts.appBlockId);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
+  // On a 0-count too: an already-suspended block keeps no tokens. The helper checks the status.
+  if (opts.to === 'suspended') {
+    const revoked = await revokeAppBlockOauthTokens(tx, opts.appBlockId);
+    if (opts.revoked) opts.revoked.value = revoked;
+  }
   return flip.count > 0;
 }
 
-export type DelistListingResult = { appListingId: string; status: 'removed' };
+const OWNER_RESTORE_UNAVAILABLE =
+  "This app can't be republished right now. Contact support if this persists.";
+/** Shown to the owner: that a hold exists and who to ask, never its label or reason. */
+export const OWNER_RESTORE_HELD =
+  "A moderator hold is on this app, so it can't be republished right now. Contact support.";
+
+/**
+ * A block suspended over an open review hold (the late-hold re-suspend) stays suspended until a
+ * moderator clears the hold, whichever path would restore it. Fails closed when the holds cannot
+ * be read, as approve does.
+ */
+async function assertNoOpenReviewHold(
+  tx: Prisma.TransactionClient,
+  appBlockId: string,
+  ownerFacing = false
+) {
+  const block = await tx.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { blockId: true },
+  });
+  if (!block) return;
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(tx, [block.blockId])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[offsite-moderation] hold read failed; refusing to restore the block', err);
+    if (ownerFacing)
+      throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_UNAVAILABLE);
+    throw new OffsiteModerationError(
+      'FORBIDDEN',
+      "Could not read this app's review holds, so it cannot be restored. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (!open) return;
+  if (ownerFacing) throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_HELD);
+  throw new OffsiteModerationError(
+    'FORBIDDEN',
+    "This app has an open review hold, and a moderator must clear it before the app can be restored. Holds are listed on the app's pending review; if nothing is pending, ask an engineer."
+  );
+}
+
+/**
+ * LIVE UNPUBLISH (`app-blocks-live-unpublish`), after an on-site takedown COMMITS: start removing
+ * the app from the shared static server. Never throws and never undoes the takedown. For the
+ * server's readiness app nothing is removed and the returned `liveNote` says so.
+ */
+async function takeDownLiveAppAfterCommit(slug: string): Promise<{ liveNote?: string }> {
+  return takeDownLiveApp(slug).catch(() => ({}));
+}
+
+export type DelistListingResult = {
+  appListingId: string;
+  status: 'removed';
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
+};
 
 /**
  * MOD delist an APPROVED listing (approved → removed) — now DUAL-KIND (W13
@@ -592,6 +680,7 @@ export async function delistListing(opts: {
   const isOnsite = listing.kind === 'onsite';
   const eventId = newAppListingModerationEventId();
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     // Allow approved → removed AND removed → removed (the enforced-takedown lock). The
     // idempotent removed→removed write keeps status `removed` but still counts (1 row),
@@ -619,6 +708,7 @@ export async function delistListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
     await tx.appListingModerationEvent.create({
       data: {
@@ -666,8 +756,10 @@ export async function delistListing(opts: {
 
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
-  return { appListingId: input.appListingId, status: 'removed' };
+  return { appListingId: input.appListingId, status: 'removed', ...live };
 }
 
 export type RelistListingResult = { appListingId: string; status: 'approved' };
@@ -692,6 +784,9 @@ export async function relistListing(opts: {
   const reason = requireModReason(input.reason);
   const listing = await classifyListingForAction(input.appListingId);
   const isOnsite = listing.kind === 'onsite';
+  // A relist goes live, so the owner must have accepted the current terms. The reset-to-pending
+  // paths are exempt: they re-queue for review, and the approval they lead to is gated.
+  await assertListingOwnerAcceptedAppDeveloperTerms(input.appListingId);
   // Set when the on-site block-restore flip matched 0 rows (drift — see below).
   let onsiteBlockRestoreDrift = false;
 
@@ -771,6 +866,10 @@ export async function relistListing(opts: {
 
   // Catalog bust: relist puts the listing back into the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // The block is approved again (not on drift): put the app back on the shared static server.
+  if (isOnsite && listing.appBlockId && !onsiteBlockRestoreDrift) {
+    restoreLiveAppSoon({ slug: listing.slug, appBlockId: listing.appBlockId });
+  }
 
   return { appListingId: input.appListingId, status: 'approved' };
 }
@@ -1465,6 +1564,8 @@ export type ResetOnsiteListingToPendingResult = {
   appListingId: string;
   status: 'pending';
   publishRequestId: string;
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
 };
 
 /**
@@ -1572,6 +1673,7 @@ export async function resetOnsiteListingToPending(opts: {
   const eventId = newAppListingModerationEventId();
   const publishRequestId = `pubreq_${newUlid()}`;
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   try {
     await dbWrite.$transaction(async (tx) => {
       // (1) guard-flip listing approved → pending (onsite + status-guarded TOCTOU).
@@ -1594,6 +1696,7 @@ export async function resetOnsiteListingToPending(opts: {
         appBlockId,
         from: 'approved',
         to: 'suspended',
+        revoked,
       });
 
       // (3) re-enter the review queue: clone the latest approved request into a FRESH
@@ -1676,8 +1779,11 @@ export async function resetOnsiteListingToPending(opts: {
 
   // Catalog bust: onsite reset-to-pending — same membership change as the offsite path.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // The re-approval publishes again; until then the subdomain must not serve the old version.
+  const live = await takeDownLiveAppAfterCommit(listing.slug);
+  await forgetRevokedAppTokens(revoked.value);
 
-  return { appListingId: input.appListingId, status: 'pending', publishRequestId };
+  return { appListingId: input.appListingId, status: 'pending', publishRequestId, ...live };
 }
 
 /**
@@ -1743,7 +1849,12 @@ async function loadOwnedListingInTx(
   };
 }
 
-export type UnpublishOwnListingResult = { appListingId: string; status: 'removed' };
+export type UnpublishOwnListingResult = {
+  appListingId: string;
+  status: 'removed';
+  /** Set when the store takedown went through but the app keeps serving (the readiness app). */
+  liveNote?: string;
+};
 
 /**
  * OWNER self-hide their OWN approved listing (approved → removed) — DUAL-KIND
@@ -1765,6 +1876,10 @@ export async function unpublishOwnListing(opts: {
   const { input, userId } = opts;
   const reason = input.reason?.trim() ? input.reason.trim() : null;
 
+  // The on-site slug, for the post-commit live unpublish (set only once the tx authorized it).
+  let onsiteSlug: string | null = null;
+
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'approved') {
@@ -1790,7 +1905,9 @@ export async function unpublishOwnListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
+    if (isOnsite && listing.appBlockId) onsiteSlug = listing.slug;
     // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
     // imagery a moderator last signed off on — nothing else in the schema captures it (no
     // approve path writes a moderation event at all, and every existing `before`/`after`
@@ -1823,8 +1940,12 @@ export async function unpublishOwnListing(opts: {
 
   // Catalog bust: owner-unpublish removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
+  // Widened back from the closure assignment (TypeScript cannot see through it).
+  const slugToTakeDown = onsiteSlug as string | null;
+  const live = slugToTakeDown ? await takeDownLiveAppAfterCommit(slugToTakeDown) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
-  return { appListingId: input.appListingId, status: 'removed' };
+  return { appListingId: input.appListingId, status: 'removed', ...live };
 }
 
 /**
@@ -1905,8 +2026,9 @@ export type RepublishOwnListingResult = {
  * approved in the SAME tx (via {@link flipBackingBlockStatus}), so the app serves again.
  * On the REVIEW arm it is deliberately LEFT SUSPENDED — the app must not serve while its
  * store card is unreviewed, the same posture {@link resetOnsiteListingToPending} takes —
- * and `approveExternalRequest` un-suspends it on approve, gated on exactly the `pending`
- * on-site listing this route writes. OFF-SITE: only the listing flips. `reason` optional.
+ * and `approveExternalRequest` un-suspends it on approve (and puts the app back live), gated on
+ * exactly the `pending` on-site listing this route writes. OFF-SITE: only the listing flips.
+ * `reason` optional.
  *
  * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, UNIFORMLY FOR BOTH KINDS (this used to be a
  * pure visibility toggle with NO re-derive, which was the hole). A `removed` listing is
@@ -1924,10 +2046,13 @@ export async function republishOwnListing(opts: {
   userId: number;
 }): Promise<RepublishOwnListingResult> {
   const { input, userId } = opts;
+  await assertAcceptedAppDeveloperTermsTrpc(userId);
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;
   let onsiteBlockId: string | null = null;
+  // Set when the IMMEDIATE arm approved the backing block again: the app to put back live.
+  let liveRestore: { slug: string; appBlockId: string } | null = null;
   // Set by the REVIEW arm; `null` means the republish went live immediately.
   let reviewReason: RepublishReviewReason | null = null;
 
@@ -2084,8 +2209,10 @@ export async function republishOwnListing(opts: {
         appBlockId: listing.appBlockId,
         from: 'suspended',
         to: 'approved',
+        ownerFacing: true,
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
+      else liveRestore = { slug: listing.slug, appBlockId: listing.appBlockId };
     }
 
     await tx.appListingModerationEvent.create({
@@ -2131,6 +2258,10 @@ export async function republishOwnListing(opts: {
 
   // Catalog bust: owner-republish restores the listing to the catalog (or moves it to pending).
   await bustAppListingCatalogCache().catch(() => undefined);
+  // IMMEDIATE arm: serve the app again. The review arm leaves the block suspended, and
+  // `approveExternalRequest` puts the app back when it un-suspends the block.
+  const restore = liveRestore as { slug: string; appBlockId: string } | null;
+  if (restore) restoreLiveAppSoon(restore);
 
   // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
   // the transaction callback and TypeScript cannot see through the closure, so it is

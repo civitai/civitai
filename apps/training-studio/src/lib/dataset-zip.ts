@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { extOfMime } from '$lib/media';
 import { pool } from '$lib/pool';
+import { withTrigger } from '$lib/training-trigger';
 
 /** One dataset file for the zip: `base` names both the media file and its `.txt` caption. `ext` is the
  *  caller's best guess; the blob's MIME is the fallback when it has none. */
@@ -30,9 +31,13 @@ export function uniqueBaseNames(names: string[], fallback = 'image'): string[] {
 
 /** A standard LoRA-layout zip: each media file plus a same-named `.txt` caption, which round-trips with
  *  the Data step's "Import .zip" and works in other trainers. Items whose bytes can't be loaded are
- *  skipped and counted; `blob` is null when none loaded, so an empty zip never reads as success. */
+ *  skipped and counted; `blob` is null when none loaded, so an empty zip never reads as success.
+ *  `trigger` leads every caption that lacks it, as training applies it: other trainers only learn a
+ *  trigger word from the captions, and the Data step's import recognises a shared first tag. An
+ *  uncaptioned file stays uncaptioned, so re-importing still auto-labels it. */
 export async function buildDatasetZip(
-  items: DatasetZipItem[]
+  items: DatasetZipItem[],
+  trigger = ''
 ): Promise<{ blob: Blob | null; included: number; failed: number }> {
   const zip = new JSZip();
   let included = 0;
@@ -47,7 +52,7 @@ export async function buildDatasetZip(
     // Bytes, not the Blob: JSZip only reads Blobs where it detects browser support (not under the tests).
     zip.file(`${item.base}.${item.ext ?? extOfMime(blob.type) ?? 'png'}`, await blob.arrayBuffer());
     const caption = item.caption.trim();
-    if (caption) zip.file(`${item.base}.txt`, caption);
+    if (caption) zip.file(`${item.base}.txt`, withTrigger(trigger, caption));
   });
   const failed = items.length - included;
   if (included === 0) return { blob: null, included, failed };
@@ -62,4 +67,10 @@ export function saveBlob(blob: Blob, fileName: string) {
   a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** The trigger word a finished run's dataset download should carry: AI Toolkit keeps it out of the captions
+ *  as `triggerWord`; Kohya runs have none there because their captions already include it. */
+export function runZipTrigger(training: Record<string, unknown>): string {
+  return typeof training.triggerWord === 'string' ? training.triggerWord : '';
 }

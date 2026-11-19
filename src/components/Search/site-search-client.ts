@@ -1,14 +1,18 @@
 import type { InstantMeiliSearchOptions } from '@meilisearch/instant-meilisearch';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
-import { searchFetch as directSearchFetch } from '~/components/Search/search-api-key';
+import {
+  searchFetch as directSearchFetch,
+  getSearchApiKey,
+} from '~/components/Search/search-api-key';
 import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 
 /**
  * Browser site search, two ways, chosen per request by the `siteSearchProxy` flag:
  * - on: `/api/search`, which speaks the Meilisearch protocol and applies the viewer's and the
  *   site's rules server-side. The browser holds no search key.
- * - off: straight to Meilisearch with a per-viewer token (`search-api-key`).
+ * - off: straight to Meilisearch with a per-viewer token (`search-api-key`), or through
+ *   `/api/search` when there is no token.
  */
 export const SITE_SEARCH_PATH = '/api/search';
 
@@ -22,7 +26,13 @@ function meilisearchPath(url: string) {
 }
 
 async function proxySearchFetch<T>(path: string, init: RequestInit): Promise<T> {
-  const res = await fetch(`${SITE_SEARCH_PATH}${path}`, { ...init, credentials: 'same-origin' });
+  const headers = new Headers(init.headers);
+  headers.delete('Authorization');
+  const res = await fetch(`${SITE_SEARCH_PATH}${path}`, {
+    ...init,
+    headers,
+    credentials: 'same-origin',
+  });
 
   const body = await res.json().catch(() => undefined);
   if (!res.ok) {
@@ -41,9 +51,10 @@ async function proxySearchFetch<T>(path: string, init: RequestInit): Promise<T> 
  * option, which must parse and throw on its own. Takes a URL on either the site-search path or the
  * Meilisearch host; only its path is used.
  */
-export function searchFetch<T = any>(url: string, init: RequestInit = {}): Promise<T> {
+export async function searchFetch<T = any>(url: string, init: RequestInit = {}): Promise<T> {
   const path = meilisearchPath(url);
-  if (isSiteSearchProxyEnabled()) return proxySearchFetch<T>(path, init);
+  if (isSiteSearchProxyEnabled() || !(await getSearchApiKey()))
+    return proxySearchFetch<T>(path, init);
   const host = (env.NEXT_PUBLIC_SEARCH_HOST ?? '').replace(/\/+$/, '');
   return directSearchFetch<T>(`${host}${path}`, init);
 }

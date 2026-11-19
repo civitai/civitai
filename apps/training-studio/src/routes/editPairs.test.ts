@@ -4,6 +4,7 @@ import {
   matchZipPairs,
   pairItems,
   pairProblem,
+  pairsFromItems,
   seedEditPrompts,
   type EditPair,
 } from './editPairs';
@@ -133,6 +134,24 @@ describe('pairItems', () => {
       { air: 'start-b', caption: '', path: 'control_1/pair_0002.png' },
       { air: 'res-b', caption: 'turn it around', path: 'main/pair_0002.png' },
     ]);
+  });
+});
+
+describe('pairsFromItems', () => {
+  it("rebuilds a run's pairs from its submitted items, a shared start once per pair", () => {
+    const start = img({ name: 'tee.png', blobId: 'start-a' });
+    const items = pairItems([
+      pair({ before: start, after: img({ blobId: 'res-a' }), instruction: 'add a smiley' }),
+      pair({ before: start, after: img({ blobId: 'res-b' }), instruction: 'make it red' }),
+    ]);
+    expect(pairsFromItems(items).map((p) => [p.before.air, p.after?.air, p.instruction])).toEqual([
+      ['start-a', 'res-a', 'add a smiley'],
+      ['start-a', 'res-b', 'make it red'],
+    ]);
+  });
+
+  it('finds no pairs in a plain dataset', () => {
+    expect(pairsFromItems([{ air: 'a', caption: 'ohwx, 1girl' }])).toEqual([]);
   });
 });
 

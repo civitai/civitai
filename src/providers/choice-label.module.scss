@@ -1,0 +1,17 @@
+// Checkbox and Radio put the description outside their <label>, so tapping it did nothing.
+// The label's click area is stretched over the whole label and description; links and buttons in
+// the description sit above it and still act.
+.labelWrapper {
+  position: relative;
+}
+
+.label::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.description :is(a, button) {
+  position: relative;
+  z-index: 1;
+}

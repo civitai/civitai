@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Group, Loader, Select, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Loader, Select, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';

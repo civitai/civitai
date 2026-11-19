@@ -57,12 +57,30 @@ async function article(
     category = 'announcement' as string | null,
     userId = AUTHOR,
     tosViolation = false,
+    ingestion = 'Scanned',
+    unlisted = false,
+    availability = 'Public',
+    nsfwLevel = 1,
+    contentScannedAt = null as string | null,
   } = {}
 ) {
   await db.query(
-    `INSERT INTO "Article" (id, "userId", title, status, "publishedAt", "tosViolation")
-     VALUES ($1, $2, $3, $4, $5::timestamp, $6)`,
-    [id, userId, `Article ${id}`, status, publishedAt, tosViolation]
+    `INSERT INTO "Article" (id, "userId", title, status, "publishedAt", "tosViolation", ingestion,
+       unlisted, availability, "nsfwLevel", "contentScannedAt")
+     VALUES ($1, $2, $3, $4, $5::timestamp, $6, $7, $8, $9, $10, $11::timestamp)`,
+    [
+      id,
+      userId,
+      `Article ${id}`,
+      status,
+      publishedAt,
+      tosViolation,
+      ingestion,
+      unlisted,
+      availability,
+      nsfwLevel,
+      contentScannedAt,
+    ]
   );
   if (category) {
     const tag = await db.query<{ id: number }>(`SELECT id FROM "Tag" WHERE name = $1`, [category]);
@@ -86,7 +104,8 @@ beforeAll(async () => {
       id INT PRIMARY KEY,
       username TEXT,
       "bannedAt" TIMESTAMP(3),
-      muted BOOLEAN NOT NULL DEFAULT false
+      muted BOOLEAN NOT NULL DEFAULT false,
+      "browsingLevel" INT NOT NULL DEFAULT 31
     );
     CREATE TABLE "Article" (
       id INT PRIMARY KEY,
@@ -94,7 +113,12 @@ beforeAll(async () => {
       title TEXT NOT NULL,
       status TEXT NOT NULL,
       "publishedAt" TIMESTAMP(3),
-      "tosViolation" BOOLEAN NOT NULL DEFAULT false
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+      ingestion TEXT NOT NULL DEFAULT 'Scanned',
+      unlisted BOOLEAN NOT NULL DEFAULT false,
+      availability TEXT NOT NULL DEFAULT 'Public',
+      "nsfwLevel" INT NOT NULL DEFAULT 1,
+      "contentScannedAt" TIMESTAMP(3)
     );
     CREATE TABLE "Tag" (id INT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE "TagsOnTags" ("fromTagId" INT NOT NULL, "toTagId" INT NOT NULL);
@@ -204,6 +228,34 @@ describe('new-article-from-following — who gets what, executed', () => {
       await article(11, '2026-10-16 10:00:10');
       expect(await announced()).toEqual([12]);
     });
+
+    it.each(['Pending', 'Rescan', 'Blocked', 'Error'])(
+      'an article whose scan state is %s',
+      async (ingestion) => {
+        await article(11, '2026-10-16 10:00:10', { ingestion });
+        expect(await announced()).toEqual([12]);
+      }
+    );
+
+    it('an unlisted article', async () => {
+      await article(11, '2026-10-16 10:00:10', { unlisted: true });
+      expect(await announced()).toEqual([12]);
+    });
+
+    it('a Private article', async () => {
+      await article(11, '2026-10-16 10:00:10', { availability: 'Private' });
+      expect(await announced()).toEqual([12]);
+    });
+  });
+
+  it("an article outside a follower's browsing level reaches only the followers who browse it", async () => {
+    // F2 browses PG only; the article is rated R.
+    await db.exec(`UPDATE "User" SET "browsingLevel" = 1 WHERE id = ${F2}`);
+    await article(11, '2026-10-16 10:00:10', { nsfwLevel: 4 });
+    await article(12, '2026-10-16 10:00:10', { nsfwLevel: 1 });
+    const rows = await run();
+    expect(recipientsOf(rows, 11)).toEqual([F1]);
+    expect(recipientsOf(rows, 12)).toEqual([F1, F2]);
   });
 
   it('a future-dated publishedAt is not announced until it arrives', async () => {
@@ -242,6 +294,24 @@ describe('🔴 the cursor race — a row the previous run could not see yet', ()
 
     expect(first.length).toBeGreaterThan(0);
     expect(second).toEqual(first);
+  });
+});
+
+describe('an article that clears its scan after publish', () => {
+  it('is announced by the run after its scan lands, though its publishedAt is past the lookback', async () => {
+    await article(11, '2026-10-16 09:00:00', { contentScannedAt: '2026-10-16 10:00:10' });
+    expect(recipientsOf(await run(), 11)).toEqual([F1, F2]);
+  });
+
+  it('is not re-announced for a scan more than seven days after publish', async () => {
+    await article(11, '2026-10-09 09:59:00', { contentScannedAt: '2026-10-16 10:00:10' });
+    await article(12, '2026-10-09 10:01:00', { contentScannedAt: '2026-10-16 10:00:10' });
+    expect([...new Set((await run()).map((r) => r.details.articleId))]).toEqual([12]);
+  });
+
+  it('a scan stamped before the lookback does not re-trigger it', async () => {
+    await article(11, '2026-10-16 09:00:00', { contentScannedAt: '2026-10-16 09:30:00' });
+    expect(await run()).toEqual([]);
   });
 });
 

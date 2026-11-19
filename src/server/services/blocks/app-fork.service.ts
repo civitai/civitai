@@ -43,8 +43,8 @@
 
 import { TRPCError } from '@trpc/server';
 
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import type { ListingForkOf } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -128,6 +128,10 @@ export function assertForkableWritable(available: boolean): void {
 /** Refusal for an off-site listing: it has no source on the platform to fork. */
 export const FORKABLE_OFFSITE_MESSAGE =
   'Only apps hosted on Civitai can be forked — an external app has no source here to fork.';
+
+/** Refusal for a moderator: only the owner or a seat holder may share the app's source. */
+export const FORKABLE_MODERATOR_MESSAGE =
+  'Only the app’s owner or a collaborator can change whether it can be forked.';
 
 /** Refusal for the revision-draft write path: the opt-in is never staged on a shadow. */
 export const FORKABLE_ON_REVISION_MESSAGE =
@@ -215,22 +219,29 @@ export async function readListingForkProvenance(
 }
 
 /**
- * Record a degraded render read without letting the recording break the page. A missing column
- * never reaches here (the narrow reader swallows it), so what arrives is a real fault — `error`.
- * The `.catch(() => null)` is load-bearing: nothing awaits this, so an unhandled rejection would
- * take down the render this exists only to observe.
+ * The listing each of `listingIds` was forked from, in one query: fork listing id → parent
+ * listing id, for the forks among them only. Degrades to an empty map on a missing column, like
+ * {@link readListingForkProvenance}; everything else propagates. It returns ids, never a parent's
+ * name or slug: a caller decides whether a parent may be named.
  */
-function noteDegradedForkRead(name: string, err: unknown): void {
+export async function readListingForkParents(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, string>> {
+  if (listingIds.length === 0) return new Map();
   try {
-    logToAxiom({
-      name,
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-      code: (err as { code?: unknown })?.code ?? null,
-    }).catch(() => null);
-  } catch {
-    // The degraded path's whole job is to keep rendering; a logger that throws synchronously
-    // must not undo that.
+    const rows =
+      (await db.$queryRaw`SELECT al."id" AS "id", al."fork_of_listing_id" AS "forkOfListingId"
+        FROM "app_listings" al
+        WHERE al."id" = ANY(${[...listingIds]}::text[])
+          AND al."fork_of_listing_id" IS NOT NULL`) as Array<{
+        id: string;
+        forkOfListingId: string;
+      }>;
+    return new Map(rows.map((r) => [r.id, r.forkOfListingId]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
   }
 }
 
@@ -245,7 +256,7 @@ export async function readListingForkProvenanceForRender(
   try {
     return await readListingForkProvenance(listingId, db);
   } catch (err) {
-    noteDegradedForkRead('app-fork-provenance-read-degraded', err);
+    noteDegradedRead('app-fork-provenance-read-degraded', err);
     return NO_FORK_PROVENANCE;
   }
 }
@@ -274,7 +285,7 @@ export async function resolveForkAttribution(
     const parent = await lookupVisibleParent(provenance.forkOfListingId);
     return parent ? { visible: true, slug: parent.slug, name: parent.name } : { visible: false };
   } catch (err) {
-    noteDegradedForkRead('app-fork-attribution-degraded', err);
+    noteDegradedRead('app-fork-attribution-degraded', err);
     return { visible: false };
   }
 }
@@ -405,7 +416,7 @@ export async function carryForkProvenanceToPublishRequest(
     );
     return count > 0;
   } catch (err) {
-    if (!isMissingColumnError(err)) noteDegradedForkRead('app-fork-provenance-carry-failed', err);
+    if (!isMissingColumnError(err)) noteDegradedRead('app-fork-provenance-carry-failed', err);
     return false;
   }
 }

@@ -7,10 +7,10 @@ import {
   Group,
   Button,
   Anchor,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useState } from 'react';

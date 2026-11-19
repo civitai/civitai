@@ -12,15 +12,14 @@ import {
   Grid,
   Group,
   Paper,
-  Popover,
   Progress,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconAward,

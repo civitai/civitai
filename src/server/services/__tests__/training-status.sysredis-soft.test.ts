@@ -67,7 +67,13 @@ vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
   getOrchestratorCaller: vi.fn(),
 }));
 
-import { getTrainingServiceStatus } from '~/server/services/training.service';
+import {
+  getTrainingServiceStatus,
+  getTrainingServiceStatusState,
+  TRAINING_STATUS_UNKNOWN_MESSAGE,
+  __resetTrainingStatusLastKnownForTests,
+} from '~/server/services/training.service';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -75,6 +81,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
   hGet.mockResolvedValue('{}');
+  resetEnv();
+  // The last-known status is per process; each case starts with none.
+  __resetTrainingStatusLastKnownForTests();
 });
 
 describe('getTrainingServiceStatus — sysRedis hGet (fail-open to defaults, park-bounded)', () => {
@@ -87,28 +96,105 @@ describe('getTrainingServiceStatus — sysRedis hGet (fail-open to defaults, par
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
-  it('DOWN: hGet throws → fail-open to schema default (available:true); logSysRedisFailOpen fired', async () => {
+  // A failed read must not turn an operator's pause into "available": it serves the last status
+  // read in this process, and "paused" (with a clear message) when there is none.
+  it('DOWN with nothing read yet: treats training as paused, with a clear message', async () => {
     hGet.mockRejectedValue(new Error('sysRedis connection is down'));
     const status = await getTrainingServiceStatus();
-    expect(status.available).toBe(true);
+    expect(status).toMatchObject({ available: false, message: TRAINING_STATUS_UNKNOWN_MESSAGE });
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledWith(
       'defaults-firing',
       'getTrainingServiceStatus',
-      expect.any(Error)
+      expect.any(Error),
+      { served: 'fail-closed' }
     );
   });
 
-  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → defaults (fail-on-revert)', async () => {
-    hGet.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+  it("DOWN after a good read: keeps an operator's pause", async () => {
+    hGet.mockResolvedValueOnce(JSON.stringify({ available: false, message: 'paused for upgrade' }));
+    await getTrainingServiceStatus();
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
     const status = await getTrainingServiceStatus();
-    expect(status.available).toBe(true);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(status).toMatchObject({ available: false, message: 'paused for upgrade' });
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledWith(
       'defaults-firing',
       'getTrainingServiceStatus',
-      expect.any(Error)
+      expect.any(Error),
+      { served: 'last-known-good' }
     );
+  });
+
+  it('DOWN after a good read: keeps "available" (no needless outage)', async () => {
+    hGet.mockResolvedValueOnce(JSON.stringify({ available: true, message: 'slow today' }));
+    await getTrainingServiceStatus();
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatus()).resolves.toMatchObject({
+      available: true,
+      message: 'slow today',
+    });
+  });
+
+  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → paused, not defaults (fail-on-revert)', async () => {
+    hGet.mockReturnValue(new Promise(() => undefined));
+    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    const status = await getTrainingServiceStatus();
+    expect(status).toMatchObject({ available: false, message: TRAINING_STATUS_UNKNOWN_MESSAGE });
+    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+  });
+
+  it('TRAINING_STATUS_FAIL_CLOSED off: a failed read falls back to "available", as before', async () => {
+    setEnv({ TRAINING_STATUS_FAIL_CLOSED: false });
+    hGet.mockResolvedValueOnce(JSON.stringify({ available: false, message: 'paused for upgrade' }));
+    await getTrainingServiceStatus();
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    const status = await getTrainingServiceStatus();
+    expect(status.available).toBe(true);
+    expect(status.message).toBeUndefined();
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledWith(
+      'defaults-firing',
+      'getTrainingServiceStatus',
+      expect.any(Error),
+      { served: 'defaults' }
+    );
+  });
+});
+
+// `known` decides whether the public status endpoints may edge-cache the answer (see
+// training.router getStatus / getPublicStatus). Only the fail-closed fallback is unknown.
+describe('getTrainingServiceStatusState — known', () => {
+  it('a live read is known', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ available: false, message: 'paused' }));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: false, message: 'paused' },
+    });
+  });
+
+  it('DOWN with nothing read yet: the fail-closed fallback is NOT known', async () => {
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: false,
+      status: { available: false, message: TRAINING_STATUS_UNKNOWN_MESSAGE },
+    });
+  });
+
+  it('DOWN after a good read: the last-known value is known', async () => {
+    hGet.mockResolvedValueOnce(JSON.stringify({ available: false, message: 'paused for upgrade' }));
+    await getTrainingServiceStatusState();
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: false, message: 'paused for upgrade' },
+    });
+  });
+
+  it('TRAINING_STATUS_FAIL_CLOSED off: the "available" default is known (cached, as before)', async () => {
+    setEnv({ TRAINING_STATUS_FAIL_CLOSED: false });
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: true },
+    });
   });
 });

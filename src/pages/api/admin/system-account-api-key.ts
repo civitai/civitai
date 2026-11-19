@@ -1,8 +1,7 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { TokenScope, TokenScopePresets } from '@civitai/auth/token-scope';
-import { env } from '~/env/server';
+import { TokenScope } from '@civitai/auth/token-scope';
 import { dbWrite } from '~/server/db/client';
 import {
   systemAccountRefusal,
@@ -12,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
+import { distinctAdminToken } from '~/server/utils/admin-token';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
 /**
@@ -22,12 +22,22 @@ import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 const SYSTEM_ACTOR_ID = -1;
 const MAX_EXPIRY_DAYS = 365;
 
-const READ_SCOPES = Object.fromEntries(
+// Any named scope inside Full. The opt-in bits above Full are left out; NON_USER_SCOPES among them
+// may only be minted by their own grants, never onto a User key.
+const GRANTABLE_SCOPES: Record<string, bigint> = Object.fromEntries(
   Object.entries(TokenScope).filter(
-    ([, bit]) => bit !== 0 && (TokenScopePresets.ReadOnly & bit) === bit
+    ([name, bit]) => bit !== 0n && name !== 'Full' && (TokenScope.Full & bit) === bit
   )
-) as Record<string, number>;
+);
 
+const scopeMask = (names: string[]) =>
+  // Own keys only: an inherited name (`toString`) is a function, which a bigint `|` throws on.
+  names.reduce(
+    (mask, name) => mask | (Object.hasOwn(GRANTABLE_SCOPES, name) ? GRANTABLE_SCOPES[name] : 0n),
+    0n
+  );
+
+// Without `scopes` a key stays read-only.
 const DEFAULT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
 
 const schema = z.object({
@@ -42,8 +52,13 @@ const schema = z.object({
   scopes: z
     .array(z.string())
     .min(1)
-    .refine((names) => names.every((name) => Object.hasOwn(READ_SCOPES, name)), {
-      message: `scopes must be read scopes: ${Object.keys(READ_SCOPES).join(', ')}`,
+    .refine((names) => names.every((name) => Object.hasOwn(GRANTABLE_SCOPES, name)), {
+      message: `scopes must be named from: ${Object.keys(GRANTABLE_SCOPES).join(', ')}`,
+    })
+    // A key of exactly Full counts as a full user credential (isFullScopeUserKey), which may mint
+    // further keys outside this route's expiry, rotation and audit.
+    .refine((names) => scopeMask(names) !== TokenScope.Full, {
+      message: 'scopes must not add up to Full',
     })
     .optional(),
   expiresInDays: z.coerce
@@ -64,14 +79,8 @@ async function refusal(userId: number) {
   );
 }
 
-// Unconfigured while it repeats another admin token.
-function keyToken() {
-  const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
-  return token && [env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token) ? undefined : token;
-}
-
 export default HeaderTokenSecuredEndpoint(
-  keyToken,
+  () => distinctAdminToken('SYSTEM_ACCOUNT_KEY_TOKEN'),
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');
@@ -83,9 +92,7 @@ export default HeaderTokenSecuredEndpoint(
     const refused = await refusal(userId);
     if (refused) return res.status(refused.status).json({ error: refused.error });
 
-    const tokenScope = scopes
-      ? scopes.reduce((mask, scope) => mask | READ_SCOPES[scope], 0)
-      : DEFAULT_SCOPE;
+    const tokenScope = scopes ? scopeMask(scopes) : DEFAULT_SCOPE;
 
     // Generated here so that a failure inside the insert can still be revoked by hash.
     const key = generateKey();
@@ -109,14 +116,6 @@ export default HeaderTokenSecuredEndpoint(
 
     // The key is live from the insert on, whether or not this request returns it.
     const keyId = minted instanceof Error ? null : minted.id;
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'system-account-api-key-minted',
-        details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId },
-      },
-      'moderation'
-    ).catch(() => null);
     const auditRecorded = await trackModActivity(SYSTEM_ACTOR_ID, {
       entityType: 'user',
       activity: 'mintSystemAccountApiKey',
@@ -124,21 +123,32 @@ export default HeaderTokenSecuredEndpoint(
     })
       .then(() => true)
       .catch(() => false);
+    // 'error' when no audit row was written: then this line is the only record of the mint.
+    logToAxiom({
+      type: minted instanceof Error || !auditRecorded ? 'error' : 'info',
+      name: 'system-account-api-key-minted',
+      details: {
+        userId,
+        keyId,
+        name,
+        tokenScope: Number(tokenScope),
+        asserted_actor: actorUserId,
+        auditRecorded,
+      },
+    });
 
     // Never throws. The outcome is read from the table rather than from deleteApiKeys' result.
+    // Logged as 'error' even when 'revoked': a revoke only follows a mint that failed or was refused.
     const revoke = async (reason: string) => {
       await deleteApiKeys({ key: hash }).catch(() => null);
       const remaining = await dbWrite.apiKey.count({ where: { key: hash } }).catch(() => null);
       const outcome =
         remaining !== 0 ? 'revoke-failed' : inserted ? 'revoke-unconfirmed' : 'revoked';
-      logToAxiom(
-        {
-          type: 'error',
-          name: `system-account-api-key-${outcome}`,
-          details: { userId, keyId, name, reason },
-        },
-        'moderation'
-      ).catch(() => null);
+      logToAxiom({
+        type: 'error',
+        name: `system-account-api-key-${outcome}`,
+        details: { userId, keyId, name, reason },
+      });
     };
 
     try {
@@ -159,14 +169,11 @@ export default HeaderTokenSecuredEndpoint(
     const rotated = await deleteApiKeys({ userId, name, type: 'User', id: { lt: minted.id } }).then(
       ({ count }) => count,
       () => {
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'system-account-api-key-rotation-failed',
-            details: { userId, keyId, name },
-          },
-          'moderation'
-        ).catch(() => null);
+        logToAxiom({
+          type: 'error',
+          name: 'system-account-api-key-rotation-failed',
+          details: { userId, keyId, name },
+        });
         return null;
       }
     );
@@ -175,7 +182,7 @@ export default HeaderTokenSecuredEndpoint(
       userId,
       keyId: minted.id,
       name,
-      tokenScope,
+      tokenScope: Number(tokenScope),
       expiresAt: minted.expiresAt,
       rotated,
       auditRecorded,

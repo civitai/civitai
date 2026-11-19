@@ -14,6 +14,8 @@ import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression
 import { isImpressionEntityType } from '~/server/schema/track.schema';
 import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
 
 const isCosmeticEntity = (value?: string): value is CosmeticEntity =>
   !!value && (Object.values(CosmeticEntity) as string[]).includes(value);
@@ -37,11 +39,13 @@ export function GenericImageCard({
   entityType,
   entityId,
   disabled,
+  hideEventDecoration,
 }: {
   image: ImageProps;
   entityId: number;
   entityType?: string;
   disabled?: boolean;
+  hideEventDecoration?: boolean;
 }) {
   const url = (() => {
     if (!entityType || !entityId) return undefined;
@@ -97,7 +101,7 @@ export function GenericImageCard({
       }}
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
-      eventDecoration={image.eventDecoration?.data}
+      eventDecoration={hideEventDecoration ? undefined : image.eventDecoration?.data}
       eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}
       aspectRatio="portrait"
       useCSSAspectRatio
@@ -142,6 +146,8 @@ export function GenericImageCard({
                   ) : (
                     <MediaHash {...image} />
                   )}
+                  {/* Hat Turf hats are the image's: drawn only on a card that stands for it. */}
+                  {safe && isImageEntity && <HatTurfLayer imageId={image.id} />}
 
                   {Icon && (
                     <Icon
@@ -169,16 +175,19 @@ export function GenericImageCard({
     </FeedCard>
   );
 
-  if (isImageEntity && !disabled)
-    return (
-      <RoutedDialogLink
-        name="imageDetail"
-        state={{ imageId: entityId, filters: { postId: image.postId } }}
-        passHref
-      >
-        {cardContent}
-      </RoutedDialogLink>
-    );
-
-  return cardContent;
+  return (
+    <HatTurfCardProvider>
+      {isImageEntity && !disabled ? (
+        <RoutedDialogLink
+          name="imageDetail"
+          state={{ imageId: entityId, filters: { postId: image.postId } }}
+          passHref
+        >
+          {cardContent}
+        </RoutedDialogLink>
+      ) : (
+        cardContent
+      )}
+    </HatTurfCardProvider>
+  );
 }

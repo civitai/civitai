@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
@@ -49,8 +50,6 @@ const APPROVED = 'approved';
 export const POST_INTENT_USER_STAGE_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 export const POST_INTENT_APP_STAGE_LIMIT = { max: 2000, windowSeconds: 60 * 60 };
 const STAGE_LOCK_SECONDS = 30 * 60;
-const DEL_IF_EQUALS =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 const SWEEP_BUDGET_MS = 4 * 60 * 1000;
 
 export type StagedIntentMedia = {
@@ -150,7 +149,7 @@ export async function resolveIntentItem(
       type: 'error',
       message: 'failed to resolve item',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return null;
   }
 }
@@ -177,7 +176,7 @@ async function acquireStageLock(key: string): Promise<(() => Promise<void>) | nu
     .catch(() => null);
   if (!acquired) return null;
   return async () => {
-    await redis.eval(DEL_IF_EQUALS, { keys: [redisKey], arguments: [token] }).catch(() => null);
+    await delIfValue(redis, redisKey, token).catch(() => null);
   };
 }
 
@@ -225,7 +224,7 @@ async function deleteStagedObjects(staged: Pick<StagedIntentMedia, 'key'>[]): Pr
       type: 'error',
       message: 'failed to delete staged objects',
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return false;
   }
 }
@@ -515,7 +514,7 @@ export async function publishIntent({
     : [];
 
   const detail = description ? plainTextToPostHtml(description) : null;
-  const { createImage } = await import('~/server/services/image.service');
+  const { createImage, deleteImages } = await import('~/server/services/image.service');
   const imageIds: number[] = [];
   let post: { id: number };
   try {
@@ -580,10 +579,12 @@ export async function publishIntent({
       return created;
     });
   } catch (err) {
-    if (imageIds.length)
-      await dbWrite.image
-        .deleteMany({ where: { id: { in: imageIds }, userId, postId: null } })
-        .catch(() => null);
+    // The files stay: the share is retried with the same upload keys.
+    await deleteImages(imageIds, {
+      actor: { id: userId },
+      onlyWhere: Prisma.sql`"postId" IS NULL`,
+      keepStoredFiles: true,
+    }).catch(() => null);
     throw err;
   }
 
@@ -605,7 +606,7 @@ export async function publishIntent({
         message: 'publish effects failed',
         postId: post.id,
         error: err instanceof Error ? err.message : String(err),
-      }).catch(() => null)
+      })
     );
   }
 

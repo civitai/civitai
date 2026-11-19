@@ -1,15 +1,28 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as CrucibleEntryAccepted from '~/server/services/crucible-entry-accepted';
 import type * as PostService from '~/server/services/post.service';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
 const afterPostsPublish = vi.fn();
+const revokeCrucibleEntry = vi.fn();
+
+vi.mock('~/server/services/crucible-entry-accepted', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleEntryAccepted>()),
+  revokeCrucibleEntry,
+}));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   afterPostsPublish,
+}));
+
+const { syncReviewsOfMovedPosts } = vi.hoisted(() => ({ syncReviewsOfMovedPosts: vi.fn() }));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  syncReviewsOfMovedPosts,
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -46,6 +59,19 @@ beforeEach(() => {
 });
 
 describe('withdrawCrucibleEntry', () => {
+  it('releases the reviews of only the entry posts it revealed, not ones already public', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 300, userId: ENTRANT, hidden: true },
+      { id: 301, userId: ENTRANT, hidden: false },
+    ]);
+
+    await withdraw();
+
+    expect(syncReviewsOfMovedPosts).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ change: 'publish', postIds: [300] })
+    );
+  });
+
   it('detaches the image under the crucible row lock, keeping the row and its fee', async () => {
     const result = await withdraw();
 
@@ -69,6 +95,21 @@ describe('withdrawCrucibleEntry', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-withdrawn', entryId: 5, imageId: 70 })
     );
+  });
+
+  it('takes the withdrawn entry back from whatever accepted it, and only once it is withdrawn', async () => {
+    await withdraw();
+    expect(revokeCrucibleEntry).toHaveBeenCalledTimes(1);
+    expect(revokeCrucibleEntry).toHaveBeenCalledWith({
+      entryId: 5,
+      crucibleId: 7,
+      userId: ENTRANT,
+    });
+
+    revokeCrucibleEntry.mockClear();
+    lockCrucible.mockResolvedValue([]);
+    await expect(withdraw()).rejects.toThrow(/only be removed while the crucible is running/);
+    expect(revokeCrucibleEntry).not.toHaveBeenCalled();
   });
 
   it("refuses someone else's entry as not found", async () => {

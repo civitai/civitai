@@ -41,9 +41,9 @@ vi.mock('@google-cloud/recaptcha-enterprise', () => ({
   v1: {},
 }));
 
-// `fetchTimeoutSignal` reaches the Flipt client to read a default-OFF flag. The
-// timeout is orthogonal to everything asserted here, so pin it to its production
-// default (no signal) rather than booting Flipt.
+// `fetchTimeoutSignal` reaches the Flipt client to read its off-switch. The
+// timeout is orthogonal to everything asserted here, so stub it out (no signal)
+// rather than booting Flipt.
 vi.mock('~/server/utils/fetch-timeout', () => ({
   fetchTimeoutSignal: () => undefined,
 }));
@@ -232,6 +232,26 @@ describe('verifyCaptchaToken — failure telemetry carries ip and meta', () => {
     expect(logged.status).toBe(503);
     expect(logged.clientReportedIp).toBe(IP);
     expect(logged.meta).toEqual(META);
+  });
+
+  it('fails closed with the user-facing captcha error, with telemetry, when siteverify times out', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockRejectedValue(
+          new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+        )
+    );
+
+    await expect(call()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'No response from captcha service',
+    });
+
+    const logged = soleFailureLog();
+    expect(logged.reason).toBe('siteverify-unreachable');
+    expect(logged.errorName).toBe('TimeoutError');
   });
 });
 

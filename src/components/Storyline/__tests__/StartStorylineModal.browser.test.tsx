@@ -8,6 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   StartStorylineModal,
+  openStartStorylineFromImageModal,
   openStartStorylineModal,
 } from '~/components/Storyline/StartStorylineModal';
 
@@ -20,6 +21,26 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   onClose: vi.fn(),
   options: {} as { onSuccess?: (data: { id: number }) => Promise<void> },
+  /** What ImageGuard2 decides for this viewer: false = their preferences blur the image. */
+  safe: true,
+  guarded: [] as { nsfwLevel: number }[],
+  userLookups: [] as { id: number; enabled: boolean }[],
+}));
+
+vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
+  ImageGuard2: ({
+    image,
+    children,
+  }: {
+    image: { nsfwLevel: number };
+    children: (safe: boolean) => React.ReactNode;
+  }) => {
+    mocks.guarded.push(image);
+    return <>{children(mocks.safe)}</>;
+  },
+}));
+vi.mock('~/components/ImageHash/ImageHash', () => ({
+  MediaHash: () => <span data-testid="hash">blurred</span>,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -27,6 +48,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
+      'user.getById': {
+        useQuery: (input: { id: number }, options: { enabled: boolean }) => {
+          mocks.userLookups.push({ id: input.id, enabled: options.enabled });
+          return { data: options.enabled ? { username: 'sculptor' } : undefined };
+        },
+      },
       'storyline.create': {
         useMutation: (options: typeof mocks.options) => {
           mocks.options = options;
@@ -45,6 +72,9 @@ vi.mock('~/components/Dialog/DialogProvider', async (orig) => ({
 beforeEach(() => {
   mocks.mutate.mockReset();
   mocks.onClose.mockReset();
+  mocks.safe = true;
+  mocks.guarded = [];
+  mocks.userLookups = [];
   vi.mocked(useRouter().push).mockClear();
 });
 
@@ -169,6 +199,97 @@ describe('StartStorylineModal', () => {
       openStartStorylineModal(post);
 
       expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal, props: { post } });
+      trigger.mockRestore();
+    });
+  });
+
+  describe("from someone's image", () => {
+    const sparkImage = {
+      id: 77,
+      url: 'spark.jpg',
+      type: 'image' as const,
+      nsfwLevel: NsfwLevel.R,
+      username: 'painter',
+    };
+
+    test("the credit picture follows the viewer's blur preferences", async () => {
+      mocks.safe = false;
+      renderWithProviders(<StartStorylineModal sparkImage={sparkImage} />);
+
+      const credit = page.getByTestId('storyline-spark-credit');
+      await expect.element(credit.getByTestId('hash')).toBeVisible();
+      expect(credit.element().querySelector('img')).toBeNull();
+      expect(mocks.guarded.length).toBeGreaterThan(0);
+      expect(mocks.guarded.every((image) => image.nsfwLevel === NsfwLevel.R)).toBe(true);
+    });
+
+    test('the credit picture shows when the viewer sees it unblurred', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={sparkImage} />);
+
+      const credit = page.getByTestId('storyline-spark-credit');
+      await expect.element(credit).toBeVisible();
+      expect(credit.element().querySelector('img')).not.toBeNull();
+      expect(credit.getByTestId('hash').elements()).toHaveLength(0);
+    });
+
+    test('names the creator when the image came with only their id', async () => {
+      renderWithProviders(
+        <StartStorylineModal sparkImage={{ ...sparkImage, username: null, userId: 5 }} />
+      );
+
+      await expect
+        .element(page.getByTestId('storyline-spark-credit'))
+        .toHaveTextContent("Inspired by @sculptor's image");
+      expect(mocks.userLookups).toContainEqual({ id: 5, enabled: true });
+    });
+
+    test('says "this image" only when the creator is unknown', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={{ ...sparkImage, username: null }} />);
+
+      await expect
+        .element(page.getByTestId('storyline-spark-credit'))
+        .toHaveTextContent('Inspired by this image');
+      expect(mocks.userLookups.length).toBeGreaterThan(0);
+      expect(mocks.userLookups.every((lookup) => !lookup.enabled)).toBe(true);
+    });
+
+    test('credits the image, floors the rating at it, and sends the author to write chapter 1', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={sparkImage} />);
+
+      await expect
+        .element(page.getByTestId('storyline-spark-credit'))
+        .toHaveTextContent("Inspired by @painter's image");
+      await expect.element(page.getByRole('radio', { name: 'PG-13', exact: true })).toBeDisabled();
+      await expect.element(page.getByRole('radio', { name: 'R', exact: true })).toBeChecked();
+      await page.getByRole('textbox', { name: 'Title' }).fill('After the painting');
+      await page.getByRole('button', { name: 'Start storyline' }).click();
+
+      expect(mocks.mutate).toHaveBeenCalledWith({
+        sparkImageId: 77,
+        title: 'After the painting',
+        maxNsfwLevel: NsfwLevel.R,
+        whoCanContinue: 'Anyone',
+      });
+      expect(mocks.mutate.mock.calls[0][0].postId).toBeUndefined();
+      await mocks.options.onSuccess?.({ id: 9 });
+      expect(useRouter().push).toHaveBeenCalledWith('/posts/create?storyline=9');
+    });
+
+    test('an unrated image cannot start one yet', async () => {
+      renderWithProviders(<StartStorylineModal sparkImage={{ ...sparkImage, nsfwLevel: 0 }} />);
+
+      await expect.element(page.getByText(/image hasn.t been rated yet/)).toBeVisible();
+      expect(page.getByRole('button', { name: 'Start storyline' }).elements()).toHaveLength(0);
+    });
+
+    test('the opener passes the image through', () => {
+      const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+      openStartStorylineFromImageModal(sparkImage);
+
+      expect(trigger).toHaveBeenCalledWith({
+        component: StartStorylineModal,
+        props: { sparkImage },
+      });
       trigger.mockRestore();
     });
   });

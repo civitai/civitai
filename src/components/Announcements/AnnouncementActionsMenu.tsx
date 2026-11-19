@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDotsVertical } from '@tabler/icons-react';
 import React from 'react';
 import { AnnouncementMuteMenuItem } from '~/components/Announcements/AnnouncementMuteToggle';

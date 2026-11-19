@@ -12,23 +12,34 @@ import {
   Text,
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
+import { useRouter } from 'next/router';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
+import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   buyerRoundFinalsState,
+  deliverNeeds,
   deliverWait,
   filesByRound,
   filesPollMs,
   finalsCopy,
   sellerFileStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
+  previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import {
+  isVideoPreviewMime,
+  SERVICE_DEAL_FILE_RETENTION_NOTICE,
+  SERVICE_FINAL_VIDEO_HELP,
+} from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ServiceDealFileKind } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -49,7 +60,9 @@ export function useServiceDealFiles(deal: ServiceDealView) {
 }
 
 export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
-  const { data: files = [], isLoading } = useServiceDealFiles(deal);
+  const { data = [], isLoading } = useServiceDealFiles(deal);
+  // The buyer's attachments have their own panel and take no part in the delivery.
+  const files = data.filter((file) => file.kind !== 'Attachment');
   const features = useFeatureFlags();
   const working = deal.status === 'Accepted' || deal.status === 'InRevision';
   const canUpload = deal.viewerRole === 'seller' && working && !!features.creatorServices;
@@ -61,6 +74,11 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>Delivery</Text>
+        {showsRetentionNotice(deal.status) && files.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {SERVICE_DEAL_FILE_RETENTION_NOTICE}
+          </Text>
+        )}
         {canUpload && <SellerUploader deal={deal} files={files} />}
         {deal.viewerRole === 'buyer' ? (
           <BuyerFiles deal={deal} files={files} />
@@ -80,13 +98,16 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
 function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFile[] }) {
   const utils = trpc.useUtils();
   // Keyed per upload, not by name: two picks of the same name must not clear each other.
-  const [busy, setBusy] = useState<{ key: number; name: string }[]>([]);
-  const nextKey = useRef(0);
   const resetPreview = useRef<() => void>(null);
   const resetFinal = useRef<() => void>(null);
   const requestUpload = trpc.creatorServiceDealFile.requestUpload.useMutation();
   const completeUpload = trpc.creatorServiceDealFile.completeUpload.useMutation();
   const refreshFiles = () => utils.creatorServiceDealFile.list.invalidate({ dealId: deal.id });
+  const { busy, send: sendFiles } = useDealFileUploads({
+    verb: 'upload',
+    complete: (fileId) => completeUpload.mutateAsync({ fileId }),
+    refresh: refreshFiles,
+  });
   const deliver = trpc.creatorServiceDealFile.deliver.useMutation({
     onSuccess: async () => {
       await Promise.all([
@@ -100,11 +121,11 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
   });
 
   const round = deal.revisionsUsed;
-  const upload = async (kind: ServiceDealFileKind, picked: File[]) => {
+  const upload = async (kind: 'Preview' | 'Final', picked: File[]) => {
     // So the same file can be picked again after a failed attempt.
     (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);
-    const { send, refused, overflow } = sortPicked(kind, picked, slots);
+    const { send, refused, overflow } = sortPicked(kind, picked, slots, deal.previewKind);
     for (const { name, reason } of refused)
       showErrorNotification({ title: `Can't upload ${name}`, error: { message: reason } });
     if (overflow > 0)
@@ -118,41 +139,22 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           } fit.`,
         },
       });
-    for (const file of send) {
-      const key = nextKey.current++;
-      setBusy((items) => [...items, { key, name: file.name }]);
-      try {
-        const mimeType = file.type || 'application/octet-stream';
-        const { fileId, uploadUrl } = await requestUpload.mutateAsync({
-          dealId: deal.id,
-          kind,
-          fileName: file.name,
-          mimeType,
-          size: file.size,
-        });
-        const put = await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': mimeType },
-        });
-        if (!put.ok) throw new Error('The upload did not go through. Try again.');
-        await completeUpload.mutateAsync({ fileId });
-      } catch (error) {
-        showErrorNotification({
-          title: `Couldn't upload ${file.name}`,
-          error: error instanceof Error ? error : { message: String(error) },
-        });
-      } finally {
-        setBusy((items) => items.filter((item) => item.key !== key));
-        await refreshFiles();
-      }
-    }
+    await sendFiles(send, (file, mimeType) =>
+      requestUpload.mutateAsync({
+        dealId: deal.id,
+        kind,
+        fileName: file.name,
+        mimeType,
+        size: file.size,
+      })
+    );
   };
 
   const previewSlots = uploadSlotsLeft('Preview', deal.previewKind, files, round);
   const finalSlots = uploadSlotsLeft('Final', deal.previewKind, files, round);
   const takesPreview = deal.previewKind !== 'None';
   const waiting = deliverWait(files, round);
+  const needs = deliverNeeds(files, round, deal.previewKind);
 
   return (
     <Stack gap="sm">
@@ -161,12 +163,15 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           ? 'Upload a preview and your final files. The buyer sees a low-resolution, watermarked copy of the preview. The final files stay sealed until they accept.'
           : 'Upload your final files. They stay sealed until the buyer accepts.'}
       </Text>
+      <Text size="xs" c="dimmed">
+        {SERVICE_FINAL_VIDEO_HELP}
+      </Text>
       <Group gap="sm">
         {takesPreview && (
           <FileButton
             onChange={(picked) => upload('Preview', picked)}
             resetRef={resetPreview}
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept={previewAccept(deal.previewKind)}
             multiple
           >
             {(props) => (
@@ -196,7 +201,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         <Button
           color="yellow"
           loading={deliver.isPending}
-          disabled={busy.length > 0 || !!waiting}
+          disabled={busy.length > 0 || !!waiting || !!needs}
           onClick={() => deliver.mutate({ dealId: deal.id })}
         >
           Deliver
@@ -209,6 +214,11 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
             {waiting} Deliver unlocks when they pass.
           </Text>
         </Group>
+      )}
+      {needs && !waiting && busy.length === 0 && (
+        <Text size="sm" c="dimmed">
+          {needs}
+        </Text>
       )}
       {busy.length > 0 && (
         <Text size="sm" c="dimmed">
@@ -306,9 +316,7 @@ function PartyFiles({
                     {file.failReason}
                   </Text>
                 )}
-                {file.previewUrl && (
-                  <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={256} />
-                )}
+                <PreviewMedia file={file} maw={256} />
               </Stack>
             );
           })}
@@ -316,6 +324,42 @@ function PartyFiles({
       ))}
     </Stack>
   );
+}
+
+/** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
+function PreviewOffDomain() {
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
+  return (
+    <Text size="xs" c="dimmed">
+      This preview isn&apos;t available on civitai.com.{' '}
+      <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+        See it on civitai.red
+      </Anchor>
+    </Text>
+  );
+}
+
+function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
+  if (file.previewOffDomain) return <PreviewOffDomain />;
+  if (!file.previewUrl) return null;
+  // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
+  if (isVideoPreviewMime(file.mimeType))
+    return (
+      <video
+        src={file.previewUrl}
+        aria-label="Watermarked preview"
+        className="w-full rounded-sm"
+        style={maw ? { maxWidth: maw } : undefined}
+        controls
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
+    );
+  return <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={maw} />;
 }
 
 /** The buyer sees ready, watermarked previews, and final files only as the server unlocks them. */
@@ -330,7 +374,9 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
   return (
     <Stack gap="md">
       {filesByRound(files).map(({ round, files: roundFiles }) => {
-        const previews = roundFiles.filter((file) => file.kind === 'Preview' && file.previewUrl);
+        const previews = roundFiles.filter(
+          (file) => file.kind === 'Preview' && (file.previewUrl || file.previewOffDomain)
+        );
         const finals = roundFiles.filter((file) => file.kind === 'Final');
         const state = buyerRoundFinalsState(deal, round, finals);
         return (
@@ -341,12 +387,7 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
             {previews.length > 0 && (
               <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
                 {previews.map((file) => (
-                  <Image
-                    key={file.id}
-                    src={file.previewUrl}
-                    alt="Watermarked preview"
-                    radius="sm"
-                  />
+                  <PreviewMedia key={file.id} file={file} />
                 ))}
               </SimpleGrid>
             )}

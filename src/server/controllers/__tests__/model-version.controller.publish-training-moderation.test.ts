@@ -123,7 +123,9 @@ describe('publishModelVersionHandler — training moderation gate', () => {
   it('reads with the OWNER token when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
     await expect(run({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(NOT_APPROVED);
-    expect(mockGetToken.mock.calls).toEqual([[OWNER_ID, undefined, { bypassCache: true }]]);
+    expect(mockGetToken.mock.calls).toEqual([
+      [OWNER_ID, undefined, { bypassCache: true, allowRestricted: true }],
+    ]);
   });
 });
 

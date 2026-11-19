@@ -5,7 +5,8 @@ import { LAST_ACTIONED_WINDOW_DAYS, URGENT_REPORT_COUNT } from '$lib/queue-thres
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
-import { REPORT_ENTITIES, reportEntity } from './report-entities';
+import { REPORT_ENTITIES, reportEntity, reportQueueMembers } from './report-entities';
+import type { AgentReportWhere } from './agent-reporters';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
 import { ENQUEUE_SOURCE } from './unpublished-version-posts';
@@ -16,6 +17,7 @@ import {
   ReportStatus,
   reportCountKey,
   reportEntities,
+  reportQueueOf,
   type ReportEntity,
   type ReportReason,
 } from '$lib/reports';
@@ -28,6 +30,37 @@ import {
 const extraGuests = (alias: string) =>
   sql<number>`(CASE WHEN ${sql.ref(`${alias}.details`)}->>'guestCount' ~ '^[0-9]{1,6}$'
     THEN greatest((${sql.ref(`${alias}.details`)}->>'guestCount')::int - 1, 0) ELSE 0 END)`;
+
+/**
+ * Whether report `report` (a column reference to its id) is one of `type`'s queue — in any of the
+ * report tables worked there (`reportQueueMembers`) — and, given `entityId`, about that entity.
+ */
+function inReportQueue(type: ReportEntity, report: RawBuilder<number>, entityId?: number) {
+  return sql<boolean>`(${sql.join(
+    reportQueueMembers(reportQueueOf(type)).map(
+      (m) =>
+        sql`exists (select 1 from ${sql.table(m.reportTable)} er where er."reportId" = ${report}${
+          entityId == null ? sql`` : sql` and er.${sql.ref(m.fk)} = ${entityId}`
+        })`
+    ),
+    sql` or `
+  )})`;
+}
+
+/** The queue's entity a report is about, from whichever of the queue's report tables holds it. */
+function reportQueueEntityId(type: ReportEntity, report: RawBuilder<number>) {
+  return sql<number | null>`coalesce(${sql.join(
+    reportQueueMembers(reportQueueOf(type)).map(
+      (m) =>
+        sql`(select er.${sql.ref(m.fk)} from ${sql.table(
+          m.reportTable
+        )} er where er."reportId" = ${report} limit 1)`
+    ),
+    sql`, `
+  )})`;
+}
+
+const reportRowId = sql<number>`"Report"."id"`;
 
 export type ModeratorReportRow = {
   id: number;
@@ -48,8 +81,8 @@ export type ModeratorReportRow = {
   statusSetAt: Date | null;
   statusSetByUsername: string | null;
   entityId: number | null;
-  /** Site-relative path for report types whose entity has no page of its own. Only comments set it —
-   *  see `commentContextUrl`. `null` everywhere else, where `entityUrl` already answers. */
+  /** Site-relative path for report types whose entity has no page of its own. Set for the types in
+   *  `CONTEXT_RESOLVERS`; `null` everywhere else, where `entityUrl` already answers. */
   contextUrl: string | null;
 };
 
@@ -62,51 +95,17 @@ export type ModeratorReportRow = {
  * only way to the words being reported was to search for them.
  *
  * Resolved in SQL because every parent is a join away and the queue already pays for one.
- *
- * `commentV2` threads carry the parent as one of a dozen nullable columns, and a REPLY carries none of
- * them — its thread's parent is the comment above it — so the resolution falls back to `rootThreadId`
- * (6,429 of the 6,785 reported replies on the dev clone). `bountyEntryId` threads never carry the
- * `bountyId` the URL needs (248 of 248), hence the join. `highlight` is what scrolls to and marks the
- * comment once the page opens, and is the whole point of linking rather than landing on the entity.
  */
 type ContextResolver = (
   entityId: ReturnType<typeof sql<number | null>>
 ) => ReturnType<typeof sql<string | null>>;
 
 const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
-  comment: (entityId) =>
+  // The main app's comment permalink resolves a live `CommentV3` row to its thread; a deleted one
+  // gets no link rather than a dead one.
+  commentV3: (entityId) =>
     sql<string | null>`(
-      SELECT '/models/' || c."modelId" || '?dialog=commentThread&commentId=' ||
-             coalesce(c."parentId", c.id) || '&highlight=' || c.id
-      FROM "Comment" c WHERE c.id = ${entityId} AND c."modelId" IS NOT NULL
-    )`,
-
-  commentV2: (entityId) =>
-    sql<string | null>`(
-      SELECT coalesce(CASE
-        WHEN p."imageId"       IS NOT NULL THEN '/images/'   || p."imageId"
-        WHEN p."postId"        IS NOT NULL THEN '/posts/'    || p."postId"
-        WHEN p."articleId"     IS NOT NULL THEN '/articles/' || p."articleId"
-        WHEN p."reviewId"      IS NOT NULL THEN '/reviews/'  || p."reviewId"
-        WHEN p."bountyEntryId" IS NOT NULL THEN '/bounties/' || be."bountyId" || '/entries/' || p."bountyEntryId"
-        WHEN p."bountyId"      IS NOT NULL THEN '/bounties/' || p."bountyId"
-        WHEN p."challengeId"   IS NOT NULL THEN '/challenges/' || p."challengeId"
-        WHEN p."modelId"       IS NOT NULL THEN '/models/'   || p."modelId"
-        WHEN p."comicProjectId" IS NOT NULL THEN '/comics/'  || p."comicProjectId"
-        WHEN p."model3dId"     IS NOT NULL THEN '/3d-models/' || p."model3dId"
-        -- Threads with no parent column at all are the remainder (3,519 on the dev clone). They are
-        -- orphaned rows, not a missing mapping: one carries 110 comments and no entity of any kind.
-        -- /comments/v2/:id is the main app resolving the thread itself, the only thing left that can
-        -- find the comment — better than the dead text this used to render.
-        ELSE NULL
-      END || '?highlight=' || cv.id, '/comments/v2/' || cv.id)
-      FROM "CommentV2" cv
-      JOIN "Thread" t ON t.id = cv."threadId"
-      -- A reply's own thread hangs off a comment; the entity is on the root.
-      LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
-      JOIN LATERAL (SELECT * FROM "Thread" x WHERE x.id = CASE WHEN t."commentId" IS NULL THEN t.id ELSE coalesce(root.id, t.id) END) p ON true
-      LEFT JOIN "BountyEntry" be ON be.id = p."bountyEntryId"
-      WHERE cv.id = ${entityId}
+      SELECT '/comments/' || c.id FROM "CommentV3" c WHERE c.id = ${entityId} AND c."deletedAt" IS NULL
     )`,
 
   // A bounty entry lives under its bounty, and the id is only on the entry's own row.
@@ -138,10 +137,10 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
-  // An offering has no page of its own; it is listed in its seller's shop.
+  // An offering has no page of its own; its card in the seller's shop carries the `service-<id>` anchor.
   serviceOffering: (entityId) =>
     sql<string | null>`(
-      SELECT '/user/' || u.username || '/shop'
+      SELECT '/user/' || u.username || '/shop#service-' || o.id
       FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"
       WHERE o.id = ${entityId} AND u.username IS NOT NULL
     )`,
@@ -163,21 +162,20 @@ function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<nu
 
 /** Whether the report page can still open this report (it finds one only through the entity's report
  *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
- *  read it as unknown, never as gone. */
+ *  read it as unknown, never as gone. The entity is read from that join row rather than taken from
+ *  the caller: a snapshot taken before the comment tables merged holds a v1 comment's old id. */
 export async function reportReachability(
   type: ReportEntity,
-  entityId: number | null,
   reportId: number
 ): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
   const join = reportEntity(type);
   try {
     const { rows } = await sql<{ reachable: boolean; url: string | null }>`
-      SELECT EXISTS (
-               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
-             ) AS reachable,
-             ${
-               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
-             } AS url
+      SELECT ${inReportQueue(type, sql<number>`${reportId}::int`)} AS reachable,
+             (SELECT ${reportContextUrl(type, sql<number>`er.${sql.ref(join.fk)}`)}
+              FROM ${sql.table(
+                join.reportTable
+              )} er WHERE er."reportId" = ${reportId} LIMIT 1) AS url
     `.execute(dbRead);
     return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
   } catch {
@@ -208,6 +206,8 @@ export type GetReportsParams = {
   entityId?: number;
   /** Only the reports `unpublished-version-posts` filed for this unpublish reason. */
   unpublishedReason?: string;
+  /** Only, or all but, the reports agent accounts filed (`Report.userId`). */
+  agents?: AgentReportWhere;
 };
 
 /**
@@ -223,16 +223,9 @@ function reportQueueBase({
   reportId,
   entityId,
   unpublishedReason,
+  agents,
 }: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
-  const join = reportEntity(type);
-  const entityExists =
-    entityId == null
-      ? sql<boolean>`exists (select 1 from ${sql.table(
-          join.reportTable
-        )} er where er."reportId" = "Report"."id")`
-      : sql<boolean>`exists (select 1 from ${sql.table(
-          join.reportTable
-        )} er where er."reportId" = "Report"."id" and er.${sql.ref(join.fk)} = ${entityId})`;
+  const entityExists = inReportQueue(type, reportRowId, entityId ?? undefined);
 
   let base = dbRead
     .selectFrom('Report')
@@ -247,6 +240,8 @@ function reportQueueBase({
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
+  if (agents)
+    base = base.where('Report.userId', agents.mode === 'only' ? 'in' : 'not in', agents.ids);
   if (unpublishedReason)
     base = base
       .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
@@ -301,19 +296,17 @@ export async function getReports({
   reportId,
   entityId: forEntity,
   unpublishedReason,
+  agents,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
   page: number;
   limit: number;
 }> {
-  const join = reportEntity(type);
   const offset = (page - 1) * limit;
 
   // The join table/column is dynamic, so this uses raw `sql`; the rest of the query stays typed.
-  const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
-    join.reportTable
-  )} er where er."reportId" = "Report"."id" limit 1)`;
+  const entityId = reportQueueEntityId(type, reportRowId);
 
   let base = reportQueueBase({
     type,
@@ -324,6 +317,7 @@ export async function getReports({
     reportId,
     entityId: forEntity,
     unpublishedReason,
+    agents,
   });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
 
@@ -395,10 +389,7 @@ export async function getReportHistory(
   type: ReportEntity,
   limit = 300
 ): Promise<{ items: ReportHistoryRow[]; truncated: boolean }> {
-  const join = reportEntity(type);
-  const entityId = sql<number | null>`(select er.${sql.ref(join.fk)} from ${sql.table(
-    join.reportTable
-  )} er where er."reportId" = "Report"."id" limit 1)`;
+  const entityId = reportQueueEntityId(type, reportRowId);
 
   const rows = (await dbRead
     .selectFrom('Report')
@@ -407,11 +398,7 @@ export async function getReportHistory(
     .leftJoin('User', 'User.id', 'Report.statusSetBy')
     .select(['Report.id', 'Report.statusSetAt', 'Report.status', 'User.username as moderator'])
     .select(entityId.as('entityId'))
-    .where(
-      sql<boolean>`exists (select 1 from ${sql.table(
-        join.reportTable
-      )} er where er."reportId" = "Report"."id")`
-    )
+    .where(inReportQueue(type, reportRowId))
     .where('Report.statusSetAt', 'is not', null)
     // The daily Clavata expiry closes reports as the system user; nobody worked those.
     .where('Report.statusSetBy', 'is distinct from', SYSTEM_USER_ID)
@@ -488,12 +475,11 @@ export type QueueWorker = { by: string | null; at: string; count: number };
  * entry is that queue's last-actioned badge. A report counts for whoever set its status last.
  */
 export async function getReportQueueWorkers(type: ReportEntity): Promise<QueueWorker[]> {
-  const { reportTable } = reportEntity(type);
   const { rows } = await sql<{ by: number; at: Date; count: number }>`
     select r."statusSetBy" as "by", max(r."statusSetAt") as "at", count(*)::int as "count"
     from "Report" r
-    join ${sql.table(reportTable)} er on er."reportId" = r."id"
-    where r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
+    where ${inReportQueue(type, sql<number>`r."id"`)}
+      and r."statusSetAt" > now() - make_interval(days => ${sql.lit(LAST_ACTIONED_WINDOW_DAYS)})
       and r."statusSetBy" <> ${sql.lit(SYSTEM_USER_ID)}
       and r."status" in (${sql.join(REVIEWED_REPORT_STATUSES.map((s) => sql.lit(s)))})
     group by r."statusSetBy"
@@ -531,9 +517,16 @@ async function perReportType<V>(
   reports: RawBuilder<unknown>,
   value: RawBuilder<V>
 ): Promise<[string, V][]> {
-  const branches = REPORT_ENTITIES.map(
-    ({ type, reportTable }) => sql`select ${sql.lit(type)} as type, ${value} as value
-      from ${sql.table(reportTable)} er
+  // One branch per queue: a type worked in another's queue (`REPORT_QUEUE_OF`) counts toward it.
+  const queues = [...new Set(REPORT_ENTITIES.map((e) => reportQueueOf(e.type)))];
+  const branches = queues.map(
+    (queue) => sql`select ${sql.lit(queue)} as type, ${value} as value
+      from (${sql.join(
+        reportQueueMembers(queue).map(
+          (m) => sql`select "reportId" from ${sql.table(m.reportTable)}`
+        ),
+        sql` union all `
+      )}) er
       join matched r on r."id" = er."reportId"`
   );
   const { rows } = await sql<{ type: string; value: V }>`with matched as materialized (${reports})
@@ -546,11 +539,14 @@ export async function setReportStatus({
   status,
   userId,
   ip,
+  noRewardFor = [],
 }: {
   id: number;
   status: ReportStatus;
   userId: number;
   ip?: string;
+  /** Reporters paid nothing for this report, whatever it says. */
+  noRewardFor?: readonly number[];
 }) {
   // A stale tab or a forged id must not report success. The UPDATE is deliberately a no-op when the
   // report is ALREADY in the requested status (that guard protects the reward path), so "nothing
@@ -591,7 +587,7 @@ export async function setReportStatus({
     await rewardReportReporters({
       reportId: id,
       reporterIds,
-      unpaidReporterIds: reportersWithoutReward(updated),
+      unpaidReporterIds: [...reportersWithoutReward(updated), ...noRewardFor],
       ip,
     });
   }
@@ -659,7 +655,7 @@ export type MostReportedRow = {
   /** `other` only when the report has no row in ANY report table. */
   entity: ReportEntity | 'other';
   entityId: number | null;
-  /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
+  /** Site-relative deep link for entities with no page of their own — see `CONTEXT_RESOLVERS`. */
   contextUrl: string | null;
   reportedByUsername: string | null;
   /** See `getOwnerFlaggedMinorModelIds`. Always false for anything but a model. */

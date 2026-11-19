@@ -8,7 +8,7 @@
   import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { bountyUrl, userLookupUrl } from '$lib/entity-url';
   import { FLAG_APPEAL_RULING_CHOICES } from '$lib/ruling-choices';
   import type { ActionData, PageData } from './$types';
 
@@ -85,7 +85,7 @@
       >
         <div class="flex flex-wrap items-baseline gap-x-2">
           <a
-            href={`${data.civitaiUrl}/bounties/${row.bountyId}`}
+            href={bountyUrl(data.civitaiUrl, row.bountyId)}
             target="_blank"
             rel="noreferrer"
             class="font-medium {LINK_CLASS}"
@@ -118,7 +118,7 @@
         <p class="mt-1 text-xs text-dark-2">
           expires {dateTime(row.expiresAt)} ·
           <a
-            href={`${data.civitaiUrl}/bounties/${row.bountyId}`}
+            href={bountyUrl(data.civitaiUrl, row.bountyId)}
             target="_blank"
             rel="noreferrer"
             class={LINK_CLASS}

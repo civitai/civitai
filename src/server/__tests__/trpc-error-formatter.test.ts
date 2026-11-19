@@ -77,6 +77,36 @@ async function callThroughTrpc(thrown: unknown) {
   return { status: res.status, error: body.error, loggedRefs };
 }
 
+describe('trpc errorFormatter — consentRevokeRecorded lifting', () => {
+  const shape503 = {
+    message: 'removed, enforcement lags',
+    code: -32603,
+    data: { code: 'SERVICE_UNAVAILABLE', httpStatus: 503 },
+  } as Parameters<typeof errorFormatter>[0]['shape'];
+  const fmt = (code: 'SERVICE_UNAVAILABLE' | 'INTERNAL_SERVER_ERROR', cause: unknown) =>
+    errorFormatter({
+      shape: { ...shape503, data: { ...shape503.data, code } },
+      error: new TRPCError({ code, message: shape503.message, cause }),
+    }) as { message: string; data: Record<string, unknown> };
+
+  it('lifts cause.consentRevokeRecorded onto data on a 503', () => {
+    const result = fmt('SERVICE_UNAVAILABLE', { consentRevokeRecorded: true });
+    expect(result.data.consentRevokeRecorded).toBe(true);
+    expect(result.data.code).toBe('SERVICE_UNAVAILABLE');
+    expect(result.message).toBe('removed, enforcement lags');
+  });
+
+  it('does not lift it for a bare 503 (the unreachable-database mapping)', () => {
+    expect(fmt('SERVICE_UNAVAILABLE', new Error('db')).data.consentRevokeRecorded).toBeUndefined();
+  });
+
+  it('does not lift it on a 500, whose message is still made client-safe', () => {
+    const result = fmt('INTERNAL_SERVER_ERROR', { consentRevokeRecorded: true });
+    expect(result.data.consentRevokeRecorded).toBeUndefined();
+    expect(result.message).not.toBe('removed, enforcement lags');
+  });
+});
+
 describe('trpc errorFormatter — server faults, through a real tRPC handler', () => {
   it('masks a 500, and onError sees the same ref the response carries', async () => {
     const { status, error, loggedRefs } = await callThroughTrpc(

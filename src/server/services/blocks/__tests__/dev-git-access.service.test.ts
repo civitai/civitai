@@ -48,6 +48,16 @@ afterEach(() => {
   vi.resetModules();
 });
 
+describe('userIdForForgejoUsername', () => {
+  it('maps only an exact dev-<digits> handle to a user id', async () => {
+    const { userIdForForgejoUsername } = await import('../dev-git-access.service');
+    expect(userIdForForgejoUsername('dev-42')).toBe(42);
+    expect(userIdForForgejoUsername('civitai-apps')).toBeNull();
+    expect(userIdForForgejoUsername(undefined)).toBeNull();
+    expect(userIdForForgejoUsername('dev-42x')).toBeNull();
+  });
+});
+
 describe('encrypt/decrypt round-trip', () => {
   it('round-trips a token through AES-256-GCM', async () => {
     const { __testing } = await import('../dev-git-access.service');
@@ -114,7 +124,11 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
     // CLAIM: placeholder row with an EMPTY token, on the dev-<id> handle.
     expect(mockDbWrite.appDevForgejoIdentity.create).toHaveBeenCalledTimes(1);
     const claim = mockDbWrite.appDevForgejoIdentity.create.mock.calls[0][0].data;
-    expect(claim).toMatchObject({ userId: 42, forgejoUsername: 'dev-42', forgejoTokenEncrypted: '' });
+    expect(claim).toMatchObject({
+      userId: 42,
+      forgejoUsername: 'dev-42',
+      forgejoTokenEncrypted: '',
+    });
 
     expect(mockForgejo.createForgejoUser).toHaveBeenCalledWith({
       username: 'dev-42',
@@ -135,9 +149,9 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
     const fill = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[0][0];
     expect(fill.where).toEqual({ userId: 42, forgejoTokenEncrypted: '' });
     expect(fill.data.forgejoTokenEncrypted).not.toContain('minted-token-sha1');
-    expect(mod.__testing.decryptToken(fill.data.forgejoTokenEncrypted, 'unit-test-secret-key')).toBe(
-      'minted-token-sha1'
-    );
+    expect(
+      mod.__testing.decryptToken(fill.data.forgejoTokenEncrypted, 'unit-test-secret-key')
+    ).toBe('minted-token-sha1');
 
     expect(mockForgejo.deleteForgejoUser).not.toHaveBeenCalled();
     expect(mockDbWrite.appDevForgejoIdentity.deleteMany).not.toHaveBeenCalled();

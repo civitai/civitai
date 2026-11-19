@@ -117,6 +117,18 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
 
+/** Re-applies the limit after dividing: `(m * w) / w` can land an ulp above `m`, and the server refuses anything strictly above. */
+export function capScaleFromWidth(width: number, boundsWidth: number, maxScale: number) {
+  return Math.min(width / boundsWidth, maxScale);
+}
+
+const SCALE_FLOAT_NOISE = 1e-9;
+
+/** Not a clamp: a draft really over the limit (creator lowered it mid-session) must reach the server and be refused, not quietly shrunk. */
+export function snapScaleOvershoot(scale: number, maxScale: number) {
+  return scale > maxScale && scale - maxScale < SCALE_FLOAT_NOISE ? maxScale : scale;
+}
+
 /** What an image can be, as far as stickers are concerned: audio is placed like an image. */
 export const STICKER_MEDIA_TYPES = ['image', 'video'] as const;
 export type StickerMediaType = (typeof STICKER_MEDIA_TYPES)[number];

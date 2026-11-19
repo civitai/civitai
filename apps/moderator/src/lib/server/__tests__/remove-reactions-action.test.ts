@@ -26,7 +26,7 @@ vi.mock('$app/server', () => ({
 
 const { countReactions, removeReactions } = await import('../user-actions.service');
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 const MAY_HAVE_COMPLETED =
   'Could not confirm the removal. Count the reactions again to see what is left.';
 
@@ -71,7 +71,7 @@ describe('removeReactions', () => {
   it("passes the endpoint's refusal through", async () => {
     respond = () =>
       // The main app's 4xx pass-through envelope: `{ message }` alone.
-      json({ message: 'That username does not belong to user 8675309.' }, 400);
+      json({ message: 'That username does not belong to user 990100034.' }, 400);
     const result = await removeReactions({ userId: TARGET, username: 'someone' });
     expect(result.ok).toBe(false);
     if (!result.ok) {

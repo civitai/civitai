@@ -33,6 +33,16 @@ export const systemNotifications = createNotificationProcessor({
       url: details.url,
     }),
   },
+  // Must stay toggleable: push needs a type the user can turn off.
+  'event-reminder': {
+    displayName: 'Event reminders',
+    category: NotificationCategory.System,
+    defaultPush: true,
+    prepareMessage: ({ details }) => ({
+      message: details.message,
+      url: details.url,
+    }),
+  },
   'system-message': {
     displayName: 'Heads Up!',
     category: NotificationCategory.Other,

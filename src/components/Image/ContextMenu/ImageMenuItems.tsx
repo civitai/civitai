@@ -1,4 +1,5 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import {
   IconAlertTriangle,
   IconBan,
@@ -36,12 +37,14 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import { isMoreLikeThisVisible, moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
 } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
+import { StartStorylineFromImageMenuItem } from '~/components/Storyline/StartStorylineFromImageMenuItem';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -59,6 +62,8 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
+  // A feedback page capture's owner is a system account, never a person to report, hide or block.
+  const isCapture = isFeedbackCaptureOwner(_userId);
   const isImage = context === 'image';
 
   const handleSaveClick = () => {
@@ -78,7 +83,12 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
   const handleReportCsam = () => {
     if (!_userId) return;
     if (features.csamReports)
-      window.open(`/moderator/csam/${_userId}?imageId=${imageId}`, '_blank');
+      window.open(
+        isCapture
+          ? `/moderator/csam/capture?imageId=${imageId}`
+          : `/moderator/csam/${_userId}?imageId=${imageId}`,
+        '_blank'
+      );
     else reportCsamMutation.mutate({ imageIds: [imageId] });
   };
   const toggleImageFlag = useToggleImageFlag();
@@ -133,10 +143,10 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
-      {features.semanticImageSearch && isImage && image.type === 'image' && (
+      {isImage && isMoreLikeThisVisible(features, image) && (
         <Menu.Item
           component={NextLink}
-          href={`/search/semantic?imageId=${imageId}`}
+          href={moreLikeThisHref(features, imageId)}
           leftSection={<IconSparkles size={14} stroke={1.5} />}
         >
           More like this
@@ -147,6 +157,21 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
         isOwner={!!isOwner}
         published={!!image.publishedAt}
       />
+      {isImage && image.type === 'image' && (
+        <StartStorylineFromImageMenuItem
+          image={{
+            id: imageId,
+            url: image.url,
+            type: image.type,
+            nsfwLevel: image.nsfwLevel,
+            hash: image.hash,
+            width: image.width,
+            height: image.height,
+            userId: _userId,
+            username: user?.username ?? null,
+          }}
+        />
+      )}
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">
@@ -158,8 +183,8 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             </Menu.Item>
           </LoginRedirect>
           <HideImageButton as="menu-item" imageId={imageId} />
-          {_userId && <HideUserButton as="menu-item" userId={_userId} />}
-          {_userId && <BlockUserButton userId={_userId} as="menu-item" />}
+          {_userId && !isCapture && <HideUserButton as="menu-item" userId={_userId} />}
+          {_userId && !isCapture && <BlockUserButton userId={_userId} as="menu-item" />}
         </>
       )}
       {isModerator && (

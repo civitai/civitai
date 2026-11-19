@@ -9,8 +9,8 @@ import {
   Text,
   TextInput,
   Textarea,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowDown,
   IconArrowUp,

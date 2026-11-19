@@ -17,9 +17,7 @@ import {
  * WHAT THIS GUARD IS FOR, AND WHAT IT IS NOT. It is not "every bridge proc must be rate limited".
  * That would be the wrong rule and the card that produced this file (clawgate #569) says so in its
  * own non-goals: a rate limit on a generation poll loop that is sized too tight breaks generation
- * for honest blocks, and `submitWorkflow` is bounded by a per-app generation VELOCITY ceiling
- * instead (tighter than a request limit on the `standard` tier every app has today — the tier
- * qualifier is load-bearing and is argued at the procedure). The rule is
+ * for honest blocks. The rule is
  * that the DECISION exists and is written down where the next reader will find it. The realistic
  * regression is not someone deleting a limiter — it is the eighteenth bridge proc, written by
  * copying the seventeenth's opening lines, whose author never considered the question at all.
@@ -100,6 +98,10 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPollRateLimit: 'poll',
   checkBlockEstimateCellsRateLimit: 'estimate-cells',
   checkBlockUploadAppRateLimit: 'upload-app',
+  checkBlockSubmitRateLimit: 'submit',
+  checkBlockSubmitUserRateLimit: 'submit-user',
+  checkBlockGenerationSourceUserRateLimit: 'gen-source-user',
+  checkBlockUploadedGenerationSourceUserRateLimit: 'uploaded-gen-source-user',
 });
 
 type Decision = {
@@ -146,6 +148,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
   },
+  consentQuoteGrantStanding: {
+    buckets: ['catalog'],
+    why: 'The session-bound standing consent to a step quote for a viewer who opted in: Redis and two primary reads, reached only from the host after a preview said standing. The read bucket like consentQuoteGrant; the per-(viewer, app) burst bound that limits what it lets run is a separate fail-closed bucket checked inside it, not a bridge bucket.',
+  },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
     why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
@@ -161,6 +167,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   getImagesByIds: {
     buckets: ['catalog'],
     why: 'A bounded by-id image read that forces no-store, so the origin absorbs every call; pre-existing.',
+  },
+  getWorkflowMedia: {
+    buckets: ['catalog'],
+    why: 'A bounded ref batch (32) that seals one media ticket per ref with no orchestrator call; the orchestrator HEAD happens later, per fetch, at the media route. Same bucket as getImagesByIds, its sibling read.',
   },
   getMyBuzzAccounts: {
     buckets: ['catalog'],
@@ -198,6 +208,23 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['upload-app'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
+  persistUploadedGenerationSource: {
+    buckets: ['uploaded-gen-source-user'],
+    why: 'The server half of a picked generation source while app-block-source-scanned-rows is on: one server-side fetch of a consumer blob, one private scanned Image row and up to a 30 s scan wait per call, the same work as persistGenerationSource. Its OWN bucket (60 per hour keyed on the token subject, no moderator or dev/test/preview exemption) and its OWN 2-in-flight pool, the same sizes as persistGenerationSource’s, so an app saving outputs and a viewer picking sources cannot starve each other. Also carries the per-user rateLimit middleware, keyed on its own path.',
+  },
+  persistGenerationSource: {
+    buckets: ['gen-source-user'],
+    why: 'The server half of PERSIST_GENERATION_SOURCE: one private, scanned Image row and up to a 30 s scan wait per call. Its OWN bucket, 60 per hour keyed on the token subject, with no moderator or dev/test/preview exemption (the per-user rateLimit middleware it also carries has both, and moderators are the flag audience). NOT the per-install publish bucket, which every viewer of a page app shares. Concurrency is capped separately at 2 in flight per user, before the bucket is charged.',
+  },
+
+  presignMediaUploadBatchItem: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
+  },
+  previewOutputUnlock: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the output unlock: one orchestrator workflow read, classified at the token ceiling; prices and materialises nothing. A signed-in session that is the token subject is required as well.',
+  },
   previewQuoteGrant: {
     buckets: ['catalog'],
     why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read; materialises nothing. previewTrainingQuote is its training-named delegate.',
@@ -218,13 +245,25 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'Up to 50 projections per call off an orchestrator LIST; pre-existing.',
   },
+  recordMediaUploadBatchItem: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. Bounded by its batch: one blob key per file the batch declared, no repeats, while the batch is open — a conditional UPDATE that does nothing past that.',
+  },
   setReactionFromApp: {
     buckets: [],
     why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
   },
-  submitWorkflow: {
+  startMediaUploadBatch: {
     buckets: [],
-    why: 'DELIBERATELY NONE. Bounded by the per-app generation VELOCITY ceiling in reserveAppSpend (120 gens/60 s aggregate on the standard tier — and that tier qualifier is load-bearing: trusted is 600 and platform 3,000) plus the per-user and per-app daily Buzz caps, which unlike every limiter here fail CLOSED. Three stated holes (a pre-reserve rejection loop; the dev-token skip; the velocity counter is app-wide and never refunded) are written out at the procedure.',
+    why: 'NONE OF THESE BUCKETS. Charged the viewer’s own UTC-day batch quota instead (1,200 files and 10 GiB across all apps, sysRedis, fail-closed) in media-upload-batch.service, which this file’s derivation does not read; pinned in media-upload-batch.service.test.ts.',
+  },
+  submitWorkflow: {
+    buckets: ['submit', 'submit-user'],
+    why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, plus :submit-user: per subject across all installs at twice that, both above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
+  },
+  unlockOutput: {
+    buckets: ['catalog'],
+    why: 'The confirmed output unlock: at most one per workflow at a time (a Redis NX lock refuses a concurrent second), a click in the host dialog under a signed-in session that is the token subject, and the orchestrator’s own Yellow balance check (it counts against no limit: the original spend already did). The catalog bucket bounds the reads a refused or repeated click costs.',
   },
   updateUserSettings: {
     buckets: [],
@@ -254,8 +293,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  *       unlimited READS; its `append`, `update`, `vote`, `unvote`, `report` and — as of the shared
  *       REST read surface — `withdraw` all carry their own bucket family.
  *
- * Stated the honest way: across every block-JWT tRPC procedure the figure is **12 unlimited** — the
- * 9 above, plus this file's own three (`submitWorkflow`, `listMyWorkflows`, `updateUserSettings`)
+ * Stated the honest way: across every block-JWT tRPC procedure the figure is **11 unlimited** — the
+ * 9 above, plus this file's own two (`listMyWorkflows`, `updateUserSettings`)
  * — not the 1 that the `blocks.router.ts`-only view suggests. The 9 are named, not fixed;
  * extending this guard across routers is a larger change than #569 asked for.
  *
@@ -431,9 +470,7 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
   it('the UNLIMITED procedures are exactly the ones argued to be unlimited', () => {
     // 🔴 PINNED AS A LITERAL SET rather than derived from the ledger, so that moving a procedure
     // to `buckets: []` is a change to THIS line and cannot pass as bookkeeping — and it earned its
-    // keep immediately: all three members arrived by a DIFFERENT route. `submitWorkflow` was never
-    // limited and is argued from the per-app velocity ceiling; `listMyWorkflows` and
-    // `updateUserSettings` were limited by #569 and UN-limited by its round-0 audit, because each
+    // keep: `listMyWorkflows` and `updateUserSettings` were limited by #569 and UN-limited by its round-0 audit, because each
     // limit's own written justification conceded a margin of 10³–10⁴. Each argument is at its
     // procedure in `blocks.router.ts`. Removing a limit is as much a decision as adding one, and
     // this line is where both kinds have to be declared.
@@ -444,10 +481,13 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
     // `setReactionFromApp` is not unlimited in fact — it is charged the site's per-user reaction
     // quota by the rateLimit middleware, which this file's derivation does not read. It is listed
     // here because that is what `buckets: []` means to this file; its ledger entry says why.
+    // The three batch-upload steps likewise: bounded by the daily batch quota and the batch itself.
     expect(unlimited).toEqual([
       'listMyWorkflows',
+      'presignMediaUploadBatchItem',
+      'recordMediaUploadBatchItem',
       'setReactionFromApp',
-      'submitWorkflow',
+      'startMediaUploadBatch',
       'updateUserSettings',
     ]);
   });

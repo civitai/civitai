@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 // `modelVersion.upsert` is reachable by every model owner, so a field only a moderator or a dedicated
 // endpoint may change must be refused here too. The mock scaffold mirrors
@@ -40,7 +40,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 // Spread the real module rather than listing its exports: a hand-listed mock couples this file to
@@ -92,6 +91,15 @@ vi.mock('~/server/services/model-file.service', () => ({
 vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
+  mockQueueComFaceRecheck: vi.fn(),
+  mockQueueComFaceRestore: vi.fn(),
+}));
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueComFaceRecheck: mockQueueComFaceRecheck,
+  queueComFaceRestore: mockQueueComFaceRestore,
+}));
 
 import { upsertModelVersion } from '~/server/services/model-version.service';
 
@@ -103,9 +111,11 @@ const VERSION_ID = 100;
 function seedExisting({
   status = ModelStatus.Draft,
   trainingStatus = null,
+  usageControl = ModelUsageControl.Download,
 }: {
   status?: ModelStatus;
   trainingStatus?: TrainingStatus | null;
+  usageControl?: ModelUsageControl;
 } = {}) {
   dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
     nsfw: false,
@@ -118,6 +128,7 @@ function seedExisting({
     id: VERSION_ID,
     status,
     trainingStatus,
+    usageControl,
     meta: null,
     model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Public' },
     monetization: null,
@@ -132,6 +143,8 @@ const written = () => mockTx.modelVersion.update.mock.calls[0]?.[0]?.data;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `storedWords` sets a stored row; without this it leaks into later tests.
+  dbMock.dbWrite.modelVersion.findUnique.mockReset().mockResolvedValue(null as never);
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );
@@ -248,6 +261,70 @@ describe('upsertModelVersion — an owner cannot reopen a started run for a new 
   });
 });
 
+describe('upsertModelVersion — Internal and External generation are moderator-managed', () => {
+  const { Download, Generation, InternalGeneration, ExternalGeneration } = ModelUsageControl;
+
+  it.each([
+    [ExternalGeneration, Download],
+    [ExternalGeneration, Generation],
+    [InternalGeneration, Download],
+    [InternalGeneration, ExternalGeneration],
+    [Download, ExternalGeneration],
+    [Generation, InternalGeneration],
+  ] as const)('refuses a non-moderator moving %s to %s', async (from, to) => {
+    seedExisting({ usageControl: from });
+
+    await expect(edit({ usageControl: to })).rejects.toThrowError(/managed by moderators/i);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner resubmit the stored External control with another edit', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ usageControl: ExternalGeneration, name: 'renamed' });
+
+    expect(written().usageControl).toBe(ExternalGeneration);
+    expect(written().name).toBe('renamed');
+  });
+
+  it('lets an owner edit that omits usageControl through on an External version', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ name: 'renamed' });
+
+    expect(written().name).toBe('renamed');
+    expect(written().usageControl).toBeUndefined();
+  });
+
+  it('lets an owner move between Download and Generation', async () => {
+    seedExisting({ usageControl: Download });
+
+    await edit({ usageControl: Generation });
+
+    expect(written().usageControl).toBe(Generation);
+  });
+
+  it('leaves a moderator free to move External to Download', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ usageControl: Download }, true);
+
+    expect(written().usageControl).toBe(Download);
+  });
+
+  it('judges the change against the locked row, not the earlier read', async () => {
+    seedExisting({ usageControl: Download });
+    mockTx.$queryRaw.mockResolvedValueOnce([
+      { name: 'v1', trainedWords: [], trainingStatus: null, usageControl: ExternalGeneration },
+    ] as never);
+
+    await expect(edit({ usageControl: Generation })).rejects.toThrowError(/managed by moderators/i);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('upsertModelVersion — a version cannot be moved to another model', () => {
   it('refuses a non-moderator naming a different modelId on update', async () => {
     seedExisting();
@@ -281,5 +358,103 @@ describe('upsertModelVersion — a version cannot be moved to another model', ()
     await edit({ modelId: OTHER_MODEL_ID }, true);
 
     expect(written().modelId).toBe(OTHER_MODEL_ID);
+  });
+});
+
+describe('upsertModelVersion — trigger-word edits queue the .com face re-check', () => {
+  const storedWords = (trainedWords: string[]) =>
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({ name: 'v1', trainedWords } as never);
+
+  it('queues it when an owner changes the trigger-word set', async () => {
+    seedExisting();
+    storedWords(['alpha', 'beta']);
+
+    await edit({ trainedWords: ['alpha', 'gamma'] });
+
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceRestore).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue it when an owner only reorders or repeats the same words', async () => {
+    seedExisting();
+    storedWords(['alpha', 'beta']);
+
+    await edit({ trainedWords: ['beta', 'alpha', 'beta'] });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('does not queue it for an edit that leaves the trigger words out', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ trainedWords: undefined });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('does not queue it for a save that sends the stored name', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ name: 'v1' });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('queues it when an owner renames a version', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ name: 'renamed' });
+
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('queues it when an owner adds a version without trigger words', async () => {
+    seedExisting();
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+    mockTx.modelVersion.create.mockResolvedValue({ id: VERSION_ID + 1, modelId: MODEL_ID });
+
+    await upsertModelVersion({
+      modelId: MODEL_ID,
+      name: 'v2',
+      baseModel: 'SD 1.5',
+      trainedWords: [],
+      isModerator: false,
+    } as never);
+
+    expect(mockTx.modelVersion.create).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('queues it when an owner adds a version with trigger words', async () => {
+    seedExisting();
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+    mockTx.modelVersion.create.mockResolvedValue({ id: VERSION_ID + 1, modelId: MODEL_ID });
+
+    await upsertModelVersion({
+      modelId: MODEL_ID,
+      name: 'v2',
+      baseModel: 'SD 1.5',
+      trainedWords: ['alpha'],
+      isModerator: false,
+    } as never);
+
+    expect(mockTx.modelVersion.create).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue it for a moderator’s change', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ trainedWords: ['gamma'] }, true);
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 });

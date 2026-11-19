@@ -18,7 +18,16 @@
     "./node_modules",
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
+    "packages/civitai-ui",
     "src/**/__tests__/**",
-    "packages/civitai-ui"
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/tests/**",
+    "src/test-utils/**",
+    "packages/*/src/**/__tests__/**",
+    "packages/*/src/**/*.test.ts",
+    "packages/*/src/**/*.test.tsx",
+    "tests/**",
+    "test/**"
   ]
 }

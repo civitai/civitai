@@ -1,12 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import * as z from 'zod';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import {
   getHiddenModelVersionIds,
   isPrivateModelVersion,
 } from '~/server/services/model-visibility.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const schema = z
   .array(
@@ -55,7 +57,16 @@ export default PublicEndpoint(
     // Versions the caller may not see are left out, as if their hashes had not matched.
     const hidden = await getHiddenModelVersionIds(
       matched.map((entry) => entry.modelVersion),
-      async () => (await getServerAuthSession({ req, res }))?.user
+      async () =>
+        restOwnerOrModeratorViewer(
+          req,
+          (
+            await getApiAuthSession(
+              { req, res },
+              { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+            )
+          )?.user
+        )
     );
     const visible = matched.filter((entry) => !hidden.has(entry.modelVersionId));
     const ids = visible.map((entry) => ({

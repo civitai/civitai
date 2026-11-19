@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
@@ -12,9 +12,15 @@
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
+    stampMature,
     defaultRunParams,
+    isLabeled,
     isTrainable,
-    labelOptions,
+    expandedCount,
+    repeatsOf,
+    selectionTakesRepeats,
+    labelModeForCard,
+    sweepLabelMode,
     labelString,
     runCard,
     runParamsKey,
@@ -27,9 +33,17 @@
     type SamplePrompt,
     type Selection,
   } from './trainingFlow';
-  import type { FromPrices, LabelType } from '$lib/data/trainingModels';
-  import type { ReuseItem } from '$lib/reuse';
+  import {
+    TAG_FIND_REPLACE_FLAG_KEY,
+    type FromPrices,
+    type LabelType,
+  } from '$lib/data/trainingModels';
+  import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
+  import { JUNK_TAGS } from '$lib/autolabel-exclude';
+  import type { TrainingRunPayload } from '$lib/backend';
+  import { newSubmitKey } from '$lib/submit-key';
+  import { watchReadiness, type ReadinessView } from './uploadReadiness';
 
   let {
     prices,
@@ -58,7 +72,9 @@
   // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
   // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
   let autoLabel = $state<'auto' | 'manual'>('auto');
-  let excludeTags = $state<string[]>([]);
+  let excludeTags = $state<string[]>([...JUNK_TAGS]);
+  let excludeCharacter = $state(true);
+  let excludeSource = $state(true);
   // Review-step fields, owned here for the same reason. Name and prompts remember what they were seeded
   // from: while unedited they follow a changed trigger / dataset, once edited they're kept. Empty
   // `samplePrompts` means unseeded — Review never lets the list reach zero.
@@ -67,19 +83,26 @@
   let samplePrompts = $state<SamplePrompt[]>([]);
   let promptsSeed: { labels: string; prompts: string } | null = null;
   let runParams = $state<Record<string, RunParams>>({});
-  // The trigger the current Review params were seeded with.
+  // The trigger and LoRA type the current Review params were seeded with.
   let paramsSeedTrigger = '';
+  let paramsSeedLoraType = '';
   let presetType = $state('');
+  let openAdvanced = $state('');
+  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
   // DataStep materializes these once a model is picked (the label type depends on the selection).
   let reuseItems = $state<ReuseItem[]>([]);
+  // An edit run's hand-off: EditDataStep turns it into pairs once, then empties it.
+  let reusePairItems = $state<ReuseItem[]>([]);
   onMount(() => {
     try {
       const raw = sessionStorage.getItem('ts:reuse-dataset');
       if (raw) {
-        reuseItems = JSON.parse(raw);
+        const items: ReuseItem[] = JSON.parse(raw);
+        if (isPairDataset(items)) reusePairItems = items;
+        else reuseItems = items;
         sessionStorage.removeItem('ts:reuse-dataset');
       }
     } catch {
@@ -92,9 +115,26 @@
   // typed before switching to an edit model must not ride along.
   const runTrigger = $derived(trainsPairs ? '' : trigger);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
+  const takesRepeats = $derived(!!selection && selectionTakesRepeats(selection));
+  // Counts every repeat copy: the "seen ~N×" hint and the quote (Kohya prices by item count) must
+  // see what the submit sends.
   const trainableCount = $derived(
-    trainsPairs ? readyPairs.length : images.filter(isTrainable).length
+    trainsPairs
+      ? readyPairs.length
+      : takesRepeats
+      ? expandedCount(images)
+      : images.filter(isTrainable).length
   );
+  const repeated = $derived.by(() => {
+    if (trainsPairs || !takesRepeats) return undefined;
+    const imgs = images.filter((i) => isTrainable(i) && repeatsOf(i) > 1);
+    if (imgs.length === 0) return undefined;
+    return {
+      images: imgs.length,
+      extra: imgs.reduce((sum, i) => sum + repeatsOf(i) - 1, 0),
+      max: Math.max(...imgs.map(repeatsOf)),
+    };
+  });
   const matureCount = $derived(
     trainsPairs
       ? readyPairs.filter(
@@ -102,6 +142,121 @@
         ).length
       : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
+
+  // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
+  const datasetBlobIds = $derived(
+    trainsPairs
+      ? pairItems(pairs).map((i) => i.air)
+      : images.filter((i) => i.status === 'uploaded' && !!i.blobId).map((i) => i.blobId!)
+  );
+  const datasetKey = $derived([...datasetBlobIds].sort().join('\n'));
+  // The server's count under the v2 rating, for the dataset it was made for. Until it answers, or when
+  // the rating is off for this user, Review counts from the upload rating as before.
+  let ratedMature = $state<{ key: string; count: number } | null>(null);
+  const RATING_POLLS = 6;
+  const RATING_POLL_MS = 5000;
+  $effect(() => {
+    // After the readiness wait, so Review never reads every file for both at once.
+    if (step !== 3 || !readinessSettled) return;
+    const be = backend();
+    if (!be.datasetRating) return;
+    const ids = datasetBlobIds;
+    const key = datasetKey;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async (poll: number) => {
+      try {
+        const res = await be.datasetRating!(ids);
+        if (stopped || !res.enabled) return;
+        ratedMature = { key, count: res.matureCount };
+        if (res.unrated > 0 && poll < RATING_POLLS)
+          timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
+      } catch {
+        // the upload rating's count stands
+      }
+    };
+    void ask(1);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+  const reviewMatureCount = $derived(
+    ratedMature?.key === datasetKey ? ratedMature.count : matureCount
+  );
+
+  // Review holds Start until the orchestrator would take every dataset file, for the dataset it was made for.
+  let readiness = $state<{ key: string; view: ReadinessView } | null>(null);
+  // "Check again" bumps this to start a fresh wait.
+  let readinessRound = $state(0);
+  const readinessSupported = !!backend().datasetReadiness && !!backend().datasetReadyToTrain;
+  $effect(() => {
+    if (step !== 3 || !readinessSupported) return;
+    const be = backend();
+    // Keyed on the dataset, not the array: a re-derived array of the same files must not restart the wait.
+    const key = datasetKey;
+    void readinessRound;
+    const stop = watchReadiness(
+      untrack(() => datasetBlobIds),
+      {
+        probe: (blobIds) => be.datasetReadiness!(blobIds),
+        check: (run) => be.datasetReadyToTrain!(run),
+        buildRun: () => untrack(readinessRun),
+        onView: (view) => (readiness = { key, view }),
+      }
+    );
+    return () => {
+      stop();
+      readiness = null;
+    };
+  });
+  // Until the wait reports for this dataset, Start is held.
+  const readinessView = $derived<ReadinessView>(
+    readiness?.key === datasetKey
+      ? readiness.view
+      : readinessSupported
+        ? { kind: 'checking', ready: 0, total: datasetBlobIds.length }
+        : { kind: 'off' }
+  );
+  const readinessSettled = $derived(
+    readinessView.kind === 'ready' || readinessView.kind === 'off'
+  );
+  // An edit pair goes as a whole, so Remove counts the pairs it takes out.
+  const readinessUnusableCount = $derived.by(() => {
+    if (readinessView.kind !== 'unusable') return undefined;
+    const gone = new Set(readinessView.blobIds);
+    if (!trainsPairs) return gone.size;
+    return pairs.filter((p) => gone.has(p.before.blobId ?? '') || gone.has(p.after?.blobId ?? ''))
+      .length;
+  });
+
+  /** The first run as the submit would send it, for the readiness whatif. */
+  function readinessRun(): TrainingRunPayload | undefined {
+    const run = selection?.runs[0];
+    const params = run && runParams[runParamsKey(run)];
+    if (!selection || !run || !params) return undefined;
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
+    return buildTrainingRuns(
+      selection,
+      images,
+      runTrigger,
+      reviewName,
+      [{ run, params }],
+      samplePrompts,
+      ['yellow', 'blue'],
+      labelMode,
+      edit
+    )[0];
+  }
+
+  function removeDatasetFiles(blobIds: string[]) {
+    const gone = new Set(blobIds);
+    if (trainsPairs)
+      pairs = pairs.filter(
+        (p) => !gone.has(p.before.blobId ?? '') && !gone.has(p.after?.blobId ?? '')
+      );
+    else images = images.filter((i) => !gone.has(i.blobId ?? ''));
+  }
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
@@ -155,18 +310,22 @@
       samplePrompts = seeded.length ? seeded : seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
+    const { loraType } = selection;
     runParams = Object.fromEntries(
       selection.runs.map((run) => {
         const key = runParamsKey(run);
         const existing = runParams[key];
-        // Params still at the previous trigger's defaults follow a trigger change (shuffle/keep).
+        // Params still at the previous seed's defaults follow a trigger change (shuffle/keep) or a
+        // LoRA type change (network size).
         const untouched =
           existing &&
-          JSON.stringify(existing) === JSON.stringify(defaultRunParams(run, paramsSeedTrigger));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t)];
+          JSON.stringify(existing) ===
+            JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
+        return [key, existing && !untouched ? { ...defaultRunParams(run, t, loraType), ...existing } : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
+    paramsSeedLoraType = loraType;
     leaveData();
     step = 3;
   }
@@ -174,11 +333,16 @@
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
   // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
   // ReviewStep, which shows them on the Start button.
+  // One key per batch, kept across a failed Start so a retry finds the runs a lost response hid
+  // instead of charging them again; replaced once a Start lands. Run i's key is this plus its index.
+  let submitKey = newSubmitKey();
+
   async function start(
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
     name: string,
-    currencies: string[]
+    currencies: string[],
+    reviewedMature: number
   ) {
     if (!selection) return;
     // An edit run's pairs go as blobs placed by path — each image was uploaded and scanned on its own.
@@ -194,10 +358,15 @@
       labelMode,
       edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    const keyed = stampMature(runs, reviewedMature).map((run, i) => ({
+      ...run,
+      submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
+    }));
+    const { workflowIds: ids, failure } = await backend().submitTraining(keyed);
+    submitKey = newSubmitKey();
     if (failure)
       submitNotice.set(
-        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+        `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
       );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
@@ -210,14 +379,15 @@
 
 <section class="flex flex-col gap-6">
   <div class="flex items-center justify-between gap-3">
-    <nav class="flex flex-wrap items-center gap-1.5" aria-label="Training steps">
+    <nav class="flex min-w-0 items-center gap-1.5" aria-label="Training steps">
       {#each STEPS as s, i (s.n)}
         {@const state = s.n < step ? 'done' : s.n === step ? 'active' : 'todo'}
         <div class="flex items-center gap-1.5">
           <button
             type="button"
             onclick={() => jump(s.n)}
-            class="flex items-center gap-2 transition {state === 'todo' ? 'opacity-50' : 'opacity-100'}"
+            aria-current={state === 'active' ? 'step' : undefined}
+            class="flex shrink-0 items-center gap-2 transition {state === 'todo' ? 'opacity-50' : 'opacity-100'}"
           >
             <span
               class="grid h-6 w-6 place-items-center rounded-full border font-mono text-xs
@@ -229,12 +399,17 @@
             >
               {#if state === 'done'}<IconCheck size={13} stroke={3} />{:else}{s.n}{/if}
             </span>
-            <span class="text-sm font-semibold {state === 'active' ? 'text-dark-0' : 'text-dark-2'}">
+            <!-- Below sm only the current step is labelled, so the three steps fit one row. -->
+            <span
+              class="whitespace-nowrap text-sm font-semibold {state === 'active'
+                ? 'text-dark-0'
+                : 'sr-only text-dark-2 sm:not-sr-only'}"
+            >
               {s.label}
             </span>
           </button>
           {#if i < STEPS.length - 1}
-            <span class="h-px w-8 bg-dark-4"></span>
+            <span class="h-px w-4 bg-dark-4 sm:w-8"></span>
           {/if}
         </div>
       {/each}
@@ -251,21 +426,25 @@
       {prices}
       {enabledModelFlags}
       initial={selection}
+      flowLabelMode={labelMode}
+      datasetLabeled={images.some(isLabeled)}
+      startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
+        const previous = selection ? runCard(selection.runs[0]!) : null;
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        // Reset the label mode to the model's default only when the current choice isn't valid for it —
-        // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
-        // single-format model snaps to its format.
-        const card = runCard(sel.runs[0]!);
-        if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
+        const labeled = images.some(isLabeled);
+        labelMode =
+          sweepLabelMode(sel.runs.map(runCard), previous, labelMode, labeled) ??
+          labelModeForCard(previous, runCard(sel.runs[0]!), labelMode, labeled);
         step = 2;
       }}
     />
   {:else if step === 2 && selection && trainsPairs}
     <EditDataStep
       bind:pairs
+      bind:reuseItems={reusePairItems}
       onContinue={enterReview}
       onBack={() => {
         leaveData();
@@ -276,6 +455,7 @@
     <DataStep
       {selection}
       {prices}
+      findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
       bind:trigger
@@ -283,6 +463,8 @@
       bind:autoLabel
       bind:filter={dataFilter}
       bind:excludeTags
+      bind:excludeCharacter
+      bind:excludeSource
       onContinue={enterReview}
       onBack={() => {
         leaveData();
@@ -298,9 +480,16 @@
       bind:prompts={samplePrompts}
       bind:params={runParams}
       bind:presetType
+      bind:openAdvanced
+      bind:acknowledgedAdvanced
       imageCount={trainableCount}
+      {repeated}
       {trainsPairs}
-      {matureCount}
+      matureCount={reviewMatureCount}
+      readiness={readinessView}
+      {readinessUnusableCount}
+      onCheckReadinessAgain={() => readinessRound++}
+      onRemoveFiles={removeDatasetFiles}
       onStart={start}
       onBack={() => (step = 2)}
       onShowMature={() => {

@@ -1,0 +1,166 @@
+/*
+ * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
+ * that carries the viewer's margin and the lock to its right. A surface resizes it by setting
+ * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
+ * two stylesheets load in.
+ */
+.badge {
+  --dial: var(--hat-turf-badge-size, 24px);
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: var(--dial);
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--dial) / 2);
+  background: none;
+  color: var(--mantine-color-white);
+  cursor: pointer;
+  pointer-events: auto;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.chip {
+  padding-right: 6px;
+  background-color: rgba(0, 0, 0, 0.55);
+  filter: none;
+}
+
+/* Control arm: taps fall through to the card. */
+.passive {
+  cursor: inherit;
+  pointer-events: none;
+}
+
+.dial {
+  position: relative;
+  flex: none;
+  width: var(--dial);
+  height: var(--dial);
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+}
+
+.track {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 4;
+}
+
+.arc {
+  fill: none;
+  stroke-width: 4;
+  transition: stroke-dasharray 0.55s ease, stroke-dashoffset 0.55s ease;
+}
+
+/* The dark gap keeps the leader's own colour apart from its arc of the ring. */
+.gap {
+  fill: rgba(12, 12, 14, 0.95);
+}
+
+.discFill {
+  transition: fill 0.3s ease;
+}
+
+/* The unfilled part of the disc, toward the scoring cap. */
+.discTrack {
+  opacity: 0.35;
+}
+
+.level {
+  transition: y 0.4s ease, height 0.4s ease;
+}
+
+.neutral {
+  fill: rgba(255, 255, 255, 0.2);
+}
+
+/* Holds the digit over the disc: 14/48 of the dial from the centre. */
+.disc {
+  position: absolute;
+  inset: calc(var(--dial) * 10 / 48);
+  display: grid;
+  place-items: center;
+  color: var(--mantine-color-white);
+}
+
+.count {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-white);
+}
+
+/* Two digits in the disc: the font follows the dial so both fit, on the card and in the detail row. */
+.countTwo {
+  font-size: calc(var(--dial) * 0.34);
+  letter-spacing: -0.03em;
+}
+
+/* White has to read on the lightest team colour (yellow) too. */
+.countInside {
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.8), 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.bump {
+  animation: bump 0.55s ease;
+}
+
+.blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 1px;
+}
+
+.blockedDot {
+  flex: none;
+  width: max(6px, calc(var(--dial) * 0.2));
+  height: max(6px, calc(var(--dial) * 0.2));
+  border-radius: 50%;
+}
+
+.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.lock {
+  display: grid;
+  place-items: center;
+  color: var(--mantine-color-white);
+
+  & svg {
+    width: max(12px, calc(var(--dial) * 0.45));
+    height: max(12px, calc(var(--dial) * 0.45));
+  }
+}
+
+@keyframes bump {
+  35% {
+    transform: scale(1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arc,
+  .discFill {
+    transition: none;
+  }
+
+  .bump {
+    animation: none;
+  }
+}
+
+/* The viewer's margin: signed, in the chip beside the dial. */
+.margin {
+  font-size: 11px;
+  font-weight: 700;
+}

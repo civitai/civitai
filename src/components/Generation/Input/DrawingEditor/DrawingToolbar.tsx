@@ -1,16 +1,5 @@
-import {
-  ActionIcon,
-  Tooltip,
-  Popover,
-  Slider,
-  ColorPicker,
-  TextInput,
-  Text,
-  Stack,
-  Group,
-  Kbd,
-  Menu,
-} from '@mantine/core';
+import { ActionIcon, Slider, ColorPicker, TextInput, Text, Stack, Group, Kbd } from '@mantine/core';
+import { Tooltip, Popover, Menu } from '~/components/MantineOverlays';
 import {
   IconBrush,
   IconEraser,

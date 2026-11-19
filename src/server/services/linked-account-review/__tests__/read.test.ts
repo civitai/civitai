@@ -30,11 +30,51 @@ describe('ClickHouse readers', () => {
     expect(rows).toEqual([{ userId: 11, ip: 'x', ipAccounts: 9 }]);
   });
 
+  // Sign-ins are written with the signed-in account in targetUserId; userId is usually 0 on them.
+  it('matches sign-ins and counts accounts per IP by the signed-in account', async () => {
+    let sql = '';
+    await signIns(
+      {
+        $query: async <T extends object>(q: string) => {
+          sql = q;
+          return [] as T[];
+        },
+      },
+      [11],
+      new Date()
+    );
+    expect(sql).toMatch(/SELECT DISTINCT targetUserId AS userId, ip FROM userActivities/);
+    expect(sql).toMatch(/AND targetUserId IN \(11\)/);
+    expect(sql).toMatch(/uniqExact\(targetUserId\) AS accounts/);
+    expect(sql).not.toMatch(/\buserId IN\b/);
+  });
+
+  // A sign-in to account 42 on a device still holding account 7's session has userId 7: the
+  // reader must never read that column, so account 7 cannot appear in its output.
+  it('never reads the acting account of a sign-in', async () => {
+    let sql = '';
+    await signIns(
+      {
+        $query: async <T extends object>(q: string) => {
+          sql = q;
+          return [] as T[];
+        },
+      },
+      [42],
+      new Date()
+    );
+    const bareUserId = sql
+      .replace(/targetUserId AS userId/g, '')
+      .replace(/l\.userId AS userId/g, '')
+      .match(/(?<!target)(?<![.\w])userId\b/g);
+    expect(bareUserId).toBeNull();
+  });
+
   it('reads every user when the list spans several queries', async () => {
     const asked: number[] = [];
     const counting: ClickhousePort = {
       $query: async <T extends object>(sql: string) => {
-        const ids = /userId IN \(([\d,]+)\)/.exec(sql)![1].split(',').map(Number);
+        const ids = /(?:userId|targetUserId) IN \(([\d,]+)\)/.exec(sql)![1].split(',').map(Number);
         asked.push(...ids);
         return ids.map((id) => ({ userId: String(id), ip: 'x', ipAccounts: '2' })) as T[];
       },

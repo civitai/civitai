@@ -3,16 +3,22 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import semver from 'semver';
 import { parsePlatformFeedbackVersion as parseVersion } from '@civitai/shared/platform-feedback-version';
+import * as z from 'zod';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import type {
   CreatePlatformFeedbackInput,
   GetPlatformFeedbackStatusInput,
+  ListPlatformFeedbackChangesInput,
   PlatformFeedbackClient,
   PlatformFeedbackReadbackStatus,
   PlatformFeedbackReport,
   PlatformFeedbackServerState,
 } from '~/server/schema/platform-feedback.schema';
-import { platformFeedbackServerStateSchema } from '~/server/schema/platform-feedback.schema';
+import {
+  listPlatformFeedbackChangesSchema,
+  platformFeedbackServerStateSchema,
+} from '~/server/schema/platform-feedback.schema';
 import {
   FEEDBACK_AREA_DISABLED_MESSAGE,
   isFeedbackAreaEnabled,
@@ -155,10 +161,20 @@ const POST_CLOSE_COUNT = Prisma.sql`(CASE
 END)`;
 
 /**
+ * `context.server` with `reporterIds` always removed, plus `extra` (fixed literals, never input).
+ * The one place reporter ids are stripped, for every read in this file.
+ */
+function serverStateWithout(extra: 'samples' | 'fingerprint') {
+  return Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - ${Prisma.raw(
+    `'${extra}'`
+  )} END`;
+}
+
+/**
  * `context.server` without the two fields only moderators read. Every read here selects this, so
  * reporter ids and sample text never leave the database on a path that answers a reporter.
  */
-const SERVER_STATE = Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - 'samples' END`;
+const SERVER_STATE = serverStateWithout('samples');
 
 /**
  * The first 300 UTF-16 units, minus a surrogate pair the cut split: a lone surrogate is not valid
@@ -430,4 +446,172 @@ export async function getPlatformFeedbackStatus({
       updatedAt: latestIso(state.lastSeenAt, state.resolution?.at, row.handledAtMs),
     };
   });
+}
+
+/**
+ * How old a change must be before the moderator feed hands it out. A change's time is stamped by
+ * its writer before its transaction commits (the reporter's send stamps `lastSeenAt` before waiting
+ * up to `LOCK_TIMEOUT` for the fingerprint lock), so the newest changes can still become visible
+ * with a time a caller's cursor has already passed. Holding back the last 30s keeps the cursor
+ * monotonic against that and against modest clock skew between app hosts and the database.
+ */
+export const PLATFORM_FEEDBACK_CHANGES_SETTLE_MS = 30_000;
+
+/**
+ * Milliseconds for an ISO-8601 UTC string the service or the moderator app wrote; anything else,
+ * NULL. The shape test keeps a malformed value from failing the statement for every row.
+ */
+const isoMs = (value: Prisma.Sql) => Prisma.sql`(CASE
+  WHEN ${value} ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$'
+    THEN (EXTRACT(EPOCH FROM (${value})::timestamp) * 1000)::bigint
+END)`;
+
+/**
+ * When a row last changed in a way a triager would want to see again:
+ *   - created;
+ *   - reported again (`lastSeenAt`, bumped on every repeat, merged or not);
+ *   - triaged (`handledAt`), or given a resolution (`resolution.at`);
+ *   - touched by any moderator triage write (`changedAt`, which the moderator app's
+ *     `stampPlatformChange` sets).
+ * `changedAt` is what surfaces the writes that REMOVE the other two times: clearing a resolution,
+ * and a move back to `new`, which nulls `handledAt`. A reopen or a regression is a new row, so it
+ * surfaces by `createdAt`.
+ */
+const CHANGED_MS = Prisma.sql`GREATEST(
+  (EXTRACT(EPOCH FROM f."createdAt") * 1000)::bigint,
+  (EXTRACT(EPOCH FROM f."handledAt") * 1000)::bigint,
+  ${isoMs(Prisma.sql`f."context"->'server'->>'lastSeenAt'`)},
+  ${isoMs(Prisma.sql`f."context"->'server'->'resolution'->>'at'`)},
+  ${isoMs(Prisma.sql`f."context"->'server'->>'changedAt'`)}
+)`;
+
+/**
+ * `context.server` without `reporterIds` or `fingerprint`. A free-text report's fingerprint hashes
+ * its reporter's id beside text the feed returns, so the id could be searched for from it.
+ */
+const FEED_SERVER_STATE = serverStateWithout('fingerprint');
+
+type ChangeRow = {
+  id: number;
+  status: string;
+  message: string;
+  createdAt: Date;
+  handledAt: Date | null;
+  report: unknown;
+  server: unknown;
+  changedMs: bigint | number | string;
+};
+
+const toCursor = (changedMs: number, id: number) => `${changedMs}:${id}`;
+
+function parseCursor(cursor: string | null | undefined) {
+  if (!cursor) return { changedMs: -1, id: 0 };
+  const [changedMs, id] = cursor.split(':').map(Number);
+  return { changedMs, id };
+}
+
+const feedReportSchema = z.object({
+  about: z.string().nullable().catch(null),
+  kind: z.string().nullable().catch(null),
+  ref: z.string().nullable().catch(null),
+  client: z
+    .object({ name: z.string().nullable().catch(null), version: z.string().nullable().catch(null) })
+    .catch({ name: null, version: null }),
+  command: z.string().optional().catch(undefined),
+  exitCode: z.number().optional().catch(undefined),
+  httpStatus: z.number().optional().catch(undefined),
+  errorExcerpt: z.string().optional().catch(undefined),
+  docUrl: z.string().optional().catch(undefined),
+  appSlug: z.string().optional().catch(undefined),
+  agent: z.string().optional().catch(undefined),
+  os: z.string().optional().catch(undefined),
+  arch: z.string().optional().catch(undefined),
+});
+
+const parseFeedReport = (report: unknown) =>
+  feedReportSchema.parse(
+    report && typeof report === 'object' && !Array.isArray(report)
+      ? report
+      : { client: { name: null, version: null } }
+  );
+
+/**
+ * `apps-platform` rows changed after `cursor`, oldest change first, for moderator tooling that
+ * polls the queue. A row appears again each time it changes (see `CHANGED_MS`); the caller keys on
+ * `id` and keeps the latest. Reporter ids are never returned. Sample texts are: a moderator already
+ * reads them, with the reporters' ids, in the moderator app.
+ *
+ * Not gated on the area's collection flag: that flag stops new reports, and rows already collected
+ * still need triage.
+ */
+export async function listPlatformFeedbackChanges(input: ListPlatformFeedbackChangesInput) {
+  const { cursor, limit } = listPlatformFeedbackChangesSchema.parse(input);
+  const after = parseCursor(cursor);
+  const settledBefore = Date.now() - PLATFORM_FEEDBACK_CHANGES_SETTLE_MS;
+
+  // The primary: a replica lagging past the settle window would advance a caller's cursor over a
+  // change it had not yet received, and that change would never be handed out.
+  const rows = await dbWrite.$queryRaw<ChangeRow[]>(Prisma.sql`
+    SELECT * FROM (
+      SELECT f."id", f."status", f."message", f."createdAt", f."handledAt",
+             f."context"->'report' AS "report",
+             ${FEED_SERVER_STATE} AS "server",
+             ${CHANGED_MS} AS "changedMs"
+      FROM "Feedback" f
+      WHERE f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
+    ) c
+    WHERE (c."changedMs", c."id") > (${after.changedMs}::bigint, ${after.id}::bigint)
+      AND c."changedMs" <= ${settledBefore}::bigint
+    ORDER BY c."changedMs", c."id"
+    LIMIT ${limit + 1}::int
+  `);
+
+  const page = rows.slice(0, limit);
+  const items = page.map((row) => {
+    const changedMs = Number(row.changedMs);
+    const state = parseServerState(row.server);
+    const report = parseFeedReport(row.report);
+    const fixedIn = state.resolution?.fixedIn;
+    const { command, exitCode, httpStatus, errorExcerpt, docUrl, appSlug, agent, os, arch } =
+      report;
+    return {
+      id: row.id,
+      createdAt: new Date(row.createdAt).toISOString(),
+      updatedAt: new Date(changedMs).toISOString(),
+      status: row.status,
+      handled: row.status !== 'new',
+      handledAt: row.handledAt ? new Date(row.handledAt).toISOString() : null,
+      about: report.about,
+      kind: report.kind,
+      ref: report.ref,
+      message: row.message,
+      client: { name: report.client.name, version: report.client.version },
+      details: { command, exitCode, httpStatus, errorExcerpt, docUrl, appSlug, agent, os, arch },
+      samples: (state.samples ?? []).map(({ text, clientVersion }) => ({ text, clientVersion })),
+      reporters: state.reporters,
+      reports: state.reports,
+      firstSeenAt: state.firstSeenAt,
+      lastSeenAt: state.lastSeenAt,
+      regressionOf: state.regressionOf ?? null,
+      reopenOf: state.reopenOf ?? null,
+      resolution: state.resolution
+        ? {
+            fixedIn: fixedIn
+              ? { component: fixedIn.component, version: fixedIn.version.trim() || null }
+              : null,
+            publicNote: state.resolution.publicNote ?? null,
+            at: state.resolution.at ?? null,
+          }
+        : null,
+      moderatorUrl: `${env.MODERATOR_APP_URL}/feedback/${row.id}`,
+      cursor: toCursor(changedMs, row.id),
+    };
+  });
+
+  const last = items[items.length - 1];
+  return {
+    items,
+    nextCursor: last ? last.cursor : cursor ?? null,
+    hasMore: rows.length > limit,
+  };
 }

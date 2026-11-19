@@ -65,7 +65,11 @@ All three are charged to the user and show their price before running.
 - **Suggest** asks a vision chat model to describe the change from before to after. It only fills an
   instruction that is still empty when the answer arrives.
 
-## Known gaps
+## Train again
 
-- A finished edit run can't be reused as a dataset ("Train again" / reuse a dataset) yet: its blobs are
-  pairs, which the plain Data step can't take, so the run offers no dataset to reuse.
+A run's dataset keeps each item's `path`, so "Train again", "Try again with this dataset" and Remix
+rebuild its pairs (`pairsFromItems` in `editPairs.ts`) and open Select on the Image edit section; the
+edit Data step adds them as "Earlier training" pairs with no re-upload. A starting image the run also
+rendered samples from carries that sample URL, so the new run's samples seed from it. The Data step's
+"Reuse a dataset" picker trains single images and refuses an edit run. The run page's Download keeps the
+`control_1/` + `main/` layout, so the zip imports back as pairs.

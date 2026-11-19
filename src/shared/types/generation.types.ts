@@ -42,6 +42,8 @@ export type GenerationResourceBase = {
   isPrivate?: boolean;
   /** Whether this resource's owner can receive a creator-tip share (computed by server) */
   tipsEnabled?: boolean;
+  partnerService?: boolean;
+  partnerTrains?: boolean;
   /**
    * Stamped by `getResourceData` for `Wildcards`-type ModelVersions. The
    * resolved `WildcardSet.id` corresponding to this ModelVersion — present

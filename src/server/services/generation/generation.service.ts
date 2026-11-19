@@ -1,5 +1,10 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+  GenerationConfigUnavailableError,
+} from '~/server/services/generation/generation-kill-switch';
 import { asResourceValue } from '~/shared/utils/resource.utils';
+import { stopsCreatorEarnings } from '~/server/common/constants';
 import {
   LORA_STRENGTH_BOUNDS,
   fluxKreaAir,
@@ -12,6 +17,7 @@ import {
   coverageColumn,
   coveragePair,
   coveredBy,
+  boostRequiredFor,
   coveredForUser,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -24,6 +30,7 @@ import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helper
 import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { lastKnownGood, type LastKnownRead } from '~/server/services/generation/last-known-good';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
@@ -33,6 +40,7 @@ import type {
   ResolveImageMetaInput,
   SetEvictableInput,
   SetAdditionalResourceFeeWaivedInput,
+  SetPartnerDisclosureInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -66,10 +74,12 @@ import type { GenerationResource, GenerationResourceValue } from '~/shared/types
 
 import {
   applicableRulesFor,
+  toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
+  type GateRuleView,
 } from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
@@ -81,6 +91,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  getPartnerDisclosure,
   isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
@@ -91,6 +102,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
+  isBaseModelGenerationDisabled,
   ecosystemById,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
@@ -156,22 +168,61 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   );
 }
 
-export async function getGenerationStatus() {
-  // Fail open: a sysRedis outage shouldn't crash generation API calls.
-  let raw: string | null | undefined;
-  try {
+export { GENERATION_CONFIG_UNAVAILABLE_MESSAGE };
+
+export function generationConfigUnavailableError() {
+  return new GenerationConfigUnavailableError();
+}
+
+const failOpenExtra = (last: { ageMs: number } | undefined) => ({
+  served: last ? 'last-known-good' : 'fail-closed',
+  lastKnownAgeMs: last?.ageMs,
+});
+
+// The kill switch is a moderation control: a failed read must never turn an operator's
+// "disabled" back into "enabled". The last raw value read is kept (the parse stays outside).
+const generationStatusRead = lastKnownGood<string | null>();
+
+/**
+ * The generation kill switch, with whether it is KNOWN. On a sysRedis failure it answers with the
+ * last value this process read; when there is none, `known: false` and a DISABLED status (global
+ * and self-hosted) with GENERATION_CONFIG_UNAVAILABLE_MESSAGE, never the schema default "enabled".
+ * Callers that ENFORCE refuse on `known: false` (buildGenerationContext); the public status
+ * endpoint must not edge-cache that fallback.
+ */
+export async function getGenerationStatusState(): Promise<{
+  status: GenerationStatus;
+  known: boolean;
+}> {
+  const read = await generationStatusRead.read(
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
-    raw = await withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
-    );
-  } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
-    raw = undefined;
-  }
-  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+    () =>
+      withSysReadDeadline(
+        sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+      ),
+    (err, last) =>
+      logSysRedisFailOpen(
+        'defaults-firing',
+        'getGenerationStatus generation.service',
+        err,
+        failOpenExtra(last)
+      )
+  );
+  const status = read.known
+    ? generationStatusSchema.parse(JSON.parse(read.value ?? '{}'))
+    : generationStatusSchema.parse({
+        mode: 'disabled',
+        selfHostedMode: 'disabled',
+        message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+      });
 
-  return status as GenerationStatus;
+  return { status: status as GenerationStatus, known: read.known };
+}
+
+/** The kill switch; see getGenerationStatusState (this drops `known`). */
+export async function getGenerationStatus(): Promise<GenerationStatus> {
+  return (await getGenerationStatusState()).status;
 }
 
 export async function setGenerationStatus(input: {
@@ -867,17 +918,34 @@ const generatorMessageStore = perEntryStore<GeneratorMessage>({
   schema: generatorMessageSchema,
 });
 
+// Gate rules hide or disable models and ecosystems — a moderation control, like the kill switch.
+const gateRulesRead = lastKnownGood<GateRule[]>();
+
 /**
- * The operator-authored gate rules. Fail-open to `[]` so a bad or unreachable
- * store never blocks generation.
+ * The operator-authored gate rules, with whether they are known. On a sysRedis failure this is
+ * the last set this process read; `known: false` when there is none — "no rules" would make every
+ * hidden model submittable, so callers that ENFORCE must refuse instead (buildGenerationContext).
  */
-export async function getGateRules(): Promise<GateRule[]> {
+export async function getGateRuleState(): Promise<LastKnownRead<GateRule[]>> {
   // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on every
   // gen submit — a silent sysRedis half-open would park it.
-  return withSysReadDeadline(gateRuleStore.read()).catch((err) => {
-    logSysRedisFailOpen('read-degraded', 'getGateRules', err);
-    return [];
-  });
+  return gateRulesRead.read(
+    () => withSysReadDeadline(gateRuleStore.read()),
+    (err, last) => logSysRedisFailOpen('read-degraded', 'getGateRules', err, failOpenExtra(last))
+  );
+}
+
+/** The gate rules; throws SERVICE_UNAVAILABLE when they cannot be read and were never read. */
+export async function getGateRules(): Promise<GateRule[]> {
+  const state = await getGateRuleState();
+  if (!state.known) throw generationConfigUnavailableError();
+  return state.value;
+}
+
+/** For tests: forget the last-known kill switch and gate rules. */
+export function __resetGenerationConfigLastKnownForTests() {
+  generationStatusRead.reset();
+  gateRulesRead.reset();
 }
 
 export async function saveGateRule(rule: GateRule): Promise<GateRule> {
@@ -919,13 +987,8 @@ export type GenerationConfig = {
    * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
   selfHostedMode: GenerationStatusMode;
-  /**
-   * The gate rules that apply to THIS user (already audience-filtered server
-   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
-   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
-   * the server.
-   */
-  gateRules: GateRule[];
+  /** Applicable rules for THIS user, reduced to what the client renders (`toGateRuleViews`). */
+  gateRules: GateRuleView[];
   /**
    * Mod-authored messages for THIS user (audience-filtered server side, so copy
    * aimed at one tier never ships in another's payload). Rendered above the
@@ -967,14 +1030,17 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, hasTestingAccess, status, gateRules, generatorMessages] =
+  const [unstableResources, hasTestingAccess, status, gateRuleState, generatorMessages] =
     await Promise.all([
       getUnstableResources(),
       resolveTestingAccess(user),
       getGenerationStatus(),
-      getGateRules(),
+      getGateRuleState(),
       getGeneratorMessages(),
     ]);
+  // Display only: with the rules unknown the picker shows no gates, and a submit is refused by
+  // buildGenerationContext, which enforces them.
+  const gateRules = gateRuleState.known ? gateRuleState.value : [];
   const selfHostedMode = status.selfHostedMode;
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
@@ -985,11 +1051,13 @@ export async function getGenerationConfig(
       isMember,
       isModerator: user.isModerator,
     }),
-    gateRules: applicableRulesFor(gateRules, {
-      isModerator: !!user.isModerator,
-      isMember,
-      hasTestingAccess,
-    }),
+    gateRules: toGateRuleViews(
+      applicableRulesFor(gateRules, {
+        isModerator: !!user.isModerator,
+        isMember,
+        hasTestingAccess,
+      })
+    ),
     generatorMessages: applicableMessagesFor(generatorMessages, {
       isMember,
       tier: user.tier ?? 'free',
@@ -1059,6 +1127,26 @@ export async function setAdditionalResourceFeeWaived({
   return { id, waived: isAdditionalResourceFeeWaived(flags) };
 }
 
+export async function setPartnerDisclosure({
+  id,
+  partnerService,
+  partnerTrains,
+  isModerator,
+}: SetPartnerDisclosureInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  if (partnerTrains && !partnerService)
+    throw throwBadRequestError('Partner trains requires partner service');
+  const mask = ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains;
+  const bits =
+    (partnerService ? ModelVersionFlag.PartnerService : 0) |
+    (partnerTrains ? ModelVersionFlag.PartnerTrains : 0);
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`(flags & ~(${mask}::int)) | ${bits}::int`
+  );
+  return { id, ...getPartnerDisclosure(flags) };
+}
+
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 
 // The one rule both the orchestrator's charge (mini endpoint) and the generator's cost badge read.
@@ -1121,7 +1209,12 @@ export async function getCanGenerateHiddenGates(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<CanGenerateBlockedTargets> {
-  const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
+  const [ruleState, hasTestingAccess] = await Promise.all([
+    getGateRuleState(),
+    resolveTestingAccess(user),
+  ]);
+  // Display only (the model page's canGenerate); a submit is refused while the rules are unknown.
+  const rules = ruleState.known ? ruleState.value : [];
   return canGenerateBlockedTargets(
     applicableRulesFor(rules, {
       isModerator: !!user.isModerator,
@@ -1178,6 +1271,8 @@ export function getResourceCanGenerate({
   if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
     canGenerate = false;
   }
+
+  if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
@@ -1319,19 +1414,22 @@ export async function getResourceData(
     generation = false,
     withPreview = false,
     browsingLevel,
+    acceptBoostRequired = false,
   }: {
     user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
+    /** See `coverageAudience`. Each admitted-by-boost resource comes back `boostRequired`. */
+    acceptBoostRequired?: boolean;
   } = {}
-): Promise<(GenerationResource & { air: string })[]> {
+): Promise<(GenerationResource & { air: string; boostRequired?: boolean })[]> {
   if (!versionIds.length) return [];
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const { next, member } = await coverageAudience(user);
+  const { next, member, boostAdmits } = await coverageAudience(user, { acceptBoostRequired });
 
   const showSfwFace = showsSfwFace(browsingLevel);
 
@@ -1351,10 +1449,13 @@ export async function getResourceData(
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
-    const covered = coveredForUser(item, next, {
+    const coverageAudienceFor = {
       member,
       isCheckpoint: item.model.type === 'Checkpoint',
-    });
+      boostAdmits,
+    };
+    const covered = coveredForUser(item, next, coverageAudienceFor);
+    const boostRequired = boostRequiredFor(item, next, coverageAudienceFor);
     // 🔴 `getResourceCanGenerate` ALONE, deliberately — not the `isGenerationEligible` pair that
     // `resolveCanGenerateForVersions` uses. This path receives every resource in the request, and the
     // helper's third clause is the ecosystem's flat model-TYPE list, which the generator has never
@@ -1423,7 +1524,10 @@ export async function getResourceData(
       epochNumber,
       isOwnedByUser,
       isPrivate,
-      tipsEnabled: isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
+      ...(boostRequired && canGenerate ? { boostRequired: true } : {}),
+      tipsEnabled:
+        !stopsCreatorEarnings(item.baseModel) &&
+        isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }
 
@@ -1524,7 +1628,15 @@ export async function getResourceData(
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
-    return { ...resource, fileSizeKB, additionalResourceCost, epochDetails, air };
+    const { flags, ...rest } = resource;
+    return {
+      ...rest,
+      ...getPartnerDisclosure(flags),
+      fileSizeKB,
+      additionalResourceCost,
+      epochDetails,
+      air,
+    };
   }
 
   function getSubstituteData(

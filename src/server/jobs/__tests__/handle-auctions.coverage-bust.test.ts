@@ -31,7 +31,9 @@ vi.mock('~/server/services/model.service', () => ({
   getTopWeeklyEarners,
 }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { updateSync: searchIndexUpdate } }));
-vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust: vi.fn() }));
+vi.mock('~/server/services/home-block-cache.service', () => ({
+  bustFeaturedModelsHomeBlockCache: vi.fn(),
+}));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/auction.service', () => ({}));
 vi.mock('~/server/services/buzz.service', () => ({}));

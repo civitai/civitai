@@ -24,6 +24,19 @@ export function useOutputType(store: GenerationStore): 'image' | 'video' | 'audi
   );
 }
 
+/** The form's values as one string, so two moments of the form compare by value. */
+export function formStateKey(store: GenerationStore): string {
+  return JSON.stringify(store.getSnapshot().state);
+}
+
+export function useFormStateKey(store: GenerationStore): string {
+  return useSyncExternalStore(
+    (cb) => store.subscribe(cb),
+    () => formStateKey(store),
+    () => formStateKey(store)
+  );
+}
+
 export function useSelectedResourceIds(store: GenerationStore): number[] {
   // Joined so the snapshot is a primitive: an array would be a new reference on every read.
   const key = useSyncExternalStore(

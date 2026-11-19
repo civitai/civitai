@@ -1,0 +1,69 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CrucibleService from '~/server/services/crucible.service';
+
+const finalizeCrucible = vi.fn();
+
+vi.mock('~/server/services/crucible.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleService>()),
+  activateScheduledCrucibles: vi.fn(async () => 0),
+  voidUnscannedCrucibles: vi.fn(async () => []),
+  getCruciblesForFinalization: vi.fn(async () => [1, 2]),
+  finalizeCrucible,
+}));
+
+const freezeAllFlagDays = vi.fn(async () => 0);
+vi.mock('~/server/events/turf/flag-freeze', () => ({ freezeAllFlagDays }));
+
+const { finalizeCruciblesJob } = await import('~/server/jobs/finalize-crucibles');
+const crucibleService = await import('~/server/services/crucible.service');
+const { CrucibleRankingDeferredError } = await import('~/server/services/crucible-bradley-terry');
+
+describe('finalize-crucibles — a crucible waiting on ClickHouse', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('is deferred, not counted as a failure, and does not stop the next crucible', async () => {
+    finalizeCrucible.mockImplementation(async (id: number) => {
+      if (id === 1) throw new CrucibleRankingDeferredError('ClickHouse has 3 of 4 votes, waiting');
+      return { finalEntries: [], totalPrizesDistributed: 0 };
+    });
+
+    const result = await finalizeCruciblesJob.run({}).result;
+
+    expect(result).toMatchObject({ finalized: 1, failed: 0, deferredIds: [1], successIds: [2] });
+  });
+
+  it('still counts any other error as a failure', async () => {
+    finalizeCrucible.mockImplementation(async (id: number) => {
+      if (id === 1) throw new Error('boom');
+      return { finalEntries: [], totalPrizesDistributed: 0 };
+    });
+
+    const result = await finalizeCruciblesJob.run({}).result;
+
+    expect(result).toMatchObject({ finalized: 1, failed: 1, deferredIds: [] });
+  });
+});
+
+describe('finalize-crucibles — the flag freeze', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('runs every minute, even when no crucible is due', async () => {
+    vi.mocked(crucibleService.getCruciblesForFinalization).mockResolvedValueOnce([]);
+
+    const result = await finalizeCruciblesJob.run({}).result;
+
+    expect(result).toMatchObject({ finalized: 0 });
+    expect(freezeAllFlagDays).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stop the job when it fails', async () => {
+    vi.mocked(crucibleService.getCruciblesForFinalization).mockResolvedValueOnce([]);
+    freezeAllFlagDays.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(finalizeCruciblesJob.run({}).result).resolves.toMatchObject({ finalized: 0 });
+  });
+});

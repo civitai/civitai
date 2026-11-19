@@ -1,5 +1,3 @@
-import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type {
@@ -15,17 +13,19 @@ import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.serv
 import {
   checkEntityImageKeys,
   createEntityImages,
-  invalidateManyImageExistence,
   updateEntityImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
 import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import {
   isPayoutOverdue,
@@ -114,6 +114,26 @@ export const getBountyEntryEarnedBuzz = async ({
   return data;
 };
 
+export const BOUNTY_ENTRY_LIMIT_REACHED =
+  'You have reached the maximum number of entries for this bounty';
+
+// Locks the same Bounty row, the same way, as `lockBountyForPayout`, so a create racing an award
+// or refund waits rather than deadlocks, and reads `complete` as the payout left it.
+async function assertEntryAllowedUnderLock(
+  tx: Prisma.TransactionClient,
+  { bountyId, userId }: { bountyId: number; userId: number }
+) {
+  const [bounty] = await tx.$queryRaw<{ entryLimit: number; complete: boolean }[]>`
+    SELECT "entryLimit", complete FROM "Bounty" WHERE id = ${bountyId} FOR UPDATE
+  `;
+  if (!bounty) throw throwBadRequestError('Bounty not found');
+  if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+
+  const existing = await tx.bountyEntry.count({ where: { bountyId, userId } });
+  if (bounty.entryLimit && existing >= bounty.entryLimit)
+    throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
+}
+
 export const upsertBountyEntry = async ({
   id,
   bountyId,
@@ -122,7 +142,15 @@ export const upsertBountyEntry = async ({
   images,
   description,
   userId,
-}: UpsertBountyEntryInput & { userId: number }) => {
+  shownImageIds,
+  replaceImages,
+}: UpsertBountyEntryInput & {
+  userId: number;
+  /** Replace every linked image, for a caller that never read the entry's images. */
+  replaceImages?: boolean;
+}) => {
+  if (!id && images?.length === 0)
+    throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
@@ -155,6 +183,8 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
+          shownImageIds: replaceImages ? 'all' : shownImageIds,
+          maxLinked: constants.bounties.maxEntryImagesForEdit,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -162,6 +192,11 @@ export const upsertBountyEntry = async ({
 
       return entry;
     } else {
+      // First statement of the create: the controller's limit check reads outside this
+      // transaction, so two parallel submits could both pass it. The row lock makes the second
+      // wait and then count the first one's committed entry.
+      await assertEntryAllowedUnderLock(tx, { bountyId, userId });
+
       const entry = await tx.bountyEntry.create({
         data: {
           bountyId,
@@ -217,7 +252,7 @@ export const upsertBountyEntry = async ({
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
   const logData = { entryId: id, userId, bountyId: 0 };
   const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
-    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
+    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra });
 
   await log('info', 'Award bounty entry started');
   const fileCheckOn = await isBountyEntryFileCheckOn();
@@ -388,9 +423,11 @@ export const getBountyEntryFilteredFiles = async ({
 
 export const deleteBountyEntry = async ({
   id,
+  userId,
   isModerator,
 }: {
   id: number;
+  userId: number;
   isModerator: boolean;
 }) => {
   const entryFindArgs = {
@@ -433,7 +470,8 @@ export const deleteBountyEntry = async ({
       async (tx) => {
         const locked = await lockBountyForPayout(tx, entry.bountyId);
         if (!evenIfPending && locked && isPayoutPending(locked)) return PAYOUT_PENDING;
-        return deleteEntryRows(tx, id);
+        // A moderator deleting their own entry deletes it as its owner.
+        return deleteEntryRows(tx, id, isModerator && entry.userId !== userId);
       },
       { maxWait: 10000, timeout: 30000 }
     );
@@ -449,33 +487,25 @@ export const deleteBountyEntry = async ({
       'This bounty has a payout still pending, so its entries cannot be deleted yet. Try again later.'
     );
   if (!deleted) return null;
-  await invalidateManyImageExistence(deleted.imageIds);
   return deleted.entry;
 };
 
 const PAYOUT_PENDING = Symbol('payout-pending');
 
-async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
-  const entryImageIds = Prisma.sql`SELECT ic."imageId" FROM "ImageConnection" ic
-    WHERE ic."entityId" = ${id} AND ic."entityType" = 'BountyEntry'`;
-  await tx.$executeRaw(
-    detachHeldThreadsSql(
-      { bountyEntryId: Prisma.sql`SELECT ${id}::int`, imageId: entryImageIds },
-      await holdMarkerViewExists()
-    )
-  );
+async function deleteEntryRows(tx: Prisma.TransactionClient, id: number, moderatorDelete: boolean) {
   const entry = await tx.bountyEntry.delete({ where: { id } });
   if (!entry) return null;
 
   await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-  const images = await tx.imageConnection.findMany({
-    select: { imageId: true },
-    where: { entityId: id, entityType: 'BountyEntry' },
-  });
-
-  await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-  const imageIds = images.map((i) => i.imageId);
-  await tx.image.deleteMany({ where: { id: { in: imageIds } } });
-
+  const connections = await tx.$queryRaw<{ imageId: number }[]>`
+    DELETE FROM "ImageConnection"
+    WHERE "entityId" = ${id} AND "entityType" = 'BountyEntry'
+    RETURNING "imageId"
+  `;
+  const imageIds = connections.map((connection) => connection.imageId);
+  // An entry can link any image its author owns, so only the ones nothing else uses go. One whose
+  // author was removed keeps its images.
+  if (entry.userId !== null)
+    await queueImageDeletes(kyselyOver(tx), imageIds, { ownerId: entry.userId, moderatorDelete });
   return { entry, imageIds };
 }

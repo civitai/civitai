@@ -2,6 +2,9 @@ import { STATUS } from './statuses';
 
 export type TicketView = 'moderation' | 'support';
 
+/** Where a ticket belongs. `legal` is no view: Legal works those tickets in Freshdesk, so neither list shows them. */
+export type TicketRoute = TicketView | 'legal';
+
 export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' || v === 'support';
 
 export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
@@ -32,9 +35,18 @@ export const TICKET_ROUTING = {
 /** Freshdesk tag that hands a ticket to support, unless its status is a moderation status. */
 export const SENT_TO_SUPPORT_TAG = 'sent-to-support';
 
-/** Whether `tags` carries the sent-to-support tag. Freshdesk treats tags case-insensitively. */
+/** Freshdesk tag that hands a ticket to Legal. Legal's intake watch keys on this tag alone. */
+export const PRIVACY_REQUEST_TAG = 'privacy-request';
+
+/** Freshdesk tag that marks a ticket a moderator sent to the mod lead, as opposed to support handing it back. */
+export const MOD_LEAD_REVIEW_TAG = 'mod-lead-review';
+
+/** Freshdesk treats tags case-insensitively. */
+export const hasTag = (tags: readonly string[] | undefined, tag: string): boolean =>
+  !!tags?.some((t) => t.toLowerCase() === tag);
+
 export const hasSentToSupportTag = (tags: readonly string[] | undefined): boolean =>
-  !!tags?.some((t) => t.toLowerCase() === SENT_TO_SUPPORT_TAG);
+  hasTag(tags, SENT_TO_SUPPORT_TAG);
 
 export type RoutingInput = {
   cfFeature: string | null | undefined;
@@ -46,11 +58,13 @@ export type RoutingInput = {
 const isIn = (list: readonly (string | number)[], value: string | number) => list.includes(value);
 
 /**
- * Precedence: moderation status, then the sent-to-support tag, then `cf_feature`, then the router's topic
- * (only for a ticket with no feature). A moderation status outranks the tag because that is how support
+ * Precedence: the privacy tag (Legal owns the ticket whatever else it carries), then moderation
+ * status, then the sent-to-support tag, then `cf_feature`, then the router's topic (only for a ticket
+ * with no feature). A moderation status outranks the sent-to-support tag because that is how support
  * hands an escalated ticket back.
  */
-export function routeTicket({ cfFeature, status, routerTopic, tags }: RoutingInput): TicketView {
+export function routeTicket({ cfFeature, status, routerTopic, tags }: RoutingInput): TicketRoute {
+  if (hasTag(tags, PRIVACY_REQUEST_TAG)) return 'legal';
   if (isIn(TICKET_ROUTING.moderationStatuses, status)) return 'moderation';
   if (hasSentToSupportTag(tags)) return 'support';
   const feature = cfFeature?.trim() ?? '';

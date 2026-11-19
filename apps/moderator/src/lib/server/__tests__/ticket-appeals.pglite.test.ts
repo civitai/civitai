@@ -45,6 +45,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await (h.db.current as Kysely<unknown>).destroy();
   h.db.current = null;
+  await pg.close();
 });
 
 const now = new Date('2026-10-29T00:00:00Z');

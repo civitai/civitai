@@ -38,8 +38,10 @@
   <Card>
     <CardHeader class="flex flex-row items-center gap-3">
       <CardTitle class="text-base text-white">Membership</CardTitle>
-      {#if isCP}
+      {#if isCP && isMember}
         <Badge variant="default" class="ml-auto">Creator Program</Badge>
+      {:else if isCP}
+        <Badge variant="outline" class="ml-auto">Membership inactive</Badge>
       {:else if isMember}
         <Badge variant="secondary" class="ml-auto">Member</Badge>
       {:else}
@@ -48,9 +50,13 @@
     </CardHeader>
     <CardContent class="flex flex-col gap-3">
       <p class="text-sm text-dark-0">
-        {#if isCP}
+        {#if isCP && isMember}
           You're a Creator Program member{tier ? ` on the ${tier} tier` : ''} —
           <strong class="text-green-5">monetization is unlocked</strong>.
+        {:else if isCP}
+          You're in the Creator Program, but
+          <strong class="text-white">your membership isn't active, so you can't bank more Buzz.</strong>
+          Buzz you've already banked still pays out at the end of the month.
         {:else if isMember}
           You have an active {tier} membership.
           <strong class="text-white">Join the Creator Program to unlock monetization.</strong>
@@ -59,7 +65,7 @@
         {/if}
       </p>
       <div class="flex flex-wrap gap-2">
-        {#if isMember || isCP}
+        {#if isMember}
           <Button
             href={CIVITAI_MANAGE_MEMBERSHIP_URL}
             target="_blank"
@@ -71,7 +77,7 @@
           </Button>
         {:else}
           <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm"
-            >Get a membership</Button
+            >{isCP ? 'Renew membership' : 'Get a membership'}</Button
           >
         {/if}
         {#if !isCP}

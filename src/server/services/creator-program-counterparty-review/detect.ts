@@ -13,8 +13,8 @@ import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
  * Creators and the users they exchange Buzz with in both directions.
  *
  * The bankable ledger already nets these exchanges (`creator-program-bankable.ts`), so this review
- * moves no money. It exists so a creator doing it at volume hears from us, and so a moderator can
- * decide whether they stay in the Creator Program.
+ * moves no money. It exists so a moderator can decide whether the creator stays in the Creator
+ * Program.
  */
 
 /** Stable producer key: it groups this review's runs on the abuse board. */

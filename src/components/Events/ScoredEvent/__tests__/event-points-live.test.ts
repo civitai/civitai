@@ -240,7 +240,12 @@ describe('roster card pushes', () => {
     const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
     const sent: { target: string; data: Record<string, unknown> }[] = [];
     const pusher = createEventPointsPusher({
-      selectWatched: async (_e, hats, teams, _s, owners = []) => ({ hats, teams, owners }),
+      selectWatched: async (_e, hats, teams, _s, owners = []) => ({
+        hats,
+        teams,
+        owners,
+        selves: [],
+      }),
       claimTeamsPush: async () => true,
       getHatTotals: async () => ({ points: { [hatField(hat)]: 64 }, counts: null }),
       getTeamPoints: async () => ({ Blue: 900 }),

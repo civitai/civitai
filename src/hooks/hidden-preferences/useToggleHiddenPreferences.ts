@@ -1,5 +1,6 @@
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import {
+  applyClearHidden,
   applyOptimisticHiddenToggle,
   applyToggleSuccess,
   EMPTY_HIDDEN_CACHE,
@@ -42,6 +43,25 @@ export const useToggleHiddenPreferences = () => {
         queryUtils.hiddenPreferences.getHidden.setData(undefined, plan.restore as any);
       else await queryUtils.hiddenPreferences.getHidden.invalidate();
     },
+  });
+};
+
+export const useClearHiddenPreferences = () => {
+  const queryUtils = trpc.useUtils();
+
+  return trpc.hiddenPreferences.clearHidden.useMutation({
+    onSuccess: async (_result, { kind }) => {
+      queryUtils.hiddenPreferences.getHidden.setData(
+        undefined,
+        (old) => applyClearHidden(old as never, kind) as typeof old
+      );
+      if (kind === 'model') await queryUtils.hiddenPreferences.getHiddenModels.invalidate();
+      else {
+        await queryUtils.user.getLists.invalidate();
+        await queryUtils.user.getList.invalidate();
+      }
+    },
+    onError: (error) => showErrorNotification({ error }),
   });
 };
 

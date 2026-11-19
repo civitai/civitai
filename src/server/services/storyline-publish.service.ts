@@ -1,5 +1,7 @@
+import { Prisma } from '@prisma/client';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { onStorySparked } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { contentRestriction } from '~/server/common/content-restriction';
 import { createNotification } from '~/server/services/notification.service';
@@ -20,12 +22,9 @@ import {
   writeOwnerChapter,
 } from '~/server/services/storyline.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import {
-  STORYLINE_MINOR_CEILING,
-  storylineCeiling,
-  storylineLevelAllowed,
-} from '~/shared/utils/storyline';
+import { storylineCeiling, storylineLevelAllowed } from '~/shared/utils/storyline';
 import {
   STORYLINE_REFUSALS,
   storylineRatingGap,
@@ -209,7 +208,7 @@ const logFailure = (message: string, postId: number) => (error: unknown) =>
     message,
     postId,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => undefined);
+  });
 
 type PendingChapterPromotion =
   | {
@@ -244,8 +243,9 @@ const aboveRatingWait = (gap: StorylineRatingGap): PendingChapterPromotion => {
  * it, except past the safe-for-work cap of a minor-flagged title.
  */
 export async function promotePendingChapter(postId: number): Promise<PendingChapterPromotion> {
+  let root = false;
   try {
-    return await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
+    const result = await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
       const [link] = await tx.$queryRaw<
         { storylineId: number; parentChapterId: number | null; userId: number }[]
       >`
@@ -308,6 +308,7 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           postId,
           userId: link.userId,
         }));
+        root = true;
       } else {
         const parentChapter = await tx.storylineChapter.findUnique({
           where: { id: link.parentChapterId },
@@ -339,6 +340,8 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
         ceilingRaisedTo,
       };
     });
+    if (root && result.status === 'written') void onStorySparked(result.storylineId);
+    return result;
   } catch (error) {
     // The post's chapter row, or the storyline's chapter 1, committed by a writer that got there
     // between this one's checks and its insert.
@@ -441,8 +444,11 @@ export function selectReadyPendingChapters(limit: number) {
           AND NOT EXISTS (
             SELECT 1 FROM "StorylineChapter" r WHERE r."storylineId" = st.id AND r.depth = 0
           )
-          AND p."nsfwLevel" < 2 * (CASE WHEN st."minorByScan" THEN ${STORYLINE_MINOR_CEILING}::int
-            ELSE ${NsfwLevel.XXX}::int END)
+          AND NOT ${minorContentRestrictedSql({
+            minor: Prisma.sql`st."minorByScan"`,
+            nsfwLevel: Prisma.sql`p."nsfwLevel"`,
+          })}
+          AND p."nsfwLevel" < 2 * ${NsfwLevel.XXX}::int
         )
         OR (
           pc."parentChapterId" IS NOT NULL

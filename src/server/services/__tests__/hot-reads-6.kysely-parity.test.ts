@@ -1,52 +1,55 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
 import {
-  downloadFilesWhere,
+  compiledRelations,
+  declaredViews,
+  isViewMarker,
+  relationsOf,
+  schemaLines,
+} from '~/server/db/__tests__/no-view-ledger';
+import {
   readActiveDonationGoalsViaKysely,
   readActiveDonationGoalsViaPrisma,
   readDownloadFilesViaKysely,
-  readDownloadFilesViaPrisma,
   readExistingModelVersionIdsViaKysely,
   readExistingModelVersionIdsViaPrisma,
   readModelAssociationTargetsViaKysely,
-  readModelAssociationTargetsViaPrisma,
   readModelPoiAndOwnerViaKysely,
-  readModelPoiAndOwnerViaPrisma,
   readModelVersionEngagementsViaKysely,
-  readModelVersionEngagementsViaPrisma,
   readModelVersionOwnerViaKysely,
-  readModelVersionOwnerViaPrisma,
   readModelVersionPrivacyViaKysely,
   readModelVersionPrivacyViaPrisma,
   readPostDetailViaKysely,
   readPostDetailViaPrisma,
   readUserBannedAtViaKysely,
-  readUserBannedAtViaPrisma,
   readUserIdByUsernameViaKysely,
-  readUserIdByUsernameViaPrisma,
   readUserReviewsViaKysely,
-  readUserReviewsViaPrisma,
   type UserReviewsInput,
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere, PostDetailViewer } from '@civitai/db-queries/hot-reads-6';
 import { AssociationType } from '~/shared/utils/prisma/enums';
 
 /**
- * Parity gate for the reads behind `kysely-hot-reads-6`. Both paths run against the same rows in
- * the same database and must return the same value, `toStrictEqual`: the same keys, timestamps as
- * UTC Dates, enums as strings, JSON as parsed values, NULL as `null`, floats as numbers. A read
- * with no `orderBy` is unordered on both sides, so both are compared sorted (nested lists too).
+ * The hot-reads-6 Kysely reads (hot-reads-6.reads.ts). Each must return, `toStrictEqual`, the value
+ * the Prisma read it replaced returned for the same rows: the same keys, timestamps as UTC Dates,
+ * enums as strings, JSON as parsed values, NULL as `null`, floats as numbers. A read with no
+ * `orderBy` is unordered, so it is compared sorted (nested lists too).
  *
- * Where a Kysely twin answers `undefined` (a row it cannot map: an orphaned required relation), the
- * caller runs the Prisma read instead, so those cases compare the caller's composite, settled, with
- * the Prisma read settled: the same value or the same rejection.
+ * Those values are fixtures/hot-reads-6-golden.json: the Prisma reads' output for these same
+ * fixture rows. A change to the fixture rows needs the golden re-derived by hand.
+ *
+ * Where a Kysely read answers `undefined` (a row it cannot map: an orphaned required relation), the
+ * caller runs a Prisma read instead. The post detail and the metric-privacy inputs keep that Prisma
+ * reader here, so they are still compared live: the caller's composite, settled, with the Prisma
+ * read settled (the same value or the same rejection). So are the donation goals lookup's reads,
+ * whose Prisma side still serves the primary. The model version's owner falls back to
+ * `getVersionById` instead, so only the cases Kysely answers are pinned.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_6_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost. Locally, KYSELY_PARITY_DATABASE_URL
@@ -123,6 +126,8 @@ const F_MODEL = 7201;
 const F_CONFIG_PRIVATE = 7202;
 const F_REPLACED = 7203;
 const F_SENSITIVE = 7204;
+
+const golden = readTaggedGolden(resolve(here, 'fixtures/hot-reads-6-golden.json'));
 
 const sortBy =
   <T>(key: (row: T) => number) =>
@@ -294,25 +299,17 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
   });
 
   describe("a model version's owner", () => {
-    const viaService = async (id: number) =>
-      (await readModelVersionOwnerViaKysely(kysely, id)) ??
-      (await readModelVersionOwnerViaPrisma(prisma, id));
-
     it.each([
       ['an owner with a picture and cosmetics', MV_A],
       ['an owner with a dangling picture id and NULL-data cosmetics', MV_POI],
       ['a deleted owner with no username', MV_DELETED_OWNER],
-      ['a missing version', MV_GONE],
-      ['a version whose model is gone', MV_MODEL_GONE],
-      ["a version whose model's user is gone", MV_USER_GONE],
     ])('%s', async (_, id) => {
-      const normalize = (read: Awaited<ReturnType<typeof viaService>>) =>
+      const normalize = (read: Awaited<ReturnType<typeof readModelVersionOwnerViaKysely>>) =>
         read && { model: { user: normalizeUser(read.model.user) } };
-      const viaPrisma = await settle(async () =>
-        normalize(await readModelVersionOwnerViaPrisma(prisma, id))
+      const viaKysely = await settle(async () =>
+        normalize(await readModelVersionOwnerViaKysely(kysely, id))
       );
-      const viaKysely = await settle(async () => normalize(await viaService(id)));
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`owner:${_}`));
     });
 
     it('control: each branch reads the fixture expected', async () => {
@@ -360,10 +357,10 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       expect(
         (await readModelVersionOwnerViaKysely(kysely, MV_DELETED_OWNER))?.model.user.deletedAt
       ).toStrictEqual(new Date('2026-01-02T03:04:05.678Z'));
-      // No row: the caller falls back to Prisma (null for a missing version, a throw for an orphan).
+      // No row: the caller falls back to `getVersionById` (null for a missing version, a throw for an
+      // orphan).
       for (const id of [MV_GONE, MV_MODEL_GONE, MV_USER_GONE])
         expect(await readModelVersionOwnerViaKysely(kysely, id)).toBeUndefined();
-      expect(await readModelVersionOwnerViaPrisma(prisma, MV_GONE)).toBeNull();
     });
   });
 
@@ -482,7 +479,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       ['a missing model', M_GONE],
     ])('%s', async (_, id) => {
       expect(await readModelPoiAndOwnerViaKysely(kysely, id)).toStrictEqual(
-        await readModelPoiAndOwnerViaPrisma(prisma, id)
+        golden.take(`poi-owner:${_}`)
       );
     });
 
@@ -498,13 +495,13 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
   describe('a user by username', () => {
     it.each(['owner', 'dangling', 'viewer', 'missing'])('id of %s', async (username) => {
       expect(await readUserIdByUsernameViaKysely(kysely, username)).toStrictEqual(
-        await readUserIdByUsernameViaPrisma(prisma, username)
+        golden.take(`user-id:${username}`)
       );
     });
 
     it.each(['owner', 'dangling', 'missing'])('bannedAt of %s', async (username) => {
       expect(await readUserBannedAtViaKysely(kysely, username)).toStrictEqual(
-        await readUserBannedAtViaPrisma(prisma, username)
+        golden.take(`banned-at:${username}`)
       );
     });
 
@@ -580,7 +577,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       ['no versions', { userId: VIEWER, modelVersionIds: [] }],
     ])('%s', async (_, input) => {
       expect(byVersion(await readModelVersionEngagementsViaKysely(kysely, input))).toStrictEqual(
-        byVersion(await readModelVersionEngagementsViaPrisma(prisma, input))
+        golden.take(`engagements:${_}`)
       );
     });
 
@@ -608,7 +605,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
     ])('%s', async (_, input) => {
       // Ordered by `index`: compared as returned, not sorted.
       expect(await readModelAssociationTargetsViaKysely(kysely, input)).toStrictEqual(
-        await readModelAssociationTargetsViaPrisma(prisma, input)
+        golden.take(`associations:${_}`)
       );
     });
 
@@ -640,7 +637,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       ['no reviews', { userId: MANAGER, recommended: true }],
     ])('%s', async (_, input) => {
       expect(byVersion(await readUserReviewsViaKysely(kysely, input))).toStrictEqual(
-        byVersion(await readUserReviewsViaPrisma(prisma, input))
+        golden.take(`user-reviews:${_}`)
       );
     });
 
@@ -704,7 +701,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       ['no files', { modelVersionId: MV_GONE, notReplaced: true }],
     ])('%s', async (_, where) => {
       expect(byFile(await readDownloadFilesViaKysely(kysely, where))).toStrictEqual(
-        byFile(await readDownloadFilesViaPrisma(prisma, downloadFilesWhere(where)))
+        golden.take(`download-files:${_}`)
       );
     });
 
@@ -722,6 +719,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Model',
           metadata: { fp: 'fp16', size: 'full' },
           sizeKB: 1234.5,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [{ hash: 'SHA-MODEL' }],
         },
         {
@@ -732,6 +731,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Config',
           metadata: null,
           sizeKB: 0.25,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [],
         },
         {
@@ -742,6 +743,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Model',
           metadata: {},
           sizeKB: 2048,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [{ hash: 'SHA-SENSITIVE' }],
         },
       ]);
@@ -756,50 +759,14 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       ).toStrictEqual([F_MODEL]);
     });
   });
+
+  // Last in the block: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
+  });
 });
 
 // No statement reads a VIEW. Offline: the statements are compiled, not run.
-
-const SCHEMA_PRISMA = resolve(
-  here,
-  '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-);
-
-const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
-const isViewMarker = (line: string) => line.trim() === '/// @view';
-
-/**
- * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
- * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
- * line skips blank and `///` lines and stops at anything else.
- */
-function declaredViews(): Set<string> & { markersAttributed: number } {
-  const lines = schemaLines();
-  const views = new Set<string>();
-  const attributed = new Set<number>();
-  lines.forEach((line, i) => {
-    const model = /^model (\w+) \{/.exec(line);
-    if (!model) return;
-    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
-      if (isViewMarker(lines[j])) {
-        views.add(model[1]);
-        attributed.add(j);
-      }
-  });
-  return Object.assign(views, { markersAttributed: attributed.size });
-}
-
-/** The quoted relation names a compiled statement reads FROM or JOINs, sorted. */
-function relationsOf(sqlText: string): string[] {
-  return [...sqlText.matchAll(/\b(?:from|join)\s+"(\w+)"/gi)].map((match) => match[1]).sort();
-}
-
-async function compiledRelations(read: (db: never) => Promise<unknown>) {
-  const harness = compileHarness();
-  // The dummy driver returns no rows, so a read that requires one stops after its first statement.
-  await read(harness.db as never).catch(() => undefined);
-  return harness.queries.map((query) => relationsOf(query.sql));
-}
 
 describe('hot reads 6: no statement reads a view', () => {
   const TABLES = [

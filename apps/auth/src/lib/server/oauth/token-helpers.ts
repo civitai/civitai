@@ -2,7 +2,11 @@ import { error } from '@sveltejs/kit';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { db } from '$lib/server/db/db';
+import { apiKeyScopeInsert } from './scope';
+import { lockAppBlockSuspended } from './app-block-mint-lock';
 import { OAUTH_TOKEN_PREFIX, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from './constants';
 
 interface TokenPair {
@@ -12,20 +16,28 @@ interface TokenPair {
   refreshTokenExpiresAt: Date;
 }
 
+/** The ApiKey `name` prefix of an access token minted by the client_credentials grant. */
+export const CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX = 'oauth-cc:';
+
 async function insertToken(opts: {
+  executor?: Kysely<DB>;
   userId: number;
   clientId: string;
-  scope: number;
+  scope: bigint;
   type: 'Access' | 'Refresh';
   expiresAt: Date;
+  clientCredentials?: boolean;
 }): Promise<string> {
   const token = OAUTH_TOKEN_PREFIX + generateKey(36);
-  await db
+  const prefix = opts.clientCredentials
+    ? CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX
+    : `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:`;
+  await (opts.executor ?? db)
     .insertInto('ApiKey')
     .values({
       key: generateSecretHash(token),
-      name: `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:${opts.clientId}`,
-      tokenScope: opts.scope,
+      name: `${prefix}${opts.clientId}`,
+      ...apiKeyScopeInsert(opts.scope),
       userId: opts.userId,
       type: opts.type,
       expiresAt: opts.expiresAt,
@@ -33,6 +45,29 @@ async function insertToken(opts: {
     })
     .execute();
   return token;
+}
+
+const AI_SERVICES_SCOPES = TokenScope.AIServicesRead | TokenScope.AIServicesWrite;
+
+/** Whether `user` (undefined: not found) may not hold `scope`: a restricted account gets no AI Services scope. */
+export function accountRefusesScope(
+  user: { muted: boolean; bannedAt: Date | null } | undefined,
+  scope: bigint
+): boolean {
+  if ((scope & AI_SERVICES_SCOPES) === 0n) return false;
+  return !user || user.muted || !!user.bannedAt;
+}
+
+/** A restricted account gets no AI Services token from any grant, issue or refresh; other scopes still issue. */
+async function assertScopeAllowedForAccount(userId: number, scope: bigint) {
+  if ((scope & AI_SERVICES_SCOPES) === 0n) return;
+  const user = await db
+    .selectFrom('User')
+    .select(['muted', 'bannedAt'])
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  if (accountRefusesScope(user, scope))
+    error(403, 'This account cannot be granted AI Services access.');
 }
 
 /**
@@ -46,10 +81,11 @@ async function insertToken(opts: {
 export async function createOAuthTokenPair(
   userId: number,
   clientId: string,
-  scope: number
+  scope: bigint
 ): Promise<TokenPair> {
   if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
     error(403, 'This account cannot sign in.');
+  await assertScopeAllowedForAccount(userId, scope);
   const now = new Date();
 
   // UserRead is a mandatory baseline on every OAuth token: an app acting on a user's behalf must always
@@ -78,20 +114,41 @@ export async function createOAuthTokenPair(
   return { accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt };
 }
 
-/** Access-only mint for app blocks: no refresh token, caller-bounded TTL, same prefix/hash as the pair. */
+/**
+ * Access-only mint for app blocks and the client_credentials grant: no refresh token, caller-bounded TTL,
+ * same prefix/hash as the pair. A client_credentials token is named `oauth-cc:<clientId>`.
+ */
 export async function createAppAccessToken(
   userId: number,
   clientId: string,
-  scope: number,
-  ttlSeconds: number
+  scope: bigint,
+  ttlSeconds: number,
+  opts: { clientCredentials?: boolean; refuseSuspendedAppBlock?: boolean } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {
+  await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
-  const accessToken = await insertToken({
-    userId,
-    clientId,
-    scope: scope | TokenScope.UserRead,
-    type: 'Access',
-    expiresAt,
+  const insert = (executor?: Kysely<DB>) =>
+    insertToken({
+      executor,
+      userId,
+      clientId,
+      scope: scope | TokenScope.UserRead,
+      type: 'Access',
+      expiresAt,
+      clientCredentials: opts.clientCredentials,
+    });
+  if (!opts.refuseSuspendedAppBlock) return { accessToken: await insert(), expiresAt };
+
+  const accessToken = await db.transaction().execute(async (trx) => {
+    if (await lockAppBlockSuspended(trx, clientId)) throw new AppBlockSuspendedError();
+    return insert(trx);
   });
   return { accessToken, expiresAt };
+}
+
+export class AppBlockSuspendedError extends Error {
+  constructor() {
+    super('app block suspended');
+    this.name = 'AppBlockSuspendedError';
+  }
 }

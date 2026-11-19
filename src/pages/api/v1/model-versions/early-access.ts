@@ -13,9 +13,9 @@ import { getCapTier } from '~/server/services/subscriptions.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Tracker } from '~/server/clickhouse/client';
-import { env } from '~/env/server';
-import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Narrow cross-app write for a model version's paid-access config — the creator
 // studio (SvelteKit spoke) calls this server-to-server, forwarding the shared
@@ -68,7 +68,7 @@ export default AuthedEndpoint(
     if (
       paidAccess?.permanent &&
       !user.isModerator &&
-      !matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN)
+      !webhookTokenAuthenticates(req, req.query.token)
     ) {
       return res
         .status(403)
@@ -131,5 +131,6 @@ export default AuthedEndpoint(
       return res.status(status).json({ error: err?.message ?? 'Failed to update early access' });
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.ModelsWrite } }
 );

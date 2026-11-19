@@ -11,6 +11,7 @@
  */
 
 import { ModelType, type MediaType } from '@civitai/db-schema/enums';
+import { NsfwLevel } from './browsing-levels';
 import { lazy } from './lazy';
 import { isDefined } from './type-guards';
 
@@ -117,9 +118,10 @@ export type LicenseRecord = {
   // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
   // several licences use for a liability disclaimer rather than an attribution.
   attribution?: string;
-  disableMature?: boolean;
   // License forbids commercial use (drives commercial-use override + monetization block).
   nonCommercial?: boolean;
+  // License requires derivatives to carry the same license.
+  requiresSameLicense?: boolean;
 };
 
 export type BaseModelFamilyRecord = {
@@ -138,7 +140,17 @@ export type BaseModelRecord = {
   disabled?: boolean; // Disables ALL support types (generation, training, auction, etc.)
   licenseId?: number;
   experimental?: boolean; // If true, show experimental warning in generation UI
+  // Where mature content is restricted, as the terms governing our use of this base model
+  // require. The only definition; see isMatureRestricted.
+  matureRestricted?: readonly MatureRestrictedSurface[];
 };
+
+/**
+ * - `generation`: our generator caps output below the mature levels.
+ * - `models`: models that carry mature content can't be published on the base model.
+ * - `images`: posted images at a mature level that use it are flagged and hidden.
+ */
+export type MatureRestrictedSurface = 'generation' | 'models' | 'images';
 
 // =============================================================================
 // Ecosystem Constants
@@ -214,6 +226,7 @@ export const ECO = {
   LTXV25: 81,
   Sora2: 43,
   Veo3: 44,
+  GeminiOmni: 98,
   SVD: 45,
   Vidu: 47,
   MiniMaxH3: 48,
@@ -234,6 +247,10 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
+  // MiniMax's image model. Its own ecosystem, not a MiniMaxH3 version: separate weights, and
+  // H3 video LoRAs do not apply to it.
+  MiniMaxH3Image: 97,
+  Fibo2: 99,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -620,6 +637,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 7,
     sortOrder: 72,
   },
+  {
+    id: ECO.GeminiOmni,
+    key: 'GeminiOmni',
+    displayName: 'Gemini Omni',
+    familyId: 7,
+    sortOrder: 73,
+  },
 
   // OpenAI Family (familyId: 8)
   {
@@ -870,6 +894,13 @@ export const ecosystems: EcosystemRecord[] = [
     // txt2vid + img2vid (no vid2vid support currently)
   },
   {
+    id: ECO.MiniMaxH3Image,
+    key: 'MiniMaxH3Image',
+    displayName: 'MiniMax H3 Image',
+    familyId: 26,
+    sortOrder: 165,
+  },
+  {
     id: ECO.Kling,
     key: 'Kling',
     displayName: 'Kling',
@@ -944,6 +975,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MOSS Image',
     familyId: 29,
     sortOrder: 272,
+  },
+
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
   },
 
   // Audio ecosystems
@@ -1068,6 +1108,10 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Flux3Klein_base',
   // ComfyMossImage{Sft,Base}CreateImageInput
   'MossImage',
+  // ComfyMiniMaxH3{Create,Edit}ImageInput
+  'MiniMaxH3Image',
+  // ComfyFibo2DevCreateImageInput, ComfyFibo2EditTurboEditImageInput
+  'Fibo2',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1242,6 +1286,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Veo3 - checkpoint only
   { ecosystemId: ECO.Veo3, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // GeminiOmni - checkpoint only
+  { ecosystemId: ECO.GeminiOmni, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Grok - checkpoint only
   { ecosystemId: ECO.Grok, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1262,7 +1309,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  // MAI - checkpoint only (Microsoft MAI Image, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
@@ -1287,6 +1334,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
+  // MiniMax H3 Image - LoRAs and creator checkpoints for generation; LORA training (AI Toolkit only)
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'training', modelTypes: loraOnly },
+  // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
+  { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1303,7 +1355,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux3Klein, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Flux3Klein_base, supportType: 'generation', modelTypes: checkpointAndLora },
   // MOSS Image - open weights, checkpoint and LoRA
-  { ecosystemId: ECO.MossImage, supportType: 'generation', modelTypes: [...checkpointAndLora, ModelType.LoCon] },
+  {
+    ecosystemId: ECO.MossImage,
+    supportType: 'generation',
+    modelTypes: [...checkpointAndLora, ModelType.LoCon],
+  },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1503,7 +1559,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Ideogram,
     defaults: {
-      model: { id: 3246186 },
+      model: { id: 3375798 },
       modelLocked: true,
     },
   },
@@ -1722,6 +1778,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.GeminiOmni,
+    defaults: {
+      model: { id: 3465115 },
+      modelLocked: true,
+      engine: 'gemini-omni',
+    },
+  },
+  {
     ecosystemId: ECO.NanoBanana,
     defaults: {
       model: { id: 2154472 },
@@ -1781,7 +1845,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
       // The comfy variant, not the hosted API one: it is the version the model
       // page publishes, and the only one that takes LoRAs.
       model: { id: 3216500 },
-      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MiniMaxH3Image,
+    defaults: {
+      model: { id: 3463368 },
+    },
+  },
+  {
+    ecosystemId: ECO.Fibo2,
+    defaults: {
+      model: { id: 3469179 },
+      // No published settings for Fibo's turbo LoRA; borrows the MOSS few-step, CFG-free band.
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -2436,6 +2513,10 @@ export const BM = {
   Flux3Klein: 115,
   Flux3Klein_base: 116,
   MossImage: 117,
+  MiniMaxH3Image: 118,
+  GeminiOmni: 119,
+  Fibo2: 120,
+  Fibo2Turbo: 121,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2457,6 +2538,11 @@ export const supportOverrides: SupportOverride[] = [
   // SD3 group - no training (redundant since all SD3 models are disabled, but kept for documentation)
   // { ecosystemId: ECO.SD3, supportType: 'training', enabled: false },
   // { ecosystemId: ECO.SD35M, supportType: 'training', enabled: false },
+  // Not licensed for on-site generation. Ideogram 4.5 shares the ecosystem but is licensed
+  // separately, so this is per base model, never per ecosystem.
+  { baseModelId: BM.Ideogram, supportType: 'generation', disabled: true },
+  // An API model with no LoRA input; the ecosystem's LoRA support is Ideogram 4.0's.
+  { baseModelId: BM.Ideogram45, supportType: 'generation', modelTypes: ['Checkpoint'] },
 ];
 
 // =============================================================================
@@ -2473,6 +2559,8 @@ export const licenses: LicenseRecord[] = [
     id: 2,
     name: 'SDXL 0.9 research license',
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL0.9',
+    notice:
+      'SDXL 0.9 is licensed under the SDXL Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
   {
     id: 3,
@@ -2481,26 +2569,27 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 4,
+    // No base model uses this since Stability relicensed SDXL Turbo to the Community License (id 9).
     name: 'Stability AI Non-Commercial Research Community License',
     url: 'https://huggingface.co/stabilityai/sdxl-turbo/blob/main/LICENSE.md',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 5,
+    // No base model uses this since Stability relicensed SVD to the Community License (id 9).
     name: 'Stable Video Diffusion Community License',
     url: 'https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/blob/main/LICENSE.md',
     notice:
       'Stable Video Diffusion is licensed under the Stable Video Diffusion Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 6,
     name: 'Playground v2 Community License',
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
+    notice: 'Playground v2 is licensed under the Playground v2 Community License.',
   },
   {
     id: 7,
@@ -2509,12 +2598,11 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 8,
-    name: 'SAI NC RC',
+    name: 'Stability AI Non-Commercial Research Community License',
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
     notice:
-      'Stable Cascade is licensed under the Stable Cascade Non-Commercial Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    poweredBy: 'Powered by Stability AI',
-    disableMature: true,
+      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    nonCommercial: true,
   },
   {
     id: 9,
@@ -2523,30 +2611,27 @@ export const licenses: LicenseRecord[] = [
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
-    disableMature: true,
   },
   {
     id: 10,
     name: 'Tencent Hunyuan Community License Agreement',
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     notice:
-      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of "Tencent Hunyuan" are owned by Tencent or its affiliate.',
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
     poweredBy: 'Powered by Tencent Hunyuan',
   },
   {
     id: 11,
-    name: 'Tencent Hunyuan Video License Agreement',
+    name: 'Tencent Hunyuan Community License Agreement',
     url: 'https://huggingface.co/tencent/HunyuanVideo/blob/main/LICENSE',
     notice:
-      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of "Tencent Hunyuan" are owned by Tencent or its affiliate.',
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
     poweredBy: 'Powered by Tencent Hunyuan',
   },
   {
     id: 12,
     name: 'Kolors License',
     url: 'https://raw.githubusercontent.com/Kwai-Kolors/Kolors/master/MODEL_LICENSE',
-    notice:
-      'Kolors is licensed under the Kolors Model License Agreement, Copyright (c) Kuaishou Technology. All Rights Reserved.',
   },
   {
     id: 13,
@@ -2558,9 +2643,10 @@ export const licenses: LicenseRecord[] = [
     name: 'FLUX.1 [dev] Non-Commercial License',
     url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
     notice:
-      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    requiresSameLicense: true,
   },
   {
     id: 15,
@@ -2569,18 +2655,19 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 16,
-    name: 'LTX Video License',
+    name: 'LTXV Open Weights License 0.X',
     url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
   },
   {
     id: 17,
-    name: 'CogVideoX License',
-    url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
+    name: 'The CogVideoX License',
+    url: 'https://huggingface.co/zai-org/CogVideoX-5b/blob/main/LICENSE',
   },
   {
     id: 18,
-    name: 'NoobAI License',
+    name: 'Fair AI Public License 1.0-SD (NoobAI terms)',
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
+    requiresSameLicense: true,
   },
   {
     id: 19,
@@ -2589,77 +2676,88 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 20,
-    name: 'OpenAI',
-    url: 'https://openai.com/policies/',
+    name: 'OpenAI Services Agreement',
+    url: 'https://openai.com/policies/services-agreement/',
   },
   {
     id: 21,
-    name: 'Imagen4',
-    url: 'https://deepmind.google/about/responsibility-safety/',
+    name: 'Gemini API Additional Terms of Service',
+    url: 'https://ai.google.dev/gemini-api/terms',
   },
   {
     id: 22,
-    name: 'Veo 3',
-    url: 'https://policies.google.com/terms',
+    name: 'Gemini API Additional Terms of Service',
+    url: 'https://ai.google.dev/gemini-api/terms',
   },
   {
     id: 23,
-    name: 'Seedream',
-    url: 'https://seed.bytedance.com/en/user-agreement',
+    name: 'BytePlus ModelArk Terms and Conditions',
+    url: 'https://docs.byteplus.com/en/docs/ModelArk/Terms_and_Conditions',
   },
   {
     id: 24,
-    name: 'Pony',
+    name: 'Pony License',
     url: 'https://purplesmart.ai/license',
+    notice: 'This Model is licensed under the Pony License. All Rights Reserved.',
+    poweredBy: 'Powered by PurpleSmartAI, INC',
+    requiresSameLicense: true,
   },
   {
     id: 25,
-    name: 'CircleStone Labs Non-Commercial License v1.0',
+    name: 'CircleStone Labs Non-Commercial License v1.2',
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
     notice:
       'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    // NVIDIA Open Model License section 3.2: Anima is built on Cosmos.
+    poweredBy: 'Built on NVIDIA Cosmos',
   },
   {
     id: 26,
-    name: 'Grok',
-    url: 'https://x.ai/legal/terms-of-service',
+    name: 'xAI Terms of Service - Enterprise',
+    url: 'https://x.ai/legal/terms-of-service-enterprise',
   },
   {
     id: 27,
-    name: 'HappyHorse',
-    url: 'https://happyhorsesai.com/',
+    // Model Studio, which serves HappyHorse and the API-only Qwen 2 and 3, sells under these.
+    name: 'Alibaba Cloud International Website Product Terms of Service',
+    url: 'https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service-v-3-8-0',
   },
   {
     id: 28,
-    name: 'Krea AI Terms of Service',
+    name: 'Krea Terms of Use',
     url: 'https://www.krea.ai/terms',
   },
   {
     id: 29,
-    name: 'FLUX.2 [dev] Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
     notice:
-      'The FLUX.2 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.2 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 30,
-    name: 'FLUX.2 Klein 9B Non-Commercial License',
-    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
     notice:
-      'The FLUX.2 Klein 9B Model is licensed by Black Forest Labs. Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   {
     id: 31,
-    name: 'Alibaba Wan / Tongyi Wanxiang Terms of Service',
-    url: 'https://wan.video/',
+    name: 'Wan Terms of Service',
+    url: 'https://wan.video/policy/termsofService',
   },
   {
     id: 32,
-    name: 'ShengShu Vidu Terms of Service',
+    name: 'Vidu Terms of Service',
     url: 'https://www.vidu.com/terms',
   },
   {
@@ -2669,8 +2767,8 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 34,
-    name: 'Kuaishou Kling AI Terms of Service',
-    url: 'https://klingai.com/docs/user-policy',
+    name: 'Kling AI Terms of Service',
+    url: 'https://kling.ai/docs/user-policy',
   },
   {
     id: 35,
@@ -2679,21 +2777,21 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 36,
-    name: 'Microsoft AI Terms of Use',
-    url: 'https://www.microsoft.com/en-us/servicesagreement',
+    // Azure sells the MAI models as Foundry Models.
+    name: 'Microsoft Product Terms',
+    url: 'https://www.microsoft.com/licensing/terms/productoffering/MicrosoftAzure/MCA',
   },
   {
     id: 37,
     name: 'Ideogram Non-Commercial Model Agreement',
-    // Public blob page — the nf4 `raw` URL is gated and 401s, and their license's
-    // own cited github URL 404s. The license name links here in the UI.
-    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
-    // Section 3(iii) attribution wording; the URL lives on the linked license name
-    // above the notice, so we omit the bare URL here.
+    // Ideogram’s own ungated copy; the Hugging Face files are gated.
+    url: 'https://ideogram.ai/legal/non-commercial-model-agreement/',
+    // Section 3(iii) wording, URL included: the licence’s own link drops /blob/main/ and 404s.
     notice:
-      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
-    disableMature: true,
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://github.com/ideogram-oss/ideogram4/blob/main/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL. All rights reserved. Copyright © Ideogram, Inc.',
     nonCommercial: true,
+    // Redistribution must be on terms no less restrictive.
+    requiresSameLicense: true,
   },
   {
     id: 38,
@@ -2702,8 +2800,8 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 39,
-    name: 'Black Forest Labs Terms of Service',
-    url: 'https://bfl.ai/legal/terms-of-service',
+    name: 'Black Forest Labs Developer Terms of Service',
+    url: 'https://bfl.ai/legal/developer-terms-of-service',
   },
   {
     id: 40,
@@ -2711,6 +2809,9 @@ export const licenses: LicenseRecord[] = [
     // to LTX-2.5 and later, and stricter than the Jan 2026 text the 2.x weights carry.
     name: 'LTX-2.x Community License Agreement',
     url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
+    notice:
+      'LTX Video 2.5 and its derivatives, including LoRAs and fine-tunes, are licensed by Lightricks Ltd. under the LTX-2.x Community License Agreement and must be redistributed under that same agreement, with a copy included. Use is subject to the use restrictions in its Attachment A. Entities with annual revenues of at least $10,000,000 must obtain a paid commercial license from Lightricks before any commercial use.',
+    requiresSameLicense: true,
   },
   {
     id: 41,
@@ -2721,12 +2822,13 @@ export const licenses: LicenseRecord[] = [
     // commit, and section III.1 obliges us to hand over a stable copy.
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     notice:
-      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+      'MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
     // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
     // header and ecosystem label both render it, so no `attribution` line is
     // needed under the generate button. "Powered by MiniMax H3" is the separate,
     // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
+    requiresSameLicense: true,
   },
   {
     id: 42,
@@ -2741,10 +2843,9 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 43,
-    // Muse Image ships API-only through fal; Meta publishes no model-specific
-    // licence, so the governing text is Meta's general AI terms.
-    name: 'Meta AI Terms of Service',
-    url: 'https://www.meta.com/legal/ai-terms/',
+    // Muse Image ships API-only, through Meta’s Model API.
+    name: 'Meta Model API Terms of Service',
+    url: 'https://dev.meta.ai/legal/terms-of-service',
   },
   {
     id: 44,
@@ -2754,7 +2855,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 45,
     name: 'Qwen Research License Agreement',
-    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/f52e6a529129fff6a994469561673ea45a84043d/LICENSE',
     notice:
       'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
     nonCommercial: true,
@@ -2766,9 +2867,8 @@ export const licenses: LicenseRecord[] = [
   },
   {
     id: 47,
-    name: 'Ideogram Terms of Service',
-    url: 'https://ideogram.ai/legal/tos',
-    disableMature: true,
+    name: 'Ideogram Developer API Agreement and Policy',
+    url: 'https://ideogram.ai/legal/api-tos',
   },
   {
     id: 48,
@@ -2777,6 +2877,10 @@ export const licenses: LicenseRecord[] = [
     name: 'Krea 2 Community License Agreement',
     // The licence link on the Hugging Face model cards, pinned to a commit.
     url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    notice:
+      'Krea 2 is licensed under the Krea 2 Community License Agreement. For more information, visit https://krea.ai/krea-2-licensing.',
+    // Section 3.1(a) binds every recipient of the model or a derivative to the Agreement.
+    requiresSameLicense: true,
   },
   {
     id: 49,
@@ -2787,6 +2891,66 @@ export const licenses: LicenseRecord[] = [
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
     nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  {
+    id: 50,
+    // Id 14, flagged non-commercial for Krea and Kontext; Flux.1 D keeps id 14.
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  {
+    id: 51,
+    // Pony Diffusion V6 XL’s card: a modified FAIPL that bars inference on paid services.
+    // Civitai holds explicit permission for commercial inference, derivatives included.
+    name: 'Fair AI Public License 1.0-SD (Pony Diffusion terms)',
+    url: 'https://civitai.com/models/257749',
+  },
+  {
+    id: 52,
+    // PolyGen is Meshy’s API, through fal.
+    name: 'Meshy Terms of Service',
+    url: 'https://www.meshy.ai/terms-of-use',
+  },
+  {
+    id: 53,
+    name: 'Tripo Terms of User Agreement',
+    url: 'https://www.tripo3d.ai/terms',
+  },
+  {
+    id: 54,
+    // v2 and v2-mini carry the 2.0 Community License, which has the same terms.
+    name: 'Tencent Hunyuan 3D 2.1 Community License Agreement',
+    url: 'https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE',
+    notice:
+      'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
+  },
+  {
+    id: 55,
+    name: 'MiniMax-H3-Image Community License Agreement',
+    // Permalinked to the 10 Nov 2026 revision, as for id 41.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    // Section IV.2 wants exactly "MiniMax-H3-Image" on the UI, which the "MiniMax H3 Image"
+    // label does not match, so it is shown under the generate button.
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
+  {
+    id: 56,
+    // Civitai's own terms for Fibo on the platform, not the CC BY-NC licence of Bria's public weights.
+    name: 'FIBO 2.0 Platform License',
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    poweredBy: 'Powered by Bria AI',
+    requiresSameLicense: true,
   },
 ];
 
@@ -2942,6 +3106,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
   },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -3026,7 +3195,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Krea-trained variant of Flux optimized for creative generation',
     type: 'image',
     ecosystemId: ECO.FluxKrea,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux1Kontext,
@@ -3034,7 +3203,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux variant specialized for context-aware image editing and generation',
     type: 'image',
     ecosystemId: ECO.Flux1Kontext,
-    licenseId: 14,
+    licenseId: 50,
   },
   {
     id: BM.Flux2D,
@@ -3107,6 +3276,28 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MossImage,
     licenseId: 13,
+  },
+  {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
+  {
+    id: BM.Fibo2Turbo,
+    name: 'Fibo 2.0 Turbo',
+    description: "Bria AI's Fibo 2.0 with Turbo distillation for few-step image editing",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.Flux3Video,
@@ -3182,6 +3373,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.Ideogram45,
@@ -3191,6 +3383,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Ideogram,
     hidden: true,
     licenseId: 47,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // Boogu
@@ -3222,6 +3415,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Imagen4,
     hidden: true,
     licenseId: 21,
+    matureRestricted: ['generation'],
   },
 
   // Kolors
@@ -3259,6 +3453,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Krea3,
     hidden: true,
     licenseId: 28,
+    matureRestricted: ['generation'],
   },
 
   // LTXV
@@ -3293,6 +3488,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.LTXV25,
     licenseId: 40,
+    matureRestricted: ['generation'],
   },
 
   // Lens
@@ -3302,6 +3498,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Civitai's image generation model",
     type: 'image',
     ecosystemId: ECO.Lens,
+    licenseId: 19,
   },
 
   // Lumina
@@ -3353,6 +3550,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.NanoBanana,
     hidden: true,
     licenseId: 21,
+    matureRestricted: ['generation'],
   },
 
   // NoobAI
@@ -3440,7 +3638,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SDXL-based model with extensive tag-based prompt support',
     type: 'image',
     ecosystemId: ECO.Pony,
-    licenseId: 1,
+    licenseId: 51,
   },
   {
     id: BM.PonyV7,
@@ -3466,7 +3664,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Next-generation Qwen image generation model',
     type: 'image',
     ecosystemId: ECO.Qwen2,
-    licenseId: 13,
+    licenseId: 27,
   },
   {
     // The 7B 2.1 weights have their own addon compatibility. The shared Qwen
@@ -3484,7 +3682,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Alibaba's Qwen 3 image generation model",
     type: 'image',
     ecosystemId: ECO.Qwen3,
-    licenseId: 13,
+    licenseId: 27,
   },
 
   // Stable Cascade
@@ -3496,6 +3694,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SCascade,
     hidden: true,
     licenseId: 8,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // SD 1.x
@@ -3521,7 +3720,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SD 1.5 with Latent Consistency Model for faster inference',
     type: 'image',
     ecosystemId: ECO.SD1,
-    licenseId: 1,
+    licenseId: 3,
   },
   {
     id: BM.SD15Hyper,
@@ -3529,7 +3728,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SD 1.5 with Hyper optimization for reduced steps',
     type: 'image',
     ecosystemId: ECO.SD1,
-    licenseId: 1,
+    licenseId: 3,
   },
 
   // SD 2.x
@@ -3588,6 +3787,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35,
@@ -3599,6 +3799,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35Large,
@@ -3610,6 +3811,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35LargeTurbo,
@@ -3621,6 +3823,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SD35Medium,
@@ -3632,6 +3835,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     disabled: true,
     experimental: true,
     licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // SDXL
@@ -3685,7 +3889,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SDXL,
     hidden: true,
     disabled: true,
-    licenseId: 4,
+    licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SDXLDistilled,
@@ -3737,7 +3942,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SVD,
     hidden: true,
     disabled: true,
-    licenseId: 5,
+    licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
   {
     id: BM.SVDXT,
@@ -3747,7 +3953,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.SVD,
     hidden: true,
     disabled: true,
-    licenseId: 5,
+    licenseId: 9,
+    matureRestricted: ['generation', 'models', 'images'],
   },
 
   // Sora 2
@@ -3770,6 +3977,19 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Veo3,
     hidden: true,
     licenseId: 22,
+    matureRestricted: ['generation'],
+  },
+
+  // Gemini Omni
+  {
+    id: BM.GeminiOmni,
+    name: 'Gemini Omni',
+    description: "Google's Gemini Omni Flash video generation model",
+    type: 'video',
+    ecosystemId: ECO.GeminiOmni,
+    hidden: true,
+    licenseId: 22,
+    matureRestricted: ['generation'],
   },
 
   // Wan Video
@@ -3926,6 +4146,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Vidu,
     hidden: true,
     licenseId: 32,
+    matureRestricted: ['generation'],
   },
 
   // MiniMax H3
@@ -3938,6 +4159,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 41,
   },
 
+  // MiniMax H3 Image
+  {
+    id: BM.MiniMaxH3Image,
+    name: 'MiniMax H3 Image',
+    description: "MiniMax's image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MiniMaxH3Image,
+    licenseId: 55,
+  },
+
   // Kling
   {
     id: BM.Kling,
@@ -3947,6 +4178,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Kling,
     hidden: true,
     licenseId: 34,
+    matureRestricted: ['generation'],
   },
 
   // Seedance
@@ -3967,7 +4199,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'ACE Audio music generation model',
     type: 'audio',
     ecosystemId: ECO.AceAudio,
-    licenseId: 13,
+    licenseId: 19,
   },
 
   // MiniMax Music 3
@@ -3997,6 +4229,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.Sonilo,
     licenseId: 46,
+    matureRestricted: ['generation'],
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
@@ -4009,7 +4242,9 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Meshy text-to-3D / image-to-3D generation (via Fal)',
     type: 'image',
     ecosystemId: ECO.PolyGen,
+    licenseId: 52,
     hidden: true,
+    matureRestricted: ['generation'],
   },
   // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
   // resource-less, hidden-from-picker convention as PolyGen above.
@@ -4019,7 +4254,9 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Tripo image-to-3D generation (via Fal)',
     type: 'image',
     ecosystemId: ECO.Tripo,
+    licenseId: 53,
     hidden: true,
+    matureRestricted: ['generation'],
   },
   {
     id: BM.Hunyuan3D,
@@ -4027,6 +4264,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Hunyuan3D image-to-3D generation (via Comfy)',
     type: 'image',
     ecosystemId: ECO.Hunyuan3D,
+    licenseId: 54,
     hidden: true,
   },
   {
@@ -4035,6 +4273,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Pixal3D image-to-3D generation (via Comfy)',
     type: 'image',
     ecosystemId: ECO.Pixal3D,
+    licenseId: 19,
     hidden: true,
   },
   {
@@ -4043,6 +4282,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Trellis.2 image-to-3D generation (via Comfy)',
     type: 'image',
     ecosystemId: ECO.Trellis2,
+    licenseId: 19,
     hidden: true,
   },
 ];
@@ -4231,6 +4471,20 @@ export function isModelSupported(
   }
 
   return true;
+}
+
+/**
+ * A base model whose generation is switched off by name, whatever the resource type. Narrower than
+ * `isModelSupported`: it reads only explicit disables, so paths that skip the model-type check (a
+ * LoRA attached to a generation) can apply it without refusing types they support by design.
+ */
+export function isBaseModelGenerationDisabled(baseModelName: string): boolean {
+  const baseModel = baseModelByName.get(baseModelName);
+  if (!baseModel) return false;
+  if (baseModel.disabled) return true;
+  return supportOverrides.some(
+    (o) => o.baseModelId === baseModel.id && o.supportType === 'generation' && o.disabled
+  );
 }
 
 /**
@@ -4528,6 +4782,35 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
   });
 }
 
+/** Only moderators may put a version on a hidden base model; see `getActiveBaseModels`. */
+export function isHiddenBaseModel(baseModel: string): boolean {
+  return !!baseModelByName.get(baseModel)?.hidden;
+}
+
+/** The levels a mature restriction covers. */
+export const MATURE_RESTRICTED_LEVELS: readonly number[] = [
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+];
+
+// Lowercased: a stored base-model string differing only in case must still be restricted.
+const baseModelByLowerName = new Map(baseModelRecords.map((m) => [m.name.toLowerCase(), m]));
+
+export function isMatureRestricted(
+  baseModel: string | null | undefined,
+  surface: MatureRestrictedSurface
+): boolean {
+  return (
+    !!baseModel &&
+    !!baseModelByLowerName.get(baseModel.toLowerCase())?.matureRestricted?.includes(surface)
+  );
+}
+
+export function matureRestrictedBaseModels(surface: MatureRestrictedSurface): string[] {
+  return baseModelRecords.filter((m) => m.matureRestricted?.includes(surface)).map((m) => m.name);
+}
+
 let modelLockedBaseModelSet: Set<string> | undefined;
 
 /**
@@ -4634,9 +4917,8 @@ export function getCompatibleBaseModels(
     const modelEcosystem = ecosystemById.get(model.ecosystemId);
     if (!modelEcosystem) continue;
 
-    // Check if this model's ecosystem supports the model type for generation
-    const support = getEcosystemSupport(model.ecosystemId, 'generation');
-    if (!support || support.disabled || !support.modelTypes.includes(modelType)) continue;
+    // Per base model: an override can switch one off without its ecosystem (Ideogram 4.0).
+    if (!isModelSupported(model.id, 'generation', modelType)) continue;
 
     // Get support level
     const supportLevel = getGenerationSupport(ecosystemId, model.ecosystemId, modelType);

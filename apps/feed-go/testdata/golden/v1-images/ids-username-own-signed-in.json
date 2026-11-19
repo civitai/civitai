@@ -1,0 +1,772 @@
+{
+  "name": "ids-username-own-signed-in",
+  "description": "`ids` with `username` naming the signed-in viewer: resolved to their id; on this path the session username makes it their own feed.",
+  "now": "2026-06-15T12:00:00.000Z",
+  "config": {
+    "imageLocation": "https://image.example.test/golden"
+  },
+  "request": {
+    "query": "ids=8001,8003,8007&username=artist_one",
+    "path": "/api/v1/images",
+    "headers": {
+      "host": "blue.example.test"
+    },
+    "session": {
+      "userId": 1001
+    }
+  },
+  "feed": [],
+  "redis": {
+    "model:gallery-settings:post-version:7001": {
+      "value": {
+        "id": 7001,
+        "modelVersionId": 6001,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADomlkzRtZrm1vZGVsVmVyc2lvbklkzRdxqGNhY2hlZEF01v9qL+gU"
+    },
+    "model:gallery-settings:post-version:7007": {
+      "value": {
+        "id": 7007,
+        "modelVersionId": 6001,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADomlkzRtfrm1vZGVsVmVyc2lvbklkzRdxqGNhY2hlZEF01v9qL+gU"
+    },
+    "model:gallery-settings:version-model:6001": {
+      "value": {
+        "id": 6001,
+        "modelId": 5001,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADomlkzRdxp21vZGVsSWTNE4moY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:basic-users:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null,
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWlaW1hZ2XZJDAwMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDkwMalkZWxldGVkQXTAqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:image-resources:8001": {
+      "value": {
+        "imageId": 8001,
+        "resources": [
+          {
+            "imageId": 8001,
+            "modelVersionId": 6001,
+            "strength": null,
+            "detected": true,
+            "modelId": 5001,
+            "modelName": "Golden model 5001",
+            "modelType": "Checkpoint",
+            "versionName": "v6001",
+            "baseModel": "SDXL 1.0",
+            "poi": false,
+            "minor": false
+          },
+          {
+            "imageId": 8001,
+            "modelVersionId": 6002,
+            "strength": 0.8,
+            "detected": false,
+            "modelId": 5001,
+            "modelName": "Golden model 5001",
+            "modelType": "LORA",
+            "versionName": "v6002",
+            "baseModel": "Pony",
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0GpcmVzb3VyY2Vzkt4AC6dpbWFnZUlkzR9Brm1vZGVsVmVyc2lvbklkzRdxqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tialtb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDGpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYwMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LC3gALp2ltYWdlSWTNH0GubW9kZWxWZXJzaW9uSWTNF3Koc3RyZW5ndGjLP+mZmZmZmZqoZGV0ZWN0ZWTCp21vZGVsSWTNE4mpbW9kZWxOYW1lsUdvbGRlbiBtb2RlbCA1MDAxqW1vZGVsVHlwZaRMT1JBq3ZlcnNpb25OYW1lpXY2MDAyqWJhc2VNb2RlbKRQb255o3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:image-resources:8007": {
+      "value": {
+        "imageId": 8007,
+        "resources": [
+          {
+            "imageId": 8007,
+            "modelVersionId": 6001,
+            "strength": null,
+            "detected": true,
+            "modelId": 5001,
+            "modelName": "Golden model 5001",
+            "modelType": "Checkpoint",
+            "versionName": "v6001",
+            "baseModel": "SDXL 1.0",
+            "poi": false,
+            "minor": false
+          }
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0epcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzR9Hrm1vZGVsVmVyc2lvbklkzRdxqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tialtb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDGpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYwMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
+    },
+    "packed:caches:profile-pictures:v4:1001": {
+      "value": {
+        "id": 8901,
+        "name": null,
+        "url": "00000000-0000-4000-8000-000000008901",
+        "nsfwLevel": 1,
+        "hash": "UGOLDENPROFILE8901",
+        "userId": 1001,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 512,
+        "height": 512,
+        "metadata": {
+          "width": 512,
+          "height": 512
+        },
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
+    },
+    "packed:caches:tag-ids-for-images:8001": {
+      "value": {
+        "imageId": 8001,
+        "tags": [
+          501,
+          520
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0GkdGFnc5LNAfXNAgioY2FjaGVkQXTW/2ov6BQ="
+    },
+    "packed:caches:tag-ids-for-images:8007": {
+      "value": {
+        "imageId": 8007,
+        "tags": [
+          501,
+          526
+        ],
+        "cachedAt": {
+          "$date": "2026-06-15T11:55:00.000Z"
+        }
+      },
+      "packed": "3gADp2ltYWdlSWTNH0ekdGFnc5LNAfXNAg6oY2FjaGVkQXTW/2ov6BQ="
+    },
+    "session:data2:1001": {
+      "value": {
+        "id": 1001,
+        "username": "artist_one",
+        "isModerator": false,
+        "bannedAt": null,
+        "tier": null
+      },
+      "packed": "3gAFomlkzQPpqHVzZXJuYW1lqmFydGlzdF9vbmWraXNNb2RlcmF0b3LCqGJhbm5lZEF0wKR0aWVywA=="
+    },
+    "model:gallery-settings:5001": {
+      "raw": "{\"hiddenTags\":[],\"hiddenUsers\":[{\"id\":1009,\"username\":\"hidden_nine\"}],\"hiddenImages\":{\"6001\":[8099]},\"level\":31,\"pinnedPosts\":{},\"creatorHiddenUserIds\":[],\"sfwHeld\":false}"
+    },
+    "metrics:Image:8001": {
+      "hash": {
+        "Like": "7",
+        "Heart": "3",
+        "Laugh": "1",
+        "Cry": "1",
+        "commentCount": "5",
+        "Collection": "11",
+        "tippedAmount": "13",
+        "_populatedAt": "1781524680"
+      }
+    },
+    "metrics:Image:8007": {
+      "hash": {
+        "Like": "3",
+        "Heart": "10",
+        "Laugh": "3",
+        "Cry": "1",
+        "commentCount": "9",
+        "Collection": "9",
+        "tippedAmount": "41",
+        "_populatedAt": "1781524680"
+      }
+    }
+  },
+  "sysRedis": {
+    "system:browsing-setting-addons": {
+      "raw": "[{\"type\":\"some\",\"nsfwLevels\":[4,8,16],\"disableMinor\":true,\"excludedTagIds\":[9911]},{\"type\":\"some\",\"nsfwLevels\":[1,2,4,8,16],\"disablePoi\":true,\"excludedTagIds\":[9901]}]"
+    }
+  },
+  "db": {
+    "images": [
+      {
+        "id": 8001,
+        "name": "golden-8001.png",
+        "url": "00000000-0000-4000-8000-000000008001",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8001",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-12T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8001"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-12T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7001,
+        "postTitle": "Golden post 7001",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          },
+          {
+            "modelVersionId": 6002,
+            "detected": false
+          }
+        ]
+      },
+      {
+        "id": 8002,
+        "name": "golden-8002.png",
+        "url": "00000000-0000-4000-8000-000000008002",
+        "nsfwLevel": 2,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8002",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-08T08:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8002"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-08T08:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7001,
+        "postTitle": "Golden post 7001",
+        "index": 1,
+        "publishedAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          }
+        ]
+      },
+      {
+        "id": 8007,
+        "name": "golden-8007.png",
+        "url": "00000000-0000-4000-8000-000000008007",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8007",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-04T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-04T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8007"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-04T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7007,
+        "postTitle": "Golden post 7007",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-04T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "restricted": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          }
+        ]
+      }
+    ],
+    "posts": [
+      {
+        "id": 7001,
+        "modelVersionId": 6001
+      },
+      {
+        "id": 7007,
+        "modelVersionId": 6001
+      }
+    ],
+    "modelVersions": [
+      {
+        "id": 6001,
+        "modelId": 5001
+      },
+      {
+        "id": 6002,
+        "modelId": 5001
+      },
+      {
+        "id": 6101,
+        "modelId": 5002
+      },
+      {
+        "id": 6201,
+        "modelId": 5003
+      },
+      {
+        "id": 6301,
+        "modelId": 5004
+      },
+      {
+        "id": 6401,
+        "modelId": 5005
+      }
+    ],
+    "models": [
+      {
+        "id": 5001,
+        "userId": 1001,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5002,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": true,
+        "galleryLevel": 3
+      },
+      {
+        "id": 5003,
+        "userId": 1001,
+        "mode": "TakenDown",
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5004,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5005,
+        "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      }
+    ],
+    "reviews": [
+      {
+        "id": 4001,
+        "userId": 1001,
+        "modelId": 5001,
+        "modelVersionId": 6001,
+        "rating": 5,
+        "details": "Synthetic review",
+        "recommended": true,
+        "postId": null
+      },
+      {
+        "id": 4002,
+        "userId": 1001,
+        "modelId": 5001,
+        "modelVersionId": 6001,
+        "rating": 3,
+        "details": null,
+        "recommended": false,
+        "postId": null
+      },
+      {
+        "id": 4003,
+        "userId": 1002,
+        "modelId": 5001,
+        "modelVersionId": 6002,
+        "rating": 4,
+        "details": null,
+        "recommended": true,
+        "postId": null
+      }
+    ],
+    "reactions": [
+      {
+        "imageId": 8001,
+        "userId": 1003,
+        "reaction": "Like"
+      },
+      {
+        "imageId": 8001,
+        "userId": 1003,
+        "reaction": "Heart"
+      },
+      {
+        "imageId": 8007,
+        "userId": 1003,
+        "reaction": "Laugh"
+      }
+    ],
+    "placements": [
+      {
+        "id": 9501,
+        "surface": "galleryPromotion",
+        "targetType": "model",
+        "targetId": 5005,
+        "status": "approved",
+        "resolvedAt": {
+          "$date": "2026-06-14T10:00:00.000Z"
+        },
+        "data": {
+          "postId": 7201,
+          "days": 7,
+          "modelVersionIds": [
+            6401
+          ],
+          "imageIds": [
+            8201
+          ],
+          "acceptedLevel": 3,
+          "endsAt": "2026-06-21T10:00:00.000Z"
+        }
+      }
+    ],
+    "users": [
+      {
+        "id": 1001,
+        "username": "artist_one",
+        "image": "00000000-0000-4000-8000-000000000901",
+        "deletedAt": null
+      },
+      {
+        "id": 1002,
+        "username": "artist_two",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": 1003,
+        "username": "viewer_three",
+        "image": null,
+        "deletedAt": null
+      },
+      {
+        "id": 1004,
+        "username": "mod_four",
+        "image": null,
+        "deletedAt": null
+      }
+    ],
+    "userCosmetics": [
+      {
+        "userId": 1001,
+        "cosmeticId": 301,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 303,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 304,
+        "data": "{\"2\": 1, \"color\": \"gold\", \"sparkle\": {\"at\": 0.5, \"on\": true}}",
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 305,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 302,
+        "data": null,
+        "equippedAt": false,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1001,
+        "cosmeticId": 302,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": 8001,
+        "equippedToType": "Image"
+      },
+      {
+        "userId": 1009,
+        "cosmeticId": 303,
+        "data": "{\"lights\": 2}",
+        "equippedAt": true,
+        "equippedToId": 8007,
+        "equippedToType": "Image"
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 401,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": 8003,
+        "equippedToType": "Image"
+      }
+    ],
+    "cosmetics": [
+      {
+        "id": 301,
+        "name": "Golden Badge",
+        "type": "Badge",
+        "source": "Trophy",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003011\"}",
+        "flags": 0,
+        "createdById": null
+      },
+      {
+        "id": 302,
+        "name": "Golden Frame",
+        "type": "ContentDecoration",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003021\", \"crop\": \"0%\", \"offset\": \"5%\"}",
+        "flags": 0,
+        "createdById": null
+      },
+      {
+        "id": 303,
+        "name": "Pending Badge",
+        "type": "Badge",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003031\"}",
+        "flags": 0,
+        "createdById": 1009
+      },
+      {
+        "id": 304,
+        "name": "Creator Plate",
+        "type": "NamePlate",
+        "source": "Purchase",
+        "data": "{\"2\": 1, \"color\": \"gold\"}",
+        "flags": 0,
+        "createdById": 1009
+      },
+      {
+        "id": 305,
+        "name": "Removed Badge",
+        "type": "Badge",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003051\"}",
+        "flags": 4,
+        "createdById": 1009
+      },
+      {
+        "id": 401,
+        "name": "Golden Hat",
+        "type": "ContentDecoration",
+        "source": "Claim",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000004011\", \"event\": \"goldentest2026\", \"offset\": \"10%\"}",
+        "flags": 0,
+        "createdById": null
+      }
+    ],
+    "cosmeticShopItems": [
+      {
+        "cosmeticId": 303,
+        "addedById": 1009,
+        "status": "PendingReview",
+        "meta": "{}",
+        "rejectionReason": null
+      },
+      {
+        "cosmeticId": 304,
+        "addedById": 1009,
+        "status": "Draft",
+        "meta": "{\"history\": [{\"kind\": \"reviewed\", \"action\": \"approve\"}]}",
+        "rejectionReason": null
+      },
+      {
+        "cosmeticId": 304,
+        "addedById": 1010,
+        "status": "Rejected",
+        "meta": "{}",
+        "rejectionReason": "Not theirs"
+      }
+    ],
+    "usernames": [
+      "artist_one"
+    ]
+  },
+  "expect": {
+    "body": {
+      "items": [
+        {
+          "id": 8007,
+          "url": "https://image.example.test/golden/00000000-0000-4000-8000-000000008007/original=true/00000000-0000-4000-8000-000000008007.jpeg",
+          "hash": "UGOLDEN8007",
+          "width": 832,
+          "height": 1216,
+          "nsfwLevel": "None",
+          "type": "image",
+          "nsfw": false,
+          "browsingLevel": 1,
+          "createdAt": "2026-06-04T09:00:00.000Z",
+          "postId": 7007,
+          "thumbnail": null,
+          "stats": {
+            "cryCount": 1,
+            "laughCount": 3,
+            "likeCount": 3,
+            "dislikeCount": 0,
+            "heartCount": 10,
+            "commentCount": 9
+          },
+          "meta": null,
+          "username": "artist_one",
+          "baseModel": "SDXL 1.0",
+          "modelVersionIds": [
+            6001
+          ]
+        },
+        {
+          "id": 8001,
+          "url": "https://image.example.test/golden/00000000-0000-4000-8000-000000008001/original=true/00000000-0000-4000-8000-000000008001.jpeg",
+          "hash": "UGOLDEN8001",
+          "width": 832,
+          "height": 1216,
+          "nsfwLevel": "None",
+          "type": "image",
+          "nsfw": false,
+          "browsingLevel": 1,
+          "createdAt": "2026-06-12T09:00:00.000Z",
+          "postId": 7001,
+          "thumbnail": null,
+          "stats": {
+            "cryCount": 1,
+            "laughCount": 1,
+            "likeCount": 7,
+            "dislikeCount": 0,
+            "heartCount": 3,
+            "commentCount": 5
+          },
+          "meta": null,
+          "username": "artist_one",
+          "baseModel": "SDXL 1.0",
+          "modelVersionIds": [
+            6001
+          ]
+        }
+      ],
+      "metadata": {}
+    }
+  }
+}

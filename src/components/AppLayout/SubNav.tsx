@@ -18,6 +18,22 @@ import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImage
 import { StorylineFeedFilters } from '~/components/Storyline/StorylineFeedFilters';
 import clsx from 'clsx';
 
+// The filter group is the wrapper's first child. It gives up its full-width rule to leave room for
+// the gear: its gap closes, its buttons stop growing and may shrink with an ellipsis, and the
+// trailing chevron goes. Signed in, the images feed's group (Everyone, sort, Filters) is the
+// widest and only just fits at 390px, so these are all needed. Scoped here, not in
+// `FeedFilters.module.scss`, because the same group renders full width inline elsewhere.
+const PHONE_FILTER_ROW = [
+  'contents @max-sm:flex @max-sm:w-full @max-sm:items-start @max-sm:gap-1',
+  '@max-sm:[&>:first-child]:!gap-1 @max-sm:[&>:first-child]:w-auto @max-sm:[&>:first-child]:min-w-0 @max-sm:[&>:first-child]:flex-1',
+  '@max-sm:[&>:first-child>*]:min-w-0 @max-sm:[&>:first-child>*]:grow-0',
+  '@max-sm:[&>:first-child_button]:min-w-0 @max-sm:[&>:first-child_button]:max-w-full',
+  '@max-sm:[&>:first-child_button>span]:min-w-0 @max-sm:[&>:first-child_button>span]:truncate',
+  // Below 390px (the container's own width, as `@max-sm` is) the audience button keeps only its icon.
+  '@max-[389px]:[&>:first-child_button[data-collapse-label]>span]:sr-only',
+  '@max-sm:[&>:first-child_button>svg]:shrink-0 @max-sm:[&>:first-child_button>svg[data-chevron]]:hidden',
+].join(' ');
+
 const filterSections = [
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
   { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
@@ -30,7 +46,8 @@ const filterSections = [
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },
-  { pathname: '/apps', component: <AppsStoreFeedFilters ml="auto" /> },
+  // The store's filters belong to the store (`/apps/store`); `/apps` is the viewer's app home.
+  { pathname: '/apps/store', component: <AppsStoreFeedFilters ml="auto" /> },
   { pathname: '/storylines', component: <StorylineFeedFilters ml="auto" /> },
   // Matched on `router.pathname`, which is the ROUTE and not the URL, so this has
   // to carry the optional slug segment the hub route gained.
@@ -68,11 +85,17 @@ export function SubNav2() {
     >
       <HomeTabs />
       <NavCustomizeNotice />
-      {section?.component}
-      <SubNavSettingsButton
-        withHomepageOption={router.pathname === '/'}
-        className={section ? undefined : 'ml-auto'}
-      />
+      {section ? (
+        // Below `sm` the feed filters and the gear share ONE row under the tabs, so the tabs row
+        // keeps all its width to scroll in. `contents` leaves desktop as it was.
+        <div className={PHONE_FILTER_ROW}>
+          {section.component}
+          {/* Pushes the gear right when the group is hidden on phones (the hub pages). */}
+          <SubNavSettingsButton className="@max-sm:ml-auto" />
+        </div>
+      ) : (
+        <SubNavSettingsButton withHomepageOption={router.pathname === '/'} className="ml-auto" />
+      )}
     </div>
   );
 }

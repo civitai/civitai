@@ -65,7 +65,9 @@ describe('pages build schema media through the rating-checked builders', () => {
 
   it('the article page', () => {
     const src = read('pages/articles/[id]/[[...slug]].tsx');
-    expect(src).toMatch(/\n\s+image: safeSchemaImageUrl\(article\.coverImage, /);
+    expect(src).toMatch(
+      /\n\s+image: safeSchemaImageUrl\(article\.coverImage(?: \?\? article\.bannerImage)?, /
+    );
     expect(src).not.toMatch(/getEdgeUrl\(/);
   });
 });

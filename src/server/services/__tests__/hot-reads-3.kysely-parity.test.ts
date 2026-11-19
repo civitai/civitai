@@ -1,38 +1,40 @@
-import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { compileHarness } from '@civitai/db-queries/test-harness';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
+import { readTaggedGolden } from '~/server/db/__tests__/tagged-golden';
+import {
+  compiledRelations,
+  declaredViews,
+  isViewMarker,
+  relationsOf,
+  schemaLines,
+} from '~/server/db/__tests__/no-view-ledger';
 import {
   countSuggestedResourcesViaKysely,
-  countSuggestedResourcesViaPrisma,
   readDefaultModelVersionsViaKysely,
-  readDefaultModelVersionsViaPrisma,
   readModelPagePostsViaKysely,
-  readModelPagePostsViaPrisma,
   readOwnerSettingsViaKysely,
-  readOwnerSettingsViaPrisma,
   readViewerPendingPlacementsViaKysely,
-  readViewerPendingPlacementsViaPrisma,
   type DefaultModelVersionInput,
   type ModelPagePostsInput,
   type ViewerPendingPlacementsInput,
 } from '~/server/services/hot-reads-3.reads';
 
 /**
- * Parity gate for the reads behind `kysely-hot-reads-3`: the model page's default-version lookup,
- * the suggested-resource count, the owner's settings, the owner's posts on the versions, and the
- * viewer's pending remix-gallery submissions. Both paths run against the same rows in the same
- * database and must return the same value, `toStrictEqual`: timestamps as UTC Dates, enums as
- * strings, JSON decoded, NULL as `null`, a missing row as `null`, counts as numbers, and rows in the
- * same order (every Prisma read here is ordered, and every fixture below keeps the order key
- * distinct so neither path is comparing a tie).
+ * The Kysely reads that replaced the Prisma ones behind the retired hot-reads-3 flag: the model
+ * page's default-version lookup, the suggested-resource count, the owner's settings, the owner's
+ * posts on the versions, and the viewer's pending remix-gallery submissions. Each must return,
+ * `toStrictEqual`, the value the Prisma read returned for the same rows: timestamps as UTC Dates,
+ * enums as strings, JSON decoded, NULL as `null`, a missing row as `null`, counts as numbers, and
+ * rows in the same order (every Prisma read here was ordered, and every fixture below keeps the
+ * order key distinct so no case compares a tie).
  *
- * The Prisma side of each read is the reader the service runs (hot-reads-3.reads.ts).
+ * Those values are fixtures/hot-reads-3-golden.json, the Prisma reads' output for these same fixture
+ * rows. A change to the fixture rows needs the golden re-derived by hand.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_3_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost, so the suite cannot skip itself
@@ -77,6 +79,8 @@ const PL_NEWEST = 6301;
 const PL_OLDEST = 6302;
 const PL_MIDDLE = 6303;
 const SUGGESTED_COUNT = 3;
+
+const golden = readTaggedGolden(resolve(here, 'fixtures/hot-reads-3-golden.json'));
 
 describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma returned', () => {
   const prisma = new PrismaClient({ datasourceUrl: parityUrl && withSchema(parityUrl) });
@@ -177,9 +181,8 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       ['a model with no versions', { modelId: MODEL_EMPTY }],
       ['a missing model', { modelId: MISSING_MODEL }],
     ])('%s', async (_, input) => {
-      const viaPrisma = await readDefaultModelVersionsViaPrisma(prisma, input);
       const viaKysely = await readDefaultModelVersionsViaKysely(kysely, input);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`default-version:${_}`));
     });
 
     it('control: the fixtures exercise order, NULLs, the cap and the empty cases', async () => {
@@ -218,9 +221,8 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       ['a model with none', MODEL_EMPTY],
       ['a missing model', MISSING_MODEL],
     ])('%s', async (_, modelId) => {
-      const viaPrisma = await countSuggestedResourcesViaPrisma(prisma, modelId);
       const viaKysely = await countSuggestedResourcesViaKysely(kysely, modelId);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`suggested:${_}`));
     });
 
     it('control: the fixture count is the one expected, as a number', async () => {
@@ -235,9 +237,8 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       ['empty settings', OTHER_USER],
       ['a missing user', MISSING_USER],
     ])('%s', async (_, userId) => {
-      const viaPrisma = await readOwnerSettingsViaPrisma(prisma, userId);
       const viaKysely = await readOwnerSettingsViaKysely(kysely, userId);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`settings:${_}`));
     });
 
     it('control: the JSON fixture decodes', async () => {
@@ -255,9 +256,8 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       ['no versions', { modelVersionIds: [], userId: OWNER }],
       ['another user', { modelVersionIds: [V_PUBLISHED, V_TRAINING], userId: OTHER_USER }],
     ])('%s', async (_, input) => {
-      const viaPrisma = await readModelPagePostsViaPrisma(prisma, input);
       const viaKysely = await readModelPagePostsViaKysely(kysely, input);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`posts:${_}`));
     });
 
     it('control: the fixture posts come back in id order', async () => {
@@ -290,9 +290,8 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       ['another target', input({ targetId: OTHER_HOST })],
       ['nothing pending', input({ targetId: MISSING_MODEL })],
     ])('%s', async (_, args) => {
-      const viaPrisma = await readViewerPendingPlacementsViaPrisma(prisma, args);
       const viaKysely = await readViewerPendingPlacementsViaKysely(kysely, args);
-      expect(viaKysely).toStrictEqual(viaPrisma);
+      expect(viaKysely).toStrictEqual(golden.take(`pending:${_}`));
     });
 
     it('control: the fixture rows exercise order, the filters, free and a NULL expiry', async () => {
@@ -308,51 +307,15 @@ describe.skipIf(!parityUrl)('hot reads 3: Kysely returns exactly what Prisma ret
       });
     });
   });
+
+  // Last in the block: every captured case is still asserted above, so none can be dropped quietly.
+  it('every golden case is asserted', () => {
+    expect(golden.unused()).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
 // No statement reads a VIEW. Offline: the statements are compiled, not run.
-
-const SCHEMA_PRISMA = resolve(
-  here,
-  '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-);
-
-const schemaLines = () => readFileSync(SCHEMA_PRISMA, 'utf-8').split('\n');
-const isViewMarker = (line: string) => line.trim() === '/// @view';
-
-/**
- * Every model declared `/// @view` in schema.full.prisma. The marker sits above the model, in its
- * doc comment block, sometimes with a blank line between them, so the walk up from each `model`
- * line skips blank and `///` lines and stops at anything else.
- */
-function declaredViews(): Set<string> & { markersAttributed: number } {
-  const lines = schemaLines();
-  const views = new Set<string>();
-  const attributed = new Set<number>();
-  lines.forEach((line, i) => {
-    const model = /^model (\w+) \{/.exec(line);
-    if (!model) return;
-    for (let j = i - 1; j >= 0 && (lines[j].trim() === '' || lines[j].startsWith('///')); j--)
-      if (isViewMarker(lines[j])) {
-        views.add(model[1]);
-        attributed.add(j);
-      }
-  });
-  return Object.assign(views, { markersAttributed: attributed.size });
-}
-
-/** The quoted relation names a compiled statement reads FROM or JOINs. */
-function relationsOf(sqlText: string): string[] {
-  return [...sqlText.matchAll(/\b(?:from|join)\s+"(\w+)"/gi)].map((match) => match[1]);
-}
-
-async function compiledRelations(read: (db: never) => Promise<unknown>) {
-  const harness = compileHarness();
-  // The dummy driver returns no rows, so a read that requires one throws after compiling.
-  await read(harness.db as never).catch(() => undefined);
-  return harness.queries.map((query) => relationsOf(query.sql));
-}
 
 describe('hot reads 3: no statement reads a view', () => {
   it('control: the view list is read from the schema, and names the known aggregate views', () => {
@@ -368,8 +331,8 @@ describe('hot reads 3: no statement reads a view', () => {
 
   it('control: the relation extractor finds a view a statement reads', () => {
     expect(relationsOf('select * from "UserStat" inner join "User" on 1 = 1')).toEqual([
-      'UserStat',
       'User',
+      'UserStat',
     ]);
   });
 

@@ -1,4 +1,5 @@
-import { Badge, Button, Card, Group, Loader, Popover, Stack, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';

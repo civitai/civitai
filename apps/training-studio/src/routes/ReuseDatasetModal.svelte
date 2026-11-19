@@ -3,7 +3,8 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import type { TrainingRow } from '$lib/data/trainingRows';
   import type { Media } from '$lib/data/trainingModels';
-  import { toReuseItems } from '$lib/reuse';
+  import { isPairDataset, toReuseItems } from '$lib/reuse';
+  import { RETENTION_DAYS } from '$lib/orchestrator-core';
 
   // Emits items in addFromBlobs shape so the Data step can seed them with no re-upload.
   let {
@@ -44,12 +45,17 @@
         error = "That run's dataset can't be reused (no per-image blobs).";
         return;
       }
+      if (isPairDataset(dataset)) {
+        error = 'That run trained on edit pairs — use Train again on its page with an Image edit model.';
+        return;
+      }
       onReuse(
         toReuseItems(dataset, row.workflowId).map((i) => ({
           blobId: i.air,
           name: i.name,
           caption: i.caption,
           previewWorkflowId: i.workflowId,
+          repeats: i.repeats,
         }))
       );
       open = false;
@@ -66,7 +72,8 @@
     <Dialog.Header>
       <Dialog.Title>Reuse a dataset</Dialog.Title>
       <Dialog.Description>
-        Pick an existing training to load its images + captions — no re-upload.
+        Pick a training from the last {RETENTION_DAYS} days to load its images + captions — no
+        re-upload.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -81,7 +88,7 @@
         {@const shown = rows.filter((r) => r.media === media)}
         {#if shown.length === 0}
           <div class="py-10 text-center font-mono text-sm text-dark-2">
-            No {media} trainings to reuse yet.
+            No {media} trainings from the last {RETENTION_DAYS} days to reuse.
           </div>
         {:else}
           <div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">

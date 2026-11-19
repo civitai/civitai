@@ -54,6 +54,8 @@ describe('RESOLUTION_REASONS', () => {
         'other',
       ],
       'flagAppeal/Rejected': ['flag-confirmed', 'other'],
+      'lockReview/Approved': ['lock-not-needed', 'context-provided', 'other'],
+      'lockReview/Rejected': ['lock-stands', 'sexual-purpose', 'other'],
       'heldDetection/Kept': ['detection-correct', 'other'],
       'heldDetection/Dismissed': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
       'flagReview/Kept': ['detection-correct', 'other'],
@@ -162,5 +164,24 @@ describe('resolutionReasonLabel', () => {
     expect(resolutionReasonLabel('word-match')).toBe('Keyword hit only');
     expect(resolutionReasonLabel('retired-slug')).toBe('retired-slug');
     expect(resolutionReasonLabel(null)).toBeNull();
+  });
+});
+
+describe('lock review reasons scoped to a setting', () => {
+  const rejections = (asked: ('nsfw' | 'tags')[]) =>
+    resolutionReasonsFor('lockReview', 'Rejected', asked).map((r) => r.value);
+
+  it('offers the sexual-purpose reason only when the mature setting was asked about', () => {
+    expect(rejections(['tags'])).toEqual(['lock-stands', 'other']);
+    expect(rejections(['tags', 'nsfw'])).toEqual(['lock-stands', 'sexual-purpose', 'other']);
+  });
+
+  it('refuses it for a review of other settings', () => {
+    expect(resolutionReasonError('lockReview', 'Rejected', 'sexual-purpose', '', ['tags'])).toMatch(
+      /does not apply/
+    );
+    expect(
+      resolutionReasonError('lockReview', 'Rejected', 'sexual-purpose', '', ['nsfw'])
+    ).toBeNull();
   });
 });

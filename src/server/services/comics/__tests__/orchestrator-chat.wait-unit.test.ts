@@ -23,13 +23,12 @@ import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
  *
  * Derived, not arbitrary: HALF the measured undici headers timeout.
  *
- * `submitWorkflow` only bounds an attempt with an `AbortSignal.timeout` on the
- * whatIf path, so a real submit has no client-side abort — the practical
- * ceiling is undici's default headers timeout, measured at 300.7s against a
- * server that accepts and never responds. A `wait` at or above that never gets
- * to return its graceful 202: the fetch throws first, and
- * `submitWorkflowWithRetry` re-submits (it retries on ANY throw — it is not
- * gated on an error allow-list). Since these bodies carry no `externalId` the
+ * `submitWorkflow` bounds every real submit, but raises an attempt's budget to
+ * cover the requested `wait` plus a margin, so its own abort never undercuts a
+ * wait. The practical ceiling is still undici's default headers timeout,
+ * measured at 300.7s against a server that accepts and never responds. A `wait`
+ * at or above that never gets to return its graceful 202: the fetch throws
+ * first, and `submitWorkflowWithRetry` re-submits a network error. Since these bodies carry no `externalId` the
  * orchestrator cannot dedupe, so exceeding the timeout converts one billable
  * job into up to three.
  *
@@ -331,11 +330,13 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
       new Set([
         'server/services/blocks/steps/text-output-moderation.ts:SCAN_WAIT_SECONDS',
         'server/services/comics/orchestrator-chat.ts:CHAT_COMPLETION_WAIT_SECONDS',
+        'server/services/creator-service-deal-video-preview.ts:TRANSCODE_WAIT_SECONDS',
         'server/services/model-sfw-face.service.ts:DRAFT_WAIT_SECONDS',
         'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
         'server/services/product-badge.service.ts:30',
         'server/services/text-scan/harness.ts:SUGGEST_ALIASES_WAIT_SECONDS',
         'server/services/training-studio-auto-label.service.ts:0',
+        'server/services/training-studio-dataset-rating.service.ts:WAIT_SECONDS',
         'server/services/training.service.ts:0',
         'server/services/upload-prompt-scan.service.ts:SCAN_WAIT_SECONDS',
       ])

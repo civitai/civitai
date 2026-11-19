@@ -108,8 +108,11 @@
       <div class="divider"><span>This app will be able to</span></div>
 
       <ul class="scopes">
-        {#each data.scopes as label (label)}
-          <li><IconCheck size={16} color="#37b24d" /><span>{label}</span></li>
+        {#each data.scopes as { label, isNew } (label)}
+          <li>
+            <IconCheck size={16} color="#37b24d" /><span>{label}</span>
+            {#if isNew}<span class="new-badge">New</span>{/if}
+          </li>
         {/each}
       </ul>
 
@@ -355,6 +358,16 @@
     align-items: center;
     gap: 0.5rem;
     font-size: 0.9rem;
+  }
+  .new-badge {
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: rgba(34, 139, 230, 0.15);
+    color: #74c0fc;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
   .remember {
     display: flex;

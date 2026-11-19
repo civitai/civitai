@@ -7,10 +7,10 @@
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { LINK_CLASS, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
-  import { chatUrl } from '../url';
+  import { OPEN_ROW_CLASS, chatUrl } from '../url';
   import type { ChatInsights } from './chat-insights';
 
-  let { stats }: { stats: ChatInsights['stats'] } = $props();
+  let { stats, chatId }: { stats: ChatInsights['stats']; chatId: number | null } = $props();
 
   const SHOWN = 10;
   let expanded = $state(false);
@@ -99,7 +99,12 @@
         {:else}
           <ul class="space-y-1 text-sm">
             {#each topChats as c (c.chatId)}
-              <li class="flex flex-wrap items-baseline gap-x-2">
+              <li
+                class="-mx-2 flex flex-wrap items-baseline gap-x-2 rounded-md px-2 py-0.5 {c.chatId ===
+                chatId
+                  ? OPEN_ROW_CLASS
+                  : ''}"
+              >
                 <span class="tabular-nums text-dark-0">{num(c.messages)}</span>
                 <a href={chatUrl(c.chatId)} class={LINK_CLASS}>chat {c.chatId}</a>
               </li>

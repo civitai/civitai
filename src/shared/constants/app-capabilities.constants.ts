@@ -25,6 +25,20 @@ export type ListingKind = 'onsite' | 'offsite';
 /** The two capability roles. `null` (no access) is modelled as the absence of one. */
 export type AppRole = 'owner' | 'editor';
 
+/**
+ * Who may open the listing editor: a seat holder, or a moderator holding no seat. A
+ * moderator edits content only — never earnings, collaborators, publishing or the
+ * feedback inbox — so it is a separate value rather than `editor`.
+ */
+export type ListingEditorRole = AppRole | 'moderator';
+
+export function listingEditorRole(
+  role: AppRole | null | undefined,
+  isModerator: boolean | null | undefined
+): ListingEditorRole | null {
+  return role ?? (isModerator ? 'moderator' : null);
+}
+
 export type ListingCapability =
   /**
    * Listing SCALARS — name / tagline / description / category / external URL. Edited
@@ -214,6 +228,10 @@ export const MATERIAL_LISTING_PATCH_FIELDS = [
   'name',
   'contentRating',
   'sourceRepoUrl',
+  // The issue-tracker / support link — an outbound link on a public page, so a change is
+  // re-reviewed like `sourceRepoUrl`'s. Staged on the shadow; only `applyApprovedRevision`
+  // publishes it.
+  'issueTrackerUrl',
 ] as const;
 
 /**

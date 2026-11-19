@@ -6,7 +6,7 @@ import { int4Id, parseForm } from '../query';
 export const NOT_PERMITTED = 'Not permitted.';
 
 export type LinkedUser =
-  | { status: 'ok'; userId: number | null }
+  | { status: 'ok'; userId: number | null; ticketCreatedAt?: string | null }
   | { status: 'refused'; code: number; message: string };
 
 /** What every ticket panel action needs, whatever the panel. */
@@ -37,7 +37,13 @@ export async function checkTicketTarget(
         error: 'That account is not the one linked to this ticket — nothing was changed.',
       }),
     };
-  return { ticketId: ids.ticketId, userId: ids.userId, form };
+  return {
+    ticketId: ids.ticketId,
+    userId: ids.userId,
+    form,
+    // Read from the help desk, never the form.
+    ticketCreatedAt: linked.ticketCreatedAt ?? null,
+  };
 }
 
 /**

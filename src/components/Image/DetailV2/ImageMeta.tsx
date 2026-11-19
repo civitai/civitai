@@ -1,4 +1,5 @@
-import { Divider, Text, Badge, Tooltip, UnstyledButton } from '@mantine/core';
+import { Divider, Text, Badge, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo } from 'react';

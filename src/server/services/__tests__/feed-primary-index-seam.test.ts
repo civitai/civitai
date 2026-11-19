@@ -1,13 +1,11 @@
+import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
-
-vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
-  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
-);
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -36,6 +34,30 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+
+// Hydration queries here. It returns no rows unless a test makes it fail.
+const { pg, emptyPool } = vi.hoisted(() => {
+  const pg = { fail: false, statements: [] as { text: string; values: unknown[] }[] };
+  const query = async (text: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
+    if (typeof text === 'string') pg.statements.push({ text, values: values ?? [] });
+    else pg.statements.push({ text: text.text, values: text.values ?? [] });
+    if (pg.fail) throw new Error('hydrate query failed');
+    return { rows: [] };
+  };
+  const client = { query, release: () => undefined };
+  return { pg, emptyPool: { connect: async () => client, query } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+// The replica's user-id-by-username read (a Kysely statement).
+const { getUserIdByUsername } = vi.hoisted(() => ({ getUserIdByUsername: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername,
+}));
 vi.mock('~/server/services/new-creators.service', () => ({
   getNewCreatorUserIds: vi.fn(async () => newCreatorIds()),
 }));
@@ -43,18 +65,12 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-const primaryOn = vi.fn(() => false);
-const hubsOn = vi.fn(() => false);
 const newCreatorIds = vi.fn((): number[] => []);
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    getFliptBoolean: vi.fn(async (flag: string) => {
-      if (flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY) return primaryOn();
-      if (flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS) return hubsOn();
-      return false;
-    }),
+    getFliptBoolean: vi.fn(async () => false),
   };
 });
 const resolveHubSources = vi.fn();
@@ -80,7 +96,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 
 import { getAllImagesIndex } from '../image.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import { restrictedMinorClause } from '~/__tests__/minor-clause';
 
 const request = () =>
   ({
@@ -92,37 +108,23 @@ const request = () =>
     user: { id: 42, isModerator: false },
   } as unknown as Parameters<typeof getAllImagesIndex>[0]);
 
-describe('getAllImagesIndex with feed-service-primary', () => {
+describe('getAllImagesIndex on the feed service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pg.fail = false;
+    pg.statements = [];
   });
 
-  it('does not ask the feed when the flag is off', async () => {
-    primaryOn.mockReturnValue(false);
-    await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).not.toHaveBeenCalled();
-  });
-
-  it('asks the feed once and falls through to the search path when hydration yields nothing', async () => {
-    primaryOn.mockReturnValue(true);
-    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
-    const r = await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.source).not.toBe('feed');
-    expect(r.nextCursor).toBeUndefined();
-  });
-
-  it('asks the feed once and falls through when the feed itself fails', async () => {
-    primaryOn.mockReturnValue(true);
+  it('answers a feed timeout with a retryable SERVICE_UNAVAILABLE', async () => {
     fetchFeedPrimary.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
-    const r = await getAllImagesIndex(request());
+    await expect(getAllImagesIndex(request())).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.items).toEqual([]);
   });
 
   it('scopes the feed to the creator a profile page names by username', async () => {
-    primaryOn.mockReturnValue(true);
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    getUserIdByUsername.mockResolvedValue({ id: 7 });
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({
       ...request(),
@@ -137,7 +139,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a page past the offset cap instead of answering it from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     await expect(
       getAllImagesIndex({ ...request(), sort: 'Newest', cursor: '30000|1788000000000' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -145,7 +146,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('hides challenge entries in the feed by excluding the challenge tag', async () => {
-    primaryOn.mockReturnValue(true);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), hideChallenges: true });
     const query = new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
@@ -153,7 +153,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a cursor it cannot read instead of restarting the page from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     for (const cursor of ['feed', -1]) {
       await expect(getAllImagesIndex({ ...request(), cursor })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
@@ -163,7 +162,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('scopes the feed to the new-creator board', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), newCreators: true });
@@ -176,7 +174,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   // The home block's follower cap rides on the input. If a route drops it, that route serves the
   // uncapped board and the 1k+ creators come back to the homepage shelf.
   it('resolves the follower-capped board when the caller asks for one', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), newCreators: true, newCreatorsMaxFollowers: 500 });
@@ -187,7 +184,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('serves an unpopulated new-creator board as an empty feed', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([]);
     const r = await getAllImagesIndex({ ...request(), newCreators: true });
     expect(r).toMatchObject({ items: [], source: 'feed' });
@@ -199,8 +195,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     const sentQuery = () => new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
 
     beforeEach(() => {
-      primaryOn.mockReturnValue(true);
-      hubsOn.mockReturnValue(true);
       fetchFeedPrimary.mockResolvedValue({
         status: 200,
         ms: 3,
@@ -210,15 +204,7 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       });
     });
 
-    it('leaves a hub on the search index until hubs are switched over', async () => {
-      hubsOn.mockReturnValue(false);
-      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7] }));
-      const r = await getAllImagesIndex(hub());
-      expect(fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(r.source).not.toBe('feed');
-    });
-
-    it('asks the feed for the hub as resolved for this viewer', async () => {
+    it('asks the feed for the hub as resolved for this viewer, on the owner view', async () => {
       resolveHubSources.mockResolvedValue(
         hubSources({
           userIds: [7],
@@ -229,6 +215,7 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       );
       const r = await getAllImagesIndex({
         ...hub(),
+        asOwner: true,
         hubExcludedSources: [{ type: 'User', targetId: 9 }],
       } as Parameters<typeof getAllImagesIndex>[0]);
 
@@ -246,6 +233,16 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       expect(q.get('excludedUserIds')).toBe('3');
       expect(q.get('excludedVersionIds')).toBe('298112');
       expect(q.get('excludedTagGroups')).toBe('66');
+    });
+
+    it("resolves a scoped key's hub as Public only: no owner id reaches the hub lookup", async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7] }));
+      await getAllImagesIndex({ ...hub(), asOwner: false } as Parameters<
+        typeof getAllImagesIndex
+      >[0]);
+      expect(resolveHubSources).toHaveBeenCalledWith(
+        expect.objectContaining({ hubId: 12, userId: undefined, isModerator: false })
+      );
     });
 
     it('asks only for the held level of a held model the hub serves', async () => {
@@ -279,5 +276,61 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       expect(r).toMatchObject({ items: [], source: 'feed' });
       expect(fetchFeedPrimary).not.toHaveBeenCalled();
     });
+  });
+});
+
+// `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
+// minor-mature-image-visibility.behavior.test.ts.
+const RESTRICTED_MINOR = restrictedMinorClause('g');
+
+describe("the feed service's page hydrate, for restricted minor images", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pg.fail = false;
+    pg.statements = [];
+  });
+
+  /** The hydrate statement for a served page of ids 1-5, as `user` sees it. */
+  async function hydrateStatement(user: { id: number; isModerator: boolean }) {
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [1, 2, 3, 4, 5] });
+    // A session's views (credentialViews); the feed reads neither without them.
+    await getAllImagesIndex({
+      ...request(),
+      browsingLevel: 31,
+      user,
+      asModerator: true,
+      asOwner: true,
+    }).catch(() => undefined);
+    const hydrate = pg.statements.find((s) => s.text.includes('"Image" i'));
+    expect(hydrate, 'the page is no longer hydrated through the pg pool').toBeDefined();
+    return hydrate as { text: string; values: unknown[] };
+  }
+
+  it('drops a restricted minor image for a stranger and keeps an unflagged R image (control)', async () => {
+    const stmt = await hydrateStatement({ id: 42, isModerator: false });
+    const clauses = [...stmt.text.matchAll(RESTRICTED_MINOR)];
+    expect(clauses).toHaveLength(1);
+    const inlined = clauses[0][0].replace(/\$(\d+)/g, (_, n) => String(stmt.values[Number(n) - 1]));
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, minor boolean, "nsfwLevel" int);
+      INSERT INTO "Image" VALUES
+        (1, 7, true, 4), (2, 7, false, 4), (3, 7, NULL, 8), (4, 7, true, 2), (5, 42, true, 4);
+    `);
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM "Image" i WHERE ${inlined} ORDER BY id`
+    );
+    // 1: another user's restricted minor image, hidden; 5: the viewer's own, kept.
+    expect(rows.map((r) => r.id)).toEqual([2, 3, 4, 5]);
+    await db.close();
+  });
+
+  it('applies no such clause for a moderator', async () => {
+    // The same hydrate for a stranger carries it, so the pattern still finds the clause.
+    const stranger = await hydrateStatement({ id: 42, isModerator: false });
+    expect([...stranger.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(1);
+    pg.statements = [];
+    const stmt = await hydrateStatement({ id: 42, isModerator: true });
+    expect([...stmt.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(0);
   });
 });

@@ -1,8 +1,10 @@
 import * as z from 'zod';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   getServiceDealFileDownloadUrl,
   resolveServiceDealFileDownload,
 } from '~/server/services/creator-service-deal-file.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS } from '~/shared/constants/creator-services.constants';
@@ -24,13 +26,16 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
       .transform((value) => value === 'true')
       .describe('Ask for the file as the buyer receives it instead of the original.'),
   }),
-  async handler({ fileId, delivered }, { actor, tracker }) {
+  async handler({ fileId, delivered }, { actor, tracker, req }) {
     const target = await resolveServiceDealFileDownload({
       fileId,
       userId: actor.id,
       isModerator: true,
       delivered,
       moderatorFetch: true,
+      canReviewCsam: !!getFeatureFlags({ user: actor, req }).csamReports,
+      // Dispute review sees a file whatever its rating.
+      servableLevels: allBrowsingLevelsFlag,
     });
     if (!target) throw throwNotFoundError('File not found');
     const url = await getServiceDealFileDownloadUrl(target, tracker);

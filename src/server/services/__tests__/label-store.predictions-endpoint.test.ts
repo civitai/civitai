@@ -176,7 +176,7 @@ describe('who may submit', () => {
   });
 
   it('refuses a grant holder presenting a key that is not full scope', async () => {
-    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1 });
+    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1n });
 
     expect((await call({ predictions: [prediction()] })).status).toBe(403);
     expect(await stored()).toEqual([]);
@@ -295,6 +295,19 @@ describe('what it accepts', () => {
         )
       ).rows
     ).toEqual([{ questionVersion: 1, modelValue: null }]);
+  });
+
+  it('takes a minute-precision predictedAt, read as :00', async () => {
+    const parsed = handler.spec.input!.parse({
+      predictions: [prediction({ predictedAt: '2026-02-03T04:05+02:00' })],
+    }) as { predictions: Array<{ predictedAt?: string }> };
+    expect(parsed.predictions[0].predictedAt).toBe('2026-02-03T04:05:00+02:00');
+    const { payload } = await call({
+      predictions: [prediction({ predictedAt: '2026-02-03T04:05+02:00' })],
+    });
+    expect(payload.results).toEqual([{ sourceRef: 'run-1:501', status: 'recorded', id: 1 }]);
+    const { rows } = await holder.db.query(`SELECT "predictedAt" FROM label_store.prediction`);
+    expect(rows).toEqual([{ predictedAt: new Date('2026-02-03T02:05:00Z') }]);
   });
 
   it('a ten-digit image id keeps its owner, so the owner can be erased', async () => {

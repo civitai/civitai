@@ -16,7 +16,6 @@ import {
   Box,
   Center,
   Group,
-  HoverCard,
   Input,
   Loader,
   LoadingOverlay,
@@ -27,6 +26,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import type { UseListStateHandlers } from '@mantine/hooks';

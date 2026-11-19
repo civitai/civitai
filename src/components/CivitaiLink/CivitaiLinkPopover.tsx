@@ -1,7 +1,6 @@
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
   Group,
-  Popover,
   Stack,
   Text,
   Progress,
@@ -12,13 +11,12 @@ import {
   Center,
   CopyButton,
   Button,
-  Tooltip,
   List,
   Loader,
-  Menu,
   Modal,
   TextInput,
 } from '@mantine/core';
+import { Popover, Tooltip, Menu } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import classes from './civitai-link.module.scss';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
@@ -55,6 +53,7 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CivitaiLinkNavSwitch } from '~/components/CivitaiLink/CivitaiLinkNavSwitch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
@@ -397,6 +396,7 @@ function LinkDropdown({ onClose }: { onClose: () => void }) {
           'link-ready': <ActivityList />,
         }[status]
       )}
+      <CivitaiLinkNavSwitch />
     </Paper>
   );
 }

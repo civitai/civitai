@@ -854,14 +854,14 @@ describe('Forgejo client-side timeout routing', () => {
     expect(timeouts[commitIdx]).toBe(120000);
   });
 
-  it('ensureReviewRepo: the auto_init repo-create POST uses the 120s commit timeout; the org-create keeps 15s', async () => {
+  it('ensureReviewRepo: the auto_init repo-create POST uses the 120s commit timeout; the org lookup keeps 15s', async () => {
     const { ensureReviewRepo } = await import('../forgejo.service');
-    fm.enqueue(null, 422); // POST /orgs (already exists)
+    fm.enqueue({ id: 1 }); // GET /orgs/<review> (exists)
     fm.enqueue(null, 201); // POST /orgs/<review>/repos (created)
 
     await ensureReviewRepo('gen-matrix');
 
-    const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs'));
+    const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs/civitai-apps-review'));
     const repoIdx = fm.calls.findIndex((c) => c.url.endsWith('/orgs/civitai-apps-review/repos'));
     expect(orgIdx).toBeGreaterThanOrEqual(0);
     expect(repoIdx).toBeGreaterThanOrEqual(0);
@@ -955,5 +955,52 @@ describe('Forgejo client-side timeout routing', () => {
 
     vi.doUnmock('~/env/server');
     vi.resetModules();
+  });
+});
+
+describe('getPlatformAccountLogin', () => {
+  beforeEach(() => {
+    // The login is memoised per module instance; every case starts from a fresh one. The env
+    // mock is re-registered because the describe above ends with `vi.doUnmock('~/env/server')`.
+    vi.resetModules();
+    vi.doMock('~/env/server', () => ({
+      env: {
+        FORGEJO_BASE_URL: 'https://forgejo.example',
+        FORGEJO_ADMIN_TOKEN: 'tok-test',
+        FORGEJO_API_TIMEOUT_MS: 15000,
+        FORGEJO_COMMIT_TIMEOUT_MS: 120000,
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock('~/env/server');
+    vi.resetModules();
+  });
+
+  it('asks Forgejo who the admin token is once, and answers later calls from that', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ login: 'platform-bot-7q', id: 3 });
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(fm.calls.map((c) => c.url)).toEqual(['https://forgejo.example/api/v1/user']);
+    expect((fm.calls[0].init?.headers as Record<string, string>)['Authorization']).toBe(
+      'token tok-test'
+    );
+  });
+
+  it('does not keep a failed read: the next call asks again', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ message: 'unavailable' }, 503);
+    await expect(getPlatformAccountLogin()).rejects.toThrow(/Forgejo 503/);
+    fm.enqueue({ login: 'platform-bot-7q' });
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(fm.calls).toHaveLength(2);
+  });
+
+  it('refuses an answer with no login', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ id: 3 });
+    await expect(getPlatformAccountLogin()).rejects.toThrow(/no login/);
   });
 });

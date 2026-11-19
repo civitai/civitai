@@ -221,6 +221,16 @@ describe('setReportStatus', () => {
     );
   });
 
+  it('pays nothing to the reporters a caller names, beside the ones the report marks', async () => {
+    updateResult = { userId: 10, alsoReportedBy: [11, 12] };
+
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7, noRewardFor: [12] });
+
+    expect(rewardReportReporters).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [12] })
+    );
+  });
+
   it('stamps previouslyReviewedCount when actioning', async () => {
     await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
 

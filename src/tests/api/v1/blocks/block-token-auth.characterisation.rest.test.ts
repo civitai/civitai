@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: installs the shared db/redis/env/prom mocks and the REAL test RSA keypair
 // before `block-token.service` evaluates env at module load, so tokens below are really signed
 // and really verified.
@@ -80,6 +81,37 @@ function subjectFlag() {
     opts?.user ? opts.user.id === 42 : h.flagBase.on;
 }
 
+// The model routes' raw queries: no rows. A cell past auth only has to answer, not find a model.
+const { emptyPool } = vi.hoisted(() => {
+  const client = { query: async () => ({ rows: [] }), release: () => undefined };
+  const query = async () => ({ rows: [] });
+  const cancellableQuery = async () => ({ result: async () => [], cancel: async () => undefined });
+  return { emptyPool: { connect: async () => client, query, cancellableQuery } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
+
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksRuntimeEnabled: async () => h.runtimeFlag.on,
@@ -88,6 +120,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   // Pinned OFF so the one route that consults the authoring capability answers the same
   // way on every machine, rather than whatever the flag client resolves to locally.
   isAppBlocksAuthorEnabled: async () => false,
+}));
+// The held-image filter reads post and model caches; this table is about admission, not images.
+vi.mock('~/server/services/image-search.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/image-search.service')>()),
+  withoutHeldImages: async <T>(items: T[]) => items,
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => h.isRevoked(...a) },
@@ -290,10 +327,21 @@ const ROUTES: Record<string, RouteSpec> = {
     query: { ids: '1' },
     scope: null,
   },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    load: () => import('~/pages/api/v1/blocks/workflow-media'),
+    method: 'POST',
+    body: { refs: ['bm1.not-a-ref'] },
+    scope: null,
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     load: () => import('~/pages/api/v1/blocks/generation-resources'),
     method: 'GET',
     query: { ids: '1' },
+    scope: null,
+  },
+  'src/pages/api/v1/blocks/generation-samplers.ts': {
+    load: () => import('~/pages/api/v1/blocks/generation-samplers'),
+    method: 'GET',
     scope: null,
   },
   'src/pages/api/v1/blocks/goods/purchase.ts': {
@@ -666,6 +714,15 @@ beforeEach(() => {
   });
   dbMock.dbRead.oauthClient.findUnique.mockReset().mockResolvedValue({ userId: SUBJECT_ID });
   dbMock.dbRead.user.findUnique.mockReset().mockResolvedValue({ id: 77, deletedAt: null });
+  // Only the submit's restriction read gets a row; every other route's user read stays empty.
+  dbMock.dbWrite.user.findUnique.mockReset().mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : null) as never);
   h.grantedScopes = [];
   env.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
 });
@@ -854,9 +911,9 @@ const REFUSAL_STATUSES = [401, 403, 405, 429];
  *   - `wrong method, no bearer`: 405 everywhere the handler checks the method first. The
  *     exception is `tools.ts`, which checks the token FIRST and answers 401.
  *   - `revoked AND not approved`: REST reports `revoked` (revocation runs before approval).
- *   - `missing scope` on the any-token routes (gated-images, generation-resources, images,
- *     models, resource-intent, tools, user-checkpoint/set): admitted — those routes declare no
- *     `requiredScope`.
+ *   - `missing scope` on the any-token routes (gated-images, generation-resources,
+ *     generation-samplers, images, models, resource-intent, tools, user-checkpoint/set):
+ *     admitted — those routes declare no `requiredScope`.
  *   - `hub OAuth token`: with OAuth tokens enabled, the middleware synthesises claims for a
  *     hub-issued access token and admits it; routes that re-verify the RAW bearer as a block
  *     JWT (app-storage, shared-storage, workflows, user-checkpoint) then refuse it with their
@@ -865,9 +922,9 @@ const REFUSAL_STATUSES = [401, 403, 405, 429];
  *   - `missing approval row` / `dev token, no approval row`: the middleware SERVES (admitted —
  *     REST's deliberate difference from the bridge); app-storage and shared-storage routes then
  *     refuse in their own second resolver (`app block not found`).
- *   - `approval row read throws`: 503 `app block status unavailable`, except on the five routes
- *     declaring `onApprovalLookupFailure: 'serve'` (generation-resources, images, models, tools,
- *     models/[id]), which are admitted.
+ *   - `approval row read throws`: 503 `app block status unavailable`, except on the routes
+ *     declaring `onApprovalLookupFailure: 'serve'` (generation-resources, generation-samplers,
+ *     images, models, tools, models/[id]), which are admitted.
  *   - `consent …`: the token carries a consent-gated scope, so the marker is consulted on every
  *     scoped route. A revoked/unavailable marker refuses only routes whose OWN scope is
  *     revokable (403 `consent_revoked` / 503 `permission_state_unavailable`); routes whose
@@ -2371,6 +2428,148 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      { error: 'Block token required' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], [], null),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    revoked: X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'token carries an unknown scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['made:up:scope']
+    ),
+    'anonymous subject': X(
+      401,
+      { message: 'workflow media read requires an authenticated viewer' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'approval row read throws': X(
+      503,
+      { error: 'app block status unavailable' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'consent revoked for the route scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'dev token, no approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
@@ -2450,7 +2649,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'hub OAuth token': X(
       200,
-      { items: [], maturity: { browsingLevel: 3, sfwOnly: true } },
+      // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
       true,
       ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
       ['getResourceData([1])'],
@@ -2512,6 +2712,68 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['getResourceData([1])'],
       []
     ),
+  },
+  // The 200 body is the whole sampler catalog, derived from the generation graph, so the
+  // admitted cells are PASSED rather than pinned verbatim here; its shape and contents are
+  // pinned in `src/tests/api/v1/blocks/generation-samplers-endpoint.test.ts`. No limiter: the
+  // route is deliberately not rate-limited (see its header), so `rate limited` is served.
+  'src/pages/api/v1/blocks/generation-samplers.ts': {
+    'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      { error: 'Block token required' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], [], null),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    revoked: X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': PASSED(true, [], [], []),
+    'token carries an unknown scope': PASSED(true, [], [], ['made:up:scope']),
+    'anonymous subject': PASSED(true, [], [], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], [], []),
+    'rate limited': PASSED(true, [], [], []),
+    'hub OAuth token': PASSED(true, [], [], []),
+    'missing approval row': PASSED(true, [], [], []),
+    'approval row read throws': PASSED(true, [], [], []),
+    'consent revoked for the route scope': PASSED(true, [], [], ['buzz:read:self']),
+    'consent marker unavailable': PASSED(true, [], [], ['buzz:read:self']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'dev token, no approval row': PASSED(true, [], [], []),
+    'private-run token, row not approved': PASSED(true, [], [], []),
   },
   'src/pages/api/v1/blocks/goods/purchase.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
@@ -3107,7 +3369,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         noneProbability: null,
         model: 'jev-unavailable',
         criteriaVersion: 2,
-        maturity: { browsingLevel: 3, sfwOnly: true },
+        // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+        maturity: { browsingLevel: 1, sfwOnly: true },
       },
       true,
       ['checkBlockLLMRateLimit("page_apb_hubrow")'],
@@ -5955,7 +6218,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -6276,7 +6539,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockPollRateLimit("bki_char", 42)'],
       [
@@ -6580,7 +6843,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       401,
       { message: 'workflow submit requires authenticated viewer' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "anon")', 'checkBlockSubmitUserRateLimit("anon")'],
       [],
       ['ai:write:budgeted']
     ),
@@ -6593,14 +6856,13 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       null
     ),
     'rate limited': X(
-      404,
-      { message: 'model version not found' },
+      429,
+      { message: 'Rate limit exceeded, please retry shortly.' },
       true,
-      [],
+      ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
-        'hydrate:42',
       ],
       ['ai:write:budgeted']
     ),
@@ -6665,7 +6927,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
@@ -6677,7 +6942,10 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       404,
       { message: 'model version not found' },
       true,
-      [],
+      [
+        'checkBlockSubmitRateLimit("bki_char", "user:42")',
+        'checkBlockSubmitUserRateLimit("user:42")',
+      ],
       [
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',
         'consent-lookup:{"userId":42,"appBlockId":"apb_claim"}',

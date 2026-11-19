@@ -1,5 +1,6 @@
 import type { GroupProps } from '@mantine/core';
-import { Box, Group, List, Popover, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Box, Group, List, Text, useMantineTheme } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import React from 'react';
 

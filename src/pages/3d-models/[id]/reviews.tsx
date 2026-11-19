@@ -8,12 +8,12 @@ import {
   Divider,
   Group,
   Loader,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,

@@ -12,6 +12,8 @@ import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-stor
 import {
   APPDATA_TABLES,
   isAccountWipeStatement,
+  isAppPurgeStatement,
+  isRaterLookupStatement,
   isReviewMaintenanceStatement,
   scanStatement,
 } from './doc-store.sql-scan';
@@ -23,6 +25,63 @@ export const MIGRATION_UP = path.resolve(
 export const MIGRATION_DOWN = path.resolve(
   __dirname,
   '../migrations/20261013120000_appdata_document_store.down.sql'
+);
+/** The app-purge enumeration policy, applied after the document-store migration. */
+export const MIGRATION_APP_PURGE_UP = path.resolve(
+  __dirname,
+  '../migrations/20261102120000_appdata_app_purge.sql'
+);
+export const MIGRATION_APP_PURGE_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261102120000_appdata_app_purge.down.sql'
+);
+/** The `doc.schema_major` column. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_SCHEMA_MAJOR_UP = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.sql'
+);
+export const MIGRATION_SCHEMA_MAJOR_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.down.sql'
+);
+
+/** The content-level columns on doc. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_DOC_LEVELS_UP = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.sql'
+);
+export const MIGRATION_DOC_LEVELS_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.down.sql'
+);
+
+/** The rater's rating id and lookup policy. Off by default: a suite opts in. */
+export const MIGRATION_DOC_RATING_ID_UP = path.resolve(
+  __dirname,
+  '../migrations/20261118120000_appdata_doc_rating_id.sql'
+);
+export const MIGRATION_DOC_RATING_ID_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261118120000_appdata_doc_rating_id.down.sql'
+);
+
+/**
+ * The `doc.record_id` column with its `gen_random_uuid()` default, and its unique index (built
+ * CONCURRENTLY; PGlite accepts the shipped file as is). ON by default, so every PGlite suite runs
+ * the store against a table that has the column, as an environment will once it is applied.
+ */
+export const MIGRATION_RECORD_ID_UP = path.resolve(
+  __dirname,
+  '../migrations/20261119120000_appdata_doc_record_id.sql'
+);
+export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
+  __dirname,
+  '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
+);
+/** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
+export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
+  __dirname,
+  '../migrations/20261119120100_appdata_doc_record_id_backfill.sql'
 );
 
 export type Row = Record<string, unknown>;
@@ -59,6 +118,16 @@ const BEGIN_MAINTENANCE =
 /** The store's account-wipe enumeration transaction: no app or namespace, one user id. */
 const BEGIN_ACCOUNT_WIPE =
   /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.account_wipe_uid', '([1-9][0-9]*)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The store's app-purge enumeration transaction: no app or namespace bound, one app id. */
+const BEGIN_APP_PURGE =
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.app_purge_id', '([^']+)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The store's rater-lookup transaction: no app or namespace bound, one rating id (0 = none). */
+const BEGIN_RATER_LOOKUP =
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.rater_lookup_id', '([0-9]+)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The rater's readiness check: a catalog read, no appdata table. */
+const RATER_POLICY_CHECK = /^SELECT count\(\*\)::int AS n FROM pg_catalog\.pg_policies pp\b/;
+/** The app-purge enumeration's policy check: a catalog read, no appdata table. */
+const APP_PURGE_POLICY_CHECK = /^SELECT count\(\*\)::int AS n FROM pg_catalog\.pg_policies pp\b/;
 
 /**
  * Wrap a store client so every statement is recorded and checked: the settings
@@ -74,20 +143,58 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
     maintenance: boolean;
     /** The user id an account-wipe enumeration transaction is bound to. */
     wipeUid?: number;
+    /** The app id an app-purge enumeration transaction is bound to. */
+    purgeApp?: string;
+    /** The rating id a rater-lookup transaction is bound to. */
+    lookupId?: number;
   } | null = null;
   const client: DocStoreClient = {
     async query(sql, params) {
       const m = BEGIN_SETTINGS.exec(sql);
       const mm = BEGIN_MAINTENANCE.exec(sql);
       const mw = BEGIN_ACCOUNT_WIPE.exec(sql);
+      const mp = BEGIN_APP_PURGE.exec(sql);
+      const ml = BEGIN_RATER_LOOKUP.exec(sql);
       if (m) bound = { app: m[1], ns: m[2], maintenance: false };
+      else if (ml) bound = { app: '', ns: '', maintenance: false, lookupId: Number(ml[1]) };
+      else if (mp) bound = { app: '', ns: '', maintenance: false, purgeApp: mp[1] };
       else if (mm) bound = { app: mm[1], ns: '', maintenance: true };
       else if (mw) bound = { app: '', ns: '', maintenance: false, wipeUid: Number(mw[1]) };
       else if (sql === 'COMMIT' || sql === 'ROLLBACK') bound = null;
       else if (/appdata/i.test(sql)) {
         const p = params ?? [];
         if (!bound) h.violations.push(`statement outside a bound transaction: ${sql}`);
-        else if (isAccountWipeStatement(sql) || bound.wipeUid !== undefined) {
+        else if (isRaterLookupStatement(sql) || bound.lookupId !== undefined) {
+          h.statements.push({ sql, params: p, app: '', ns: '' });
+          // The lookup (and the readiness check) runs only in its own transaction, keyed on the
+          // bound rating id as $1.
+          if (bound.lookupId === undefined) {
+            h.violations.push(`rater-lookup statement outside its transaction: ${sql}`);
+          } else if (RATER_POLICY_CHECK.test(sql)) {
+            // No parameters, no appdata table.
+          } else if (!isRaterLookupStatement(sql)) {
+            h.violations.push(
+              `statement other than the lookup in a rater-lookup transaction: ${sql}`
+            );
+          } else if (p[0] !== bound.lookupId) {
+            h.violations.push(`$1 does not match the bound rating id: ${sql}`);
+          }
+        } else if (isAppPurgeStatement(sql) || bound.purgeApp !== undefined) {
+          h.statements.push({ sql, params: p, app: bound.purgeApp ?? '', ns: '' });
+          // The enumeration (and its policy check) runs only in its own transaction, keyed on
+          // the bound app as $1.
+          if (bound.purgeApp === undefined) {
+            h.violations.push(`app-purge statement outside its transaction: ${sql}`);
+          } else if (APP_PURGE_POLICY_CHECK.test(sql)) {
+            // No parameters, no appdata table.
+          } else if (!isAppPurgeStatement(sql)) {
+            h.violations.push(
+              `statement other than the enumeration in an app-purge transaction: ${sql}`
+            );
+          } else if (p[0] !== bound.purgeApp) {
+            h.violations.push(`$1 does not match the bound app-purge app: ${sql}`);
+          }
+        } else if (isAccountWipeStatement(sql) || bound.wipeUid !== undefined) {
           h.statements.push({ sql, params: p, app: bound.app, ns: bound.ns });
           // The enumeration runs only in its own transaction, keyed on the bound user as $1.
           if (bound.wipeUid === undefined || !isAccountWipeStatement(sql)) {
@@ -131,9 +238,29 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
 // PGlite — one session, so the store must be driven sequentially.
 // ---------------------------------------------------------------------------
 
-export async function createPgliteHarness(opts: { rls: boolean }): Promise<Harness> {
+export async function createPgliteHarness(opts: {
+  rls: boolean;
+  /** Apply the app-purge policy migration too (default true). */
+  appPurgePolicy?: boolean;
+  /** Apply the `doc.schema_major` migration too (default false). */
+  schemaMajor?: boolean;
+  /** Apply the content-level columns migration too (default false). */
+  docLevels?: boolean;
+  /** Apply the rater's rating-id migration too (default false). */
+  docRatingId?: boolean;
+  /** Apply the `doc.record_id` column and its unique index too (default true). */
+  recordId?: boolean;
+}): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
+  if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
+  if (opts.docLevels) await pg.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
+  if (opts.docRatingId) await pg.exec(readFileSync(MIGRATION_DOC_RATING_ID_UP, 'utf8'));
+  if (opts.recordId !== false) {
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UNIQUE, 'utf8'));
+  }
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
@@ -215,7 +342,16 @@ export async function createRealPgHarness(): Promise<Harness> {
   const su = new Client({ connectionString: dbUrl });
   await su.connect();
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
+  await su.query(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  // The `doc.record_id` column and its default, as on PGlite and in every environment (the
+  // record export reads it). Its unique index is built CONCURRENTLY, which a multi-statement
+  // query cannot run, and no suite here needs it.
+  await su.query(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
   const open = new Set<Client>();
+  // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
+  // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,
+  // which Vitest reports as an unhandled error.
+  const ending = new Set<Promise<void>>();
 
   async function newClient(role: string | null): Promise<Client> {
     const c = new Client({ connectionString: dbUrl });
@@ -238,7 +374,9 @@ export async function createRealPgHarness(): Promise<Harness> {
           },
           release() {
             open.delete(c);
-            void c.end();
+            const done = c.end().catch(() => undefined);
+            ending.add(done);
+            void done.then(() => ending.delete(done));
           },
         };
         return recording(inner, h);
@@ -270,6 +408,7 @@ export async function createRealPgHarness(): Promise<Harness> {
     },
     async close() {
       await Promise.all([...open].map((c) => c.end().catch(() => undefined)));
+      await Promise.all(ending);
       await su.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.end();

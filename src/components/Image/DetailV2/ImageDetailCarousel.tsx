@@ -1,8 +1,18 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
+import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
+import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
+import {
+  STICKER_TIMELINE_SPACE,
+  useStickerTimelineOpen,
+} from '~/components/Sticker/StickerMotionEditor';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -21,6 +31,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { TextSlide } from '~/components/Image/DetailV2/TextSlide';
 import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
@@ -37,7 +49,11 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  ingestion?: string | null;
 };
+type CarouselItem =
+  | { type: 'image'; key: string; image: ImageProps }
+  | { type: 'text'; key: string; text: DetailText };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
 type State = ReturnType<typeof useCarouselNavigation<ImageProps>>;
@@ -65,7 +81,7 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
 // VIDEO is here so arrow keys still seek a focused player with native controls
 const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
@@ -73,6 +89,8 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
   if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // An element that uses the arrows itself (a sticker being nudged into place).
+  if (target.closest('[data-arrow-keys]')) return false;
   // A dialog stacked on top of the detail view (report, add-to-collection) owns
   // its own arrow handling. The detail view's own modal shell is also a dialog,
   // but it contains the carousel, which is what tells the two apart.
@@ -85,7 +103,9 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
-  images,
+  images: imageSlides,
+  items,
+  textUserId,
   videoRef,
   connect,
   index,
@@ -97,6 +117,10 @@ export function ImageDetailCarousel({
   loop = true,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
+  /** Slides with text items among the images; `index` points into these when given. */
+  items?: CarouselItem[];
+  /** The text items' author, so their own unrated text is not blurred for them. */
+  textUserId?: number;
   index: number;
   navigate?: (index: number) => void;
   next: () => void;
@@ -107,6 +131,7 @@ export function ImageDetailCarousel({
   loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  const slideCount = (items ?? imageSlides).length;
   const emblaRef = useRef<EmblaCarouselType | null>(null);
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
@@ -140,16 +165,22 @@ export function ImageDetailCarousel({
   // `scrollTo` emits 'select' synchronously, which would echo straight back into
   // `navigate` and run the whole onChange side-effect chain a second time.
   const syncingRef = useRef(false);
+  // Embla announces its slide on every reInit too (a slide added or removed, a resize), and a
+  // reInit keeps the slide it had. Writing that back is not a move: it lands after any index the
+  // parent has set but not yet rendered (a cold `?text=` load names the text from an effect, in
+  // the commit after the slide arrived) and undoes it. Only a slide that changed is passed on.
+  const announcedRef = useRef(index);
   const handleSlideChange = (slideIndex: number) => {
-    if (!syncingRef.current) navigate?.(slideIndex);
+    const moved = slideIndex !== announcedRef.current;
+    announcedRef.current = slideIndex;
+    if (moved && !syncingRef.current) navigate?.(slideIndex);
   };
 
   const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    // A slide added in the same commit as the index that names it is not embla's yet, and its
-    // own reinit would announce the old slide and write it back through `navigate`.
-    if (index >= api.slideNodes().length && index < images.length)
-      api.reInit({ startIndex: index });
+    // A slide added in the same commit as the index that names it is not embla's yet: scrolling
+    // there would miss it, so reInit embla onto it instead.
+    if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
     else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
   };
@@ -165,18 +196,19 @@ export function ImageDetailCarousel({
   useEffect(() => {
     if (embla) followIndex(embla);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- not on every render
-  }, [embla, index, images.length]);
+  }, [embla, index, slideCount]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
-  // The hat is drawn in a layer outside embla's clipping viewport, so it cannot ride a moving slide.
+  // The hat is drawn in a layer outside embla's clipping viewport, and follows its slide from there.
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
-  const [moving, setMoving] = useState(false);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
+  // The slide the last commit settled on, seeded like `settledIndex`.
+  const committedRef = useRef(index);
 
   useEffect(() => {
     if (!embla) return;
@@ -188,9 +220,16 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
-      setMoving(false);
+      committedRef.current = current;
       setSettledIndex(current);
       onSettleRef.current?.(current);
+    };
+
+    // A reInit keeps embla's slide, so one that left it where the last commit did owes no settle.
+    // Committing it anyway would announce the slide being left as the one landed on: the URL
+    // would move back to it while the carousel goes on to the index the parent just set.
+    const commitIfMoved = () => {
+      if (embla.selectedScrollSnap() !== committedRef.current) commit();
     };
 
     // 'settle' only fires from the animation loop, so anything that destroys the
@@ -202,20 +241,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    const startMoving = () => setMoving(true);
-
-    embla
-      .on('settle', commit)
-      .on('reInit', commit)
-      .on('select', armFallback)
-      .on('scroll', startMoving);
+    embla.on('settle', commit).on('reInit', commitIfMoved).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla
-        .off('settle', commit)
-        .off('reInit', commit)
-        .off('select', armFallback)
-        .off('scroll', startMoving);
+      embla.off('settle', commit).off('reInit', commitIfMoved).off('select', armFallback);
     };
   }, [embla]);
 
@@ -223,13 +252,15 @@ export function ImageDetailCarousel({
     embla?.reInit();
   });
 
-  if (!images.length) return null;
+  if (!slideCount) return null;
 
   return (
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        className="flex-1"
+        // min-w-0 here and on each slide: a text slide's words are not allowed to widen the
+        // carousel or the slide past the stage, which clips the slide on the right.
+        className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
@@ -240,8 +271,12 @@ export function ImageDetailCarousel({
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
-            {images.map((image, i) => (
-              <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
+            {(items ?? imageSlides.map(asImageItem)).map((item, i) => (
+              <Embla.Slide
+                key={item.type === 'image' ? item.image.id : item.key}
+                index={i}
+                className="min-w-0 flex-[0_0_100%]"
+              >
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
                     Neighbors key off the settled index so a new full-size decode never
@@ -249,16 +284,19 @@ export function ImageDetailCarousel({
                     isn't mounted yet, so a drag started in that window reveals it late;
                     the fallback timer above bounds how long that can last. */}
                 {() =>
-                  (i === index || isAdjacent(i, settledIndex, images.length, loop)) && (
+                  (i === index || isAdjacent(i, settledIndex, slideCount, loop)) &&
+                  (item.type === 'text' ? (
+                    <TextSlide text={item.text} userId={textUserId} {...connect} />
+                  ) : (
                     <ImageContent
-                      image={image}
+                      image={item.image}
                       active={index === i}
-                      hatLayer={index === i ? hatLayer : null}
-                      hatHidden={moving}
+                      hatLayer={hatLayer}
+                      embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
-                  )
+                  ))
                 }
               </Embla.Slide>
             ))}
@@ -271,26 +309,37 @@ export function ImageDetailCarousel({
   );
 }
 
+function asImageItem(image: ImageProps): CarouselItem {
+  return { type: 'image', key: `img:${image.id}`, image };
+}
+
 function ImageContent({
   image,
   videoRef,
   active = true,
   hatLayer,
-  hatHidden,
+  embla,
   ...connect
 }: {
   image: ImageProps;
   active?: boolean;
   hatLayer: HTMLElement | null;
-  hatHidden: boolean;
+  embla: EmblaCarouselType | null;
 } & ConnectProps &
   ImageDetailCarouselProps) {
+  const showEventCosmetics = useShowEventCosmetics();
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
     defaultValue: true,
   });
   const features = useFeatureFlags();
+  // Optional: the carousel also renders without a session provider.
+  const session = useOptionalCivitaiSessionContext();
+  const retractedSrc =
+    features.modRetractedMedia && session?.type === 'authed'
+      ? retractedMediaUrl(image, session)
+      : null;
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -305,6 +354,7 @@ function ImageContent({
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
   const pointerType = useRef('mouse');
+  const timelineOpen = useStickerTimelineOpen(image.id);
 
   const handleDragStart = (event: React.DragEvent) => {
     if (pointerType.current !== 'mouse') return;
@@ -326,8 +376,10 @@ function ImageContent({
           onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
           onDragStartCapture={handleDragStart}
           className="relative flex size-full items-center justify-center"
+          // The sticker timeline floats in the room this leaves, so it never covers the video.
+          style={timelineOpen ? { paddingBottom: STICKER_TIMELINE_SPACE } : undefined}
         >
-          {!safe && width && height ? (
+          {!safe ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"
               style={{
@@ -338,6 +390,14 @@ function ImageContent({
             >
               <MediaHash {...image} />
             </div>
+          ) : retractedSrc ? (
+            <RetractedMedia
+              src={retractedSrc}
+              type={image.type}
+              alt={image.name ?? undefined}
+              className="max-h-full w-auto max-w-full"
+              controls={active}
+            />
           ) : (
             <EdgeMedia
               // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
@@ -346,11 +406,9 @@ function ImageContent({
               {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
               imageId={image.id}
-              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              className="max-h-full w-auto max-w-full"
               wrapperProps={{
-                className: `flex items-center justify-center max-h-full w-auto max-w-full ${
-                  !safe ? 'invisible' : ''
-                }`,
+                className: 'flex items-center justify-center max-h-full w-auto max-w-full',
                 style: {
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
@@ -359,7 +417,9 @@ function ImageContent({
               // and the aspect-ratio wrapper then clips the image's height. A `width` would also
               // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
-                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+                active &&
+                !timelineOpen &&
+                (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -376,12 +436,13 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls={active}
+              controls={active && !timelineOpen}
               videoProps={{
                 autoPlay: active,
                 // A slide mid-transition is still in view, which the player's own in-view check
-                // reads as a reason to play.
-                standby: !active,
+                // reads as a reason to play. The sticker timeline owns play and pause: dropping
+                // the controls for it would otherwise re-run the player's autoplay.
+                standby: !active || timelineOpen,
               }}
             />
           )}
@@ -389,9 +450,15 @@ function ImageContent({
             imageId={image.id}
             decoration={image.eventDecoration}
             layer={hatLayer}
-            hidden={hatHidden}
+            embla={embla}
           />
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          {safe && (
+            <ImageStickerOverlay
+              imageId={image.id}
+              wearsHat={showEventCosmetics && !!image.eventDecoration}
+            />
+          )}
+          {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>

@@ -16,15 +16,14 @@
     /** Small outline buttons on the right; where the item lives is one of them. */
     links?: Snippet;
     /** Keep the links on the title row whatever the title's length: the title truncates instead, its
-     *  reference staying beside it. */
+     *  reference staying beside it. A pane too narrow for the reference and the links still wraps them
+     *  below, as the reference cannot shrink. */
     linksBeside?: boolean;
   } = $props();
 </script>
 
-<header
-  class="flex items-start justify-between gap-x-4 gap-y-2 {linksBeside ? 'flex-nowrap' : 'flex-wrap'}"
->
-  <div class="min-w-0 space-y-1.5 {linksBeside ? 'flex-1' : ''}">
+<header class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+  <div class="space-y-1.5 {linksBeside ? 'min-w-48 flex-1' : 'min-w-0'}">
     {#if linksBeside}
       <div class="flex min-w-0 items-baseline gap-x-2">
         <h2 class="m-0 min-w-0 truncate text-lg font-semibold text-white" {title}>{title}</h2>

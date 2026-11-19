@@ -6,8 +6,10 @@ import {
   CSAM_CONTENTS,
   CSAM_CONTENT_KEYS,
   getDatasetItemStates,
+  getTrainingGateState,
   getTrainingVersionDetail,
   getTrainingWorkflowDetail,
+  invalidateTrainingReviewQueue,
   moderateTrainingData,
   reportTrainingDataCsam,
   type TrainingVersionDetail,
@@ -26,6 +28,8 @@ export const load: PageServerLoad = async ({ params }) => {
   const studioDataset = loadStudioDataset(detail);
   return {
     detail,
+    // Streamed: a manager read, which can take its full timeout.
+    gate: getTrainingGateState(versionId.data),
     csamContents: CSAM_CONTENTS,
     studioDataset,
     studioItemStates: studioDataset.then((loaded) =>
@@ -102,6 +106,7 @@ export const actions: Actions = {
       contents,
     });
     if (!result.ok) return fail(400, { error: result.error });
+    invalidateTrainingReviewQueue();
 
     return { success: true, ...('warning' in result ? { warning: result.warning } : {}) };
   }),

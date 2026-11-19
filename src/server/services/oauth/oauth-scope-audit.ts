@@ -21,22 +21,7 @@
  *     procedure) so a call records exactly one row.
  */
 
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-
-/**
- * Reverse map: a single `TokenScope` bit → its stable machine name (the enum
- * key, e.g. `ModelsRead`). Built from the enum so it can never drift behind a
- * newly-added bit. Excludes the `None` (0) and `Full` (composite mask) entries —
- * neither is a single capability bit.
- */
-const SCOPE_NAME_BY_BIT: Record<number, string> = Object.entries(TokenScope).reduce(
-  (acc, [key, value]) => {
-    if (key === 'None' || key === 'Full') return acc;
-    if (typeof value === 'number' && value > 0) acc[value] = key;
-    return acc;
-  },
-  {} as Record<number, string>
-);
+import { TokenScope, tokenScopeKeyByBit } from '~/shared/constants/token-scope.constants';
 
 /**
  * Map a `TokenScope` bitmask (the value a procedure declares via
@@ -48,15 +33,12 @@ const SCOPE_NAME_BY_BIT: Record<number, string> = Object.entries(TokenScope).red
  *   - anything else (a composite / unknown value) → `'scope:<bitmask>'`
  *     (never throws; the numeric value stays recoverable).
  */
-export function tokenScopeToAuditName(bit: number): string {
+export function tokenScopeToAuditName(bit: bigint): string {
   if (bit === TokenScope.Full) return 'full';
-  return SCOPE_NAME_BY_BIT[bit] ?? `scope:${bit}`;
+  return tokenScopeKeyByBit(bit) ?? `scope:${bit}`;
 }
 
-type RequestSubject =
-  | { type: 'apiKey'; id: number }
-  | { type: 'oauth'; id: string }
-  | undefined;
+type RequestSubject = { type: 'apiKey'; id: number } | { type: 'oauth'; id: string } | undefined;
 
 /**
  * Fire-and-forget: record ONE external-OAuth scope invocation, iff the request
@@ -69,7 +51,7 @@ export function maybeRecordOauthScopeUsage(opts: {
   subject: RequestSubject;
   userId: number | undefined;
   /** The `TokenScope` bit the call exercised (declared requiredScope, or Full). */
-  scopeBit: number;
+  scopeBit: bigint;
   /** The route — the tRPC procedure path (dotted name). */
   endpoint: string;
   statusCode: number;

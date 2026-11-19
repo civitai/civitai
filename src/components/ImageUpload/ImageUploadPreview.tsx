@@ -1,17 +1,7 @@
 import type { CSSProperties } from 'react';
 import { forwardRef, useState } from 'react';
-import {
-  Alert,
-  Center,
-  Group,
-  Overlay,
-  Paper,
-  ActionIcon,
-  Text,
-  Popover,
-  Code,
-  Stack,
-} from '@mantine/core';
+import { Alert, Center, Group, Overlay, Paper, ActionIcon, Text, Code, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';

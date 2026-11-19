@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 
 /**
  * 🔴 THE SEAM TEST. The four `/api/v1/blocks/workflows/*` routes and the four
@@ -67,6 +68,25 @@ const {
  * — but it is the only thing mocked on the request path.
  */
 const claimsBox: { claims: unknown } = { claims: undefined };
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -171,6 +191,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckBlockCatalogRateLimit(...(a as [])),
   checkBlockPublishRateLimit: async () => ({ allowed: true }),
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -183,7 +205,6 @@ import estimateHandler from '~/pages/api/v1/blocks/workflows/estimate';
 import submitHandler from '~/pages/api/v1/blocks/workflows/submit';
 import queryHandler from '~/pages/api/v1/blocks/workflows/query';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -306,6 +327,15 @@ const TXT2IMG_BODY = {
 const IDEMPOTENCY_KEY = 'c4e81b02-6d39-4f57-8a1e-90b7d2f46c3a';
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   for (const fn of [
     mockVerifyBlockToken,
     mockGetOrchestratorToken,
@@ -506,7 +536,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
     mockCheckBlockPollRateLimit.mockResolvedValue({ allowed: false });
     const out = await call(pollHandler, { workflowId: OWN_ID }, '/api/v1/blocks/workflows/poll');
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 
@@ -518,7 +550,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
       '/api/v1/blocks/workflows/cancel'
     );
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
@@ -556,9 +590,24 @@ describe('the rate-limit postures reach the wire unchanged', () => {
  * Each of the four exits below is a DIFFERENT layer, and each is identified by the
  * layer's own message rather than by "some failure happened".
  */
+describe('the account-restriction check reaches the wire', () => {
+  it('a restricted subject is a 403 and nothing reaches the orchestrator', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true, bannedAt: null } as never);
+    const out = await call(
+      submitHandler,
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(403);
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 describe('the budget and cap ladder reaches the wire as a PRICED 200, not an error', () => {
   /** The whatIf price the orchestrator quotes for the preflight step. */
   const QUOTED = 999;
+  /** The per-user daily app Buzz cap this suite's viewer is held to (the Free tier's). */
+  const FREE_DAILY_CAP = 50_000;
 
   beforeEach(() => {
     mockOrchSubmitWorkflow.mockResolvedValue({
@@ -605,8 +654,8 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
   it('LAYER 2 — over the PER-VIEWER daily Buzz cap: 200, priced, refused by reserveBlockBuzzSpend', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5000 }));
     // The per-(user, UTC-day) reservation is an atomic INCRBY on sysRedis; drive its
-    // running total past BLOCK_BUZZ_CAP_PER_DAY so the platform cap is what refuses.
-    redisMock.sysRedis.incrBy.mockImplementation(async () => BLOCK_BUZZ_CAP_PER_DAY + QUOTED);
+    // running total past the Free tier's daily cap (50,000) so the platform cap is what refuses.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => FREE_DAILY_CAP + QUOTED);
 
     const out = await call(
       submitHandler,
@@ -620,7 +669,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     // The LAYER, named: this is the per-user platform ceiling, not the per-call
     // budget above it and not the per-app aggregate below it.
     expect(out.json.snapshot.error).toContain('daily Buzz cap reached');
-    expect(out.json.snapshot.error).toContain(String(BLOCK_BUZZ_CAP_PER_DAY));
+    expect(out.json.snapshot.error).toContain(String(FREE_DAILY_CAP));
     // Still no real submit — the reservation is taken BEFORE the orchestrator call.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
   });

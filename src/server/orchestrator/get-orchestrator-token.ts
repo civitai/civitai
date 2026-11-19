@@ -1,21 +1,28 @@
+import { isSystemAccountMeta } from '@civitai/auth';
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
+import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
 } from '~/server/orchestrator/orchestrator-token-identity';
-import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
+import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
-/** Unused since the cookie store was retired. Kept (optional) so existing call sites don't churn;
- *  server-side callers with no request in hand (e.g. the publish → workflow stamp) omit it. */
+/** The caller's request, whose credential is checked. Server-side callers with no request in hand
+ *  (e.g. the publish → workflow stamp) omit it. */
 type Context = {
   req: NextApiRequest;
   res: NextApiResponse;
@@ -44,6 +51,12 @@ type GetOrchestratorTokenOptions = {
    * self-call. Only the per-pod cache is skipped.
    */
   bypassCache?: boolean;
+  /**
+   * Issue the token even when the account is muted (never when banned). Only for server-side calls that never hand
+   * the token to a client and never submit work: reading, deleting or cancelling the account's own
+   * workflows, or a moderator acting on them (which may stamp workflow metadata). Every call site is listed in get-orchestrator-token.allow-restricted.test.ts.
+   */
+  allowRestricted?: boolean;
 };
 
 export async function getOrchestratorToken(
@@ -51,6 +64,18 @@ export async function getOrchestratorToken(
   ctx?: Context,
   options: GetOrchestratorTokenOptions = {}
 ) {
+  // Before both caches, so a token cached for another credential is not served either.
+  await assertCredentialMayUseOrchestrator(userId, ctx);
+  // Before any cache: a token cached before a restriction must not be served after it. The standing
+  // read is cached and falls back to the primary; when neither answers, it refuses. `allowRestricted`
+  // admits a muted account only, never a banned or missing one.
+  const standing = await getAccountStanding(userId).catch(() => null);
+  // Not the session-facing wording for a ban: a moderator acting on another account reaches this too.
+  if (standing?.banned)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
+  if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
+    throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
   // fallback path below by setting token=null on error.
@@ -61,7 +86,7 @@ export async function getOrchestratorToken(
     // ~11min on every authenticated generation call. A fast DOWN already
     // rejects into the catch below; the SLOW half-open needs the race.
     const raw = decodeRedisString(
-      await withSysReadDeadline(
+      await withSysReadBreaker(
         sysRedis.hGet<string | Buffer>(REDIS_KEYS.GENERATION.TOKENS_OWNED, redisKey)
       )
     );
@@ -152,4 +177,47 @@ export async function getOrchestratorToken(
     });
   }
   return token;
+}
+
+type RequestSessionUser = { id?: number; meta?: unknown };
+
+/**
+ * A system account's bearer key needs AI Services write scope to use the orchestrator token. Other
+ * accounts, sessions and server-side calls (no request) pass.
+ * The session user's meta decides when it is this account's and says ordinary; otherwise the
+ * account is read from the primary, and a failed read counts as a system account.
+ */
+async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context) {
+  if (!ctx?.req) return;
+  const credential = getRequestCredential(ctx.req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
+  const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
+  if (!presentedBearer || hasScope(tokenScope, TokenScope.AIServicesWrite)) return;
+
+  const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
+    .context?.session?.user;
+  if (
+    sessionUser?.id === userId &&
+    sessionUser.meta != null &&
+    !isSystemAccountMeta(sessionUser.meta)
+  )
+    return;
+
+  const account = await dbWrite.user
+    .findUnique({ where: { id: userId }, select: { meta: true } })
+    .catch(() => undefined);
+  if (account !== undefined && !isSystemAccountMeta(account?.meta)) return;
+
+  // No user, key or IP.
+  logToAxiom({
+    name: 'orchestrator-token-system-read-refused',
+    type: 'info',
+    route: ctx.req.url?.split('?')[0],
+    accountUnreadable: account === undefined,
+    ...credentialLogFields(credential),
+  }).catch(() => undefined);
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'Your API key does not have the required scope for this action',
+  });
 }

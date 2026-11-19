@@ -7,6 +7,8 @@ import { ANNOUNCEMENTS_FLAG, announcementsEnabled } from '$lib/server/announceme
 import { isStudioAdmin } from '$lib/server/admin/access';
 import { POST_PLANNER_FLAG, SALES_FLAG } from '$lib/nav';
 import { postPlannerEnabled } from '$lib/server/post-planner';
+import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { darkFlagEnabled } from '$lib/server/main-app-flags';
 
 // Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it.
 export const load: LayoutServerLoad = async ({ locals, cookies }) => {
@@ -17,15 +19,17 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
   const testMembership = cookies.get(TEST_MEMBERSHIP_COOKIE) ?? null;
   const membership = resolveMembership(user, testMembership ?? undefined);
   // Resolved here rather than per page: the nav has to know, and flag reads are cached in-process.
-  const [announcements, sales, postPlanner] = await Promise.all([
+  const [announcements, sales, postPlanner, giftLinks] = await Promise.all([
     announcementsEnabled(user),
     getFlipt().isEnabled(SALES_FLAG, String(user.id), fliptContext(user)),
     postPlannerEnabled(user),
+    darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, user),
   ]);
   const enabledFlags = [
     ...(announcements ? [ANNOUNCEMENTS_FLAG] : []),
     ...(sales ? [SALES_FLAG] : []),
     ...(postPlanner ? [POST_PLANNER_FLAG] : []),
+    ...(giftLinks ? [MODEL_GIFT_LINKS_FLAG] : []),
   ];
 
   return {

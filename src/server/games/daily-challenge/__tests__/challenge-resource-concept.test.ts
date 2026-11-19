@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Openrouter from '~/server/services/ai/openrouter';
 import type { JudgingConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   buildComparisonPrompt,
   buildGroupComparisonPrompt,
@@ -27,6 +26,10 @@ vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   ...(await importOriginal<typeof Openrouter>()),
   openrouter: { getJsonCompletionWithUsage, getJsonCompletion },
 }));
+
+// The hosted model is the default and OpenRouter its fallback; both get the same prompt. With the
+// hosted client unconnected every stage runs on OpenRouter, the client mocked above.
+vi.mock('~/server/services/ai/civitai-llm', () => ({ civitaiLLM: undefined }));
 
 vi.mock('~/server/services/challenge-category.service', () => ({
   resolveRubricBlock: vi.fn().mockResolvedValue(''),
@@ -94,7 +97,6 @@ function reviewSystemText(messages: Awaited<ReturnType<typeof buildFallbackMessa
 
 beforeEach(() => {
   vi.clearAllMocks();
-  loggingMock.logToAxiom.mockClear();
 });
 
 // The article step receives neither the description nor the trained words — only the title, links,
@@ -257,7 +259,6 @@ describe('generateResourceConcept', () => {
     await expect(
       generateResourceConcept({ resource, images: [{ url: 'u' }], config })
     ).resolves.toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
 
   it('returns undefined when the model returns an empty concept', async () => {

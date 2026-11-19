@@ -37,6 +37,10 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
   ),
 }));
 vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
+// The modal reads the signed-in user and the router for its "place a hat you own" action; the
+// harness has neither provider, and layout is all this suite measures.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ username: 'someone' }) }));
+vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/CosmeticShop/cosmetic-shop.util', () => ({
   useMutateCosmeticShop: () => ({ purchaseShopItem: vi.fn(), purchasingShopItem: false }),
 }));

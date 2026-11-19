@@ -1,0 +1,108 @@
+name: Registry adapter image
+
+# Builds apps/registry-adapter/Dockerfile the way the release build does (repo root as the context,
+# submodules checked out), without pushing it, and checks what the deployment relies on: the
+# image's user, ports and command, and that the command starts the bundle. The release image is
+# built in-cluster from a `registry-adapter-vX.Y.Z` tag (scripts/release-app.mjs), so without this
+# job the first build of a broken Dockerfile is the release.
+#
+# The Dockerfile's own gates run inside the build: `build:registry-adapter` (the bundle, and its
+# load check against the full install) and the same load check again in the runtime stage,
+# against the production node_modules the image ships.
+#
+# The paths are what the image packaging reads: the Dockerfile, scripts/ (the build, load-check
+# and runtime-deps scripts, and the postinstall's generators), tsconfig.json, the manifests
+# and lockfile both installs resolve, the patches, the workspace packages the bundle carries, and
+# the adapter's own source and env module. A change elsewhere in `src/` that breaks the bundle
+# is caught by lint.yml's `Registry adapter bundle loads its externals` step, which builds it on
+# every non-draft PR.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/registry-adapter/**'
+      - 'src/server/registry-adapter/**'
+      - 'src/env/**'
+      - 'scripts/**'
+      - 'tsconfig.json'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'patches/**'
+      - '.dockerignore'
+      - '.github/workflows/registry-adapter-image.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/registry-adapter/**'
+      - 'src/server/registry-adapter/**'
+      - 'src/env/**'
+      - 'scripts/**'
+      - 'tsconfig.json'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'patches/**'
+      - '.dockerignore'
+      - '.github/workflows/registry-adapter-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A PR push cancels its PR's in-flight run; on `main` the group queues instead, for the reason in
+# lint.yml's `concurrency` comment.
+concurrency:
+  group: registry-adapter-image-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  image:
+    name: Registry adapter image build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 30
+    steps:
+      # Submodules, as the release build checks out (the tag-webhook's SUBMODULES=true).
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # Not pushed anywhere. BuildKit (the default builder) is needed for the cache and bind mounts.
+      - name: Build
+        run: docker build -f apps/registry-adapter/Dockerfile -t registry-adapter:ci .
+
+      # What the Deployment sets or reaches: runAsUser/runAsGroup 1001, the http (7130) and grpc
+      # (7131) ports, and the command that runs the bundle.
+      - name: Image user, ports and command
+        run: |
+          set -euo pipefail
+          config=$(docker image inspect registry-adapter:ci --format '{{json .Config}}')
+          echo "$config" | jq '{User, ExposedPorts, Cmd, WorkingDir}'
+          docker image ls registry-adapter:ci --format 'size: {{.Size}}'
+          [ "$(echo "$config" | jq -r .User)" = "1001:1001" ]
+          [ "$(echo "$config" | jq -c '.ExposedPorts | keys')" = '["7130/tcp","7131/tcp"]' ]
+          [ "$(echo "$config" | jq -c .Cmd)" = '["node","dist/registry-adapter.js"]' ]
+          [ "$(echo "$config" | jq -r .WorkingDir)" = "/app" ]
+
+      # The command, run with no environment, must get as far as the site's env validation
+      # (src/env/), which proves the CMD runs the bundle on the image's Node. It does not prove the
+      # externals load: env validation runs early, before most of them are required. The runtime
+      # stage's load check covers those. Exiting for any other reason, or not exiting, fails this
+      # step.
+      - name: Command starts the bundle
+        run: |
+          # The step shell runs with -e; a failing command substitution must not end it here.
+          set -uo pipefail
+          rc=0
+          out=$(timeout 60 docker run --rm registry-adapter:ci 2>&1) || rc=$?
+          echo "$out" | tail -20
+          echo "exit: $rc"
+          [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
+          echo "$out" | grep -q 'Invalid environment variables'

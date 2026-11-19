@@ -21,13 +21,43 @@ export function throwSharedRateLimited(rl: { retryAfterSeconds: number }, messag
 }
 
 /**
+ * Throws the TOO_MANY_REQUESTS refusal carrying `meta` as `cause.rateLimit`, where the tRPC
+ * error formatter and `handleEndpointError` lift it. `message` is the caller's prose.
+ */
+export function throwRateLimited(meta: RateLimitMeta, message: string): never {
+  throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message, cause: { rateLimit: meta } });
+}
+
+const META_FIELDS = [
+  'retryAfterSeconds',
+  'retryAt',
+  'id',
+  'kind',
+] as const satisfies readonly (keyof RateLimitMeta)[];
+const PRODUCT_FIELDS = [
+  'limit',
+  'used',
+  'remaining',
+  'windowSeconds',
+  'resetAt',
+] as const satisfies readonly (keyof RateLimitMeta)[];
+
+/**
  * The retry metadata a TOO_MANY_REQUESTS `TRPCError` carries, or `undefined`. Copies only the
- * two known fields, so anything else a writer puts on `cause.rateLimit` never reaches a client.
+ * `RateLimitMeta` fields, and the counts only for a product limit, so anything else a writer puts
+ * on `cause.rateLimit` never reaches a client.
  */
 export function rateLimitMetaOf(error: unknown): RateLimitMeta | undefined {
   if (!(error instanceof TRPCError) || error.code !== 'TOO_MANY_REQUESTS') return undefined;
   const rateLimit = (error.cause as { rateLimit?: unknown } | undefined)?.rateLimit;
   if (!rateLimit || typeof rateLimit !== 'object') return undefined;
-  const { retryAfterSeconds, retryAt } = rateLimit as RateLimitMeta;
-  return { retryAfterSeconds, retryAt };
+  const source = rateLimit as Record<string, unknown>;
+  const meta: Record<string, unknown> = {
+    retryAfterSeconds: source.retryAfterSeconds,
+    retryAt: source.retryAt,
+  };
+  // Counts of an abuse limit must never reach a client, whoever built the meta.
+  const fields = source.kind === 'product' ? [...META_FIELDS, ...PRODUCT_FIELDS] : META_FIELDS;
+  for (const field of fields) if (source[field] !== undefined) meta[field] = source[field];
+  return meta as RateLimitMeta;
 }

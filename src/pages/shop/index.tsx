@@ -1,6 +1,7 @@
 import {
   Button,
   Center,
+  Chip,
   Container,
   Group,
   Loader,
@@ -8,10 +9,11 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
   SimpleGrid,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconPencilMinus, IconSearch } from '@tabler/icons-react';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -26,6 +28,7 @@ import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.sche
 import { COSMETIC_SHOP_DEFAULT_PAGE_SIZE } from '~/shared/constants/cosmetic-shop.constants';
 import type { ShopFilters } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
+import { creatorMysteryPacksEnabled } from '~/server/schema/creator-shop.schema';
 import { useEffect } from 'react';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -41,6 +44,7 @@ import clsx from 'clsx';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
+import { CommunityMysteryPacks } from '~/components/CosmeticShop/CommunityMysteryPacks';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { CosmeticShopSort } from '~/server/common/enums';
@@ -80,12 +84,13 @@ export const getServerSideProps = createServerSideProps({
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
   const subnavBottom = useSubnavBottom();
-  const [filters, setFilters] = useState<ShopFilters>({
+  const [ownFilters, setFilters] = useState<ShopFilters>({
     ...(query ?? {}),
   });
   const [sort, setSort] = useState(CosmeticShopSort.Newest);
+  const [packsOnly, setPacksOnly] = useState(false);
   const [pageSize, setPageSize] = useState<number>(COSMETIC_SHOP_DEFAULT_PAGE_SIZE);
-  const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
+  const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: ownFilters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
   // Initial load only: a purchase invalidates `user.getCosmetics`, and gating on
   // the refetch would unmount every section and lose each one's page.
@@ -93,6 +98,12 @@ export default function CosmeticShopMain() {
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
+  // With pageSearch, the header bar is the shop's search (its ?query=), not the box below.
+  const pageSearchText = useFeedSearchQuery();
+  const filters = useMemo(
+    () => (features.pageSearch ? { ...ownFilters, search: pageSearchText } : ownFilters),
+    [features.pageSearch, ownFilters, pageSearchText]
+  );
 
   // The sections mount only after the owned-cosmetics query settles, past the browser's own
   // hash scroll, so a /shop#shop-section-<id> link has to scroll once they exist.
@@ -184,18 +195,30 @@ export default function CosmeticShopMain() {
             className="sticky z-40 -mx-2 flex flex-wrap items-center justify-end gap-2 bg-gray-0 p-2 dark:bg-dark-7"
             style={{ top: subnavBottom }}
           >
-            <TextInput
-              className="w-full sm:mr-auto sm:w-80"
-              radius="xl"
-              placeholder="Search names, descriptions, :sticker:"
-              aria-label="Search the shop"
-              leftSection={<IconSearch size={16} />}
-              value={filters.search ?? ''}
-              onChange={(event) => {
-                const search = event.currentTarget.value;
-                setFilters((prev) => ({ ...prev, search }));
-              }}
-            />
+            {!features.pageSearch && (
+              <TextInput
+                className="w-full sm:mr-auto sm:w-80"
+                radius="xl"
+                placeholder="Search names, descriptions, :sticker:"
+                aria-label="Search the shop"
+                leftSection={<IconSearch size={16} />}
+                value={filters.search ?? ''}
+                onChange={(event) => {
+                  const search = event.currentTarget.value;
+                  setFilters((prev) => ({ ...prev, search }));
+                }}
+              />
+            )}
+            {creatorMysteryPacksEnabled(features) && (
+              <Chip
+                checked={packsOnly}
+                onChange={setPacksOnly}
+                variant="filled"
+                data-testid="shop-mystery-packs-filter"
+              >
+                Mystery packs
+              </Chip>
+            )}
             <ShopBrowseControls
               sort={sort}
               onSortChange={setSort}
@@ -206,7 +229,9 @@ export default function CosmeticShopMain() {
             />
           </div>
           <div className="flex flex-col gap-6">
-            {isLoading || loadingOwnedCosmetics ? (
+            {packsOnly && creatorMysteryPacksEnabled(features) ? (
+              <CommunityMysteryPacks search={filters.search} />
+            ) : isLoading || loadingOwnedCosmetics ? (
               <Center p="xl">
                 <Loader />
               </Center>

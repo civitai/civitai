@@ -3,11 +3,17 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { reviewReasonText } from '$lib/image-review';
+  import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import type { PageData } from './$types';
+  import {
+    FEEDBACK_CAPTURE_ACCOUNT_NOTE,
+    isFeedbackCaptureOwner,
+  } from '@civitai/shared/feedback-capture';
 
   type Result = NonNullable<PageData['result']>;
 
@@ -44,6 +50,8 @@
     ['Meta hidden by uploader', image.hideMeta ? 'yes' : 'no'],
   ]);
 
+  const reviewReason = $derived(image.needsReview ? reviewReasonText(image.needsReview) : null);
+
   const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
 
   // Everything in `meta` beyond the two prompts — seed, sampler, model hash, civitaiResources. Same
@@ -77,6 +85,16 @@
       {approvedAppeal}
     />
   </div>
+
+  {#if reviewReason}
+    <div class="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+      <div class="text-xs tracking-wide text-amber-200 uppercase">Why it's in review</div>
+      <p class="text-dark-0">{reviewReason}</p>
+      {#if image.needsReview === 'modRule' && image.ruleReason}
+        <p class="text-dark-0">Rule: {image.ruleReason}</p>
+      {/if}
+    </div>
+  {/if}
 
   {#if canAct}
     <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
@@ -129,6 +147,9 @@
     {#if image.userBannedAt}
       <Badge variant="destructive">uploader banned</Badge>
     {/if}
+    {#if isFeedbackCaptureOwner(image.userId)}
+      <span class="basis-full text-xs text-sky-300" role="note">{FEEDBACK_CAPTURE_ACCOUNT_NOTE}</span>
+    {/if}
     <!-- Also into the app: the post's other images are the usual reason an image lookup is not the end
          of the investigation, and the panel it lands on carries its own way out to the site. -->
     {#if image.postId}
@@ -138,12 +159,9 @@
 
   <div class="mt-4 flex flex-col gap-4 sm:flex-row">
     <!-- An image lookup that does not show the image makes the moderator open a second tab to answer
-         "what am I even looking at". `url` is the Cloudflare key, which is exactly EdgeMedia's `src`. -->
-    <EdgeMedia
-      src={image.url}
-      name={image.name}
-      type={image.type}
-      width={450}
+         "what am I even looking at". -->
+    <CdnOrRetractedMedia
+      item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
       alt="Image {image.id}"
       class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
     />
@@ -172,6 +190,14 @@
         <div>
           <div class="text-xs tracking-wide text-dark-2 uppercase">Negative prompt</div>
           <p class="wrap-break-word text-dark-2">{image.negativePrompt}</p>
+        </div>
+      {/if}
+      {#if image.promptHighlight?.hasHighlights}
+        <!-- Beside the raw prompt rather than in place of it: the highlighter normalises accents and
+             caps the length, so its text is not the stored prompt. -->
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Flagged prompt terms</div>
+          <PromptHighlight result={image.promptHighlight} />
         </div>
       {/if}
     </div>

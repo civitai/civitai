@@ -35,12 +35,12 @@ vi.mock('~/hooks/useS3Upload', () => ({
   }),
 }));
 vi.mock('~/utils/media-preprocessors', () => ({ preprocessFile: vi.fn() }));
-vi.mock('~/utils/metadata/audit', () => ({ auditMetaData: vi.fn() }));
+vi.mock('~/utils/metadata/audit', () => ({ auditPostImageMeta: vi.fn() }));
 
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { preprocessFile } from '~/utils/media-preprocessors';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 
 const videoMeta = { prompt: 'a prompt the audit rejects', engine: 'ComfyUI' };
 const processedVideo = {
@@ -52,7 +52,7 @@ const processedVideo = {
   metadata: { width: 64, height: 48, hash: 'LKO2', duration: 1, audio: false, size: 1 },
 };
 
-async function dropVideo(fileMeta?: Record<string, unknown>) {
+async function dropVideo(fileMeta?: Record<string, unknown>, generationWorkflowId?: string) {
   const onComplete = vi.fn<(props: MediaUploadOnCompleteProps) => void>();
   let upload!: ReturnType<typeof useMediaUpload>['upload'];
   function Harness() {
@@ -62,7 +62,13 @@ async function dropVideo(fileMeta?: Record<string, unknown>) {
   const root = createRoot(document.createElement('div'));
   await act(async () => root.render(React.createElement(Harness)));
   await act(async () =>
-    upload([{ file: new File([], 'clip.mp4', { type: 'video/mp4' }), meta: fileMeta }])
+    upload([
+      {
+        file: new File([], 'clip.mp4', { type: 'video/mp4' }),
+        meta: fileMeta,
+        generationWorkflowId,
+      },
+    ])
   );
   await act(async () => root.unmount());
   return onComplete;
@@ -75,12 +81,12 @@ describe('useMediaUpload with a video carrying generation meta', () => {
   });
 
   it('audits the video meta and reports the file blocked, without uploading it', async () => {
-    vi.mocked(auditMetaData).mockResolvedValue({
+    vi.mocked(auditPostImageMeta).mockReturnValue({
       blockedFor: ['audit-reason'],
       success: false,
     } as never);
     const onComplete = await dropVideo();
-    expect(auditMetaData).toHaveBeenCalledWith(expect.objectContaining(videoMeta), false);
+    expect(auditPostImageMeta).toHaveBeenCalledWith(expect.objectContaining(videoMeta), false);
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete.mock.calls[0][0]).toMatchObject({
       status: 'blocked',
@@ -90,7 +96,7 @@ describe('useMediaUpload with a video carrying generation meta', () => {
   });
 
   it('uploads the video with its meta when the audit passes', async () => {
-    vi.mocked(auditMetaData).mockResolvedValue({ blockedFor: [], success: true } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValue({ blockedFor: [], success: true } as never);
     const onComplete = await dropVideo();
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added', meta: videoMeta });
@@ -115,7 +121,7 @@ describe('useMediaUpload with an on-site generated video', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(preprocessFile).mockResolvedValue({ ...processedVideo, meta: workerTags } as never);
-    vi.mocked(auditMetaData).mockResolvedValue({ blockedFor: [], success: true } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValue({ blockedFor: [], success: true } as never);
   });
 
   it("keeps the generator's meta and drops the file's embedded ComfyUI meta", async () => {
@@ -123,12 +129,39 @@ describe('useMediaUpload with an on-site generated video', () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added' });
     expect(onComplete.mock.calls[0][0].meta).toEqual(generatorMeta);
-    expect(auditMetaData).not.toHaveBeenCalled();
+    expect(auditPostImageMeta).not.toHaveBeenCalled();
+  });
+
+  it('keeps the generator meta for a generated video with no resources', async () => {
+    // getStepMeta drops empty arrays, so a job with no LoRAs has no civitaiResources.
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources, 'workflow-1');
+    expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added' });
+    expect(onComplete.mock.calls[0][0].meta).toEqual(noResources);
+    expect(auditPostImageMeta).not.toHaveBeenCalled();
+  });
+
+  it('keeps the file meta for a ComfyUI upload with meta but no workflow id', async () => {
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources);
+    expect(onComplete.mock.calls[0][0].meta).toEqual({ ...noResources, ...workerTags });
+    expect(auditPostImageMeta).toHaveBeenCalled();
+  });
+
+  it('keeps the embedded meta of a generated image: only videos drop it', async () => {
+    vi.mocked(preprocessFile).mockResolvedValue({
+      ...processedVideo,
+      type: 'image',
+      meta: workerTags,
+    } as never);
+    const { civitaiResources: _omit, ...noResources } = generatorMeta;
+    const onComplete = await dropVideo(noResources, 'workflow-1');
+    expect(onComplete.mock.calls[0][0].meta).toEqual({ ...noResources, ...workerTags });
   });
 
   it('still reads embedded meta from a video posted without generator meta', async () => {
     const onComplete = await dropVideo();
     expect(onComplete.mock.calls[0][0].meta).toEqual(workerTags);
-    expect(auditMetaData).toHaveBeenCalledWith(workerTags, false);
+    expect(auditPostImageMeta).toHaveBeenCalledWith(workerTags, false);
   });
 });

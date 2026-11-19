@@ -48,16 +48,17 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
   useBrowsingSettings: (select: (state: typeof settings) => unknown) => select(settings),
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    system: {
-      getBrowsingSettingAddons: {
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof Trpc>()),
+    trpc: makeTrpcProxy({
+      'system.getBrowsingSettingAddons': {
         useQuery: () => ({ data: DEFAULT_BROWSING_SETTINGS_ADDONS, isLoading: false }),
       },
-    },
-  },
-}));
+    }),
+  };
+});
 vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof HiddenPreferencesModule>()),
   useHiddenPreferencesContext: () => ({
@@ -111,7 +112,7 @@ type Seen = { level: number; sentFilter?: string; disableMinor: boolean; keptMod
  * filters go into BrowsingLevelFilter the way AutocompleteSearch passes them, so `sentFilter` is
  * the one string that reaches Meilisearch.
  */
-function Probe({ seen }: { seen: Seen }) {
+function Probe({ seen, indexKey = 'models' }: { seen: Seen; indexKey?: 'models' | 'comics' }) {
   const level = useBrowsingLevelDebounced();
   const addons = useBrowsingSettingsAddons().settings;
   const { items } = useApplyHiddenPreferences({
@@ -127,15 +128,18 @@ function Probe({ seen }: { seen: Seen }) {
   seen.keptModelIds = (items as { id: number }[]).map((x) => x.id);
 
   return createElement(BrowsingLevelFilter, {
-    indexKey: 'models',
-    filters: buildAutocompleteBaseFilters({ targetIndex: 'models', addons, currentUser: viewer }),
+    indexKey,
+    filters:
+      indexKey === 'models'
+        ? buildAutocompleteBaseFilters({ targetIndex: 'models', addons, currentUser: viewer })
+        : undefined,
   });
 }
 
 const ScopedProbe = withSearchBrowsingScope(Probe);
 
 /** Mirrors `_app`: page override > addons provider > layout (header search). Homepage override is PG. */
-function renderSearch({ scoped }: { scoped: boolean }) {
+function renderSearch({ scoped, indexKey }: { scoped: boolean; indexKey?: 'models' | 'comics' }) {
   configured.length = 0;
   const seen = {} as Seen;
 
@@ -151,7 +155,7 @@ function renderSearch({ scoped }: { scoped: boolean }) {
           createElement(
             BrowsingSettingsAddonsProvider,
             null,
-            createElement(scoped ? ScopedProbe : Probe, { seen })
+            createElement(scoped ? ScopedProbe : Probe, { seen, indexKey })
           )
         )
       )
@@ -194,6 +198,12 @@ describe('withSearchBrowsingScope', () => {
     );
     expect(seen.disableMinor).toBe(false);
     expect(seen.keptModelIds).toEqual([]);
+  });
+
+  it('filters comics by every level a comic carries, not any one of them', () => {
+    canViewNsfw.value = true;
+    const seen = renderSearch({ scoped: false, indexKey: 'comics' });
+    expect(seen.sentFilter).toBe('(nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32])');
   });
 
   it('keeps the domain cap', () => {

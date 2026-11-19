@@ -180,6 +180,23 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
   useFeatureFlagsReady: () => true,
 }));
+// The card's creator is the shared `UserAvatar`, whose hover card reads user data this suite's
+// `trpc` stand-in does not serve. The stub keeps its footprint: an `avatarSize` circle beside an
+// `xs` name on one line, which is what the skeleton reserves.
+vi.mock('~/components/UserAvatar/UserAvatar', async () => {
+  const { Avatar, Group, Text } = await import('@mantine/core');
+  return {
+    UserAvatar: (props: { user?: { username?: string | null }; avatarSize?: number }) => (
+      <Group gap={6} wrap="nowrap">
+        <Avatar size={props.avatarSize ?? 20} radius="xl" />
+        <Text size="xs" truncate>
+          {props.user?.username}
+        </Text>
+      </Group>
+    ),
+  };
+});
+
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),

@@ -316,6 +316,38 @@ async function main() {
   try {
     await client.connect();
 
+    // READ-ONLY BY CONSTRUCTION. Every run without --writable (and every read-only target) runs in a
+    // READ ONLY transaction, so the SERVER refuses a write, whatever the SQL is and whatever server it
+    // lands on. The replica URL alone is not enough: after a failover the read pooler can hold
+    // connections to the new primary, and the read role can still call nextval() or a SECURITY
+    // DEFINER function that writes. Three parts, each needed:
+    //   1. BEGIN READ ONLY, and the query below runs inside it.
+    //   2. A SELECT pins the snapshot. After it, Postgres refuses to turn transaction_read_only off
+    //      ("transaction read-write mode must be set before any query"), even from inside a function.
+    //   3. The user's SQL goes out as ONE statement on the extended protocol, so it cannot COMMIT the
+    //      read-only transaction and then run a second statement outside it. Several statements fail
+    //      with "cannot insert multiple commands into a prepared statement".
+    // The transaction is rolled back, never committed. Under transaction pooling (pgbouncer) all of it
+    // stays on one server connection, so the hot-standby check below speaks for the query too.
+    // Part 3 needs a pg that honours `queryMode: 'extended'`. An older pg (8.11.3 was measured) ignores
+    // the option and sends the simple protocol, where `COMMIT; INSERT ...` ends the read-only
+    // transaction and the INSERT lands. Refuse rather than run unprotected.
+    const readOnlyRun = !writable || target.readOnly;
+    if (readOnlyRun && !new pg.Query({ text: 'SELECT 1', queryMode: 'extended' }).requiresPreparation()) {
+      console.error('Error: the installed pg package cannot send a single extended-protocol statement, so a read cannot be kept read-only. Upgrade pg.');
+      await client.end();
+      process.exit(1);
+    }
+    if (readOnlyRun) {
+      await client.query('BEGIN READ ONLY');
+      const { rows } = await client.query("SELECT current_setting('transaction_read_only') AS ro");
+      if (rows[0]?.ro !== 'on') {
+        console.error(`Error: could not open a read-only transaction (transaction_read_only=${rows[0]?.ro}).`);
+        await client.end();
+        process.exit(1);
+      }
+    }
+
     // The read-only prod target is a hot standby. A server that is not in recovery is a primary or a
     // copy, so whatever it returns is not a prod replica read, whatever the URL's name says.
     if (targetName === 'prod' && connectionVar === 'DATABASE_REPLICA_URL') {
@@ -336,8 +368,11 @@ async function main() {
 
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();
-    const queryResult = await client.query(finalQuery);
+    const queryResult = await client.query(
+      readOnlyRun ? { text: finalQuery, queryMode: 'extended' } : finalQuery
+    );
     const elapsed = Date.now() - start;
+    if (readOnlyRun) await client.query('ROLLBACK');
 
     // A MULTI-STATEMENT query resolves to an ARRAY of Results, one per statement, not to a single
     // Result. Reading `.rows` off that array yields undefined and `.rows.length` throws — which the
@@ -413,6 +448,8 @@ async function main() {
     if (err.message.includes('timeout') || err.message.includes('canceling statement')) {
       console.error(`Error: Query timed out after ${timeoutSeconds} seconds`);
       console.error('Use --timeout <seconds> to increase the limit if needed.');
+    } else if (err.message.includes('multiple commands into a prepared statement')) {
+      console.error('Error: a read runs ONE statement (it stays inside a read-only transaction). Run each statement on its own.');
     } else {
       console.error('Query error:', err.message);
     }

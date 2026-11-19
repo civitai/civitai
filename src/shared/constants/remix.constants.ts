@@ -16,11 +16,9 @@ export type RemixKind = 'edit' | 'video';
  * Which engine an image is allowed to reach, by its rating.
  *
  * This is NOT the same thing as the base-model license restrictions in
- * `getRestrictedNsfwLevelsForBaseModel`. Those describe what a model's licence
- * permits people to distribute; this describes what a hosted provider will
- * actually run. Nano Banana's licence entry carries no mature restriction, yet
- * Google refuses the request — so the split has to be stated here rather than
- * derived from licence data.
+ * `BaseModelRecord.matureRestricted`. Those describe what a model's licence
+ * permits; this describes what a hosted provider will actually run. The two
+ * can differ, so this is stated here rather than derived from base-model data.
  */
 export type RemixTier = 'safe' | 'mature';
 

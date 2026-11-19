@@ -15,7 +15,8 @@ export const config = {
     bodyParser: { sizeLimit: '8kb' },
   },
 };
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { isSystemAccountMeta } from '@civitai/auth';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -27,13 +28,13 @@ import {
   getRequestDomainColor,
   isHostForColor,
   isMatureContentRating,
+  ratingAllowedOnHost,
 } from '~/server/utils/server-domain';
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
-  effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { ratingHiddenByBrowsingLevel } from '~/server/services/blocks/app-listing-store-gate';
 import {
   resolvePerCallBuzzBudget,
   isAppStorageScope,
@@ -45,8 +46,10 @@ import {
   getGrantedScopes,
   partitionByConsent,
   consentGatedScopes,
+  CONSENT_SPEND_SCOPE,
 } from '~/server/services/blocks/scope-grant.service';
 import {
+  isAppTokenRefusedError,
   isConsentRequiredError,
   manifestCanMintOauthToken,
   manifestWantsOauthToken,
@@ -62,46 +65,27 @@ import {
   signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
+import {
+  viewerEffectiveBrowsingLevel,
+  viewerOwnBrowsingLevel,
+} from '~/server/services/blocks/viewer-browsing-level';
+import {
+  importScopeCoverage,
+  withholdUncoveredImportScope,
+} from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
 
-/**
- * The EFFECTIVE browsing-level ceiling this mint advertises to the host for
- * `BLOCK_INIT` — the intersection of the domain ceiling already computed for
- * the token claim and the VIEWER's own NSFW browsing level.
- *
- * 🔴 WHY THIS EXISTS AT ALL: `maxBrowsingLevel` is a property of the DOMAIN, so
- * two viewers on `civitai.red` — one who never enabled NSFW, one at XXX — are
- * handed the identical, maximally-wide ceiling. A block that renders mature
- * affordances off `maxBrowsingLevel` therefore shows them to a viewer whose own
- * setting says PG. This value is the one a block should render against.
- *
- * 🔴 WHY IT IS AN INTERSECTION AND NOT THE VIEWER'S RAW LEVEL: on `blue` the
- * App-Blocks domain ceiling is SFW (see `domainBrowsingCeiling`) while the
- * viewer's saved level may carry R/X/XXX, so the raw viewer level is WIDER than
- * the domain permits. Shipping it would hand untrusted publisher code a number
- * that reads as permission and is not one. Only the intersection is safe to
- * project, and it is what a block actually needs.
- *
- * `getServerBrowsingLevel` is the platform's single source of truth for "the
- * viewer's own level" (the same helper `wildcard-pack.service.ts` gates on);
- * this does not re-derive it. It already fails closed to PG for an anonymous
- * viewer and for a viewer with NSFW off, and `effectiveBrowsingCeiling` fails
- * closed again on both operands — so every absent/anonymous/malformed path
- * lands on a subset of the domain ceiling, never a superset.
- *
- * `canViewNsfw` is read from the SAME `getFeatureFlags({ user, req })` call
- * shape the route already uses for `appBlocks`, so the domain half of the
- * viewer-level derivation cannot drift from the rest of the request.
- */
-function resolveEffectiveBrowsingLevel(args: {
-  req: NextApiRequest;
-  sessionUser: SessionUser | undefined;
-  maxBrowsingLevel: number;
-}): number {
-  const { req, sessionUser, maxBrowsingLevel } = args;
-  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
-  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
-  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+/** Call only after the host gate: the site rule takes precedence over the level. */
+function hiddenByViewerBrowsingLevel(
+  contentRating: unknown,
+  req: NextApiRequest,
+  sessionUser: SessionUser | undefined
+): boolean {
+  return (
+    typeof contentRating === 'string' &&
+    isMatureContentRating(contentRating) &&
+    ratingHiddenByBrowsingLevel(contentRating, viewerOwnBrowsingLevel(req, sessionUser)) != null
+  );
 }
 
 /**
@@ -198,6 +182,11 @@ const PER_IP_RATE_LIMIT_MAX = 120;
 /** `scopes` minus the whole `isAppStorageScope` family, legacy scopes included. */
 function withoutDocumentStoreScopes(scopes: readonly string[]): string[] {
   return scopes.filter((s) => !isAppStorageScope(s));
+}
+
+/** A restricted account keeps its read scopes; only spend is withheld. */
+function withoutSpendScope(scopes: readonly string[]): string[] {
+  return scopes.filter((s) => s !== CONSENT_SPEND_SCOPE);
 }
 
 function projectClientCtx(slotContext: Record<string, unknown>): Record<string, unknown> {
@@ -510,7 +499,7 @@ async function tryDevTunnelScopedMint(args: {
   // soft-delete must not mint.
   const userRow = await dbWrite.user.findUnique({
     where: { id: userId },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
 
@@ -548,7 +537,8 @@ async function tryDevTunnelScopedMint(args: {
   // Re-clamp idempotently as defense-in-depth over the resolver's output (the
   // authority boundary re-enforces the tunnel allowlist even if the stored/returned
   // set were ever tampered). Never re-adds a stripped scope — the source lacks it.
-  const granted = clampTunnelDeclaredScopes(app.scopes);
+  const clamped = clampTunnelDeclaredScopes(app.scopes);
+  const granted = userRow.muted ? withoutSpendScope(clamped) : clamped;
   const buzzBudget = resolveDevBuzzBudget(granted);
 
   const wantsOauth = tunnel?.declaredAuth ? tunnel.declaredAuth === 'oauth' : app.auth === 'oauth';
@@ -613,7 +603,7 @@ async function tryDevTunnelScopedMint(args: {
     // Still narrowed by the author's OWN browsing level: forced-SFW caps the
     // domain half, it says nothing about the viewer half. An author with NSFW
     // off dogfoods at PG here, exactly as they would on the public run page.
-    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
       req,
       sessionUser,
       maxBrowsingLevel: FORCED_SFW_CEILING,
@@ -715,7 +705,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // Soft-delete gate (M1 parity with the prod path + the ephemeral branch).
   const userRow = await dbWrite.user.findUnique({
     where: { id: userId },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
 
@@ -750,7 +740,8 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // from minting a spend-capable token for an app no moderator ever vetted. Any future
   // code that writes `approvedScopes` OUTSIDE the mod-approval flow (e.g. copying the raw
   // manifest scopes into it) would silently break dev-tunnel spend safety here.
-  const granted = clampTunnelDeclaredScopes(app.approvedScopes);
+  const clamped = clampTunnelDeclaredScopes(app.approvedScopes);
+  const granted = userRow.muted ? withoutSpendScope(clamped) : clamped;
   // BUDGET = the manifest's page.buzzBudgetPerGen (clamped to the dev cap), defaulting
   // as the ephemeral path when absent. Only meaningful if ai:write:budgeted survived.
   const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
@@ -759,12 +750,16 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const wantsOauth = tunnel.declaredAuth
     ? tunnel.declaredAuth === 'oauth'
     : manifestWantsOauthToken(app.manifest);
+  // The hub mints nothing for a suspended app's client; its owner keeps the dev-scoped token below.
   const oauth =
     wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await mintDevTunnelOauth({
           userId,
           clientId: app.appId,
           scopes: granted,
+        }).catch((err) => {
+          if (isAppTokenRefusedError(err)) return null;
+          throw err;
         })
       : null;
 
@@ -810,7 +805,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
-    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
       req,
       sessionUser,
       maxBrowsingLevel: FORCED_SFW_CEILING,
@@ -999,6 +994,16 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
+  if (!ratingAllowedOnHost(app.contentRating, req.headers.host ?? '')) {
+    res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return 'handled';
+  }
+  // Owners and moderators get no exemption from the browsing level.
+  if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
+    return 'handled';
+  }
+
   // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
   // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
   // copy (the fourth in this file), which is what created the asymmetry review found:
@@ -1011,7 +1016,8 @@ async function tryPrivateRunMint(args: {
 
   // SCOPES — the approved snapshot through the private-run clamp. See
   // `clampPrivateRunScopes` for all three steps and why the editor strip is there.
-  const granted = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  const clamped = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  const granted = access.viewerMuted ? withoutSpendScope(clamped) : clamped;
   // BUDGET — the manifest's `page.buzzBudgetPerGen` clamped to the dev cap, defaulting
   // as every other non-public page path does. Only meaningful if `ai:write:budgeted`
   // survived the clamp, which it never does for an editor.
@@ -1080,7 +1086,7 @@ async function tryPrivateRunMint(args: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // Forced-SFW is the DOMAIN half only; see PHASE 2's identical note.
-    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+    effectiveBrowsingLevel: viewerEffectiveBrowsingLevel({
       req,
       sessionUser,
       maxBrowsingLevel: FORCED_SFW_CEILING,
@@ -1128,17 +1134,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return;
   if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
-  // feature flag, evaluated for THIS caller (possibly anon). Today the flag is
-  // `availability: ['mod']`, so this is behaviour-identical to the previous
-  // hardcoded `isModerator` check — anon/non-mod callers fail the flag and are
-  // refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
-  // via Flipt or the registry), anon/non-mod callers start passing here and the
-  // anon-scope stripping below keeps the issued token safe (no money/self scope).
+  // feature flag, evaluated for THIS caller (possibly anon), and system accounts
+  // are refused whatever the flag says. Today the flag is `availability: ['mod']`,
+  // so anon/non-mod callers fail the flag and are refused. When the flag is later
+  // widened (preview/GA → `['user']`/`['public']` via Flipt or the registry),
+  // anon/non-mod callers start passing here and the anon-scope stripping below
+  // keeps the issued token safe (no money/self scope).
   //
   // Block tokens are the linchpin — the entire block-token runtime (workflow
   // submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable only with
@@ -1148,7 +1155,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // resolveBlockInstance DB read) so a refused caller can't probe install
   // existence or consume those buckets.
   const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
-  if (!appBlocksAvailable) {
+  if (!appBlocksAvailable || isSystemAccountMeta(session?.user?.meta)) {
     res.status(403).json({ error: 'Apps are not available to this account' });
     return;
   }
@@ -1373,15 +1380,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // M1 (continued): if the session is authenticated, confirm the user row
   // isn't soft-deleted. SessionUser may not carry deletedAt; the row read
   // here is cheap and authoritative.
+  let subjectMuted = false;
   if (userId != null) {
     const userRow = await dbWrite.user.findUnique({
       where: { id: userId },
-      select: { deletedAt: true, bannedAt: true },
+      select: { deletedAt: true, bannedAt: true, muted: true },
     });
     if (!userRow || userRow.deletedAt || userRow.bannedAt) {
       res.status(403).json({ error: 'account unavailable' });
       return;
     }
+    subjectMuted = userRow.muted;
   }
 
   const rawManifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
@@ -1408,7 +1417,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // useless-but-valid token is the right graceful outcome, not a 403.
   const knownManifestScopes = rawManifestScopes.filter(isKnownBlockScope);
 
-  const oauthAllowed = block.app?.allowedScopes ?? 0;
+  const oauthAllowed = block.app?.allowedScopes ?? 0n;
   const scopeCheck = validateBlockScopesAgainstOauthClient(knownManifestScopes, oauthAllowed);
   if (!scopeCheck.valid) {
     res.status(403).json({
@@ -1504,10 +1513,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   let missingScopes: string[] = [];
   if (userId != null) {
     const granted = await getGrantedScopes({ userId, appBlockId: block.id, db: 'write' });
-    const { signable, missing } = partitionByConsent(requestedScopes, granted);
+    const { signable, missing } = withholdUncoveredImportScope(
+      partitionByConsent(requestedScopes, granted),
+      await importScopeCoverage(userId, block, requestedScopes, req.headers.host ?? '')
+    );
     manifestScopes = signable;
     missingScopes = missing;
     needsConsent = missing.length > 0;
+  }
+  if (subjectMuted) {
+    manifestScopes = withoutSpendScope(manifestScopes);
+    missingScopes = withoutSpendScope(missingScopes);
+    needsConsent = missingScopes.length > 0;
   }
 
   // Anonymous conversion: a logged-out viewer gets a token carrying ONLY the
@@ -1661,6 +1678,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
     return;
   }
+  // …and on .red, only for a viewer whose browsing level includes it (page AND model-slot mints).
+  if (hiddenByViewerBrowsingLevel(appContentRating, req, session?.user)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
+    return;
+  }
 
   // 🔴 #5127 (F1): `manifestCanMintOauthToken`, not `manifestWantsOauthToken`. An
   // `auth: "oauth"` manifest that does not DECLARE `user:read:self` cannot mint —
@@ -1694,6 +1716,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     if (!manifestScopes.includes('ai:write:budgeted')) buzzBudget = undefined;
   }
 
+  const effectiveBrowsingLevel = viewerEffectiveBrowsingLevel({
+    req,
+    sessionUser: session?.user,
+    maxBrowsingLevel,
+  });
+
   const result =
     oauth?.outcome === 'minted'
       ? oauth
@@ -1708,6 +1736,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           buzzBudget,
           domain: domainColor ?? null,
           maxBrowsingLevel,
+          viewerBrowsingLevel: effectiveBrowsingLevel,
         });
 
   // An OAuth token is not signed here: its budget is resolved when it is verified,
@@ -1746,11 +1775,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // property of the domain and is identical for every viewer on it; this is
     // that ceiling intersected with the viewer's own NSFW browsing level, and
     // it is what a block should render mature affordances against. Always a
-    // subset of `maxBrowsingLevel` — see `resolveEffectiveBrowsingLevel`.
-    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
-      req,
-      sessionUser: session?.user,
-      maxBrowsingLevel,
-    }),
+    // subset of `maxBrowsingLevel` — see `viewerEffectiveBrowsingLevel`.
+    effectiveBrowsingLevel,
   });
 });

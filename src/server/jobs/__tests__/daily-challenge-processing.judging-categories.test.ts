@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FliptClient from '~/server/flipt/client';
 const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
@@ -88,7 +89,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
   };
 });
 
-vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeHelpers>()),
   challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
   completeChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
@@ -107,6 +109,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -124,8 +127,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({

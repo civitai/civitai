@@ -17,6 +17,7 @@ const {
   NO_FORK_PROVENANCE,
   applyForkProvenanceOnApprove,
   carryForkProvenanceToPublishRequest,
+  readListingForkParents,
   readListingForkProvenance,
   readListingForkable,
   resolveForkAttribution,
@@ -134,6 +135,12 @@ describe('before the migration is applied — every read degrades, nothing throw
     await expect(readListingForkProvenance(FORK_LISTING, db)).resolves.toEqual(NO_FORK_PROVENANCE);
   });
 
+  it('the batched parent read reads "no forks"', async () => {
+    await expect(readListingForkParents([FORK_LISTING, OTHER_LISTING], db)).resolves.toEqual(
+      new Map()
+    );
+  });
+
   it('the carry on request creation is a silent no-op (a submit never fails on it)', async () => {
     await expect(
       carryForkProvenanceToPublishRequest(db, { publishRequestId: FORK_REQUEST, slug: 'fork-app' })
@@ -163,6 +170,21 @@ describe('with the migration applied', () => {
   });
   beforeEach(async () => {
     await seed(pg);
+  });
+
+  describe('the batched parent read', () => {
+    it('maps each fork among the given listings to its parent, and nothing else', async () => {
+      await pg.query(`UPDATE "app_listings" SET "fork_of_listing_id" = $1 WHERE "id" = $2`, [
+        PARENT_LISTING,
+        FORK_LISTING,
+      ]);
+      await expect(
+        readListingForkParents([FORK_LISTING, OTHER_LISTING, PARENT_LISTING], db)
+      ).resolves.toEqual(new Map([[FORK_LISTING, PARENT_LISTING]]));
+      // Only the listings asked about: the fork is not returned when it is not among them.
+      await expect(readListingForkParents([OTHER_LISTING], db)).resolves.toEqual(new Map());
+      await expect(readListingForkParents([], db)).resolves.toEqual(new Map());
+    });
   });
 
   describe('the author opt-in', () => {

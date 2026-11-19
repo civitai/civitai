@@ -111,6 +111,34 @@ describe('the model sale badge cache', () => {
     expect(salesQuery).toHaveBeenCalledTimes(2);
   });
 
+  // INVARIANT guard (behaviour that already held before this change, not regression coverage): what
+  // is cached is the sale WINDOW, and "is it running" is decided per request. A cached entry that was
+  // written before the sale started must badge once the start passes, and stop at the end, with no
+  // re-query in between.
+  it('decides a cached sale window per request: not yet, running, over', async () => {
+    salesQuery.mockResolvedValue([
+      {
+        ...saleRow,
+        startsAt: new Date(START.getTime() + 20_000),
+        endsAt: new Date(START.getTime() + 40_000),
+      },
+    ]);
+    const running = {
+      endsAt: new Date(START.getTime() + 40_000),
+      discountType: 'Percent',
+      discountAmount: 25,
+    };
+
+    await expect(fetchBadges()).resolves.toEqual({});
+    advance(30);
+    await expect(fetchBadges()).resolves.toEqual({ [MODEL]: running });
+    advance(15);
+    await expect(fetchBadges()).resolves.toEqual({});
+
+    // All three answers came from the one cached window.
+    expect(salesQuery).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a sale created while "no sale" is cached as soon as the model is busted', async () => {
     await fetchBadges();
     advance(5 * 60);

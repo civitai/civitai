@@ -1,4 +1,5 @@
-import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
+import { useRouter } from 'next/router';
+import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
@@ -7,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -15,15 +17,35 @@ import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
+import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
+import {
+  parseExcludeOwn,
+  toSemanticImageSearchInput,
+} from '~/components/Image/Infinite/image-feed-search';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import type { SearchRefusal } from '~/components/Search/search-refusal';
+import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
+import {
+  useImageFeedSearchQuery,
+  useImageFeedSearchSort,
+  useImageFeedSimilarTo,
+  useSearchPeriod,
+  useSemanticImageFeed,
+} from '~/components/Image/Infinite/useImageFeedSearch';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { backoffDelay } from '~/utils/backoff';
 
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
 const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
@@ -51,6 +73,11 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
   emptyMessage?: string;
   disableStoreFilters?: boolean;
+  /** Let a 16:9-or-wider image cover two columns (still needs the flag). Off unless a page asks. */
+  landscapeSpan?: boolean;
+  hideHatTurf?: boolean;
+  /** Answer a `?query=` from the semantic search (Search v3, behind `feedSearch`). */
+  searchable?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -61,7 +88,39 @@ export default function ImagesInfinite(props: ImagesInfiniteProps) {
   );
 }
 
-export function ImagesInfiniteContent({
+export function ImagesInfiniteContent(props: ImagesInfiniteProps) {
+  return props.searchable ? <SearchableImagesFeed {...props} /> : <ImagesFeed {...props} />;
+}
+
+// Only a feed that can be searched pays for the flag lookup and the query checks.
+function SearchableImagesFeed(props: ImagesInfiniteProps) {
+  const query = useImageFeedSearchQuery();
+  const similarTo = useImageFeedSimilarTo();
+  const { sort } = useImageFeedSearchSort();
+  // A ?query= can arrive by link or redirect, past the search bar's own checks.
+  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
+  // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
+  const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
+  return (
+    <ImagesFeed
+      {...props}
+      feedSearch={{ query, similarTo, sort, refusal, profanityMatches, period }}
+    />
+  );
+}
+
+type FeedSearch = {
+  query?: string;
+  /** "More like this": the image to match while no query is set. */
+  similarTo?: number;
+  sort?: ImageFeedSearchSort;
+  refusal?: SearchRefusal;
+  profanityMatches: string[];
+  /** The saved feed period while `useSearchPeriod` is still writing it. */
+  period?: MetricTimeframe;
+};
+
+function ImagesFeed({
   withTags,
   filters: filterOverrides = {},
   showEof = false,
@@ -71,19 +130,37 @@ export function ImagesInfiniteContent({
   showEmptyCta,
   emptyMessage,
   disableStoreFilters = false,
+  landscapeSpan,
+  searchable: _searchable,
+  feedSearch,
   ...imageProviderProps
-}: ImagesInfiniteProps) {
+}: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
+  const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
-  const computedFilters = removeEmpty({
-    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+  const {
+    query: rawSearchQuery,
+    similarTo: _similarTo,
+    ...computedFilters
+  } = removeEmpty({
+    ...(disableStoreFilters
+      ? filterOverrides
+      : {
+          ...imageFilters,
+          ...(feedSearch?.period && { period: feedSearch.period }),
+          ...filterOverrides,
+        }),
     withTags,
   });
+  const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
+  const searchQuery = rawSearchQuery && !refusal ? feedSearch?.query : undefined;
+  const similarTo = rawSearchQuery ? undefined : feedSearch?.similarTo;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
   const filters = filtersRef.current;
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
+  const searchQueryKey = useMemo(() => getQueryKey(trpc.semanticImageSearch.search), []);
 
   const rawBrowsingLevel = useBrowsingLevelDebounced();
   const domainColor = useDomainColor();
@@ -97,20 +174,36 @@ export function ImagesInfiniteContent({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
-  const {
-    images,
-    fetchNextPage,
-    refetch,
-    hasNextPage,
-    isRefetching,
-    isFetching,
-    isError,
-    debugRetryActive,
-    debugDelayMs,
-  } = useQueryImages(
-    { ...filters, browsingLevel, include: ['cosmetics'] },
-    { keepPreviousData: true }
+  const excludeOwn = parseExcludeOwn(useRouter().query.excludeOwn);
+  const searchInput = useMemo(
+    () =>
+      searchQuery || similarTo
+        ? toSemanticImageSearchInput({
+            query: searchQuery,
+            imageId: similarTo,
+            filters,
+            browsingLevel,
+            sort: feedSearch?.sort,
+            excludeOwn,
+          })
+        : undefined,
+    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn]
   );
+  const search = useSemanticImageFeed(searchInput);
+  useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
+  // A search that fails falls back to the plain feed with a banner, never an empty page.
+  const searchFailed = !!searchInput && search.isError;
+  // "More like this" from an image it can't search answers NOT_FOUND: say so, rather than outage.
+  const similarUnavailable =
+    searchFailed && !!searchInput?.imageId && search.error?.data?.code === 'NOT_FOUND';
+  const searching = !!searchInput && !searchFailed;
+  const feed = useQueryImages(
+    { ...filters, browsingLevel, include: ['cosmetics'] },
+    { keepPreviousData: true, enabled: !searching && !refusal }
+  );
+  const { debugRetryActive, debugDelayMs } = feed;
+  const { images, fetchNextPage, refetch, hasNextPage, isRefetching, isFetching, isError } =
+    searching ? search : feed;
 
   //#region [abort orphaned in-flight feed requests on filter change]
   // When filters change, the previous useInfiniteQuery observer
@@ -122,11 +215,13 @@ export function ImagesInfiniteContent({
   // orphaned (observer-less) in-flight queries fires the AbortSignal that
   // tRPC plumbs into the handler ctx, freeing the slot immediately.
   useEffect(() => {
-    queryClient.cancelQueries({
-      queryKey: infiniteQueryKey,
-      predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
-    });
-  }, [filters, browsingLevel, infiniteQueryKey]);
+    // Each typed query is a new search key too; an abandoned one is cancelled the same way.
+    for (const queryKey of [infiniteQueryKey, searchQueryKey])
+      queryClient.cancelQueries({
+        queryKey,
+        predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
+      });
+  }, [filters, browsingLevel, searchInput, infiniteQueryKey, searchQueryKey]);
   //#endregion
 
   //#region [search retry] — any backend failure (Meili, API, network)
@@ -158,14 +253,15 @@ export function ImagesInfiniteContent({
   // quick succession can collapse into a single `true` state from React's
   // perspective, leaving the effect stale).
   useEffect(() => {
-    if (!isFetching) {
+    // A cold semantic search legitimately takes several seconds; aborting it would only start it over.
+    if (!isFetching || searching) {
       setIsSlow(false);
       return;
     }
     setIsSlow(false);
     const t = setTimeout(() => setIsSlow(true), SEARCH_SLOW_THRESHOLD_MS);
     return () => clearTimeout(t);
-  }, [isFetching, retryAttempt]);
+  }, [isFetching, retryAttempt, searching]);
   //#endregion
 
   const handleRetry = useCallback(async () => {
@@ -196,7 +292,7 @@ export function ImagesInfiniteContent({
   const retryDelay = isSlow
     ? SEARCH_ABORT_THRESHOLD_MS - SEARCH_SLOW_THRESHOLD_MS
     : isError || debugRetryActive
-    ? Math.min(baseDelay * Math.pow(2, retryAttempt), SEARCH_RETRY_MAX_DELAY_MS)
+    ? backoffDelay(retryAttempt, { baseMs: baseDelay, maxMs: SEARCH_RETRY_MAX_DELAY_MS })
     : 0;
 
   // In debug mode we block real fetches so isFetching never toggles — treat it
@@ -218,8 +314,24 @@ export function ImagesInfiniteContent({
     />
   );
 
+  if (refusal)
+    return (
+      <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
+    );
+
   return (
     <>
+      {searchInput && (
+        <ImageFeedSearchSummary
+          query={searchInput.query ?? ''}
+          similarTo={searchInput.imageId}
+          correctedQuery={searching ? search.correctedQuery : undefined}
+          filters={filters}
+          failed={searchFailed}
+          unavailable={similarUnavailable}
+          onRetry={() => search.refetch()}
+        />
+      )}
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />
@@ -238,14 +350,17 @@ export function ImagesInfiniteContent({
                 const height = data?.height ? data.height : 450;
                 return { width, height };
               }}
-              adjustHeight={({ height }) => {
-                const imageHeight = Math.max(Math.min(height, 600), 150);
-                return imageHeight + 38;
-              }}
+              adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}
               withAds={showAds}
+              spanLandscapeMaxHeight={getImagesSpanMaxHeight({
+                optedIn: landscapeSpan,
+                flagOn: features.masonryLandscapeSpan,
+                customCard: !!MasonryItem,
+              })}
+              hasMore={hasNextPage && !isRetrying}
             />
           </ImagesProvider>
           {isRetrying ? (
@@ -262,11 +377,23 @@ export function ImagesInfiniteContent({
               </Center>
             </InViewLoader>
           ) : null}
-          {!hasNextPage && !isRetrying && showEof && <EndOfFeed />}
+          {!hasNextPage && !isRetrying && searching && (
+            <Text c="dimmed" ta="center" size="sm" py="xl">
+              That&rsquo;s every match. Try other words, or clear the search to see the whole feed.
+            </Text>
+          )}
+          {!hasNextPage && !isRetrying && showEof && !searching && <EndOfFeed />}
         </div>
       ) : (
-        <NoContent py="lg" message={emptyMessage}>
-          {showEmptyCta && (
+        <NoContent
+          py="lg"
+          message={
+            searching
+              ? 'No images match this search. Try other words, or remove a filter.'
+              : emptyMessage
+          }
+        >
+          {showEmptyCta && !searching && (
             <Group>
               <Link href="/posts/create">
                 <Button variant="default" radius="xl">

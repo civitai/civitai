@@ -38,7 +38,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 // The job deletes only on prod, and on prod the client env requires this.
@@ -136,12 +135,6 @@ const SCHEMA = `
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
-    -- The image's comment threads, which an image delete detaches when a held author is in one.
-    CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
-      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int UNIQUE);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
@@ -162,6 +155,14 @@ const SCHEMA = `
       "archivedAt" timestamp(3),
       images jsonb NOT NULL DEFAULT '[]',
       details jsonb NOT NULL DEFAULT '{}'
+    );
+    -- The DELETE queues each deleted image's stored file here, in the same statement.
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
     );
 `;
 
@@ -226,7 +227,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES

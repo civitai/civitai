@@ -36,7 +36,11 @@ export function useMysteryBoxViews(source: MysteryBoxSource) {
     { enabled: 'event' in source }
   );
   const held = trpc.mysteryBox.getHeld.useQuery(undefined, { enabled: 'inventory' in source });
-  const query = 'event' in source ? forEvent : held;
+  const forSeller = trpc.mysteryBox.getForSeller.useQuery(
+    { sellerId: 'seller' in source ? source.seller : 1 },
+    { enabled: 'seller' in source }
+  );
+  const query = 'event' in source ? forEvent : 'seller' in source ? forSeller : held;
   return { views: query.data as MysteryBoxView[] | undefined, isLoading: query.isLoading };
 }
 
@@ -62,16 +66,24 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
       undefined,
       (counts) => counts && { ...counts, unopenedBoxes: Math.max(0, counts.unopenedBoxes + change) }
     );
-  const recordPurchase = (boxDefinitionId: number, boxItemId: string) => {
-    if ('event' in source)
-      utils.mysteryBox.getForEvent.setData({ event: source.event }, (views) =>
-        views?.map((view) =>
-          view.boxDefinitionId === boxDefinitionId && !view.heldBoxItemIds.includes(boxItemId)
-            ? { ...view, heldBoxItemIds: [...view.heldBoxItemIds, boxItemId] }
-            : view
-        )
-      );
-    addToUnopenedCount(1);
+  const patchViews = (
+    patch: (views: MysteryBoxView[] | undefined) => MysteryBoxView[] | undefined
+  ) => {
+    if ('event' in source) utils.mysteryBox.getForEvent.setData({ event: source.event }, patch);
+    else if ('seller' in source)
+      utils.mysteryBox.getForSeller.setData({ sellerId: source.seller }, patch);
+  };
+  const recordPurchase = (boxDefinitionId: number, boxItemIds: string[]) => {
+    patchViews((views) =>
+      views?.map((view) => {
+        if (view.boxDefinitionId !== boxDefinitionId) return view;
+        const added = boxItemIds.filter((id) => !view.heldBoxItemIds.includes(id));
+        return added.length
+          ? { ...view, heldBoxItemIds: [...view.heldBoxItemIds, ...added] }
+          : view;
+      })
+    );
+    addToUnopenedCount(boxItemIds.length);
     void utils.mysteryBox.getHeld.invalidate();
   };
   // Write the modal's own read, don't refetch: a lagging replica could still answer "unopened". The
@@ -79,8 +91,8 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
   const recordOpen = (view: MysteryBoxView, opened: MysteryBoxOpenResult) => {
     const event = boxEventOf(source, view);
     const isThisBox = (other: MysteryBoxView) => other.boxDefinitionId === view.boxDefinitionId;
-    if ('event' in source) {
-      utils.mysteryBox.getForEvent.setData({ event: source.event }, (views) =>
+    if ('event' in source || 'seller' in source) {
+      patchViews((views) =>
         views?.map((other) => (isThisBox(other) ? afterOpen(other, opened) : other))
       );
       void utils.mysteryBox.getHeld.invalidate();
@@ -92,11 +104,16 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
     }
     addToUnopenedCount(-1);
     void utils.mysteryBox.getOpenings.invalidate();
-    if (event) void utils.event.getMyHats.invalidate({ event });
+    if (event) {
+      void utils.event.getMyHats.invalidate({ event });
+      void utils.hatTurf.getMyStickerHats.invalidate({ event });
+    }
   };
   const refresh = () =>
     'event' in source
       ? utils.mysteryBox.getForEvent.invalidate({ event: source.event })
+      : 'seller' in source
+      ? utils.mysteryBox.getForSeller.invalidate({ sellerId: source.seller })
       : utils.mysteryBox.getHeld.invalidate();
 
   const playShow = () => {
@@ -135,23 +152,25 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
               title: 'Your box is safe',
               error: error as Error,
               reason:
-                'event' in source
-                  ? 'It stays with you, unopened. Open it again from your Inventory.'
-                  : 'It stays with you, unopened. Try opening it again.',
+                'inventory' in source
+                  ? 'It stays with you, unopened. Try opening it again.'
+                  : 'It stays with you, unopened. Open it again from your Inventory.',
             }
       );
     }
   };
 
-  const buyAndOpen = async (view: MysteryBoxView) => {
-    if (!view.listing || busy) return;
+  /** Buys one box, or with `pack` the view's pack, and opens the first: a pack's guaranteed box. */
+  const buyAndOpen = async (view: MysteryBoxView, { pack = false }: { pack?: boolean } = {}) => {
+    const listing = pack ? view.packListing : view.listing;
+    if (!listing || busy) return;
     setResult(undefined);
     setPhase('buying');
     let bought;
     try {
       bought = await purchaseShopItem({
-        shopItemId: view.listing.shopItemId,
-        expectedUnitAmount: view.listing.unitAmount,
+        shopItemId: listing.shopItemId,
+        expectedUnitAmount: listing.unitAmount,
         expectedVersion: view.version,
       });
     } catch {
@@ -166,8 +185,8 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
       void refresh();
       return;
     }
-    const { boxItemId } = bought;
-    recordPurchase(view.boxDefinitionId, boxItemId);
+    const { boxItemId, boxItemIds } = bought;
+    recordPurchase(view.boxDefinitionId, boxItemIds);
     return open(view, boxItemId);
   };
 

@@ -1,20 +1,18 @@
-import { Loader, Popover, ScrollArea, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Loader, ScrollArea, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconMoodSmile } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';
 import { cloneElement, isValidElement, useMemo, useState } from 'react';
-import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { StickerPickerTile } from '~/components/Sticker/StickerPickerTile';
 import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { StickerSurface } from '~/shared/utils/sticker-token';
-import {
-  STICKER_SURFACES,
-  rankStickerMatch,
-  stickerBalanceLabel,
-} from '~/shared/utils/sticker-token';
+import { STICKER_SURFACES, rankStickerMatch } from '~/shared/utils/sticker-token';
 import { BASE_EMOJI } from '~/shared/constants/base-emoji';
 import { trpc } from '~/utils/trpc';
 
@@ -22,14 +20,13 @@ import { trpc } from '~/utils/trpc';
  * Opening the picker must not move focus out of the composer. Two things break
  * when it does: the caret is lost, so the sticker lands wherever `focus()` puts
  * it rather than where the author was typing; and a composer validating on blur
- * (`CommentForm` uses `mode: 'onBlur'`) fires "Cannot be empty" the moment the
- * picker is clicked, then keeps showing it — pre-submit, React Hook Form doesn't
- * re-validate on change.
+ * would fire "Cannot be empty" the moment the picker is clicked, then keep showing
+ * it — pre-submit, React Hook Form doesn't re-validate on change.
  */
 const keepComposerFocus = (e: ReactMouseEvent) => e.preventDefault();
 
 /** Both tabs share one height so the panel never resizes under the pointer. */
-const PICKER_BODY_HEIGHT = 'h-[220px]';
+const PICKER_BODY_HEIGHT = 'h-[280px]';
 
 export function StickerPicker({
   onSelect,
@@ -49,6 +46,7 @@ export function StickerPicker({
   position?: 'top' | 'top-end' | 'top-start' | 'bottom' | 'bottom-end' | 'bottom-start';
 }) {
   const features = useFeatureFlags();
+  const hoverCapable = useHoverCapable();
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'emoji' | 'sticker'>('emoji');
@@ -143,7 +141,7 @@ export function StickerPicker({
             />
           </div>
         ) : (
-          <div className="flex w-64 flex-col gap-2">
+          <div className="flex w-80 max-w-[calc(100vw-4rem)] flex-col gap-2">
             <TextInput
               size="xs"
               placeholder={withEmoji ? 'Search' : 'Search sticker'}
@@ -170,7 +168,7 @@ export function StickerPicker({
                   </Text>
                 ) : (
                   <ScrollArea h="100%" type="auto">
-                    <div className="grid grid-cols-7 gap-1">
+                    <div className="grid grid-cols-8 gap-1">
                       {emoji.map((item) => (
                         <UnstyledButton
                           key={item.slug}
@@ -204,60 +202,43 @@ export function StickerPicker({
                       No matches
                     </Text>
                   ) : (
-                    <ScrollArea h="100%" type="auto">
-                      <div className="grid grid-cols-6 gap-1">
-                        {filtered.map((item) => {
-                          const remaining = balancesLoaded
-                            ? balances.get(item.id) ?? null
-                            : undefined;
-                          const exhausted = remaining === 0;
-                          const balanceLabel = stickerBalanceLabel(remaining);
-                          return (
-                            <UnstyledButton
-                              key={item.id}
-                              // Stickers are consumable in comments; showing the balance
-                              // here is what keeps "not enough uses" from arriving as a
-                              // failed submit.
-                              title={
-                                remaining === undefined
-                                  ? `:${item.slug}:`
-                                  : remaining === null
-                                  ? `:${item.slug}: · unlimited`
-                                  : exhausted
-                                  ? `:${item.slug}: · out of uses — buy more`
-                                  : `:${item.slug}: · ${remaining} left`
-                              }
-                              className={clsx(
-                                'relative flex items-center justify-center rounded p-1 hover:bg-gray-2 dark:hover:bg-dark-5',
-                                exhausted && 'opacity-40'
-                              )}
-                              onClick={() => {
-                                // Exhausted opens the top-up rather than doing nothing:
-                                // a dead button is where the author leaves.
-                                if (exhausted) {
-                                  setTopUp(item);
-                                  return;
-                                }
-                                onSelect(item);
-                                setOpened(false);
-                                setQuery('');
-                              }}
-                            >
-                              <EdgeImage
-                                src={item.url}
-                                options={{ width: 64, anim: item.animated }}
-                                style={{ width: 28, height: 28, objectFit: 'contain' }}
-                              />
-                              {balanceLabel && (
-                                <span className="absolute bottom-0 right-0 rounded bg-dark-7/80 px-1 text-[10px] leading-tight text-white">
-                                  {balanceLabel}
-                                </span>
-                              )}
-                            </UnstyledButton>
-                          );
-                        })}
+                    <>
+                      <div className="min-h-0 flex-1">
+                        <ScrollArea h="100%" type="auto" offsetScrollbars>
+                          <div className="grid grid-cols-4 gap-1">
+                            {filtered.map((item) => {
+                              const remaining = balancesLoaded
+                                ? balances.get(item.id) ?? null
+                                : undefined;
+                              return (
+                                <StickerPickerTile
+                                  key={item.id}
+                                  sticker={item}
+                                  remaining={remaining}
+                                  showCreator={surface !== 'chat'}
+                                  onPick={() => {
+                                    // Exhausted opens the top-up rather than doing nothing:
+                                    // a dead button is where the author leaves.
+                                    if (remaining === 0) {
+                                      setTopUp(item);
+                                      return;
+                                    }
+                                    onSelect(item);
+                                    setOpened(false);
+                                    setQuery('');
+                                  }}
+                                />
+                              );
+                            })}
+                          </div>
+                        </ScrollArea>
                       </div>
-                    </ScrollArea>
+                      {!hoverCapable && (
+                        <Text size="xs" c="dimmed" ta="center" className="pt-1">
+                          Press and hold a sticker to preview
+                        </Text>
+                      )}
+                    </>
                   )}
                 </>
               )}

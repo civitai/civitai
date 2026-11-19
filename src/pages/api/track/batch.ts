@@ -3,6 +3,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
 import { trackBatchSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Coalesced telemetry beacon — receives a BATCH of `trackSearch` / `addAction`
 // events buffered by the browser (see src/components/TrackView/trackEventBuffer.ts)
@@ -83,7 +84,8 @@ export default PublicEndpoint(
     // hatted content pays; the session is only resolved (and shared with the Tracker) past it, and
     // signed-out viewers earn nothing.
     const hatted = hattedImpressionEntities(result.data);
-    if (hatted.length) void awardViewPoints(() => tracker.getSession(), hatted);
+    if (hatted.length)
+      void awardViewPoints(() => tracker.getSession({ scope: TokenScope.UserWrite }), hatted);
 
     return res.status(200).end();
   },

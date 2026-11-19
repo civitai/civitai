@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installUserCosmeticCacheFake } from '~/test-utils/userCosmeticCacheFake';
 
+// The showcase hat has its own cache and its own tests (events/showcase-hat.ts); here it only has to
+// reach the right user.
+const SHOWCASE_HAT = { cosmeticId: 2, url: 'hat.png', until: '2026-12-01T00:00:00.000Z' };
+const showcase = vi.hoisted(() => ({ getShowcaseHatsForUsers: vi.fn() }));
+vi.mock('~/server/events/showcase-hat', () => ({
+  ...showcase,
+  getShowcaseHatForUser: vi.fn(),
+}));
+
 const { getCosmeticsAndProfilePicturesForUsers } = await import('~/server/services/user.service');
 
 /**
@@ -31,6 +40,7 @@ const picture = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  showcase.getShowcaseHatsForUsers.mockResolvedValue({ [WEARER]: SHOWCASE_HAT });
   installUserCosmeticCacheFake({
     userCosmetics: [
       // Worn.
@@ -59,10 +69,13 @@ beforeEach(() => {
 
 describe('getCosmeticsAndProfilePicturesForUsers', () => {
   it('returns the nested-select shape: the picture, and only the cosmetics the user wears', async () => {
-    const forUser = await getCosmeticsAndProfilePicturesForUsers([WEARER, OTHER, BARE]);
+    const forUser = await getCosmeticsAndProfilePicturesForUsers([WEARER, OTHER, BARE], {
+      showcaseHat: true,
+    });
 
     expect(forUser(WEARER)).toStrictEqual({
       profilePicture: picture,
+      showcaseHat: SHOWCASE_HAT,
       cosmetics: [
         {
           data: { lights: 3 },
@@ -78,6 +91,7 @@ describe('getCosmeticsAndProfilePicturesForUsers', () => {
     });
     expect(forUser(OTHER)).toStrictEqual({
       profilePicture: null,
+      showcaseHat: null,
       cosmetics: [
         {
           data: null,
@@ -91,15 +105,24 @@ describe('getCosmeticsAndProfilePicturesForUsers', () => {
         },
       ],
     });
-    expect(forUser(BARE)).toStrictEqual({ profilePicture: null, cosmetics: [] });
+    expect(forUser(BARE)).toStrictEqual({ profilePicture: null, showcaseHat: null, cosmetics: [] });
   });
 
   it('reads all the users in one query per cache, not one per user', async () => {
-    await getCosmeticsAndProfilePicturesForUsers([WEARER, OTHER, BARE]);
+    await getCosmeticsAndProfilePicturesForUsers([WEARER, OTHER, BARE], { showcaseHat: true });
 
     expect(dbMock.dbRead.userCosmetic.findMany).toHaveBeenCalledTimes(1);
     const { userId } = dbMock.dbRead.userCosmetic.findMany.mock.calls[0][0].where;
     expect([...userId.in].sort()).toEqual([WEARER, OTHER, BARE]);
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(showcase.getShowcaseHatsForUsers).toHaveBeenCalledTimes(1);
+  });
+
+  // The model page's owner avatar draws no hat, and it is a hot read: it must not pay for the lookup.
+  it('reads no showcase hat unless the caller asks for one', async () => {
+    const forUser = await getCosmeticsAndProfilePicturesForUsers([WEARER]);
+
+    expect(showcase.getShowcaseHatsForUsers).not.toHaveBeenCalled();
+    expect(forUser(WEARER)).not.toHaveProperty('showcaseHat');
   });
 });

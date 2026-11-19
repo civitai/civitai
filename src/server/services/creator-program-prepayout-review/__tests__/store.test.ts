@@ -83,6 +83,20 @@ describe('saveFlag', () => {
     }
   );
 
+  it("keeps a manual hold's ground and reason when a run refreshes the evidence", async () => {
+    reviews.findUnique.mockResolvedValue({
+      ...row('open', ['manual:fraud']),
+      evidence: { manual: { ground: 'fraud', reason: 'r' } },
+    });
+
+    await store.saveFlag(flag(['restricted']));
+
+    expect(reviews.updateMany.mock.calls[0][0].data.evidence).toEqual({
+      note: 'today',
+      manual: { ground: 'fraud', reason: 'r' },
+    });
+  });
+
   it('reopens a cleared hold on a new signal and records the reopen in the history', async () => {
     reviews.findUnique.mockResolvedValue(row('cleared', ['counterparty']));
 

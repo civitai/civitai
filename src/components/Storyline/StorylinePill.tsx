@@ -1,4 +1,5 @@
-import { Badge, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconArrowRight, IconChevronDown, IconRoute } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { forwardRef } from 'react';

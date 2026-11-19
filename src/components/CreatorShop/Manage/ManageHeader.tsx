@@ -1,4 +1,5 @@
-import { ActionIcon, Button, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Group, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowLeft,
   IconPackage,

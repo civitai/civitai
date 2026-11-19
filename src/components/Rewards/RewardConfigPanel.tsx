@@ -10,8 +10,8 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

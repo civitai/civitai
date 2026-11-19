@@ -5,6 +5,12 @@ import { env } from '$env/dynamic/private';
 import { dbRead, dbWrite } from './db';
 import { insertModActivityBatch } from './mod-activity';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
+import {
+  claimDeferredBlockEffects,
+  fireDeferredBlockEffects,
+  type DeferredBlockEffect,
+} from './deferred-block-effects';
+import { keepPendingAppealFlags } from './image-moderation.service';
 import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '$lib/enforcement';
 
 /**
@@ -178,8 +184,9 @@ export async function clearUserCsamFlags({
   expectedCount: number;
   moderatorId: number;
 }): Promise<ClearUserFlagsResult> {
+  let claimed: DeferredBlockEffect[] = [];
   try {
-    return await dbWrite.transaction().execute(async (trx) => {
+    const result = await dbWrite.transaction().execute(async (trx) => {
       const marker = await holdMarkerState(trx);
       const held = (await getFlagClearHolds([userId], trx)).get(userId);
       if (held) {
@@ -194,9 +201,13 @@ export async function clearUserCsamFlags({
         entityIds: cleared,
         activity: 'dismissReviewFlag',
       });
+      claimed = await claimDeferredBlockEffects(trx, cleared);
+      await keepPendingAppealFlags(trx, cleared);
       const remaining = await flaggedCount(trx, userId);
       return { ok: true, cleared: cleared.length, remaining } as const;
     });
+    await fireDeferredBlockEffects(claimed, { moderatorId });
+    return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
     throw e;
@@ -244,8 +255,9 @@ export async function releaseHeldUserCsamFlags(
   if (!APPROVAL_REF_PATTERN.test(approvalRef)) throw new Error('Not an approval reference.');
   if (!reason) throw new Error('A release needs a reason.');
   let legs: FlagClearHoldLeg[] = [];
+  let claimed: DeferredBlockEffect[] = [];
   try {
-    return await dbWrite.transaction().execute(async (trx) => {
+    const result = await dbWrite.transaction().execute(async (trx) => {
       const { rows } = await sql<{ present: unknown }>`
         SELECT to_regclass(${`"${RELEASE_TABLE}"`}) IS NOT NULL AS present`.execute(trx);
       if (rows[0]?.present !== true) return { ok: false, reason: 'unavailable', legs } as const;
@@ -280,8 +292,12 @@ export async function releaseHeldUserCsamFlags(
         entityIds: released,
         activity: 'releaseHeldReviewFlag',
       });
+      claimed = await claimDeferredBlockEffects(trx, released);
+      await keepPendingAppealFlags(trx, released);
       return { ok: true, dryRun: false, count: released.length, remaining, legs } as const;
     });
+    await fireDeferredBlockEffects(claimed, { moderatorId });
+    return result;
   } catch (e) {
     if (e instanceof DryRun)
       return { ok: true, dryRun: true, count: e.count, remaining: e.remaining, legs };

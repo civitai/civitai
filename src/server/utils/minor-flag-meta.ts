@@ -1,4 +1,4 @@
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { filterSensitiveProfanityData, PROFANITY_META_KEYS } from '~/libs/profanity-simple/helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
@@ -48,48 +48,10 @@ export function resolveMinorAppeal<T>({
   return isOwner ? appeal : null;
 }
 
-// Written by the minor-hash service and never safe to expose: the snapshot carries
-// prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
-// textModeration forensics and the systemNsfwLock source are for moderator review only.
-// The single definition of which meta keys are secret — everything that hands a
-// Model.meta back to a client must go through this.
-export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
-export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null;
-export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
-  if (!meta) return meta;
-
-  const {
-    minorFlagSnapshot: _snapshot,
-    ownerFlagOverride: _ownerFlagOverride,
-    minorHashDismissed: _dismissed,
-    minorHashCleared: _cleared,
-    minorHashAccepted: _accepted,
-    poiFlagSnapshot: _poiSnapshot,
-    poiHashMatch: _poiMatch,
-    poiHashCleared: _poiCleared,
-    textModeration: _textModeration,
-    textScanFlags: _textScanFlags,
-    modelRules: _modelRules,
-    modelRulesCleared: _modelRulesCleared,
-    systemNsfwLock: _systemNsfwLock,
-    ...rest
-  } = meta;
-
-  return rest;
-}
-
-/**
- * Meta keys only a server-side moderation path may write. `modelUpsertSchema.meta`
- * is a `looseObject`, so unknown keys survive parsing and are merged into
- * `Model.meta` with the client's copy winning — without this, a creator can author
- * their own `textModeration` forensics for a moderator to read, or mint the
- * `minorFlagSnapshot` that the appeal flow treats as proof of an automated flag.
- *
- * Deliberately the same list as `stripMinorHashMeta` plus the profanity pair: a key
- * that is never safe to hand out is never safe to accept either, and keeping one
- * list means the two directions cannot drift apart.
- */
-const MODERATION_OWNED_META_KEYS = [
+// Moderation records an owner may neither read nor write: the minor-hash snapshot carries
+// prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and textModeration
+// forensics are for moderator review only.
+const MODERATION_SECRET_META_KEYS = [
   'minorFlagSnapshot',
   'ownerFlagOverride',
   'minorHashDismissed',
@@ -102,8 +64,49 @@ const MODERATION_OWNED_META_KEYS = [
   'textScanFlags',
   'modelRules',
   'modelRulesCleared',
-  'profanityMatches',
-  'profanityEvaluation',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+// Server-owned keys that are also hidden from clients. Client meta can't write them at all
+// (`SERVER_OWNED_META_KEYS`), so they are not in the inbound list.
+const HIDDEN_SERVER_OWNED_META_KEYS = [
+  'ownerDeclaredFlags',
+  'systemNsfwLock',
+  'restrictedNsfwVerdict',
+  'restrictedNsfwVerdictRulings',
+  'restrictedNsfwVerdictDormant',
+  'comFaceIntent',
+  'comFaceIntentRelockSuppressed',
+] as const satisfies readonly (typeof SERVER_OWNED_META_KEYS)[number][];
+
+const CLIENT_HIDDEN_META_KEYS: readonly string[] = [
+  ...MODERATION_SECRET_META_KEYS,
+  ...HIDDEN_SERVER_OWNED_META_KEYS,
+];
+
+// The single definition of which meta keys are secret: everything that hands a Model.meta back to
+// a client must go through this.
+export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
+export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null;
+export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
+  if (!meta) return meta;
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of CLIENT_HIDDEN_META_KEYS) delete rest[key];
+  return rest as ModelMeta;
+}
+
+/**
+ * Meta keys only a server-side moderation path may write. `modelUpsertSchema.meta`
+ * is a `looseObject`, so unknown keys survive parsing and are merged into
+ * `Model.meta` with the client's copy winning — without this, a creator can author
+ * their own `textModeration` forensics for a moderator to read, or mint the
+ * `minorFlagSnapshot` that the appeal flow treats as proof of an automated flag.
+ *
+ * Built from the same lists `stripMinorHashMeta` and `filterSensitiveProfanityData` hide: a
+ * key that is never safe to hand out is never safe to accept either.
+ */
+const MODERATION_OWNED_META_KEYS = [
+  ...MODERATION_SECRET_META_KEYS,
+  ...PROFANITY_META_KEYS,
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /**
@@ -160,6 +163,7 @@ export const RESTORE_CANNOT_PROMOTE_KEY = 'restoreCannotPromote';
  * Meta of a model that is Private after a moderator's `cannotPromote` decision: the flag stays forced
  * on while private, and the decision is kept in the restore marker for `publishPrivateModel`.
  * `banned: true` records it; `false` drops the marker so publish makes the model promotable.
+ * `toggleCannotPromote` writes the same rule in SQL, to toggle in one statement.
  */
 export function withPrivateCannotPromote<T extends object>(meta: T, banned: boolean): T {
   const { [RESTORE_CANNOT_PROMOTE_KEY]: _marker, ...rest } = meta as Record<string, unknown>;
@@ -175,16 +179,30 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
- * dispute. Client meta that carries them is ignored, so on update the stored values survive the
- * `{ ...prevMeta, ...meta }` merge.
+ * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com;
+ * `comFaceIntent` keeps the listing intent verdict a .com face was judged by.
+ * `restrictedNsfwVerdict` is a moderator's lead, kept with its rulings and dormant verdict;
+ * `ownerDeclaredFlags` outlives the override a ruling drops. Client meta carrying any of these is
+ * ignored, so on update the stored values survive the `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
   'trainingStudioModerationApproved',
   'systemNsfwLock',
+  'restrictedNsfwVerdict',
+  'restrictedNsfwVerdictRulings',
+  'restrictedNsfwVerdictDormant',
+  'ownerDeclaredFlags',
+  'comFaceRemoved',
+  'comFaceIntent',
+  'comFaceIntentRelockSuppressed',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
-export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {
+/** The text checks whose unlocked mature rating the owner cannot undo alone until a read of the
+ *  text as not mature drops their marker (`assertScanRatingKept`, `dropScanRatingMarker`). */
+export const SCAN_RATING_SOURCES: readonly string[] = ['text-scan'];
+
+export function systemNsfwLockMarker(source: string): { source: string; at: string } {
   return { source, at: new Date().toISOString() };
 }
 
@@ -194,6 +212,13 @@ export function readSystemNsfwLockAt(meta: unknown): Date | null {
   if (!marker || typeof marker.at !== 'string') return null;
   const at = new Date(marker.at);
   return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** A system rating verdict was recorded after the current nsfw-lock marker was set. */
+export function hasLaterVerdictUnderLock(meta: unknown): boolean {
+  const lockedAt = readSystemNsfwLockAt(meta);
+  const later = (meta as ModelMeta | null)?.comFaceIntent?.laterVerdict?.at;
+  return !!lockedAt && !!later && new Date(later) > lockedAt;
 }
 
 // A content wipe's removal record is written and cleared by server code only: a moderator's edit
@@ -250,5 +275,9 @@ export function pickModerationOwnedMeta(
 }
 
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {
-  return stripMinorHashMeta(filterSensitiveProfanityData(meta, isModerator));
+  const filtered = stripMinorHashMeta(filterSensitiveProfanityData(meta, isModerator));
+  if (isModerator || !filtered?.comFaceRemoved) return filtered;
+  // Moderators only; the owner's editor gets a boolean from `getModelHandler`.
+  const { comFaceRemoved: _removed, ...rest } = filtered;
+  return rest;
 }

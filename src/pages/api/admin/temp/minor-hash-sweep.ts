@@ -83,7 +83,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
     return res.status(400).json({ error: 'modelIds is only valid with action=rollback' });
 
   if (action === 'rollback' && modelIds?.length && !dryRun)
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'info',
         name: 'minor-hash-rollback',
@@ -92,7 +92,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
         modelIds,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
   try {
     const report =

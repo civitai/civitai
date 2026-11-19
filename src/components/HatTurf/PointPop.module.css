@@ -1,0 +1,45 @@
+.pop {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.6), 0 0 6px rgb(0 0 0 / 0.35);
+  animation: rise 1100ms ease-out forwards;
+}
+
+@keyframes rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -60%) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -110%) scale(1.1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -260%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop {
+    animation: fade 1100ms linear forwards;
+  }
+  @keyframes fade {
+    0%,
+    70% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}

@@ -18,6 +18,7 @@ const {
   mockAddShopItemToSection,
   mockRemoveShopItemFromSection,
   mockGetShopItemEventTags,
+  mockGetEventTagSuggestions,
   mockSetShopItemEventTags,
 } = vi.hoisted(() => ({
   mockGetShopItemById: vi.fn(async () => ({ id: 1 })),
@@ -26,6 +27,7 @@ const {
   mockAddShopItemToSection: vi.fn(async () => [{ id: 2 }]),
   mockRemoveShopItemFromSection: vi.fn(async () => [{ id: 2 }]),
   mockGetShopItemEventTags: vi.fn(async () => ['halloween']),
+  mockGetEventTagSuggestions: vi.fn(async () => ['halloween']),
   mockSetShopItemEventTags: vi.fn(async () => ['halloween']),
 }));
 
@@ -36,6 +38,7 @@ vi.mock('~/server/services/cosmetic-shop.service', () => ({
   addShopItemToSection: mockAddShopItemToSection,
   removeShopItemFromSection: mockRemoveShopItemFromSection,
   getShopItemEventTags: mockGetShopItemEventTags,
+  getEventTagSuggestions: mockGetEventTagSuggestions,
   setShopItemEventTags: mockSetShopItemEventTags,
   getPaginatedCosmeticShopItems: vi.fn(),
   getShopSections: vi.fn(),
@@ -56,7 +59,7 @@ vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }))
 import { cosmeticShopRouter } from '../cosmetic-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function fakeCtx(user: unknown, tokenScope: number = TokenScope.Full) {
+function fakeCtx(user: unknown, tokenScope: bigint = TokenScope.Full) {
   return {
     acceptableOrigin: true,
     user,
@@ -111,6 +114,11 @@ const READS = [
       c.getShopItemEventTags({ shopItemId: 1 }),
   },
   {
+    name: 'getEventTagSuggestions',
+    mock: mockGetEventTagSuggestions,
+    call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) => c.getEventTagSuggestions(),
+  },
+  {
     name: 'setShopItemEventTags',
     mock: mockSetShopItemEventTags,
     call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) =>
@@ -143,7 +151,7 @@ describe('the cosmetic shop editor reads and section placements are moderator-on
     it(`${read.name} refuses every token missing one bit of Full`, async () => {
       for (let bit = 0; bit < 25; bit++) {
         const caller = cosmeticShopRouter.createCaller(
-          fakeCtx(mod, TokenScope.Full & ~(1 << bit)) as never
+          fakeCtx(mod, TokenScope.Full & ~(1n << BigInt(bit))) as never
         );
         await expect(read.call(caller), `token missing bit ${bit}`).rejects.toMatchObject({
           code: 'FORBIDDEN',

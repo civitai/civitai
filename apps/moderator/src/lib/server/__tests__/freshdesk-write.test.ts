@@ -38,9 +38,9 @@ afterEach(() => {
 describe('freshdesk write calls', () => {
   it('replies with POST /tickets/{id}/reply and the html body, authenticated with the write key', async () => {
     fetchMock.mockResolvedValue(json({ id: 1 }, { status: 201 }));
-    expect(await replyToTicket('74924', '<p>Hi</p>')).toEqual({ status: 'ok' });
+    expect(await replyToTicket('990100003', '<p>Hi</p>')).toEqual({ status: 'ok' });
     const { url, init, body } = sent();
-    expect(url).toBe('https://help.example.test/api/v2/tickets/74924/reply');
+    expect(url).toBe('https://help.example.test/api/v2/tickets/990100003/reply');
     expect(init.method).toBe('POST');
     expect(body).toEqual({ body: '<p>Hi</p>' });
     expect((init.headers as Record<string, string>).authorization).toBe(
@@ -50,28 +50,28 @@ describe('freshdesk write calls', () => {
 
   it('adds a PRIVATE note with POST /tickets/{id}/notes', async () => {
     fetchMock.mockResolvedValue(json({ id: 2 }, { status: 201 }));
-    expect(await addPrivateNote('74924', 'Sent by a')).toEqual({ status: 'ok' });
+    expect(await addPrivateNote('990100003', 'Sent by a')).toEqual({ status: 'ok' });
     const { url, init, body } = sent();
-    expect(url).toBe('https://help.example.test/api/v2/tickets/74924/notes');
+    expect(url).toBe('https://help.example.test/api/v2/tickets/990100003/notes');
     expect(init.method).toBe('POST');
     expect(body).toEqual({ body: 'Sent by a', private: true });
   });
 
   it('sets the status with PUT /tickets/{id}', async () => {
-    fetchMock.mockResolvedValue(json({ id: 74924, status: 4 }));
-    expect(await setTicketStatus('74924', 4)).toEqual({ status: 'ok' });
+    fetchMock.mockResolvedValue(json({ id: 990100003, status: 4 }));
+    expect(await setTicketStatus('990100003', 4)).toEqual({ status: 'ok' });
     const { url, init, body } = sent();
-    expect(url).toBe('https://help.example.test/api/v2/tickets/74924');
+    expect(url).toBe('https://help.example.test/api/v2/tickets/990100003');
     expect(init.method).toBe('PUT');
     expect(body).toEqual({ status: 4 });
   });
 
   it('updates fields with PUT /tickets/{id}, sending the tags array as given', async () => {
-    fetchMock.mockResolvedValue(json({ id: 74924 }));
-    const fields = { tags: ['a', 'sent-to-support'], group_id: 154000246097, status: 2 };
-    expect(await updateTicket('74924', fields)).toEqual({ status: 'ok' });
+    fetchMock.mockResolvedValue(json({ id: 990100003 }));
+    const fields = { tags: ['a', 'sent-to-support'], group_id: 990000000003, status: 2 };
+    expect(await updateTicket('990100003', fields)).toEqual({ status: 'ok' });
     const { url, init, body } = sent();
-    expect(url).toBe('https://help.example.test/api/v2/tickets/74924');
+    expect(url).toBe('https://help.example.test/api/v2/tickets/990100003');
     expect(init.method).toBe('PUT');
     expect(body).toEqual(fields);
   });

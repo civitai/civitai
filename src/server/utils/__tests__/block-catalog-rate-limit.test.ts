@@ -14,6 +14,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   checkBlockCatalogRateLimit,
   checkBlockEstimateCellsRateLimit,
+  checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   BLOCK_CATALOG_RATE_LIMIT_MAX,
   BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS,
 } from '../block-catalog-rate-limit';
@@ -153,5 +155,182 @@ describe('checkBlockEstimateCellsRateLimit', () => {
     expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 16)).toEqual({
       allowed: true,
     });
+  });
+});
+
+describe('checkBlockSubmitRateLimit', () => {
+  const SUBMIT_KEY = 'blocks:token-rate-limit:submit:bki_test:user:42';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges one call on a key holding the install AND the token subject', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(SUBMIT_KEY, 1);
+    expect(mockRedis.expire).toHaveBeenCalledWith(SUBMIT_KEY, 10);
+  });
+
+  it('allows twice the catalog ceiling a window and refuses one more', async () => {
+    mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+    mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(4);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({
+      allowed: false,
+      retryAfterSeconds: 4,
+    });
+  });
+
+  it('two viewers of one install never share a window', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockSubmitRateLimit('bki_test', 'user:42');
+    await checkBlockSubmitRateLimit('bki_test', 'user:43');
+    expect(mockRedis.incrBy.mock.calls.map(([k]) => k)).toEqual([
+      SUBMIT_KEY,
+      'blocks:token-rate-limit:submit:bki_test:user:43',
+    ]);
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+  });
+});
+
+describe('checkBlockSubmitUserRateLimit', () => {
+  const USER_KEY = 'blocks:token-rate-limit:submit-user:user:42';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges one call on a key holding the subject alone, never the install', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(USER_KEY, 1);
+    expect(mockRedis.expire).toHaveBeenCalledWith(USER_KEY, 10);
+  });
+
+  it('allows twice the per-install submit ceiling a window and refuses one more', async () => {
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(6);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({
+      allowed: false,
+      retryAfterSeconds: 6,
+    });
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+  });
+});
+
+describe('claimBlockStandingConsentSlot — fails CLOSED', () => {
+  const counts = new Map<string, number>();
+  function inMemoryMulti() {
+    const ops: Array<() => unknown> = [];
+    const chain = {
+      set: (k: string, v: string, o?: { NX?: boolean }) => {
+        ops.push(() => {
+          if (o?.NX && counts.has(k)) return null;
+          counts.set(k, Number(v));
+          return 'OK';
+        });
+        return chain;
+      },
+      incr: (k: string) => {
+        ops.push(() => {
+          const n = (counts.get(k) ?? 0) + 1;
+          counts.set(k, n);
+          return n;
+        });
+        return chain;
+      },
+      exec: async () => ops.map((op) => op()),
+    };
+    return chain;
+  }
+
+  beforeEach(() => {
+    counts.clear();
+    mockRedis.multi.mockReset();
+    mockRedis.multi.mockImplementation(inMemoryMulti as never);
+  });
+
+  it('allows five per viewer and app in a window, refuses the sixth', async () => {
+    const { claimBlockStandingConsentSlot, BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX } = await import(
+      '../block-catalog-rate-limit'
+    );
+    const results = [];
+    for (let i = 0; i < BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX + 1; i++) {
+      results.push(await claimBlockStandingConsentSlot(42, 'apb_x'));
+    }
+    expect(results).toEqual([true, true, true, true, true, false]);
+    expect(await claimBlockStandingConsentSlot(42, 'apb_other')).toBe(true);
+    expect(await claimBlockStandingConsentSlot(43, 'apb_x')).toBe(true);
+  });
+
+  it('the submit bucket is its own: a full consent bucket leaves it untouched, and it caps at five too', async () => {
+    const { claimBlockStandingConsentSlot, claimBlockStandingSubmitSlot } = await import(
+      '../block-catalog-rate-limit'
+    );
+    for (let i = 0; i < 6; i++) await claimBlockStandingConsentSlot(42, 'apb_x');
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await claimBlockStandingSubmitSlot(42, 'apb_x'));
+    expect(results).toEqual([true, true, true, true, true, false]);
+    expect([...counts.keys()].sort()).toEqual([
+      'blocks:token-rate-limit:standing-consent:42:apb_x',
+      'blocks:token-rate-limit:standing-submit:42:apb_x',
+    ]);
+  });
+
+  it('arms the window in the same MULTI that creates the key, so the count resets', async () => {
+    const { claimBlockStandingConsentSlot, BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS } =
+      await import('../block-catalog-rate-limit');
+    const set = vi.fn();
+    mockRedis.multi.mockImplementation((() => {
+      const chain = {
+        set: (...a: unknown[]) => (set(...a), chain),
+        incr: () => chain,
+        exec: async () => ['OK', 1],
+      };
+      return chain;
+    }) as never);
+    await claimBlockStandingConsentSlot(42, 'apb_x');
+    expect(set).toHaveBeenCalledWith(expect.stringContaining(':42:apb_x'), '0', {
+      NX: true,
+      EX: BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
+    });
+  });
+
+  it('refuses when the store throws', async () => {
+    const { claimBlockStandingConsentSlot } = await import('../block-catalog-rate-limit');
+    mockRedis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    expect(await claimBlockStandingConsentSlot(42, 'apb_x')).toBe(false);
+  });
+
+  it('refuses on a reply that is not a count', async () => {
+    const { claimBlockStandingConsentSlot } = await import('../block-catalog-rate-limit');
+    mockRedis.multi.mockImplementation((() => ({
+      set() {
+        return this;
+      },
+      incr() {
+        return this;
+      },
+      exec: async () => null,
+    })) as never);
+    expect(await claimBlockStandingConsentSlot(42, 'apb_x')).toBe(false);
   });
 });

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
+import {
+  isFbxOnlyDelivered,
+  isGlbFormat,
+  isInlineViewableModel3DFile,
+  normalizeModel3DFormat,
+  pickModel3DPreviewFile,
+} from '~/shared/orchestrator/model3d-output';
 
 const mesh = (format: string, available = true) => ({ type: 'model3d', available, format });
 const polyGen = (status: string, output: ReturnType<typeof mesh>[]) => ({
@@ -45,5 +51,73 @@ describe('isUnratedOutput — 3D meshes', () => {
   it('never holds a GLB mesh, which is rated through its preview render', async () => {
     const { isUnratedOutput } = await import('~/shared/orchestrator/workflow-data');
     expect(isUnratedOutput({ ...base, format: 'glb' })).toBe(false);
+  });
+});
+
+describe('pickModel3DPreviewFile', () => {
+  const file = (id: number, format: string, variant: string, isPrimary = false) => ({
+    id,
+    format,
+    variant,
+    isPrimary,
+  });
+
+  it('previews a GLB variant when the primary is FBX', () => {
+    const glb = file(2, 'glb', 'rigged');
+    expect(pickModel3DPreviewFile([file(1, 'fbx', 'primary', true), glb])).toBe(glb);
+  });
+
+  it('keeps a viewable primary over other GLBs', () => {
+    const primary = file(1, 'glb', 'primary', true);
+    expect(pickModel3DPreviewFile([file(2, 'glb', 'walking'), primary])).toBe(primary);
+  });
+
+  // An armature-only GLB has no geometry, so the FBX primary's download fallback is the better result.
+  it('skips armature-only GLBs and falls back to the primary', () => {
+    const primary = file(1, 'fbx', 'primary', true);
+    expect(pickModel3DPreviewFile([primary, file(2, 'glb', 'walking-armature')])).toBe(primary);
+  });
+
+  it('falls back to the first file when none is primary or viewable', () => {
+    const first = file(1, 'obj', 'primary');
+    expect(pickModel3DPreviewFile([first, file(2, 'fbx', 'rigged')])).toBe(first);
+  });
+
+  it('returns null for no files', () => {
+    expect(pickModel3DPreviewFile([])).toBeNull();
+  });
+});
+
+describe('isGlbFormat', () => {
+  it.each(['glb', 'GLB', '.glb', ' GLB '])('accepts %j', (format) => {
+    expect(isGlbFormat(format)).toBe(true);
+  });
+
+  it.each(['fbx', 'gltf', '', null, undefined])('rejects %j', (format) => {
+    expect(isGlbFormat(format)).toBe(false);
+  });
+});
+
+describe('normalizeModel3DFormat', () => {
+  it.each([
+    ['GLB', 'glb'],
+    ['.glb', 'glb'],
+    [' .GLTF ', 'gltf'],
+    ['fbx', 'fbx'],
+    [null, ''],
+  ])('%j → %j', (format, expected) => {
+    expect(normalizeModel3DFormat(format)).toBe(expected);
+  });
+});
+
+describe('isInlineViewableModel3DFile', () => {
+  it('keeps a GLB whose stored format is not normalised', () => {
+    expect(isInlineViewableModel3DFile({ format: '.glb', variant: 'primary' })).toBe(true);
+    expect(isInlineViewableModel3DFile({ format: ' GLB ', variant: null })).toBe(true);
+  });
+
+  it('drops FBX files and armature-only meshes', () => {
+    expect(isInlineViewableModel3DFile({ format: 'fbx', variant: 'primary' })).toBe(false);
+    expect(isInlineViewableModel3DFile({ format: 'glb', variant: 'walking-armature' })).toBe(false);
   });
 });

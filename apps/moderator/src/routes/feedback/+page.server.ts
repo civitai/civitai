@@ -25,7 +25,13 @@ const querySchema = z.object({
   cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   // The CONSTANT as the key, like `cursorValue` below: renaming the param breaks the destructure
   // at compile time instead of silently reading a field nothing writes.
-  [FEEDBACK_OPEN_PARAM]: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  [FEEDBACK_OPEN_PARAM]: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(MAX_INT4)
+    .optional()
+    .catch(undefined),
   /**
    * The compound keyset's value half. Bounded in LENGTH only and never coerced here: which type it
    * has to be depends on which column `?sort=` names, and that mapping is the service's — see
@@ -115,6 +121,7 @@ export const load: PageServerLoad = async ({ url, request, locals }) => {
       openVisible: false,
       siblings: [],
       knownIssues: [],
+      captureView: 'none' as const,
       areaOptions: [],
       grafanaUrl: null,
       migrationPending: true as const,
@@ -127,9 +134,9 @@ export const load: PageServerLoad = async ({ url, request, locals }) => {
    * renders the same panel; only "is a row open at all" is the queue's own question.
    */
   const openRow = open ? list.items.find((r) => r.id === open) : undefined;
-  const { siblings, knownIssues } = openRow
+  const { siblings, knownIssues, captureView } = openRow
     ? await feedbackPanelExtras(openRow, locals.grants)
-    : { siblings: [], knownIssues: [] };
+    : { siblings: [], knownIssues: [], captureView: 'none' as const };
 
   return {
     migrationPending: false as const,
@@ -145,6 +152,7 @@ export const load: PageServerLoad = async ({ url, request, locals }) => {
     openVisible: !!openRow,
     siblings,
     knownIssues,
+    captureView,
     areaOptions: feedbackAreaOptions(areas),
     /**
      * 🔴 NULL when unset, and the panel renders no link at all in that case. A missing base would

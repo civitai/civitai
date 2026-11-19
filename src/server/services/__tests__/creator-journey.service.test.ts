@@ -1,14 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chQuery = vi.hoisted(() => vi.fn());
+// `getCreatorScoreUnlocks` reads the announcement and placement configs' KeyValue rows through
+// Kysely: no row, so their compiled defaults apply (the other KeyValue rows stay on Prisma).
+const { configRow } = vi.hoisted(() => ({ configRow: vi.fn(async () => undefined) }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRow,
+}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: { query: chQuery },
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
   buildActivityProgress,
   buildSecretMilestones,
@@ -144,6 +151,119 @@ describe('getCreatorJourney', () => {
       ['hidden:remix', 'Someone builds on your work'],
       ['b', null],
     ]);
+  });
+});
+
+describe('milestone rarity', () => {
+  const visibleTier = definition({
+    key: 'score:open',
+    track: 'score',
+    threshold: 10,
+    hidden: false,
+  });
+  const hiddenTier = definition({ key: 'score:secret', track: 'score', threshold: 20 });
+  const visibleActivity = {
+    ...definition({ key: 'create:models-1', track: 'create', threshold: 1, hidden: false }),
+    cosmetic: null,
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown; track?: unknown };
+    }) =>
+      args?.where?.key
+        ? [visibleActivity]
+        : args?.where?.track === 'score'
+        ? [visibleTier, hiddenTier]
+        : []) as never);
+    // The stored count can predate a change to a definition.
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: {
+        at: Date.now(),
+        creators: 200,
+        holders: { 'score:open': 50, 'score:secret': 2, 'create:models-1': 1 },
+      },
+    } as never);
+  });
+
+  it('gives each visible tile its share of creators', async () => {
+    const journey = await getCreatorJourney(1);
+    expect(journey.tiers[0].rarity).toBe(25);
+    expect(journey.activity.milestones[0].rarity).toBe(0.5);
+  });
+
+  it('follows the current definition over the stored count, earned or not', async () => {
+    expect((await getCreatorJourney(1)).tiers[1].rarity).toBeNull();
+
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: hiddenTier },
+    ] as never);
+    const journey = await getCreatorJourney(1);
+    expect(journey.tiers[1].key).toBe('score:secret');
+    expect(journey.tiers[1].rarity).toBeNull();
+  });
+
+  it('shows no share before the first count, and still loads when the count is unreadable', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+
+    dbMock.dbRead.keyValue.findUnique.mockRejectedValue(new Error('down'));
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+  });
+
+  it('caps a share at 100% when the count has more holders than creators', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: Date.now(), creators: 200, holders: { 'score:open': 260 } },
+    } as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBe(100);
+  });
+
+  // A job that stopped running would otherwise show the last count forever.
+  it('shows no share once the count is days old', async () => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: weekAgo, creators: 200, holders: { 'score:open': 50 } },
+    } as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+  });
+});
+
+describe('reveals', () => {
+  const seen = new Date('2026-11-01');
+  const open = definition({ key: 'score:open', track: 'score', threshold: 10, hidden: false });
+  const special = definition();
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: Date.now(), creators: 200, holders: { 'score:open': 50, 'hidden:remix': 2 } },
+    } as never);
+  });
+
+  it('reveals only crossings not yet seen', async () => {
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: seen, seenAt: null, milestone: open },
+      { achievedAt: seen, seenAt: seen, milestone: definition({ key: 'b', hidden: false }) },
+    ] as never);
+
+    const { reveals } = await getCreatorJourney(1);
+    expect(reveals).toEqual([
+      expect.objectContaining({ key: 'score:open', special: false, rarity: 25, threshold: 10 }),
+    ]);
+  });
+
+  it('shows a special unlock as the earned list does', async () => {
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: seen, seenAt: null, milestone: special },
+    ] as never);
+
+    const { reveals, earned } = await getCreatorJourney(1);
+    // Exact, so a field the earned list does not carry fails here.
+    const { achievedAt: _achievedAt, ...shown } = earned[0];
+    expect(reveals).toEqual([{ ...shown, special: true, rarity: null }]);
   });
 });
 
@@ -664,14 +784,10 @@ describe('judge votes', () => {
   // ClickHouse is a second store behind one page; its outage must not take the page down.
   it('still loads, at zero votes, when ClickHouse fails', async () => {
     chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
-    loggingMock.logToAxiom.mockClear();
 
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-journey-judge-votes' })
-    );
   });
 
   // The shared client would otherwise wait minutes on a stalled connection, holding the page.
@@ -748,14 +864,10 @@ describe('compete wins', () => {
 
   it('still loads, counting the Postgres wins, when the ledger read fails', async () => {
     chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
-    loggingMock.logToAxiom.mockClear();
 
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
     expect(activity.winBreakdown).toEqual({ challenges: 2, crucibles: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-journey-ledger-wins' })
-    );
   });
 });

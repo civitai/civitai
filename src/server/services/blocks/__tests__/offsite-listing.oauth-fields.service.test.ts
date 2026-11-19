@@ -9,6 +9,17 @@ import {
 } from '~/server/services/blocks/offsite-listing.service';
 import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13) — external-app submission SERVICE tests: the OAuth-client (connect) aspects of the MERGED submitExternalListing (re-homed from the standalone connect path).
@@ -42,6 +53,10 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     oauthClient: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The no-type `issue_tracker_url` column is probed, read and written by raw SQL (opening a
+    // revision clones the parent's link onto the shadow). Column present, no link.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -82,7 +97,7 @@ const baseInput: SubmitExternalListingInput = {
 };
 
 function ownedClient(
-  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+  overrides: Partial<{ id: string; userId: number; allowedScopes: bigint }> = {}
 ) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
@@ -130,7 +145,8 @@ describe('submitExternalListing', () => {
       connectClientId: CLIENT_ID,
       // SERVER-DERIVED from the client's allowedScopes (= CEILING), NOT the form's
       // requestedScopes (ModelsRead in baseInput).
-      connectRequestedScopes: CEILING,
+      // The int4 column holds the mask as a number.
+      connectRequestedScopes: Number(CEILING),
       connectScopeJustifications: { ModelsRead: 'We download models to run them.' },
       appBlockId: null,
       userId: CALLER,
@@ -204,7 +220,7 @@ describe('submitExternalListing', () => {
       string,
       unknown
     >;
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('never snapshots a client_credentials-only bit into the disclosed connect scopes', async () => {
@@ -219,7 +235,7 @@ describe('submitExternalListing', () => {
       string,
       unknown
     >;
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('a justification for a scope OUTSIDE the client allowedScopes → BAD_REQUEST, no write', async () => {
@@ -305,7 +321,7 @@ describe('buildListingPatchData (connect scope edit)', () => {
       },
       { connectAllowedScopes: CEILING }
     );
-    expect(data.connectRequestedScopes).toBe(TokenScope.ModelsRead);
+    expect(data.connectRequestedScopes).toBe(Number(TokenScope.ModelsRead));
     expect(data.connectScopeJustifications).toEqual({ ModelsRead: 'reason' });
   });
 
@@ -388,7 +404,7 @@ describe('updateListing (connect scope edit re-validation)', () => {
       },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data.connectRequestedScopes).toBe(CEILING);
+    expect(data.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('never re-snapshots a client_credentials-only bit on a scope edit', async () => {
@@ -405,7 +421,7 @@ describe('updateListing (connect scope edit re-validation)', () => {
       patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data.connectRequestedScopes).toBe(CEILING);
+    expect(data.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('re-asserts client OWNERSHIP on edit: a client transferred to another user → FORBIDDEN, no shadow write', async () => {
@@ -513,7 +529,7 @@ describe('submitExternalListing (moderator foreign client)', () => {
     };
     expect(listingData.userId).toBe(CALLER);
     expect(listingData.connectClientId).toBe(CLIENT_ID);
-    expect(listingData.connectRequestedScopes).toBe(CEILING);
+    expect(listingData.connectRequestedScopes).toBe(Number(CEILING));
   });
 
   it('a NON-MOD with a FOREIGN client → FORBIDDEN, no write (restriction preserved)', async () => {

@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
+  getDeletedReportStorylines,
   getReportedStorylines,
   getReportStorylineId,
   getStorylineReportHolds,
@@ -12,6 +13,7 @@ import { liftStorylineScanTakedown } from '$lib/server/storyline-scan-lift.servi
 import {
   getReportedServiceOfferings,
   getReportServiceOfferingId,
+  releaseServiceOffering,
   takedownServiceOffering,
 } from '$lib/server/service-offering-takedown.service';
 import { isServiceOfferingTakedownReason } from '@civitai/shared/service-offering-takedown';
@@ -31,14 +33,25 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
-  const [games, storylines, storylineHolds, serviceOfferings] = await Promise.all([
-    type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
-    type === 'storyline' ? getReportedStorylines(entityIds) : [],
-    type === 'storyline' ? getStorylineReportHolds(queue.items.map((r) => r.id)) : [],
-    type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
-  ]);
+  const reportIds = queue.items.map((r) => r.id);
+  const [games, storylines, storylineHolds, deletedStorylines, serviceOfferings] =
+    await Promise.all([
+      type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
+      type === 'storyline' ? getReportedStorylines(entityIds) : [],
+      type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
+      type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
+      type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
+    ]);
 
-  return { ...queue, wide: true, games, storylines, storylineHolds, serviceOfferings };
+  return {
+    ...queue,
+    wide: true,
+    games,
+    storylines,
+    storylineHolds,
+    deletedStorylines,
+    serviceOfferings,
+  };
 };
 
 // The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.
@@ -159,6 +172,51 @@ export const actions: Actions = {
       success: true,
       serviceOfferingTakedown: offering.changed ? 'Taken down' : 'Already taken down',
     };
+  },
+
+  /**
+   * Shows an offering its content check held, after a moderator has read it, then sets the report
+   * Unactioned: nothing was wrong with it. An offering that is not held is left as it is.
+   */
+  releaseServiceOffering: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'serviceOffering' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const seenUpdatedAt = new Date(String(data.get('seenUpdatedAt') ?? ''));
+    if (Number.isNaN(seenUpdatedAt.getTime())) return fail(400, { error: 'Reload and try again.' });
+
+    const offeringId = await getReportServiceOfferingId(id);
+    if (!offeringId) return fail(410, { error: 'That report no longer exists.', gone: true });
+    const offering = await releaseServiceOffering({
+      offeringId,
+      seenUpdatedAt,
+      moderatorId: locals.user.id,
+    });
+    if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
+    if (offering.csamHeld)
+      return fail(409, {
+        error: 'That service is held in the CSAM queue: release is not available here.',
+      });
+    // Reloads, so the moderator reads the current text before trying again.
+    if (!offering.changed)
+      return fail(409, {
+        error: 'That service is no longer held, or was edited since you opened it.',
+        gone: true,
+      });
+
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Unactioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok) return fail(410, { error: `Released, but ${result.error}`, gone: true });
+    return { success: true, serviceOfferingTakedown: 'Released' };
   },
 
   /** Leaves the report's status as it is. */

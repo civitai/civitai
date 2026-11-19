@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Badge,
-  Divider,
-  Group,
-  Paper,
-  Stack,
-  Text,
-  ThemeIcon,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Badge, Divider, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Icon } from '@tabler/icons-react';
 import {
   IconBrandChrome,

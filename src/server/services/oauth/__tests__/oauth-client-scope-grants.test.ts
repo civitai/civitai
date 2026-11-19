@@ -210,6 +210,30 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
+  '20261225120200_remix_apps_as_rows': {
+    liveReferences: 1,
+    grants: [
+      {
+        clientId: 'civitai-remix-apps',
+        op: 'set',
+        value: 0,
+        pinnedSql:
+          'INSERT INTO "OauthClient" ( "id", "secret", "name", "description", "redirectUris", ' +
+          '"allowedOrigins", "grants", "allowedScopes", "isConfidential", "accessMode", ' +
+          '"userId", "isVerified" ) SELECT \'civitai-remix-apps\', NULL, \'Civitai Remix Apps\', ' +
+          "'Owner of the system remix app rows. Not a sign-in client.', ARRAY[]::TEXT[], " +
+          "ARRAY[]::TEXT[], ARRAY[]::TEXT[], 0, true, 'disabled', -1, true WHERE EXISTS " +
+          '(SELECT 1 FROM "User" WHERE "id" = -1) ON CONFLICT ("id") DO NOTHING;',
+        note: 'no scopes: it only owns the remix app rows, and never signs in',
+      },
+    ],
+  },
+  // Widens the column to bigint (scopes past bit 30). A type change grants nothing: every row keeps
+  // its value, so it declares no grant, and its one live reference is the ALTER COLUMN.
+  '20271117180000_widen_token_scopes_bigint': {
+    liveReferences: 1,
+    grants: [],
+  },
 };
 
 /**
@@ -379,7 +403,9 @@ function parseIdempotencyGuard(
 
 /** `v` contains every bit of `Full` and at least one more. */
 function isStrictSupersetOfFull(v: number): boolean {
-  return (v | TokenScope.Full) === v && v !== TokenScope.Full;
+  // The SQL literals are numbers; the scope enum is bigint.
+  const b = BigInt(v);
+  return (b | TokenScope.Full) === b && b !== TokenScope.Full;
 }
 
 /** The column DEFAULT in force, taken from the declared table. Exactly one is expected. */
@@ -607,13 +633,13 @@ describe('OAuth client allowedScopes written by raw SQL migration', () => {
       seed,
       'the declared column DEFAULT is no longer Full — the whole superset argument below, ' +
         'and `blocks.router.getMyAppAnalytics`, rest on it'
-    ).toBe(TokenScope.Full);
+    ).toBe(33554431);
 
     // Prove the seed is LOAD-BEARING rather than incidental: the construction this guard
     // exists to catch — a future migration ORing one opt-in bit onto a row created with
     // the column default — is a strict superset ONLY when folded from the default. Folded
     // from 0 the very same migration reads as harmless, which is how it used to pass.
-    const optInBit = TokenScope.AppBlocksDevTunnel;
+    const optInBit = Number(TokenScope.AppBlocksDevTunnel);
     expect(isStrictSupersetOfFull(seed | optInBit)).toBe(true);
     expect(isStrictSupersetOfFull(0 | optInBit)).toBe(false);
   });
@@ -622,7 +648,7 @@ describe('OAuth client allowedScopes written by raw SQL migration', () => {
     const byClient = foldGrantsByClient();
 
     expect(byClient.size).toBeGreaterThan(0); // positive control on the fold itself
-    expect(declaredColumnDefault()).toBe(TokenScope.Full); // the default IS Full, not a superset
+    expect(declaredColumnDefault()).toBe(33554431); // the default IS Full, not a superset
 
     for (const [clientId, mask] of byClient) {
       expect(
@@ -645,7 +671,7 @@ describe('OAuth client allowedScopes written by raw SQL migration', () => {
 
     // The invariant `getMyAppAnalytics` depends on. `(v | Full) !== v` ⇒ v does not
     // contain Full.
-    expect(folded! | TokenScope.Full).not.toBe(folded);
+    expect(BigInt(folded!) | TokenScope.Full).not.toBe(BigInt(folded!));
 
     // ...and specifically WHICH bits it holds, so a future widening that happens to
     // stay a non-superset still has to restate the claim here.
@@ -660,6 +686,6 @@ describe('OAuth client allowedScopes written by raw SQL migration', () => {
         TokenScope.BuzzRead |
         TokenScope.AppBlocksSubmit |
         TokenScope.AppBlocksDevTunnel
-    ).toBe(EXPECTED_CLI_ALLOWED_SCOPES);
+    ).toBe(BigInt(EXPECTED_CLI_ALLOWED_SCOPES));
   });
 });

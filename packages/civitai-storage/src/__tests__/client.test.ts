@@ -157,3 +157,28 @@ describe('client.getObjectBuffer', () => {
     expect(new Uint8Array(buf)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 });
+
+describe('client.purgeObjectVersions', () => {
+  const answering = (status: number, body: unknown) =>
+    (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+
+  it('resolves with the counts when the service read back zero versions', async () => {
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: answering(200, { versionsDeleted: 3, remaining: 0 }),
+    });
+    await expect(client.purgeObjectVersions({ backend: 'b2Image', key: 'k' })).resolves.toEqual({
+      versionsDeleted: 3,
+      remaining: 0,
+    });
+  });
+
+  it('throws when the service reports versions remaining', async () => {
+    const client = createStorageClient({
+      endpoint: 'http://storage.test',
+      fetch: answering(500, { error: 'Versions remain', versionsDeleted: 3, remaining: 1 }),
+      retries: 0,
+    });
+    await expect(client.purgeObjectVersions({ backend: 'b2Image', key: 'k' })).rejects.toThrow();
+  });
+});

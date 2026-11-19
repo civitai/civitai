@@ -123,3 +123,22 @@ describe('collectSettingsPatternErrors — submission gate', () => {
     expect(errors.some((e) => /settings\.good/.test(e))).toBe(false);
   });
 });
+
+// The guard analyses a pattern with the flags its caller will compile it with. A setting is
+// compiled with none (`new RegExp(pattern)`); a storage collection schema's pattern with "u".
+// Read without "u", `\p{Ll}` is the literal text "p{Ll}", so the same source is linear.
+describe('isPatternRedosVulnerable — analyses with the caller’s flags', () => {
+  it('finds a Unicode-property pattern vulnerable under "u"', async () => {
+    expect(await isPatternRedosVulnerable('^(\\p{Ll}+)+$', 'u')).toBe(true);
+  });
+
+  // Invariant guard: true before the flags parameter too. Pins that settings stay flagless.
+  it('reads the same source without flags by default, as a setting compiles it', async () => {
+    expect(await isPatternRedosVulnerable('^(\\p{Ll}+)+$')).toBe(false);
+    expect(
+      await collectSettingsPatternErrors({
+        name: stringField({ pattern: '^(\\p{Ll}+)+$', max_length: 40 }),
+      })
+    ).toEqual([]);
+  });
+});

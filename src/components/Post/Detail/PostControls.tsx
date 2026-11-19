@@ -1,4 +1,5 @@
-import { Menu, useMantineTheme } from '@mantine/core';
+import { useMantineTheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconEdit,
   IconFlag,

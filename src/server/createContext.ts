@@ -5,8 +5,11 @@ import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -24,7 +27,7 @@ export const createContext = async ({
   req: NextApiRequest;
   res: NextApiResponse;
 }) => {
-  const session = await getServerAuthSession({ req, res });
+  const session = await getServerAuthSession({ req, res, scope: 'defer' });
   // ATTRIBUTION surface. `ctx.ip` labels a caller for tracking, audit trails and
   // actor hashing; it is not an input to an allow/deny decision, so it takes the
   // derivation that always yields a label rather than the fail-closed one that
@@ -46,11 +49,19 @@ export const createContext = async ({
   // getServerAuthSession call. Matters for ANONYMOUS requests: a null session
   // isn't memoized by req.context.session, so the lazy path re-decrypted the
   // JWE on every track() call (authenticated requests already cache-hit).
+  // The full session, banned or not: a banned account's activity is still attributed to it.
   const track = new Tracker(req, res, session);
+  // Keyed on the full session: a banned session still reaches its own appeal state, which a shared
+  // cache must never keep.
+  // A streamed batch's headers are written before any procedure runs, so a resolver cannot
+  // take its answer back out of the edge cache. Browsers batch only when signed in.
+  // A verified crawler's answers can differ from a signed-out visitor's at the same URL, and the
+  // edge keys only on the URL.
+  const cacheable = !session?.user && !req.query?.batch && requestVerifiedCrawler(req) === null;
   const cache: CacheSettings | null = {
-    browserTTL: session?.user ? 0 : 60,
-    edgeTTL: session?.user ? 0 : 60,
-    staleWhileRevalidate: session?.user ? 0 : 30,
+    browserTTL: cacheable ? 60 : 0,
+    edgeTTL: cacheable ? 60 : 0,
+    staleWhileRevalidate: cacheable ? 30 : 0,
     canCache: true,
     skip: false,
   };
@@ -77,16 +88,21 @@ export const createContext = async ({
   // Modeled as optional (undefined when absent) so DeepNonNullable<Context> in
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
-  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(req);
+  const credential = getRequestCredential(req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
+  // A banned viewer stays here (trpcViewer moves it to `bannedUser`), so the appeal flags still reach it.
+  const viewer = withModeratorRightsFor(session?.user, credential);
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    user: session?.user,
+    ...trpcViewer(viewer),
     acceptableOrigin,
-    features: getFeatureFlagsLazy({ user: session?.user, req }),
+    // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
+    // account must still reach them.
+    features: getFeatureFlagsLazy({ user: viewer, req }),
     track,
     ip,
     cache,
@@ -131,6 +147,6 @@ export type Context = AsyncReturnType<typeof createContext>;
  */
 export type ProtectedContext = Omit<
   DeepNonNullable<Context>,
-  'apiKeyId' | 'apiKeyType' | 'subject'
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'
 > &
-  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'>;
+  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'>;

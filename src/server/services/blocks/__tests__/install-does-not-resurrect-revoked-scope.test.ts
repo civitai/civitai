@@ -409,6 +409,10 @@ describe('every Prisma mutation of the grant table is accounted for', () => {
       'modal the viewer just accepted, so lifting the suppression FOR THOSE SCOPES is the ' +
       'viewer re-consenting. `BlockRegistry.recordInstallConsent` must never appear here — its ' +
       'set is the app’s whole ceiling, supplied with no prompt.',
+    'src/server/services/apps/storage-import-grant.service.ts':
+      '`grantImportSourcePublish`, reached only from `blocks.grantScopes` with `from`: the viewer ' +
+      'accepted a consent modal naming `apps:storage:publish` in that source app, and the clear ' +
+      'covers exactly that one scope.',
   };
 
   it('POSITIVE CONTROL: the scan reads real files and finds the known writer', () => {

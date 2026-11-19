@@ -1,0 +1,16 @@
+// A Menu's dropdown as a bottom sheet: pinned full width to the viewport bottom, over the
+// position Floating UI sets inline (hence the !important), with touch-sized rows.
+.sheet {
+  position: fixed !important;
+  inset: auto 0 0 !important;
+  width: auto !important;
+  max-height: 80dvh;
+  overflow-y: auto;
+  border-radius: 12px 12px 0 0 !important;
+  padding: 8px 8px calc(8px + var(--safe-area-inset-bottom, 0px)) !important;
+
+  :global(.mantine-Menu-item) {
+    min-height: 48px;
+    font-size: 16px;
+  }
+}

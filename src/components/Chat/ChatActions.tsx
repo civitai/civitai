@@ -1,4 +1,5 @@
-import { Group, Menu, Text, Tooltip } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import {

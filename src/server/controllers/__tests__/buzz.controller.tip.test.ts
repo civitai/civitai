@@ -47,7 +47,6 @@ const { mockGetEntityCollaborators } = vi.hoisted(() => ({
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: (...a: unknown[]) => mockGetEntityCollaborators(...(a as [])),
 }));
-vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
 
 // Hoisted so the 🔴-2 tests can assert these NON-idempotent side effects do not fire
 // for a transaction the ledger deduped.
@@ -338,5 +337,94 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
       confirmOnPrimary: true,
     });
     expect(mockCreateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('createBuzzTipTransactionHandler — a model that is not commercially available', () => {
+  const mockVersionFindMany = dbMock.dbWrite.modelVersion.findMany;
+  const tipModel = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Model', entityId: 77 },
+      ctx: ctxUser(),
+    });
+  const v = (baseModel: string, status = 'Published', availability = 'Public') => ({
+    baseModel,
+    status,
+    availability,
+  });
+
+  it.each([
+    ['all its versions are Flux.2 Klein 9B', [v('Flux.2 Klein 9B'), v('Flux.2 Klein 9B-base')]],
+    [
+      'its public versions are 9B and only a hidden draft is 4B',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B', 'Draft'), v('SDXL 1.0', 'Published', 'Private')],
+    ],
+    ['it has only hidden 9B versions', [v('Flux.2 Klein 9B', 'Draft')]],
+    ['all its versions are Flux.3 Klein', [v('Flux.3 Klein'), v('Flux.3 Klein-base')]],
+    ['its versions are Ideogram 4.0 and Qwen 2.1', [v('Ideogram 4.0'), v('Qwen 2.1')]],
+  ])('refuses a tip on a model when %s, and moves no Buzz', async (_, versions) => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue(versions as never);
+    await expect(tipModel()).rejects.toThrow(
+      "This model isn't commercially available at the moment."
+    );
+    expect(mockVersionFindMany).toHaveBeenCalledWith({
+      where: { modelId: 77 },
+      select: { baseModel: true, status: true, availability: true },
+    });
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it.each([
+    ['a Flux.2 Klein 4B model', [v('Flux.2 Klein 4B')]],
+    ['an SDXL model', [v('SDXL 1.0')]],
+    [
+      'a model with a public 9B and a public 4B version',
+      [v('Flux.2 Klein 9B'), v('Flux.2 Klein 4B')],
+    ],
+    ['a model with no versions found', []],
+  ])('still tips %s', async (_, versions) => {
+    const ledger = installLedger();
+    mockVersionFindMany.mockResolvedValue(versions as never);
+    await tipModel();
+    expect(ledger.debits()).toBe(1);
+  });
+
+  it('a profile tip with no entity never looks up versions', async () => {
+    const ledger = installLedger();
+    await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
+    expect(mockVersionFindMany).not.toHaveBeenCalled();
+    expect(ledger.debits()).toBe(1);
+  });
+});
+
+describe('createBuzzTipTransactionHandler — POI images', () => {
+  const mockImageFindUnique = dbMock.dbWrite.image.findUnique;
+  beforeEach(() => mockImageFindUnique.mockReset());
+
+  const tipImage = () =>
+    createBuzzTipTransactionHandler({
+      input: { ...baseInput, entityType: 'Image', entityId: 900 },
+      ctx: ctxUser(),
+    });
+
+  it('refuses a tip on a POI image and moves no Buzz', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: true } as never);
+    await expect(tipImage()).rejects.toThrow('This image cannot receive tips');
+    expect(ledger.debits()).toBe(0);
+  });
+
+  it('still tips an image that is not POI', async () => {
+    const ledger = installLedger();
+    mockImageFindUnique.mockResolvedValue({ postId: 10, poi: false } as never);
+    await tipImage();
+    // Read on the primary, like the other guards here: a just-flagged image is not tippable.
+    expect(mockImageFindUnique).toHaveBeenCalledWith({
+      where: { id: 900 },
+      select: { postId: true, poi: true },
+    });
+    expect(mockGetEntityCollaborators).toHaveBeenCalledWith({ entityId: 10, entityType: 'Post' });
+    expect(ledger.debits()).toBe(1);
   });
 });

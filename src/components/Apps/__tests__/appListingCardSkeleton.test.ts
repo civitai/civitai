@@ -280,16 +280,4 @@ describe('the store body renders the skeleton grid and keeps the previous page',
     expect(code).toContain('isPlaceholderData');
     expect(code).toContain('gridClasses.gridPending');
   });
-
-  /**
-   * 🔴 THE ONE THIS CHANGE COULD PLAUSIBLY HAVE BROKEN. `keepPreviousData` REDUCES
-   * the window in which `items` is empty — it does not remove it (first load,
-   * error, cache eviction) — so the rail's monotonic memo is still load-bearing.
-   * `recentAppsRail.test.ts` owns that guard; this is a local reminder that the
-   * option and the memo are not alternatives, placed where someone deleting the
-   * memo "because keepPreviousData handles it" would meet it.
-   */
-  it('did NOT drop the recents monotonic memo on the strength of keepPreviousData', () => {
-    expect(bodyCode()).toMatch(/reconcileRecentApps\(\s*recents,\s*items,\s*[A-Za-z0-9_.]+\s*\)/);
-  });
 });

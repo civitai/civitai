@@ -60,6 +60,11 @@ const overrides = {
   OTEL_TRACES_SAMPLE_RATIO: '1',
   OTEL_BSP_SCHEDULE_DELAY: '500',
   OTEL_SERVICE_NAME: 'parity',
+  // Tracker events (the beacons' rows) to the job's tracker stub (`tracker-stub.mjs`), so the
+  // harness can compare what each server's route sent. The public origin here is loopback, which
+  // keeps tracker traffic in unless opted in (`outwardTrafficAllowed`).
+  CLICKHOUSE_TRACKER_URL: `http://${HOST}:4319`,
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: 'true',
 };
 Object.assign(env, overrides);
 

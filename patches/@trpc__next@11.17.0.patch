@@ -1,0 +1,44 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 313218d..690f2d6 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -32,10 +32,16 @@ function withTRPC(opts) {
+ 			});
+ 			const { queryClient, trpcClient, ssrState, ssrContext } = prepassProps;
+ 			const trpcState = (_props$pageProps = props.pageProps) === null || _props$pageProps === void 0 ? void 0 : _props$pageProps.trpcState;
++			// Patched (civitai): on the server render a page may also pass the dehydrated state it
++			// serialised into `trpcState`, as it was before serialisation, under this symbol key. Using it
++			// skips deserialising what the same request has just serialised. JSON.stringify drops symbol
++			// keys, so the browser never receives it and still deserialises `trpcState` as before.
++			const ssrDehydratedState = typeof window === "undefined" && props.pageProps ? props.pageProps[Symbol.for("civitai.trpc.ssrDehydratedState")] : void 0;
+ 			const hydratedState = react.default.useMemo(() => {
++				if (ssrDehydratedState !== void 0) return ssrDehydratedState;
+ 				if (!trpcState) return trpcState;
+ 				return transformer.input.deserialize(trpcState);
+-			}, [trpcState]);
++			}, [trpcState, ssrDehydratedState]);
+ 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(trpc.Provider, {
+ 				abortOnUnmount: (_abortOnUnmount = prepassProps.abortOnUnmount) !== null && _abortOnUnmount !== void 0 ? _abortOnUnmount : false,
+ 				client: trpcClient,
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 99d49ad..68e596c 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -31,10 +31,16 @@ function withTRPC(opts) {
+ 			});
+ 			const { queryClient, trpcClient, ssrState, ssrContext } = prepassProps;
+ 			const trpcState = (_props$pageProps = props.pageProps) === null || _props$pageProps === void 0 ? void 0 : _props$pageProps.trpcState;
++			// Patched (civitai): on the server render a page may also pass the dehydrated state it
++			// serialised into `trpcState`, as it was before serialisation, under this symbol key. Using it
++			// skips deserialising what the same request has just serialised. JSON.stringify drops symbol
++			// keys, so the browser never receives it and still deserialises `trpcState` as before.
++			const ssrDehydratedState = typeof window === "undefined" && props.pageProps ? props.pageProps[Symbol.for("civitai.trpc.ssrDehydratedState")] : void 0;
+ 			const hydratedState = React.useMemo(() => {
++				if (ssrDehydratedState !== void 0) return ssrDehydratedState;
+ 				if (!trpcState) return trpcState;
+ 				return transformer.input.deserialize(trpcState);
+-			}, [trpcState]);
++			}, [trpcState, ssrDehydratedState]);
+ 			return /* @__PURE__ */ jsx(trpc.Provider, {
+ 				abortOnUnmount: (_abortOnUnmount = prepassProps.abortOnUnmount) !== null && _abortOnUnmount !== void 0 ? _abortOnUnmount : false,
+ 				client: trpcClient,

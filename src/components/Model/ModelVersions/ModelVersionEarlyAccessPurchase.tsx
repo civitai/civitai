@@ -19,6 +19,11 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  NOT_COMMERCIALLY_AVAILABLE_LABEL,
+  isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
+} from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -141,6 +146,18 @@ export const ModelVersionEarlyAccessPurchase = ({
   // A permanent gate never becomes free, so the timed copy (and its countdown to nothing) would tell the
   // buyer to just wait it out.
   const permanent = !!paidAccess && isPermanentGate(paidAccess);
+
+  if (modelVersion?.baseModel && isNonCommercialBaseModel(modelVersion.baseModel))
+    return (
+      <Modal {...dialog} title={NOT_COMMERCIALLY_AVAILABLE_LABEL} size="sm" withCloseButton>
+        <Stack>
+          <Text size="sm">{notCommerciallyAvailableMessage(modelVersion.baseModel)}</Text>
+          <Button onClick={handleClose} variant="light" color="gray" size="compact-sm">
+            Close
+          </Button>
+        </Stack>
+      </Modal>
+    );
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>

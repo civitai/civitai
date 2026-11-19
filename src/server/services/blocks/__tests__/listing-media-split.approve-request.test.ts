@@ -5,6 +5,17 @@ import type * as AppListingAssets from '~/server/services/blocks/app-listing-ass
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-split';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 const db = { read: dbMock.dbRead, write: dbMock.dbWrite };
 
@@ -199,6 +210,8 @@ beforeEach(async () => {
     app: { userId: 42 },
   });
   db.write.oauthClient.update.mockResolvedValue({});
+  // The ceiling a late hold would put back, read on the primary before step (3).
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
   db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -218,7 +231,7 @@ beforeEach(async () => {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   });
   s3.send.mockImplementation(async () => ({
     Body: { transformToByteArray: async () => holder.zipBytes },

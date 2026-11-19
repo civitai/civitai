@@ -235,6 +235,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(out).toEqual({
         userId: WIPED,
         failures: [],
+        stopped: false,
         namespaces: [
           {
             appId: app,
@@ -590,7 +591,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect((await maint.wipeAccount(WIPED)).namespaces.length).toBeGreaterThan(0);
       const after = await snapshot(h, app);
       const again = await maint.wipeAccount(WIPED);
-      expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [] });
+      expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [], stopped: false });
       expect(await snapshot(h, app)).toEqual(after);
 
       const nobody = 5_909;
@@ -599,6 +600,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         userId: nobody,
         namespaces: [],
         failures: [],
+        stopped: false,
       });
       expect(await h.raw(`SELECT count(*)::int AS n FROM appdata.usage_app`)).toEqual(appsBefore);
     });
@@ -879,7 +881,7 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     }
     // Whichever order they committed in, the wipe left nothing and every tally is exact.
     const again = await maint.wipeAccount(WIPED);
-    expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [] });
+    expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [], stopped: false });
     expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
     await assertTalliesMatchMarks(h, app);
     await assertUsageConsistent(h, app, NS_PROD);

@@ -6,11 +6,11 @@ import {
   Button,
   Group,
   Code,
-  Tooltip,
   Paper,
   Loader,
   Center,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification } from '~/utils/notifications';

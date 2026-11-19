@@ -7,12 +7,13 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { AppAssistantWorkspaceSkeleton } from '~/components/Apps/AppAssistant/AppAssistantWorkspaceSkeleton';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { AppsBuildBody } from '~/components/Apps/AppsBuildBody';
+import { AppsBuildBody, AppsBuildRequestView } from '~/components/Apps/AppsBuildBody';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { REQUEST_ACCESS_PARAM } from '~/shared/constants/app-access-request.constants';
 import { APPS_BUILD_APPS_VIEW, MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 
@@ -40,35 +41,50 @@ type AssistantProps = {
   subagents: boolean;
   /** Replies run on the server runner (`appAssistantRemoteRunner`, the runner and the sandbox service configured). */
   remoteRunner: boolean;
+  /** App hibernate (`app-hibernate`): sleeping apps, Wake, and the assistant's tools for them. */
+  hibernate: boolean;
 };
-export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
+export type AppsBuildPageProps = { mode: 'build' } | { mode: 'request' } | AssistantProps;
 
 /**
  * `/apps/build` — the ONE place to build an app. It replaced `/apps/get-started`, `/apps/mine`
  * and `/apps/assistant` (all 301 here) and absorbed the on-platform half of `/apps/submit`.
  *
  *   assistant — the App Assistant workspace, for a signed-in viewer `canAccessAppAssistant`
- *               admits. An author also gets a "My apps" switch to the states below.
+ *               admits. An author also gets a "My builds" switch to the states below.
  *   A · pitch     (not an author)                   — recruit, and request access
  *   B · first-app (author, nothing yet)             — agent card, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
+ *   request — a SIGNED-IN viewer the gate refuses: the pitch and the Request access panel only
+ *             (no build-state data; the shared layout's rail follows their own flags). Signed out, `?request-access=1`
+ *             goes to sign-in and back; without it a refused viewer still gets `notFound`.
  *
  * 🔴 THE GATE IS `resolveAppsBuildPageMode`, WHICH THE RAIL'S Build ROW ALSO CALLS. That sharing
  * is the point of the consolidation, not an implementation detail: the routes this replaced each
  * wrote their page gate and their tab gate separately, and they disagreed — a store-visible
  * non-author was offered tabs into two 404s (PR #4668, #3899). Do not add a second flag check to
- * this file. See `resolveBuildPageAccess` for why a refusal is a hard `notFound`, never a login
- * redirect; its only redirect sends a banned account in the assistant mode to `/`.
+ * this file. See `resolveBuildPageAccess` for what a refused viewer gets instead of the build
+ * surface, and why an admitted signed-out viewer is never sent to log in.
  */
 export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
   useSession: true,
-  resolver: async ({ features, session }) => {
-    const access = resolveBuildPageAccess({ features, user: session?.user });
+  resolver: async ({ features, session, ctx }) => {
+    const access = resolveBuildPageAccess({
+      features,
+      user: session?.user,
+      wantsRequestAccess: ctx.query?.[REQUEST_ACCESS_PARAM] !== undefined,
+      returnUrl: ctx.resolvedUrl,
+    });
     if (!('assistant' in access)) return access;
 
     const user = session!.user!;
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-    const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
+    const { isAppBlocksDevTunnelEnabled, isAppHibernateEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    const [canPreview, hibernate] = await Promise.all([
+      features?.appBlocksAuthor ? isAppBlocksDevTunnelEnabled({ user }) : false,
+      isAppHibernateEnabled({ user }),
+    ]);
 
     const { env } = await import('~/env/server');
     const { isAssistantRunnerConfigured } = await import(
@@ -87,6 +103,7 @@ export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
           !!features?.appAssistantRemoteRunner &&
           isAssistantRunnerConfigured() &&
           !!env.APP_ASSISTANT_SANDBOX_URL,
+        hibernate,
       },
     };
   },
@@ -110,6 +127,21 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
     ? isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })
     : false;
 
+  if (props.mode === 'request') {
+    // The shared layout, like every /apps page. Its rail follows the viewer's own flags: an
+    // account with no store flag gets no rail and no nav query; one with the store (but no build
+    // access) gets only the store rows it can use, never Build. Decided from the SSR props, so the
+    // first paint is already this view.
+    return (
+      <>
+        <Meta title="Build on Civitai" deIndex />
+        <AppsPageLayout title="Build">
+          <AppsBuildRequestView />
+        </AppsPageLayout>
+      </>
+    );
+  }
+
   if (props.mode === 'assistant') {
     // The author's app list has no other route since `/apps/mine` redirects here, so the
     // assistant view must not hide it from them.
@@ -132,7 +164,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
         leftSection={<IconLayoutList size={16} />}
         data-testid="apps-build-show-apps"
       >
-        My apps
+        My builds
       </Button>
     ) : undefined;
 
@@ -154,6 +186,8 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
               sandboxUrl={props.sandboxUrl}
               subagents={props.subagents}
               remoteRunner={props.remoteRunner}
+              hibernate={props.hibernate}
+              userId={currentUser?.id ?? null}
             />
           )}
         </AppsPageLayout>

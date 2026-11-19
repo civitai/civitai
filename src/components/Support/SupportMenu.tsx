@@ -1,4 +1,5 @@
-import { Button, Menu } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import React, { useState } from 'react';
 import { useSupportMenuItems } from '~/components/Support/useSupportMenuItems';
 

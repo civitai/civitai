@@ -5,6 +5,7 @@ import {
   serviceOfferingTakenDownKey,
   type ServiceOfferingTakedownReason,
 } from '@civitai/shared/service-offering-takedown';
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { getNotifications } from './notifications';
@@ -15,6 +16,8 @@ export type ReportedServiceOffering = {
   description: string;
   status: string;
   maxNsfwLevel: number;
+  ingestion: string;
+  updatedAt: Date;
   sellerId: number;
   sellerUsername: string | null;
   removedReason: string | null;
@@ -32,6 +35,8 @@ const selectOffering = (db: typeof dbRead) =>
       'o.description',
       'o.status',
       'o.maxNsfwLevel',
+      'o.ingestion',
+      'o.updatedAt',
       'o.sellerId',
       'u.username as sellerUsername',
       'o.removedReason',
@@ -131,4 +136,60 @@ export async function takedownServiceOffering({
     }
   }
   return { ...offering, changed };
+}
+
+/**
+ * Releases an offering its content check held: it is shown again with the rating it has. Applies
+ * only to a held offering, and only as it was when the moderator read it (`seenUpdatedAt`), so a
+ * release can't publish text edited since. The activity is recorded only by the write that
+ * released it.
+ *
+ * Null when the offering no longer exists.
+ */
+export async function releaseServiceOffering({
+  offeringId,
+  seenUpdatedAt,
+  moderatorId,
+}: {
+  offeringId: number;
+  seenUpdatedAt: Date;
+  moderatorId: number;
+}): Promise<(ReportedServiceOffering & { changed: boolean; csamHeld: boolean }) | null> {
+  // As the main app's csamHoldBars reads it: a pending or confirmed hold, or a csam verdict no
+  // moderator dismissed for its text (its hold write may have failed and be awaiting a retry).
+  const csamHeld = sql<boolean>`(
+    EXISTS (SELECT 1 FROM "TextScanHold" h
+      WHERE h."entityType" = 'ServiceOffering' AND h."entityId" = ${offeringId}
+        AND h."label" = 'csam' AND h."status" IN ('Pending', 'Confirmed'))
+    OR EXISTS (SELECT 1 FROM "EntityModeration" em
+      WHERE em."entityType" = 'ServiceOffering' AND em."entityId" = ${offeringId}
+        AND em."status" = 'Succeeded' AND 'csam' = ANY(em."triggeredLabels")
+        AND NOT EXISTS (SELECT 1 FROM "TextScanHold" h
+          WHERE h."entityType" = 'ServiceOffering' AND h."entityId" = ${offeringId}
+            AND h."label" = 'csam' AND h."status" = 'Dismissed'
+            AND h."textHash" = em."result"->>'textHash'
+            AND h."meta"->>'decision' IS DISTINCT FROM 'superseded')))`;
+  const { numUpdatedRows } = await dbWrite
+    .updateTable('ServiceOffering')
+    .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })
+    .where('id', '=', offeringId)
+    .where('ingestion', '=', 'Blocked')
+    .where('updatedAt', '=', seenUpdatedAt)
+    .where(sql<boolean>`NOT ${csamHeld}`)
+    .executeTakeFirst();
+
+  const offering = await selectOffering(dbWrite).where('o.id', '=', offeringId).executeTakeFirst();
+  if (!offering) return null;
+
+  const changed = numUpdatedRows > 0n;
+  const held =
+    !changed && !!(await dbWrite.selectNoFrom(csamHeld.as('held')).executeTakeFirst())?.held;
+  if (changed)
+    await recordModActivity({
+      userId: moderatorId,
+      entityType: 'serviceOffering',
+      entityId: offeringId,
+      activity: 'release',
+    });
+  return { ...offering, changed, csamHeld: held };
 }

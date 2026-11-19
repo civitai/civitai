@@ -207,14 +207,13 @@ export function CreatableMultiSelect({
 
   const handleValueRemove = (val: string) => onChange?.(value.filter((item) => item !== val));
 
-  const handlePaste = (pastedText: string) => {
-    // Split pasted text by comma or new line
-    const pastedValues = pastedText
+  const addPastedEntries = (text: string) => {
+    const entries = text
       .split(/[\n,]/)
-      .slice(0, maxValues)
-      .map((x) => x.trim());
-    const newValue = new Set([...((value as string[]) ?? []), ...pastedValues]);
-    onChange?.([...newValue]);
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const merged = [...new Set([...value, ...entries])].slice(0, maxValues);
+    onChange?.(merged);
   };
 
   const values = value.map((item) => (
@@ -276,6 +275,18 @@ export function CreatableMultiSelect({
                       event.preventDefault();
                       handleValueRemove(value[value.length - 1]);
                     }
+
+                    // Enter confirms an IME composition too; that must not add the half-typed word.
+                    // Safari reports that Enter with isComposing false and keyCode 229.
+                    const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+                    if (event.key === 'Enter' && !composing) {
+                      const hasHighlightedOption = combobox.getSelectedOptionIndex() !== -1;
+                      if (hasHighlightedOption) return;
+                      // Stay in the field: without this Enter submits the surrounding form.
+                      event.preventDefault();
+                      // One entry, commas included, exactly as clicking "+ Create" adds it.
+                      if (search.trim()) handleValueSelect('$create');
+                    }
                   }}
                   onPaste={
                     parsePaste
@@ -283,7 +294,7 @@ export function CreatableMultiSelect({
                           e.preventDefault();
                           e.stopPropagation();
                           const pastedText = e.clipboardData.getData('text');
-                          handlePaste(pastedText);
+                          addPastedEntries(pastedText);
                         }
                       : undefined
                   }

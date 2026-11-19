@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
+import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { nextDataSkipMiddleware } from '~/server/middleware/next-data-skip.middleware';
@@ -16,7 +17,8 @@ import { syncAccountNoindexMiddleware } from '~/server/middleware/sync-account-n
 // botDetection's terminal-with-request-mods response so both effects apply.
 // (Session-based guards — /moderator, /testing, preview-auth — moved to _app getInitialProps: the edge runtime
 // can't resolve the thin hub civ-token to a full user.)
-const middlewares: Middleware[] = [
+// Exported for `standalone-api-policy.test.ts`, which pins what this list does to an `/api/v1/` request.
+export const middlewares: Middleware[] = [
   regionBlockMiddleware,
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,
@@ -25,6 +27,8 @@ const middlewares: Middleware[] = [
   nextDataSkipMiddleware,
   apiCacheMiddleware,
   syncAccountNoindexMiddleware,
+  // After every redirect and block; a hit is terminal and gets the headers accumulated so far.
+  botCacheMiddleware,
   botDetectionMiddleware,
 ];
 

@@ -1,4 +1,5 @@
-import { Button, CloseButton, Popover, Text } from '@mantine/core';
+import { Button, CloseButton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';

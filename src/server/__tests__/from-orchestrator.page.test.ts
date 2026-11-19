@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Workflows from '~/server/services/orchestrator/workflows';
@@ -89,6 +90,12 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
     await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'no-checkpoint' } });
   });
 
+  it('answers a run whose model was taken down as not found', async () => {
+    mockGetWorkflow.mockResolvedValue(run('approved'));
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ workflowId: 'wf-1' }] as never);
+    await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'not-found' } });
+  });
+
   it('explains a workflow that is not a training run', async () => {
     mockGetWorkflow.mockResolvedValue({ ...run('approved'), tags: ['generation'] });
     await expect(resolve()).resolves.toEqual({ props: { session, refusal: 'not-found' } });
@@ -107,5 +114,13 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
       redirect: { destination: '/models', permanent: false },
     });
     expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('redirects when the orchestrator token is refused', async () => {
+    vi.mocked(getOrchestratorToken).mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN' }));
+    await expect(resolve()).resolves.toEqual({
+      redirect: { destination: '/models', permanent: false },
+    });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 });

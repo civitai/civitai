@@ -3,10 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
-import { APP_REACTION_SERVER_ERRORS } from '~/shared/constants/block-reaction.constants';
+import {
+  APP_REACTION_SERVER_ERRORS,
+  ENTITY_REACTION_ERRORS,
+} from '~/shared/constants/block-reaction.constants';
 
 const GRANTED = ['social:react:self'];
 const ok = { ready: true, signedIn: true, reviewMode: false, grantedScopes: GRANTED };
@@ -158,5 +162,23 @@ describe('createReactionReplyLatch', () => {
     latch.reply({ error: 'rate-limited' });
     expect(emit).toHaveBeenCalledTimes(1);
     expect(emit).toHaveBeenCalledWith({ requestId: 'r', result: 1 });
+  });
+});
+
+describe('entityReactionRefusedScopes (what a refusal tells the missing-permissions notice)', () => {
+  it('needs-consent names social:react:self, and every other error names nothing', () => {
+    // The whole closed set, so a new error code is classified on purpose.
+    const named = Object.fromEntries(
+      ENTITY_REACTION_ERRORS.map((e) => [e, entityReactionRefusedScopes(e)])
+    );
+    expect(named).toEqual({
+      'invalid-request': [],
+      'sign-in-required': [],
+      'review-mode': [],
+      'not-ready': [],
+      'needs-consent': ['social:react:self'],
+      'entity-unavailable': [],
+      'rate-limited': [],
+    });
   });
 });

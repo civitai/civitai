@@ -1,0 +1,4 @@
+go test fuzz v1
+string("a=1; __Secure-civ-token=eyJ.x.y; b=2")
+string("__Secure-civ-token")
+string("eyJ.x.y")

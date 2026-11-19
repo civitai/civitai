@@ -4,7 +4,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
@@ -163,6 +163,7 @@
         {#each row.files ?? [] as file (file.id)}
           <li>
             <Badge variant="outline">{file.kind} r{file.round}</Badge>
+            {#if file.removedAt}<Badge variant="outline">removed</Badge>{/if}
             <!-- Not gated on canDownload: that is the buyer-and-seller rule (Ready finals only), while the
                  moderator link serves the original of any file, previews and unscanned finals included. -->
             <a

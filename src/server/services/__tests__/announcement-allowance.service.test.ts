@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The review found this service entirely untested, which is how `Number(score)` shipped:
@@ -10,6 +11,13 @@ vi.mock('~/server/services/creator-program.service', () => ({
   getCreatorRequirements: vi.fn(),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getCapTier: vi.fn() }));
+// The `announcements:config` KeyValue row, read through Kysely: `undefined` for no row. Its rows,
+// against a real database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { configRow } = vi.hoisted(() => ({ configRow: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRow,
+}));
 
 import { getCreatorRequirements } from '~/server/services/creator-program.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
@@ -28,7 +36,7 @@ function requirements({ current = 50_000, membership }: { current?: number; memb
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+  configRow.mockReset().mockResolvedValue(undefined);
   dbMock.dbRead.announcementSpend.findMany.mockResolvedValue([] as never);
   vi.mocked(getCreatorRequirements).mockResolvedValue(requirements({}) as never);
   vi.mocked(getCapTier).mockResolvedValue(null as never);
@@ -91,7 +99,7 @@ describe('the tier caps Justin set', () => {
 
 describe('the KeyValue override', () => {
   it('takes the stored floor and caps over the compiled defaults', async () => {
-    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+    configRow.mockResolvedValue({
       key: 'announcements:config',
       value: { minScore: 500, caps: { free: { days: 1, count: 9 } } },
     } as never);
@@ -106,7 +114,7 @@ describe('the KeyValue override', () => {
   });
 
   it('falls back to the defaults on a malformed row instead of throwing the feature off', async () => {
-    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+    configRow.mockResolvedValue({
       key: 'announcements:config',
       value: { minScore: 'lots', caps: { free: { days: -4 } } },
     } as never);
@@ -119,7 +127,7 @@ describe('the KeyValue override', () => {
   });
 
   it('keeps the compiled caps for tiers the row does not mention', async () => {
-    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+    configRow.mockResolvedValue({
       key: 'announcements:config',
       value: { caps: { free: { days: 3, count: 3 } } },
     } as never);
@@ -218,7 +226,7 @@ describe('the tier comes from the cap helper, not from the creator-program row',
 
 describe('a malformed config field falls back alone', () => {
   it('keeps a good minScore when one cap is malformed', async () => {
-    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+    configRow.mockResolvedValue({
       key: 'announcements:config',
       value: { minScore: 777, caps: { free: { days: 'many', count: 4 } } },
     } as never);
@@ -235,7 +243,7 @@ describe('a malformed config field falls back alone', () => {
   });
 
   it('keeps a good cap when minScore is malformed', async () => {
-    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+    configRow.mockResolvedValue({
       key: 'announcements:config',
       value: { minScore: 'lots', caps: { free: { days: 5, count: 3 } } },
     } as never);

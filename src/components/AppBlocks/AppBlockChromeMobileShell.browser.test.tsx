@@ -163,6 +163,7 @@ async function renderShell({
   slotId?: string;
   slug?: string;
   appBlockId?: string;
+  launchOrigin?: 'home' | 'store';
 }) {
   await page.viewport(...viewport);
   renderWithProviders(
@@ -264,7 +265,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(
       (back as HTMLElement).getAttribute('href'),
       `at ${PHONE[0]}px the back chevron must point at the Marketplace, exactly as the crumb did`
-    ).toBe('/apps');
+    ).toBe('/apps/store');
     expect(
       (back as HTMLElement).getAttribute('aria-label'),
       'the back chevron is icon-only, so its accessible name is the only thing naming it'
@@ -296,6 +297,26 @@ describe('AppBlockChrome mobile shell', () => {
     );
   });
 
+  test(`🔴 at ${PHONE[0]}x${PHONE[1]}, launched from the My apps home, the back chevron leads to My apps (/apps)`, async () => {
+    // Breadcrumb by origin, on the mobile rendering: the chevron and the desktop crumb read
+    // one target (`appsRunBackTarget`), so a home launch must change BOTH. The store-origin
+    // half is the REGRESSION test above (no prop → "Back to Marketplace" → /apps/store).
+    const root = await renderShell({ viewport: PHONE, expectCompact: true, launchOrigin: 'home' });
+    expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
+    const back = q('[data-testid="app-block-back"]');
+    expect(back, `at ${PHONE[0]}px the bar must offer a back affordance`).not.toBeNull();
+    expect((back as HTMLElement).getAttribute('href')).toBe('/apps');
+    expect((back as HTMLElement).getAttribute('aria-label')).toBe('Back to My apps');
+  });
+
+  test(`at ${PHONE[0]}x${PHONE[1]}, an explicit store origin keeps "Back to Marketplace" (/apps/store)`, async () => {
+    const root = await renderShell({ viewport: PHONE, expectCompact: true, launchOrigin: 'store' });
+    expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
+    const back = q('[data-testid="app-block-back"]');
+    expect((back as HTMLElement).getAttribute('href')).toBe('/apps/store');
+    expect((back as HTMLElement).getAttribute('aria-label')).toBe('Back to Marketplace');
+  });
+
   test(`INVARIANT GUARD — at ${DESKTOP[0]}x${DESKTOP[1]} the breadcrumb chrome is untouched and there is no chevron`, async () => {
     // 🔴 NOT REGRESSION COVERAGE — `origin/main` passes every line of this, and that
     // is the point: it is the "do not change desktop behaviour" constraint written
@@ -311,8 +332,8 @@ describe('AppBlockChrome mobile shell', () => {
     ).not.toBeNull();
     expect(
       q('[data-testid="app-block-breadcrumb-apps"]')?.getAttribute('href'),
-      `at ${DESKTOP[0]}px the leading crumb must still link to /apps`
-    ).toBe('/apps');
+      `at ${DESKTOP[0]}px the leading crumb must still link to the store`
+    ).toBe('/apps/store');
     expect(
       q('[data-testid="app-platform-nav-trigger"]'),
       `at ${DESKTOP[0]}px the platform-nav trigger must still be its own control`
@@ -395,7 +416,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(sheet, 'the ⋮ must have opened SOME surface').not.toBeNull();
 
     const labels = rowLabels(sheet as HTMLElement);
-    for (const label of ['Marketplace', 'App activity', 'My apps']) {
+    for (const label of ['My apps', 'Marketplace', 'App activity', 'My builds']) {
       expect(
         labels,
         `at ${PHONE[0]}px "${label}" must be reachable from the ⋮ — the platform nav folds into ` +
@@ -509,7 +530,7 @@ describe('AppBlockChrome mobile shell', () => {
     // 🔴 THE ROW CLICKED IS AN ACTION, NOT A LINK, AND THAT IS FORCED RATHER THAN
     // ARBITRARY. `NextLink` renders a REAL anchor; clicking one in browser mode
     // navigates the test iframe and the run dies with "Cannot connect to the iframe"
-    // — measured, on the first draft of this test with "My apps". An action row
+    // — measured, on the first draft of this test with "My builds". An action row
     // ("Permissions & activity", which needs `appBlockId` threaded) exercises exactly
     // the same `ChromeSurfaceItem` close path with nothing to navigate to.
     await renderShell({ viewport: PHONE, expectCompact: true, appBlockId: 'ab_1' });

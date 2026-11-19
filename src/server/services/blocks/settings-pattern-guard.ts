@@ -48,9 +48,14 @@ const RECHECK_TIMEOUT_MS = 5000;
  * through the gate and then run against viewer input at eval time, and an
  * exponential pattern freezes even on the ≤MAX_PATTERNED_INPUT_LEN-bounded input.
  * Only a definitive `safe` verdict passes.
+ *
+ * `flags` must be the flags the caller compiles the pattern with: the analysis reads the
+ * source as that RegExp does. A setting compiles with none (the default); a storage
+ * collection schema's pattern with "u", under which `\p{Ll}` is a Unicode property rather
+ * than the literal text "p{Ll}" (`^(\p{Ll}+)+$` is linear without "u", exponential with it).
  */
-export async function isPatternRedosVulnerable(source: string): Promise<boolean> {
-  const diagnostics = await check(source, '', { timeout: RECHECK_TIMEOUT_MS });
+export async function isPatternRedosVulnerable(source: string, flags = ''): Promise<boolean> {
+  const diagnostics = await check(source, flags, { timeout: RECHECK_TIMEOUT_MS });
   return diagnostics.status !== 'safe';
 }
 

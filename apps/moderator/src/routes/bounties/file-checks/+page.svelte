@@ -8,7 +8,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import { bountyEntryUrl, userLookupUrl } from '$lib/entity-url';
+  import { bountyEntryUrl, bountyUrl, userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -69,7 +69,7 @@
     <code class="text-xs text-dark-2">file #{row.fileId}</code>
     <span class="text-xs text-dark-2">on</span>
     <a
-      href={`${data.civitaiUrl}/bounties/${row.bountyId}`}
+      href={bountyUrl(data.civitaiUrl, row.bountyId)}
       target="_blank"
       rel="noreferrer"
       class="text-sm {LINK_CLASS}"

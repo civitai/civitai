@@ -127,7 +127,7 @@ export async function settleFlagAppealsAfterModeratorLift({
             name: 'text-scan',
             message: `moderator ${label} ruling not recorded: model text unreadable`,
             modelId,
-          }).catch(() => null);
+          });
       }
 
     const model = await dbWrite.model.findUnique({
@@ -136,7 +136,6 @@ export async function settleFlagAppealsAfterModeratorLift({
     });
     if (!model || model.minor || model.poi) return;
 
-    // Every Model appeal is a flag appeal (`isModelFlagAppealable` gates creation), so no type filter.
     // Dynamic: report.service pulls the buzz and notification graph that the profile loaders avoid.
     const { resolveEntityAppeal } = await import('~/server/services/report.service');
     await resolveEntityAppeal({
@@ -144,6 +143,7 @@ export async function settleFlagAppealsAfterModeratorLift({
       entityType: EntityType.Model,
       status: AppealStatus.Approved,
       userId,
+      modelAppealKind: 'flag',
     });
   } catch (error) {
     logToAxiom({
@@ -152,6 +152,6 @@ export async function settleFlagAppealsAfterModeratorLift({
       message: 'flag appeal not settled after moderator lift',
       modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   }
 }

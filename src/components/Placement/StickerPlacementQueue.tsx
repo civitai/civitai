@@ -11,7 +11,7 @@ import {
   Tabs,
   Text,
 } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import { IconExternalLink, IconRoute } from '@tabler/icons-react';
 import Link from 'next/link';
 import { imageWithStickersUrl, STICKER_REVEAL_SEARCH } from '~/components/Placement/queue-routes';
 import { useRouter } from 'next/router';
@@ -150,6 +150,21 @@ function PlacementThumb({
     // route to the picture, so a link that lands on an untouched-looking image is
     // worse here than on the anchor beside it.
     <WithheldThumb nsfwLevel={image.nsfwLevel} href={withheldHref(image, STICKER_REVEAL_SEARCH)} />
+  );
+}
+
+/** The row's thumbnail is a still, so this is the only sign the sticker moves on the video. */
+function MovingStickerBadge() {
+  return (
+    <Badge
+      size="sm"
+      variant="light"
+      color="grape"
+      leftSection={<IconRoute size={12} />}
+      className="w-fit"
+    >
+      Moving
+    </Badge>
   );
 }
 
@@ -313,7 +328,7 @@ function ReceivedTab({
 
       {rows.map((row) => (
         <Card key={row.id} withBorder p="sm">
-          <Group align="start" wrap="nowrap" gap="sm">
+          <Group align="start" wrap="nowrap" gap="sm" className="max-sm:flex-wrap">
             <Checkbox
               checked={selected.includes(row.id)}
               onChange={() => toggle(row.id)}
@@ -323,9 +338,9 @@ function ReceivedTab({
             <PlacementThumb image={row.image} withheldHref={withheldHref} />
             <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
 
-            <Stack gap={2} className="flex-1">
+            <Stack gap={2} className="min-w-0 flex-1">
               <Text size="sm">
-                <Text span fw={600}>
+                <Text span fw={600} className="break-words">
                   {row.placer?.username ?? 'Someone'}
                 </Text>{' '}
                 {/* Both arms in `payout-copy`, not a ternary here: this is the
@@ -334,7 +349,12 @@ function ReceivedTab({
                     tested. */}
                 {placementAmountLine(row.free, row.amount)}
               </Text>
-              {row.free && <PlacementFreeBadge noun="placement" />}
+              {(row.free || row.moving) && (
+                <Group gap={6}>
+                  {row.free && <PlacementFreeBadge noun="placement" />}
+                  {row.moving && <MovingStickerBadge />}
+                </Group>
+              )}
               <Text size="xs" c="dimmed">
                 Placed {formatDate(row.createdAt)}
                 {row.expiresAt ? ` · expires ${formatDate(row.expiresAt)}` : ''}
@@ -446,7 +466,7 @@ function PlacedTab({
               <PlacementThumb image={row.image} withheldHref={withheldHref} />
               <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
 
-              <Stack gap={2} className="flex-1">
+              <Stack gap={2} className="min-w-0 flex-1">
                 <Group gap="xs">
                   <Badge
                     size="sm"
@@ -466,6 +486,7 @@ function PlacedTab({
                   ) : (
                     <PlacementFreeBadge noun="placement" />
                   )}
+                  {row.moving && <MovingStickerBadge />}
                 </Group>
                 <Text size="sm">On {row.owner?.username ?? 'a creator'}&apos;s image</Text>
                 <Text size="xs" c="dimmed">

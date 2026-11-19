@@ -10,8 +10,8 @@ import {
   Image,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -38,18 +38,35 @@ import {
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  isMarketplaceCategory,
+  marketplaceCategoryLabel,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useIsClient } from '~/providers/IsClientProvider';
+import {
+  useAppStoreImpression,
+  useTrackAppStoreAction,
+  type AppStoreTelemetry,
+} from '~/components/Apps/appStoreTelemetry';
+import {
+  APP_VISIT_LINK_REL,
+  appVisitHref,
+  withAppSurface,
+} from '~/shared/utils/app-store-telemetry';
 
 /**
  * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
@@ -57,7 +74,8 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * Renders one `ListingCard` (from `appListings.listAvailable`) as card A: a cover with
  * the `⋮` menu over its top-right; a header row of the app icon (straddling the cover's
  * bottom edge), a one-line title and the kind-aware CTA (Open / View details / Visit ↗),
- * the title and CTA centred on the icon's centre; badges and the tagline; and, under a
+ * the title and CTA centred on the icon's centre; a meta line (category, linked to the store
+ * filtered by it, and "Updated <relative date>"); badges and the tagline; and, under a
  * divider, a footer with the recommend rollup and play count on the left and the creator on
  * the right. The whole card is one click target: the title link is stretched over it
  * (`after:inset-0`) and every other control sits above that layer (`relative z-10`).
@@ -229,17 +247,23 @@ export interface AppListingCardProps {
   preview?: boolean;
   /**
    * The card as a sidebar panel (the post and image detail pages), not a store grid cell: the
-   * divider runs edge to edge, the footer is tighter, the title and Open sit lower under the
-   * cover, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
+   * divider runs edge to edge, the footer is tighter, and the creator is a `UserAvatar` (hover card) like everywhere else on the site.
    * The grid never sets it, so the skeleton's geometry (`appListingCardGeometry`) still holds there.
    */
   embedded?: boolean;
   /** A label pinned over the cover's top-left corner, opposite the `⋮` menu. */
   coverBadge?: ReactNode;
+  /**
+   * Acquisition telemetry: where this card is rendered (and, in the store grid, its position
+   * and the grid's sort / filter / search). With it the card records its impression and its
+   * clicks (`AppStore_Action`) and tags its launch / visit links with the surface. Ignored in
+   * `preview`. Without it nothing is recorded and links are tagged `direct`.
+   */
+  telemetry?: AppStoreTelemetry;
 }
 
-/** How far an embedded card drops its title and Open below the icon-centred line. */
-const EMBEDDED_HEADER_NUDGE_PX = 8;
+/** An embedded card's CTA keeps its glyph 4px from the label (Mantine's default is 10). */
+const EMBEDDED_CTA_STYLES = { section: { marginInlineStart: 4 } };
 
 export function AppListingCard({
   card,
@@ -247,8 +271,12 @@ export function AppListingCard({
   preview = false,
   embedded = false,
   coverBadge,
+  telemetry,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
+  // The relative date is client-only, so the whole "Updated …" part waits for the client:
+  // no "Updated" with a hole in it, and the server and first client paint stay identical.
+  const isClient = useIsClient();
   const cta = getListingCta(card, { canOpenPage });
   // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
   // second inline copy. #3539 already gave each CTA its own icon; what was still
@@ -258,6 +286,25 @@ export function AppListingCard({
   // IconExternalLink, detail → IconEye) — it is a consolidation, not a restyle.
   const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
+  // A moderator `preview` records nothing and keeps raw links (its listing is not live).
+  const tracked = preview ? undefined : telemetry;
+  const surface = tracked?.surface ?? 'direct';
+  const impressionRef = useAppStoreImpression(card.id, tracked);
+  const trackStoreAction = useTrackAppStoreAction();
+  const ctaHref =
+    preview || cta.action === 'detail'
+      ? cta.href
+      : cta.external
+      ? card.kindData.kind === 'offsite'
+        ? appVisitHref(card.id, surface)
+        : cta.href
+      : tracked
+      ? withAppSurface(cta.href, surface)
+      : cta.href;
+  const onCardClick = tracked ? () => trackStoreAction('card_click', card.id, tracked) : undefined;
+  const onCtaClick = () => {
+    if (tracked) trackStoreAction('cta_click', card.id, tracked);
+  };
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
   // and returns `null` for an unmeasurable listing. That is deliberate: this
@@ -292,6 +339,12 @@ export function AppListingCard({
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
   const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
+  // META LINE. The category's display label (never the stored key), linked to the store
+  // filtered by it when the store can filter by that value — not in `preview`, where a link
+  // would take the moderator away from the review (the detail rail's rule).
+  const categoryLabel = card.category ? marketplaceCategoryLabel(card.category) : null;
+  const categoryHref = preview ? null : appsStoreCategoryHref(card.category);
+  const showUpdated = isClient && !!card.updatedAt;
 
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
   // load-bearing. Measured against a `/models` card in the same session (dark),
@@ -316,9 +369,8 @@ export function AppListingCard({
   // The whole card is one click target: the title link is stretched over it (`after:inset-0`),
   // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
   const creator = card.creator;
-  const headerNudge = embedded ? EMBEDDED_HEADER_NUDGE_PX : 0;
   return (
-    <Card padding={0} radius={0} className="h-full rounded-md">
+    <Card ref={impressionRef} padding={0} radius={0} className="h-full rounded-md">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
@@ -395,6 +447,7 @@ export function AppListingCard({
           <Anchor
             component={Link}
             href={detailHref}
+            onClick={onCardClick}
             underline="hover"
             c="inherit"
             className="after:absolute after:inset-0 after:content-['']"
@@ -402,8 +455,7 @@ export function AppListingCard({
               minWidth: 0,
               flex: 1,
               marginTop:
-                LISTING_CARD_HEADER_CENTER_PX +
-                headerNudge -
+                LISTING_CARD_HEADER_CENTER_PX -
                 (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
             }}
           >
@@ -431,55 +483,93 @@ export function AppListingCard({
           {cta.external ? (
             <Button
               component="a"
-              href={cta.href}
+              href={ctaHref}
               target="_blank"
-              rel="noopener noreferrer"
+              rel={ctaHref === cta.href ? 'noopener noreferrer' : APP_VISIT_LINK_REL}
               size="compact-sm"
-              variant="light"
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
               rightSection={<CtaGlyph size={14} />}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
               // "Opened" = actually opened. An OFF-SITE app is opened the moment this Visit CTA is
               // followed — there is no on-platform route afterwards that could record it (the
               // on-site path is recorded by `/apps/run/<slug>` itself). Recording on a detail
               // VIEW would be wrong: browsing is not opening.
               // 🔴 Stamped with the viewer's account id (#4048) — recents are per-account.
-              onClick={() =>
-                recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null)
-              }
+              onClick={() => {
+                recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null);
+                onCtaClick();
+              }}
             >
               {cta.label}
             </Button>
           ) : (
             <Button
               component={Link}
-              href={cta.href}
+              href={ctaHref}
+              onClick={onCtaClick}
               size="compact-sm"
-              variant={cta.action === 'open' ? 'filled' : 'light'}
+              variant="filled"
               className="relative z-10"
               style={{
                 flexShrink: 0,
-                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX + headerNudge}px - ${
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
                   LISTING_CARD_CTA_HEIGHT_PX / 2
                 }px)`,
               }}
-              leftSection={<CtaGlyph size={14} />}
+              // The CTA is right-aligned, so the glyph trails the label — the same as Visit.
+              rightSection={<CtaGlyph size={14} />}
+              styles={embedded ? EMBEDDED_CTA_STYLES : undefined}
             >
               {cta.label}
             </Button>
           )}
         </Group>
 
+        {/* META LINE — category · "Updated 3 days ago". ALWAYS rendered and ONE line
+            (`truncate`), so `AppListingCardSkeleton` reserves it unconditionally: without a
+            category it also holds a zero-width space, so it never collapses to no line.
+            The category link sits above the stretched title link (`relative z-10`) so it
+            is the one that receives the click. */}
+        <Text size="xs" c="dimmed" truncate data-testid="apps-listing-card-meta">
+          {categoryLabel &&
+            (categoryHref ? (
+              <Anchor
+                component={Link}
+                href={categoryHref}
+                inherit
+                c="dimmed"
+                underline="hover"
+                className="relative z-10"
+                data-testid="apps-listing-card-category"
+              >
+                {categoryLabel}
+              </Anchor>
+            ) : (
+              <span data-testid="apps-listing-card-category">{categoryLabel}</span>
+            ))}
+          {categoryLabel && showUpdated && ' · '}
+          {showUpdated && card.updatedAt && (
+            <span data-testid="apps-listing-card-updated">
+              Updated <DaysFromNow date={card.updatedAt} />
+            </span>
+          )}
+          {/* A zero-width space keeps the line box when there is nothing else to show yet
+              (no category; the date waits for the client), so the line never collapses. */}
+          {!categoryLabel && '\u200B'}
+        </Text>
+
         {/* ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES TRUNCATE — it never
             grows a second line. "Beta" never shrinks (short, and the whole signal); the long
             badges shrink (`flexShrink: 1` + `minWidth: 0`), and their Tooltip carries the full
             text. Rendered only when at least one badge is. */}
-        {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
+        {(card.isOfficial || card.isBeta || showOwnerIncomplete || visibilityBadge) && (
           <Group
             gap={4}
             wrap="nowrap"
@@ -489,6 +579,7 @@ export function AppListingCard({
             {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
                 tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
                 both for "not in beta" and while the manual-apply migration is outstanding. */}
+            {card.isOfficial && <AppListingOfficialBadge size="xs" />}
             {card.isBeta && (
               <Badge
                 color="violet"
@@ -559,9 +650,10 @@ export function AppListingCard({
             🔴 `wrap="nowrap"` is load-bearing: a wrapped footer is a second line, i.e. a card
             taller than its skeleton on every card in that grid row. The rollup and the creator
             name truncate (`minWidth: 0`); the play count is short and `flexShrink: 0`. */}
+        {/* Full-bleed: the divider runs edge to edge while the content keeps its padding. */}
         <Divider
           mt="auto"
-          style={embedded ? { marginInline: 'calc(var(--mantine-spacing-md) * -1)' } : undefined}
+          style={{ marginInline: 'calc(var(--mantine-spacing-md) * -1)' }}
           data-testid="apps-listing-card-divider"
         />
         <Group
@@ -606,12 +698,12 @@ export function AppListingCard({
               </Group>
             )}
           </Group>
-          {embedded && creator?.username && (
-            // The card fill is dark in both themes and Paper takes its text colour from the root
-            // scheme, so the name states its own light colour.
+          {creator?.username && (
+            // The embedded card fill is dark in both themes and Paper takes its text colour from
+            // the root scheme, so there the name states its own light colour.
             <div
               className="relative z-10 min-w-0 shrink"
-              style={{ color: 'var(--mantine-color-dark-0)' }}
+              style={embedded ? { color: 'var(--mantine-color-dark-0)' } : undefined}
               data-testid="apps-listing-card-creator"
             >
               <UserAvatar
@@ -623,30 +715,6 @@ export function AppListingCard({
                 textSize="xs"
               />
             </div>
-          )}
-          {!embedded && creator?.username && (
-            <Anchor
-              component={Link}
-              href={`/user/${encodeURIComponent(creator.username)}`}
-              underline="hover"
-              c="dimmed"
-              className="relative z-10"
-              style={{ minWidth: 0, flexShrink: 1 }}
-              data-testid="apps-listing-card-creator"
-            >
-              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }} justify="flex-end">
-                <Avatar
-                  src={creator.image ?? undefined}
-                  alt=""
-                  size={LISTING_CARD_CREATOR_AVATAR_PX}
-                  radius="xl"
-                  style={{ flexShrink: 0 }}
-                />
-                <Text size="xs" c="dimmed" truncate>
-                  {creator.username}
-                </Text>
-              </Group>
-            </Anchor>
           )}
         </Group>
       </Stack>

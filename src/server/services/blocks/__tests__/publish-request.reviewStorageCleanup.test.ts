@@ -3,6 +3,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import type * as RuntimeMetrics from '~/server/metrics/app-block-runtime.metrics';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * Review document-store data is deleted inline when a moderator or owner DECIDES a publish
@@ -95,6 +106,8 @@ function installDb() {
     client.appBlock.update.mockImplementation(async (a: { data?: unknown }) => a?.data ?? {});
     client.appBlock.updateMany.mockResolvedValue({ count: 0 });
     client.oauthClient.update.mockResolvedValue({});
+    // The ceiling a late hold would put back, read on the primary before step (3).
+    client.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
     client.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
     client.appListing.updateMany.mockResolvedValue({ count: 0 });
   }
@@ -105,7 +118,7 @@ const existingAppBlock = {
   appId: 'app_1',
   repoUrl: 'https://forgejo.example/cool-app',
   trustTier: 'unverified',
-  app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
+  app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
 };
 
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
@@ -154,6 +167,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path resolves the manifest `bugs` link beside the two builders; inert here.
+  buildListingIssueTrackerSync: () => ({ write: false }),
   buildListingScalarSync: () => ({
     name: 'Cool App',
     description: null,

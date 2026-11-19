@@ -7,6 +7,7 @@ import { MAX_ENTITIES_COVER_IMAGE } from '~/server/schema/image.schema';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
+import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -20,9 +21,8 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   // computed from `!coverImages.length`, so a refused query would take the entire
   // Showcase section off the profile — and it would stay off, since each render sends
   // the same list. Clamped, a showcase longer than the bound just shows its first
-  // `MAX_ENTITIES_COVER_IMAGE` items. `addEntityToShowcase` truncates to 32, but
-  // `userProfile.update` does not bound `showcaseItems`, so a stored showcase is not
-  // guaranteed to be short.
+  // `MAX_ENTITIES_COVER_IMAGE` items. Both write paths now cap a showcase at 32, but one
+  // stored before `userProfile.update` was bounded can still be longer.
   const entities = useMemo(() => showcaseItems.slice(0, MAX_ENTITIES_COVER_IMAGE), [showcaseItems]);
   const {
     data: _coverImages,
@@ -51,9 +51,15 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     data: transformed,
   });
 
+  // The images the showcase's image cards draw Hat Turf hats on (GenericImageCard).
+  const hatImageIds = useMemo(
+    () => coverImages.filter((image) => image.entityType === 'Image').map((image) => image.id),
+    [coverImages]
+  );
+
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
-  if (isNullState) {
+  if (showcaseItems.length === 0 || (isNullState && inView)) {
     return null;
   }
 
@@ -74,23 +80,25 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview rowCount={2} />
         ) : (
           <ProfileSection title="Showcase" icon={<IconHeart />}>
-            <ShowcaseGrid
-              itemCount={showcaseItems.length}
-              rows={2}
-              className={clsx({
-                [classes.nullState]: !coverImages.length,
-                [classes.loading]: isRefetching,
-              })}
-            >
-              {coverImages.map((image) => (
-                <GenericImageCard
-                  image={image}
-                  entityId={image.entityId}
-                  entityType={image.entityType}
-                  key={`${image.entityType}-${image.entityId}`}
-                />
-              ))}
-            </ShowcaseGrid>
+            <TurfSummaryProvider imageIds={hatImageIds}>
+              <ShowcaseGrid
+                itemCount={showcaseItems.length}
+                rows={2}
+                className={clsx({
+                  [classes.nullState]: !coverImages.length,
+                  [classes.loading]: isRefetching,
+                })}
+              >
+                {coverImages.map((image) => (
+                  <GenericImageCard
+                    image={image}
+                    entityId={image.entityId}
+                    entityType={image.entityType}
+                    key={`${image.entityType}-${image.entityId}`}
+                  />
+                ))}
+              </ShowcaseGrid>
+            </TurfSummaryProvider>
           </ProfileSection>
         ))}
     </div>

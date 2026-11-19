@@ -54,7 +54,7 @@ export type DealFile = {
   dealId: number;
   id: number;
   round: number;
-  kind: 'Preview' | 'Final';
+  kind: 'Preview' | 'Final' | 'Attachment';
   /** Null only for a buyer who has not paid for the file; a moderator always gets the name. */
   fileName: string | null;
   mimeType: string;
@@ -66,6 +66,8 @@ export type DealFile = {
   canDownload: boolean;
   /** Who has taken the file. Absent from a main app that predates it. */
   access?: DealFileAccess[];
+  /** Set when the uploader removed a file that was kept; the parties no longer see it. */
+  removedAt?: string;
 };
 
 /** One role's accesses of one file. `ModeratorFetch` is the dispute tool, never a party's download. */

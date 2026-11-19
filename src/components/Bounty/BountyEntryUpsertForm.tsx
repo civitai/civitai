@@ -4,7 +4,6 @@ import {
   Checkbox,
   Divider,
   Group,
-  HoverCard,
   Input,
   Paper,
   Progress,
@@ -14,8 +13,8 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import { BountyEntryMode, BountyType, Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -160,6 +159,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         ...data,
         bountyId: bounty.id,
         images: [...bountyEntryImages.map((i, index) => ({ ...i, index })), ...filteredImages],
+        shownImageIds: bountyEntry?.images.map((image) => image.id),
         files,
       },
       {

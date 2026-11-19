@@ -32,6 +32,7 @@ const policyChange: RemovalHistory = {
   firstNsfw: 'None',
   firstReason: '',
   lastReason: '',
+  scoreReason: null,
   resourceIds: [POI_VERSION],
   minorRemovals: 0,
 };

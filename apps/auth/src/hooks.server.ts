@@ -48,6 +48,7 @@ const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
   '/api/auth/oauth/device-deny': isHubPageRequest,
   '/login/oauth/device': isHubPageRequest,
   '/login/oauth/authorize': isHubPageRequest,
+  '/invite': isHubPageRequest,
   '/api/auth/switch': isTrustedSessionCaller,
   '/api/auth/impersonate': isTrustedSessionCaller,
   '/api/auth/impersonate/exit': isTrustedSessionCaller,
@@ -109,8 +110,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     return forbidden();
 
   // Populate locals.user from the session cookie. The cookie is THIN (identity only), so resolve the rich user
-  // by userId from the shared cache (produce on miss) rather than trusting an embedded user. The verifier handles
-  // both ES256 and legacy NextAuth JWE; verification / resolve failures are non-fatal.
+  // by userId from the shared cache (produce on miss) rather than trusting an embedded user. Verification /
+  // resolve failures are non-fatal.
   const routeId = event.route?.id ?? '';
   const cookieRead = readHubSession(event.cookies);
   const cookieToken = cookieRead?.value;
@@ -119,13 +120,13 @@ export const handle: Handle = async ({ event, resolve }) => {
     : null;
   let token = internal ? internal.token : cookieToken;
   let slot = cookieRead?.slot;
-  const sharedToken = legacyCookieReadEnabled()
+  const sharedToken = legacyCookieReadEnabled(null)
     ? event.cookies.get(sessionCookieNameForSlot('shared'))
     : undefined;
   // Only a browser keeps the host-only cookie it is given; any other caller would be moved again on every request.
   if (
     !internal &&
-    sessionCookieMode() === 'host' &&
+    sessionCookieMode(null) === 'host' &&
     sharedToken &&
     callerShape(event.request, true) === 'browser'
   ) {
@@ -144,13 +145,13 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.impersonatedBy = claims.impersonatedBy;
       if (!internal) event.locals.sessionSlot = slot;
       // The main app writes the shared slot through its own proxy (an account switch), unseen by the hub.
-      if (!internal && slot === 'shared' && sessionCookieMode() === 'shared') {
+      if (!internal && slot === 'shared' && sessionCookieMode(null) === 'shared') {
         dropStaleHostCopy(event.cookies, token);
       }
-      const writeSlot = slot && rollSlot({ slot });
+      const writeSlot = slot && rollSlot({ slot }, sessionCookieMode(null));
       if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
-        if (fresh) setSessionCookie(event.cookies, fresh, writeSlot);
+        if (fresh) setSessionCookie(event.cookies, fresh, writeSlot, { roll: true });
         if (fresh && event.locals.deviceId) await touchAccount(event.locals.deviceId, userId);
       }
     }

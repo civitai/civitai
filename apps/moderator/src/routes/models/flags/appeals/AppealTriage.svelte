@@ -30,6 +30,7 @@
   import { urlWith } from '$lib/url';
   import AppealDetail, { type AppealRuling } from './AppealDetail.svelte';
   import AppealTags from './AppealTags.svelte';
+  import LockReviewDetail from './LockReviewDetail.svelte';
 
   type QueueForm = { error?: string; rescanQueued?: boolean; modelId?: number } | null;
 
@@ -113,7 +114,7 @@
     {:else if filtersActive}
       <p class="m-0">No open appeals match these filters.</p>
     {:else}
-      <p class="m-0">No open appeals against a minor or real-person flag.</p>
+      <p class="m-0">No open appeals against a flag or a locked setting.</p>
     {/if}
     {#if filtersActive || data.q}
       <a href={clearFiltersHref} class="mt-2 inline-block {LINK_CLASS}">Clear filters</a>
@@ -130,6 +131,7 @@
   queueLabel="Appeal queue"
   itemLabel="Appeal"
   decisionEnabled={(row) => {
+    if (row.lockReview) return [true, !(row.minor || row.poi), false, false];
     // Keys 3 and 4 are the two splits, offered only while both flags are in force.
     const split = row.minor && poiInForce(row);
     return [flagInForce(row), true, split, split];
@@ -175,15 +177,28 @@
     </TriageRow>
   {/snippet}
   {#snippet detail(row, state)}
-    <AppealDetail
-      {row}
-      civitaiUrl={data.civitaiUrl}
-      canViewTrainingData={data.canViewTrainingData}
-      verdict={state.verdict}
-      error={state.error}
-      submit={state.submit}
-      {actionHref}
-      bind:draft={() => ruling.current, (d) => (ruling.current = d)}
-    />
+    {#if row.lockReview}
+      <LockReviewDetail
+        {row}
+        civitaiUrl={data.civitaiUrl}
+        canViewTrainingData={data.canViewTrainingData}
+        verdict={state.verdict}
+        error={state.error}
+        submit={state.submit}
+        {actionHref}
+        bind:draft={() => ruling.current, (d) => (ruling.current = d)}
+      />
+    {:else}
+      <AppealDetail
+        {row}
+        civitaiUrl={data.civitaiUrl}
+        canViewTrainingData={data.canViewTrainingData}
+        verdict={state.verdict}
+        error={state.error}
+        submit={state.submit}
+        {actionHref}
+        bind:draft={() => ruling.current, (d) => (ruling.current = d)}
+      />
+    {/if}
   {/snippet}
 </TriageShell>

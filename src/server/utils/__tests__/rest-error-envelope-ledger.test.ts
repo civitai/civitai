@@ -294,6 +294,12 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'download/attachments/[fileId].ts',
   'download/models/[modelVersionId].ts',
   'download/vault/[vaultItemId].ts',
+  // `{ error: COVER_LISTING_UNREADABLE }`: a shared constant from `@civitai/app-assistant`, text
+  // WE wrote, behind the runner's secret + a run grant; a caught error's own text never reaches
+  // the body — asserted in `src/server/__tests__/assistant-runner-cover-endpoints.test.ts` (503).
+  'internal/app-assistant/cover/listing.ts',
+  // `{ error: BANNED_ACCOUNT_MESSAGE }` and the hub client's error strings; no caught error object.
+  'auth/impersonate.ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
   'media/ingest/[mediaId].ts',
@@ -350,10 +356,16 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'admin/update-freshdesk-customer.ts',
   'mod/clavata-image-process.ts',
   'mod/csam-upload.ts',
+  // `{ error: FEEDBACK_CAPTURE_OWNER_REFUSAL }`, a string constant we wrote; no caught error object.
+  'mod/delete-user-images.ts',
+  'mod/knights/shop/cosmetics.ts',
+  'mod/knights/shop/membership.ts',
   'mod/mute-user-pending-review.ts',
   'mod/overturn-user-mute.ts',
   'mod/queue-model-metric-update.ts',
   'mod/reconcile-nowpayments.ts',
+  // `{ error: FEEDBACK_CAPTURE_OWNER_REFUSAL }`, a string constant we wrote; no caught error object.
+  'mod/remove-images.ts',
   'mod/reprocess-buzz-purchases.ts',
   'mod/reprocess-order.ts',
   'mod/resource-training-v2.ts',

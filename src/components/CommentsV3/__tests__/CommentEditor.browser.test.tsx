@@ -44,7 +44,7 @@ vi.mock('../useCommentMutations', () => ({
   useCommentMutations: () => ({ create, edit: vi.fn(), saving: false }),
 }));
 vi.mock('~/components/Sticker/StickerPicker', () => ({ StickerPicker: () => null }));
-vi.mock('~/components/CommentsV2/Comment/CreateComment', () => ({ useSectionMute: vi.fn() }));
+vi.mock('~/components/CommentsV3/useSectionMute', () => ({ useSectionMute: vi.fn() }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
 
 import { CommentEditor } from '../CommentComposer';

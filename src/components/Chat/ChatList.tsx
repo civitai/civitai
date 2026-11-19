@@ -15,8 +15,8 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconCirclePlus,
   IconCloudOff,

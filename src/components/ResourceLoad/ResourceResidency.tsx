@@ -1,4 +1,5 @@
-import { Badge, Group, Text, Tooltip } from '@mantine/core';
+import { Badge, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { chunk } from 'lodash-es';
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';

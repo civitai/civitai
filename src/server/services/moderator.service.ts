@@ -22,6 +22,10 @@ type ModelModActivity = {
     | 'setPoiAutoHash'
     | 'revertPoiAutoHash'
     | 'dismissPoiHashMatch'
+    | 'approveLockReview'
+    | 'rejectLockReview'
+    // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -29,7 +33,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review';
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}` | 'revokeEarlyAccess';
 };
 
 type ImageTagModActivity = {
@@ -46,6 +50,7 @@ export type ImageModActivity = {
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
+    | 'retractedMedia:view'
     | ReturnType<typeof shownActivity>;
 };
 
@@ -79,7 +84,23 @@ type UserModActivity = {
     | 'revokeTimedMute'
     | 'createSystemAccount'
     | 'mintSystemAccountApiKey'
+    // An admin minted, retired, unretired or re-ceilinged a per-provider download token
+    // (`providerDownloadToken:<action>:<provider>`). `userId` is the asserted actor.
+    | `providerDownloadToken:${string}`
     | 'setSystemAccountProfile'
+    // A moderator gave a Stripe member free days (membership-extend.service). Counts toward its cooldown.
+    | 'extendMembership'
+    // A moderator set or undid cancel-at-period-end on a member's Stripe membership (membership-cancel.service).
+    | 'setMembershipCancel'
+    | 'undoMembershipCancel'
+    // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
+    | 'resyncMembership'
+    // A moderator re-read a user's Tipalti payee into UserPaymentConfiguration (tipalti-payee-resync.service).
+    | 'tipaltiResync:enable'
+    | 'tipaltiResync:disable'
+    | 'tipaltiResync:status'
+    // A moderator released a built personal-data export to the account owner (personal-data-export.service).
+    | 'releasePersonalDataExport'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -130,10 +151,11 @@ type PlacementModActivity = {
   activity: 'removePlacement';
 };
 
-/** A moderator hid an `app-block` report from the app's developer, or unhid it. */
+/** A moderator hid an `app-block` report from the app's developer, or unhid it — or closed it with
+ *  a Buzz refund for the generations it reported (`/api/mod/apps/refund-workflows`). */
 type FeedbackModActivity = {
   entityType: 'feedback';
-  activity: 'hideFromOwner' | 'unhideFromOwner';
+  activity: 'hideFromOwner' | 'unhideFromOwner' | 'refundAppBuzz';
 };
 
 /** A moderator cleared a bounty entry file's check result
@@ -166,7 +188,7 @@ export type StorylineModActivity = {
 
 type CrucibleModActivity = {
   entityType: 'crucible';
-  activity: 'takeDown';
+  activity: 'takeDown' | 'updateSettings';
 };
 
 type SiteAlertModActivity = {
@@ -174,9 +196,31 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type SearchQueryRuleModActivity = {
+  entityType: 'searchQueryRule';
+  activity: 'dryRun';
+};
+
+type PublishRequestHoldModActivity = {
+  entityType: 'publishRequestHold';
+  activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
+};
+
+type PostTextModActivity = {
+  entityType: 'postText';
+  activity: 'refuse' | 'restore' | 'csamHold';
+};
+
+type CsamReportModActivity = {
+  entityType: 'csamReport';
+  activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | PublishRequestHoldModActivity
+  | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
   | ImageTagModActivity
@@ -193,6 +237,8 @@ type ModActivity = {
   | SiteAlertModActivity
   | HeldMediaGridModActivity
   | StorylineModActivity
+  | SearchQueryRuleModActivity
+  | PostTextModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
@@ -226,7 +272,7 @@ export async function trackModActivity(
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
   await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
+    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
 }

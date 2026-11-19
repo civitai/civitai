@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Button,
   Card,
+  Checkbox,
   Stack,
   Text,
   Title,
@@ -58,6 +59,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [modelsChoice, setModelsChoice] = useState('');
   const [imagesChoice, setImagesChoice] = useState('');
+  const [removeAppData, setRemoveAppData] = useState(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
 
   const handleDeleteClick = () => {
@@ -88,6 +90,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
     setConfirmModalOpen(false);
     setModelsChoice('');
     setImagesChoice('');
+    setRemoveAppData(false);
     setConfirmDeleteInput('');
   };
 
@@ -98,6 +101,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
         id: currentUser.id,
         removeModels: modelsChoice === 'delete',
         removeImages: imagesChoice === 'now',
+        removeAppData,
       });
     }
   };
@@ -187,6 +191,12 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
               />
             </Stack>
           </Radio.Group>
+          <Checkbox
+            label="Also delete my data in apps"
+            description="Everything apps have saved for you, including what you posted in them. Deleted 7 days after your account closes; restore the account before then and it stays"
+            checked={removeAppData}
+            onChange={(event) => setRemoveAppData(event.currentTarget.checked)}
+          />
           <Group justify="flex-end">
             <Button variant="outline" onClick={handleCancelAll}>
               Cancel
@@ -211,6 +221,11 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
               {imagesChoice === 'now'
                 ? 'Your images will be deleted in the background, which can take up to a day'
                 : 'Your images will be hidden in the background within a day, then deleted after 7 days'}
+            </List.Item>
+            <List.Item>
+              {removeAppData
+                ? 'Your data in apps will be deleted after 7 days'
+                : 'Your data in apps will be kept'}
             </List.Item>
           </List>
           <Text size="sm" c="dimmed">

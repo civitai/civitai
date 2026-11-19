@@ -1,7 +1,6 @@
 import type { ButtonProps, UnstyledButtonProps, FloatingPosition } from '@mantine/core';
 import {
   Button,
-  HoverCard,
   Text,
   Group,
   Stack,
@@ -9,6 +8,7 @@ import {
   createPolymorphicComponent,
   UnstyledButton,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { useRouter } from 'next/router';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps, Icon } from '@tabler/icons-react';

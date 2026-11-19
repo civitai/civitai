@@ -7,6 +7,7 @@ import type {
   ChatRemoteRunner,
   ChatSubagents,
   ChatTool,
+  ChatToolCallsMode,
   ChatToolGate,
   ChatToolResult,
   CivitaiChat,
@@ -35,6 +36,7 @@ import classes from './AppAssistant.module.scss';
 const ChatTag = 'civitai-chat' as unknown as FC<{
   ref: Ref<HTMLElement>;
   scope: string;
+  'tool-calls'?: ChatToolCallsMode;
   className?: string;
   children?: ReactNode;
 }>;
@@ -207,7 +209,8 @@ export function AppAssistantChat({
           <Loader size="sm" />
         </Center>
       )}
-      <ChatTag ref={ref} scope="app-assistant" className={classes.chat}>
+      {/* `details`: each tool call stays in the thread as a row the viewer can open (input and result). */}
+      <ChatTag ref={ref} scope="app-assistant" tool-calls="details" className={classes.chat}>
         {/* Light-DOM children the chat shows in its named slots; the page's styles apply to them. */}
         {composerTop ? <div slot="composer-top">{composerTop}</div> : null}
         {threadEnd ? <div slot="thread-end">{threadEnd}</div> : null}

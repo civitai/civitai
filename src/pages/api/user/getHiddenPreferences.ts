@@ -1,10 +1,14 @@
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default PublicEndpoint(async function handler(req, res) {
   const { refresh } = req.query;
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'anonymous', scope: { scope: TokenScope.UserRead } }
+  );
   const userId = session?.user?.id;
   const hiddenPreferences = await getAllHiddenForUser({
     userId: userId ?? -1,

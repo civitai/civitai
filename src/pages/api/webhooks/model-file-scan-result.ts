@@ -17,7 +17,7 @@ export default WebhookEndpoint(async (req, res) => {
         stack: error instanceof Error ? error.stack : undefined,
       },
       'webhooks'
-    ).catch();
+    );
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

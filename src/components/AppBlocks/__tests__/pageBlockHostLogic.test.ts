@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import {
   advanceReviewConsentLatch,
   AUTO_RETRY_BACKOFF_MS,
@@ -14,8 +15,14 @@ import {
   shouldEmitMidSessionLossBeacon,
   type MidSessionLossBeaconArgs,
   resolveCheckpointPickerRequest,
+  resolveGetWorkflowMediaRequest,
+  GET_WORKFLOW_MEDIA_MAX_REFS,
   resolveImageUploadRequest,
   resolveNavigateRequest,
+  resolvePersistGenerationSourceRequest,
+  PERSIST_SOURCE_INVALID_ERROR,
+  PERSIST_SOURCE_NOT_READY_ERROR,
+  PERSIST_SOURCE_REVIEW_ERROR,
   resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
@@ -2144,5 +2151,201 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
         )?.href
       ).toBe('/apps/run/mb');
     });
+  });
+});
+
+/**
+ * The run chrome's launch origin (`?from=home`) must survive the block's own navigation: the
+ * host pushes an href built from the BLOCK's path, so without the stamp the first in-app
+ * navigation dropped it and a reload relabelled the way out "Marketplace". The host's value
+ * wins over any `from` the block wrote into its own path. Literal expected hrefs throughout.
+ */
+describe('resolveNavigateRequest — launch origin survives in-app navigation', () => {
+  const RUN = { base: '/apps/run', slug: 'pixel-forge', siteNavigation: true };
+  const fromCount = (href: string) =>
+    new URLSearchParams(href.split('#')[0].split('?')[1] ?? '').getAll('from');
+
+  it('🔴 home: the pushed href carries from=home exactly once, sub-path kept', () => {
+    const req = resolveNavigateRequest({ path: 'gallery/42' }, { ...RUN, launchOrigin: 'home' });
+    expect(req).toEqual({
+      scope: 'app',
+      href: '/apps/run/pixel-forge/gallery/42?from=home',
+      shallow: true,
+      target: 'current',
+    });
+    expect(fromCount(req!.href)).toEqual(['home']);
+  });
+
+  it("home: the block's own query (incl. `sl`) and hash keep their bytes and order", () => {
+    expect(
+      resolveNavigateRequest(
+        { path: 'gallery?sl=asl_01J9&q=a%20b#top' },
+        { ...RUN, launchOrigin: 'home' }
+      )?.href
+    ).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9&q=a%20b&from=home#top');
+  });
+
+  it('home: a block-supplied `from` is replaced, never duplicated', () => {
+    const href = resolveNavigateRequest(
+      { path: 'gallery?from=evil&sl=asl_01J9' },
+      { ...RUN, launchOrigin: 'home' }
+    )!.href;
+    expect(href).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9&from=home');
+    expect(fromCount(href)).toEqual(['home']);
+  });
+
+  it('store: no `from` is added', () => {
+    expect(
+      resolveNavigateRequest({ path: 'gallery/42' }, { ...RUN, launchOrigin: 'store' })?.href
+    ).toBe('/apps/run/pixel-forge/gallery/42');
+  });
+
+  it('omitting the origin is the store (fail-safe: nothing is added)', () => {
+    expect(resolveNavigateRequest({ path: 'gallery/42' }, RUN)?.href).toBe(
+      '/apps/run/pixel-forge/gallery/42'
+    );
+  });
+
+  it.each([
+    ['from=home', 'gallery?from=home'],
+    ['an encoded key', 'gallery?fr%6Fm=home'],
+    ['repeated', 'gallery?from=home&from=home'],
+  ])(
+    '🔴 store: a block cannot relabel the crumb with its own `from` (%s) — reload stays Marketplace',
+    (_l, path) => {
+      const href = resolveNavigateRequest({ path }, { ...RUN, launchOrigin: 'store' })!.href;
+      expect(href).toBe('/apps/run/pixel-forge/gallery');
+      expect(fromCount(href)).toEqual([]);
+    }
+  );
+
+  it('store: other query pairs survive the `from` strip', () => {
+    expect(
+      resolveNavigateRequest(
+        { path: 'gallery?sl=asl_01J9&from=home#top' },
+        { ...RUN, launchOrigin: 'store' }
+      )?.href
+    ).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9#top');
+  });
+
+  it("site scope to a non-run page is left byte-for-byte alone (not the chrome's param)", () => {
+    expect(
+      resolveNavigateRequest(
+        { scope: 'site', path: 'models/12345?from=feed' },
+        { ...RUN, launchOrigin: 'home' }
+      )?.href
+    ).toBe('/models/12345?from=feed');
+  });
+
+  it("site scope to a run route: the host's origin wins there too", () => {
+    expect(
+      resolveNavigateRequest(
+        { scope: 'site', path: 'apps/run/other-app?from=home' },
+        { ...RUN, launchOrigin: 'store' }
+      )?.href
+    ).toBe('/apps/run/other-app');
+  });
+});
+
+describe('resolveGetWorkflowMediaRequest (untrusted iframe payload)', () => {
+  it('CONTROL: passes a well-formed request through', () => {
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs: ['a', 'b'] })).toEqual({
+      requestId: 'r1',
+      refs: ['a', 'b'],
+    });
+  });
+
+  it.each([null, 'x', {}, { requestId: '' }, { requestId: 7, refs: ['a'] }])(
+    '🔴 drops a payload without a requestId: %j',
+    (raw) => {
+      expect(resolveGetWorkflowMediaRequest(raw)).toBeNull();
+    }
+  );
+
+  it('🔴 filters out non-string, empty and over-long refs', () => {
+    const long = 'x'.repeat(2049);
+    expect(
+      resolveGetWorkflowMediaRequest({
+        requestId: 'r1',
+        refs: ['ok', 3, '', null, { r: 1 }, long, 'x'.repeat(2048)],
+      })?.refs
+    ).toEqual(['ok', 'x'.repeat(2048)]);
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs: 'ok' })?.refs).toEqual([]);
+  });
+
+  it('🔴 caps the forwarded refs at the server limit', () => {
+    const refs = Array.from({ length: GET_WORKFLOW_MEDIA_MAX_REFS + 5 }, (_, i) => `ref${i}`);
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs })?.refs).toEqual(
+      refs.slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
+    );
+    expect(GET_WORKFLOW_MEDIA_MAX_REFS).toBe(WORKFLOW_MEDIA_MAX_REFS);
+  });
+});
+
+describe('resolvePersistGenerationSourceRequest', () => {
+  const ok = { requestId: 'rq_1', workflowId: 'wf_1', imageIndex: 0 };
+  const gate = (raw: unknown, over: { ready?: boolean; reviewMode?: boolean } = {}) =>
+    resolvePersistGenerationSourceRequest({ raw, ready: true, reviewMode: false, ...over });
+
+  it('proceeds with exactly the three fields, whatever else the payload carries', () => {
+    expect(gate({ ...ok, imageIndex: 4, url: 'https://evil.example/x.png', appId: 'x' })).toEqual({
+      kind: 'proceed',
+      request: { requestId: 'rq_1', workflowId: 'wf_1', imageIndex: 4 },
+    });
+  });
+
+  it.each([
+    ['no payload', undefined],
+    ['a non-object payload', 'rq_1'],
+    ['no requestId', { workflowId: 'wf_1', imageIndex: 0 }],
+    ['an empty requestId', { ...ok, requestId: '' }],
+    ['a non-string requestId', { ...ok, requestId: 7 }],
+  ])('drops %s (nothing to reply on)', (_label, raw) => {
+    expect(gate(raw)).toEqual({ kind: 'drop' });
+  });
+
+  it('refuses review mode first — even a valid request on a ready block', () => {
+    expect(gate(ok, { reviewMode: true })).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_REVIEW_ERROR,
+    });
+    // Review is checked before readiness and before the payload.
+    expect(gate({ requestId: 'rq_1' }, { reviewMode: true, ready: false })).toMatchObject({
+      error: PERSIST_SOURCE_REVIEW_ERROR,
+    });
+  });
+
+  it('refuses a block that has not finished its handshake, before reading the payload', () => {
+    expect(gate(ok, { ready: false })).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_NOT_READY_ERROR,
+    });
+    expect(gate({ requestId: 'rq_1' }, { ready: false })).toMatchObject({
+      error: PERSIST_SOURCE_NOT_READY_ERROR,
+    });
+  });
+
+  it.each([
+    ['a missing workflowId', { requestId: 'rq_1', imageIndex: 0 }],
+    ['an empty workflowId', { ...ok, workflowId: '' }],
+    ['a workflowId over 64 characters', { ...ok, workflowId: 'w'.repeat(65) }],
+    ['a non-string workflowId', { ...ok, workflowId: 12 }],
+    ['a missing imageIndex', { requestId: 'rq_1', workflowId: 'wf_1' }],
+    ['a negative imageIndex', { ...ok, imageIndex: -1 }],
+    ['a fractional imageIndex', { ...ok, imageIndex: 0.5 }],
+    ['a string imageIndex', { ...ok, imageIndex: '0' }],
+    ['a NaN imageIndex', { ...ok, imageIndex: Number.NaN }],
+  ])('refuses %s with the invalid-request error, keeping the requestId', (_label, raw) => {
+    expect(gate(raw)).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_INVALID_ERROR,
+    });
+  });
+
+  it('accepts the boundary values: a 64-character workflowId and index 0', () => {
+    expect(gate({ ...ok, workflowId: 'w'.repeat(64) })).toMatchObject({ kind: 'proceed' });
   });
 });

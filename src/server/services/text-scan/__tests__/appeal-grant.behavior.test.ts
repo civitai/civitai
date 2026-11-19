@@ -258,7 +258,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSetModelMinor.mockReset();
   mockSideEffects.mockReset();
-  redisMock.sysRedis.eval.mockResolvedValue(1 as never);
+  redisMock.redis.eval.mockResolvedValue(1 as never);
   searchMode.value = 'off';
   labelMode.value = 'auto';
   labelMode.beforeRead = undefined;
@@ -675,6 +675,43 @@ describe('poi', () => {
       grantHash: (await loadGrantTextHash('Model', MODEL_ID, 'poi'))!,
     });
 
+  it('brings a kept scan NSFW verdict back as a pending lead, and leaves nsfw alone', async () => {
+    await seed({ poi: true, scanHash: SCANNED });
+    const kept = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'poi' };
+    await holder.db.query(`UPDATE "Model" SET meta = meta || $2::jsonb WHERE id = $1`, [
+      MODEL_ID,
+      JSON.stringify({ restrictedNsfwVerdictDormant: kept }),
+    ]);
+    expect(await overturn()).toBe(true);
+    const row = (
+      await holder.db.query<{ nsfw: boolean; meta: Record<string, unknown> }>(
+        `SELECT nsfw, meta FROM "Model" WHERE id = $1`,
+        [MODEL_ID]
+      )
+    ).rows[0];
+    expect(row.meta.restrictedNsfwVerdict).toEqual({ ...kept, liftedBy: 'appeal' });
+    expect(row.meta).not.toHaveProperty('restrictedNsfwVerdictDormant');
+    expect(row.nsfw).toBe(false);
+  });
+
+  it('a text-scan POI flag forgets an earlier lift on the waiting lead', async () => {
+    await seed({ scanHash: SCANNED });
+    const held = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'poi' };
+    await holder.db.query(`UPDATE "Model" SET meta = $2::jsonb WHERE id = $1`, [
+      MODEL_ID,
+      JSON.stringify({ restrictedNsfwVerdict: { ...held, liftedBy: 'moderator' } }),
+    ]);
+    await apply('poi', SCANNED);
+    const row = (
+      await holder.db.query<{ poi: boolean; meta: Record<string, unknown> }>(
+        `SELECT poi, meta FROM "Model" WHERE id = $1`,
+        [MODEL_ID]
+      )
+    ).rows[0];
+    expect(row.poi).toBe(true);
+    expect(row.meta.restrictedNsfwVerdict).toEqual(held);
+  });
+
   it('stays unflagged when a verdict arrives for the scanned text', async () => {
     await seed({ poi: true, scanHash: SCANNED });
     expect(await overturn()).toBe(true);
@@ -877,12 +914,12 @@ describe('resolution safety', () => {
 
   it('refuses a request while another resolution of the same label runs', async () => {
     await setup();
-    redisMock.sysRedis.set.mockResolvedValueOnce(null as never);
+    redisMock.redis.set.mockResolvedValueOnce(null as never);
 
     await expect(resolve('minor', true)).rejects.toThrow(/being resolved/);
 
     expect(mockSetModelMinor).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
     expect((await stored()).meta.textScanFlags.minor.redetected?.textHash).toBe(NEWER);
   });
 
@@ -891,7 +928,7 @@ describe('resolution safety', () => {
     await resolve('minor', false);
 
     const key = `system:text-scan:redetection-lock:${MODEL_ID}:minor`;
-    const [setKey, token, options] = redisMock.sysRedis.set.mock.calls[0] as unknown as [
+    const [setKey, token, options] = redisMock.redis.set.mock.calls[0] as unknown as [
       string,
       string,
       unknown
@@ -900,21 +937,21 @@ describe('resolution safety', () => {
     expect(options).toEqual({ NX: true, EX: 120 });
     expect(token).not.toBe('1');
     // Compare-and-delete: the script frees the key only while it still holds this request's token.
-    const [script, args] = redisMock.sysRedis.eval.mock.calls[0] as unknown as [
+    const [script, args] = redisMock.redis.eval.mock.calls[0] as unknown as [
       string,
       { keys: string[]; arguments: string[] }
     ];
     expect(script).toContain("GET', KEYS[1]) == ARGV[1]");
     expect(args).toEqual({ keys: [key], arguments: [token] });
-    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
 
     // A second request holds a different token, so it never releases the first's.
-    redisMock.sysRedis.set.mockClear();
-    redisMock.sysRedis.eval.mockClear();
+    redisMock.redis.set.mockClear();
+    redisMock.redis.eval.mockClear();
     await expect(resolve('minor', false)).rejects.toThrow();
-    const secondToken = (redisMock.sysRedis.set.mock.calls[0] as unknown as string[])[1];
+    const secondToken = (redisMock.redis.set.mock.calls[0] as unknown as string[])[1];
     expect(secondToken).not.toBe(token);
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.eval).toHaveBeenCalledTimes(1);
   });
 
   it('removes an emptied label entry and the flags object when dismissing on a flagged model', async () => {
@@ -1275,11 +1312,10 @@ describe('review mode: a first detection waits for a moderator', () => {
         message: 'held detection resolved',
         entityType: 'Model',
         entityId: MODEL_ID,
-        label: 'minor',
         kind: 'first',
         decision,
-        promptIds: { p: 1 },
         moderatorId: 9,
+        payload: { label: 'minor', promptIds: { p: 1 } },
       })
     );
   });
@@ -1350,8 +1386,8 @@ describe('review mode: a first detection waits for a moderator', () => {
         message: 'held detection resolved',
         decision: 'closed',
         kind: 'first',
-        promptIds: { p: 1 },
         moderatorId: 9,
+        payload: expect.objectContaining({ promptIds: { p: 1 } }),
       })
     );
   });

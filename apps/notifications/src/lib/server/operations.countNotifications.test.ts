@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CacheModule from './cache';
 
 // Behavioral coverage for countNotifications' per-key request coalescing (single-flight). The heaviest read
 // on the DB used to fire N concurrent identical `GROUP BY category` scans for the same user (a 43-way
@@ -38,7 +39,9 @@ vi.mock('./lag', () => ({
   preventReplicationLag: vi.fn(async () => {}),
 }));
 vi.mock('./clients/db', () => ({ notifDbWrite: () => h.readPool, notifDbRead: () => h.readPool }));
-vi.mock('./cache', () => ({
+vi.mock('./cache', async (importOriginal) => ({
+  // The real redisWithin: the code under test bounds its redis calls through it.
+  ...(await importOriginal<typeof CacheModule>()),
   notificationCache: {
     // vi.fn wrapper (delegating to the swappable state impl) so tests can assert getUser's call COUNT —
     // e.g. that a non-cacheable variant never consults the cache. vi.clearAllMocks() clears call history

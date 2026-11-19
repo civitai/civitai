@@ -1,5 +1,6 @@
 import type { ActionIconProps, ModalProps } from '@mantine/core';
-import { ActionIcon, Button, Center, Loader, Modal, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Center, Loader, Modal } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { cloneElement, useCallback, useEffect } from 'react';
 import rehypeRaw from 'rehype-raw';

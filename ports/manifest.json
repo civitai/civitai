@@ -1,0 +1,206 @@
+{
+  "$schema": "./manifest.schema.json",
+  "$comment": "Every Node endpoint ported to a Go service. Hand-written; after editing it, run `node scripts/ports/generate.mjs` to validate it and rewrite the @ported-to-go markers. Dependencies are computed in CI, not stored here. See ports/README.md.",
+  "ports": [
+    {
+      "id": "image.getImagesAsPostsInfinite",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "as-posts",
+      "status": "ramp",
+      "routes": ["/api/trpc/image.getImagesAsPostsInfinite"],
+      "nodeEntry": {
+        "file": "src/server/routers/image.router.ts",
+        "symbol": "imageRouter.getImagesAsPostsInfinite"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/server.go",
+        "apps/feed-go/internal/feed/posts.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/feed"],
+      "flags": {
+        "shadow": "feed-go-shadow",
+        "transport": "feed-go-transport",
+        "probe": "feed-go-gofirst-probe"
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "image.getInfinite",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "infinite",
+      "status": "shadow",
+      "routes": ["/api/trpc/image.getInfinite"],
+      "nodeEntry": {
+        "file": "src/server/routers/image.router.ts",
+        "symbol": "imageRouter.getInfinite"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/server.go",
+        "apps/feed-go/internal/feed/infinite.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/feed"],
+      "flags": {
+        "shadow": "feed-go-shadow-infinite",
+        "transport": "feed-go-transport-infinite",
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "model.getAll",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "model-getall",
+      "status": "shadow",
+      "routes": ["/api/trpc/model.getAll"],
+      "nodeEntry": {
+        "file": "src/server/routers/model.router.ts",
+        "symbol": "modelRouter.getAll"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/server.go",
+        "apps/feed-go/internal/modelfeed/serve.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/modelfeed"],
+      "flags": {
+        "shadow": "feed-go-shadow-model-getall",
+        "transport": "feed-go-transport-model-getall",
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "GET /api/v1/images",
+      "kind": "rest",
+      "service": "feed-go",
+      "metricEndpoint": "v1-images",
+      "status": "shadow",
+      "routes": ["/api/v1/images"],
+      "nodeEntry": {
+        "file": "src/pages/api/v1/images/index.ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/server.go",
+        "apps/feed-go/internal/feed/v1images.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/feed"],
+      "flags": {
+        "shadow": "feed-go-shadow-v1-images",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "GET /api/v1/models",
+      "kind": "rest",
+      "service": "feed-go",
+      "metricEndpoint": "v1-models",
+      "status": "shadow",
+      "routes": ["/api/v1/models"],
+      "nodeEntry": {
+        "file": "src/pages/api/v1/models/index.ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/v1models.go",
+        "apps/feed-go/internal/v1models/serve.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/v1models"],
+      "flags": {
+        "shadow": "feed-go-shadow-v1-models",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "GET /api/v1/models/[id]",
+      "kind": "rest",
+      "service": "feed-go",
+      "metricEndpoint": "v1-models-id",
+      "status": "shadow",
+      "routes": ["/api/v1/models/[id]"],
+      "nodeEntry": {
+        "file": "src/pages/api/v1/models/[id].ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/v1models.go",
+        "apps/feed-go/internal/v1models/serve.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/v1models"],
+      "flags": {
+        "shadow": "feed-go-shadow-v1-models",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "POST /api/internal/ping",
+      "kind": "rest",
+      "service": "beacon-go",
+      "metricEndpoint": "ping",
+      "status": "shadow",
+      "routes": ["/api/internal/ping"],
+      "nodeEntry": {
+        "file": "src/pages/api/internal/ping.ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/beacon-go/internal/server/server.go",
+        "apps/beacon-go/internal/beacon/compute.go"
+      ],
+      "goRoots": ["apps/beacon-go/internal/beacon", "apps/beacon-go/internal/tracker"],
+      "flags": {
+        "shadow": "beacon-go-shadow",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
+      "id": "POST /api/internal/pulse",
+      "kind": "rest",
+      "service": "beacon-go",
+      "metricEndpoint": "pulse",
+      "status": "shadow",
+      "routes": ["/api/internal/pulse"],
+      "nodeEntry": {
+        "file": "src/pages/api/internal/pulse.ts",
+        "symbol": "default"
+      },
+      "goHandler": [
+        "apps/beacon-go/internal/server/server.go",
+        "apps/beacon-go/internal/beacon/compute.go"
+      ],
+      "goRoots": ["apps/beacon-go/internal/beacon", "apps/beacon-go/internal/tracker"],
+      "flags": {
+        "shadow": "beacon-go-shadow",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    }
+  ]
+}

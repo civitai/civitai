@@ -1,12 +1,21 @@
-import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import {
+  createRevocationCheck,
+  createSlotTally,
+  createSpokeGuard,
+  type SessionRegistryRedis,
+} from '@civitai/auth';
 import { safeError } from '@civitai/axiom';
 import { getLogger } from './logger';
 import { getSysRedis } from './redis';
+import { isEnvSwitchOn } from '@civitai/shared/env-switch';
 
 // Same event shape as the main app's logSysRedisFailOpen, so its sysredis-fail-open alerts also see this app.
+// `verdict` is what the shared check answered from the markers it had already read (deny_cached|allow_unknown).
 export const isRevoked = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
-  onError: (err) => {
+  // SESSION_REVOCATION_CACHE=off|0|false turns off the record of seen revocations (plain fail-open).
+  markerCache: isEnvSwitchOn(process.env.SESSION_REVOCATION_CACHE),
+  onError: (err, _reason, _claims, verdict) => {
     getLogger()
       .logToAxiom({
         app: 'creator-studio',
@@ -15,11 +24,22 @@ export const isRevoked = createRevocationCheck({
         type: 'warning',
         subtype: 'read-degraded',
         fn: 'spoke isRevoked',
-      })
-      .catch(() => undefined);
+        verdict,
+      });
   },
 });
 
 // The door gate is any authenticated user (plan §1) — member-only capabilities are gated per-action in
 // $lib/server/membership.ts, not here, so non-members can still browse the Studio.
-export const guard = createSpokeGuard({ require: (user) => !!user, isRevoked });
+export const guard = createSpokeGuard({
+  require: (user) => !!user,
+  isRevoked,
+  onSessionSlot: createSlotTally((counts) => {
+    void getLogger().logToAxiom({
+      app: 'creator-studio',
+      name: 'session-cookie-slot',
+      type: 'info',
+      payload: counts,
+    });
+  }),
+});

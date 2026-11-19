@@ -53,7 +53,7 @@ export function StorylineImageCaptionBox({
   return (
     <div className="flex flex-col gap-1.5" data-testid="storyline-caption-box">
       <Textarea
-        aria-label="Caption for this picture"
+        label="Caption (shown in the story)"
         placeholder="What happens in this picture? (optional)"
         value={value}
         onChange={(event) => {

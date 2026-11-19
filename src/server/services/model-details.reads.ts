@@ -16,13 +16,12 @@ export type ModelWithDetails = Prisma.ModelGetPayload<{ select: typeof modelWith
  * `model.findFirst({ where: { id }, select: modelWithDetailsSelect })` returns: at most four
  * statements instead of one query per relation, run ONE AFTER ANOTHER on ONE pooled connection
  * (`db.connection()`), so a model page holds a single connection, as the Prisma read did. A missing
- * model stops after the first statement; a model with no versions after the second. Behind
- * `kysely-hot-reads-2`; the caller picks the client (`getKyselyWithoutLag('model', id)`), as it
- * picked the Prisma one.
+ * model stops after the first statement; a model with no versions after the second. The caller
+ * picks the client (`getKyselyWithoutLag('model', id)`), as it picked the Prisma one.
  *
  * Every VIEW is read by its key as a parameter ("ModelReportStat" and "GenerationCoverage" by the
- * model id), never through a join: see hot-reads.db.ts. Parity with the Prisma read, and the plans
- * of the view reads, are pinned in __tests__/hot-reads-2.kysely-parity.test.ts.
+ * model id), never through a join: see hot-reads.db.ts. The values the Prisma read returned, and the
+ * plans of the view reads, are pinned in __tests__/hot-reads-2.kysely-parity.test.ts.
  */
 export async function readModelWithDetailsViaKysely(
   db: Kysely<DB>,

@@ -19,7 +19,7 @@ import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 
-/** App Assistant subagents ship to moderators first; the Flipt flag widens them or turns them off. */
+/** App Assistant subagents: moderators only. The flag has no Flipt key, so Flipt cannot move it. */
 describe('appAssistantSubagents', () => {
   afterEach(() => {
     mocks.isFliptSync.mockReset();
@@ -34,19 +34,5 @@ describe('appAssistantSubagents', () => {
     const userFlags = await getFeatureFlagsAsync({ user });
     expect(userFlags.civitaiLink).toBe(true);
     expect(userFlags.appAssistantSubagents).toBeUndefined();
-  });
-
-  it('follows its own Flipt key, off for a moderator and on for anyone else', async () => {
-    mocks.isFliptSync.mockImplementation((key?: string) =>
-      key === 'app-assistant-subagents' ? false : null
-    );
-    const mod = { id: 9403, isModerator: true, tier: 'free' } as SessionUser;
-    expect((await getFeatureFlagsAsync({ user: mod })).appAssistantSubagents).toBeUndefined();
-
-    mocks.isFliptSync.mockImplementation((key?: string) =>
-      key === 'app-assistant-subagents' ? true : null
-    );
-    const user = { id: 9404, isModerator: false, tier: 'free' } as SessionUser;
-    expect((await getFeatureFlagsAsync({ user })).appAssistantSubagents).toBe(true);
   });
 });

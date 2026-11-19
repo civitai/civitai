@@ -1,37 +1,64 @@
 import { describe, expect, it } from 'vitest';
+import { selectableVersions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getAllowedResources } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import type { ResourceHelper } from '~/server/services/post.service';
-import {
-  getBaseModelGroup,
-  getGenerationBaseModelResourceOptions,
-} from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
-// A base model whose ecosystem exposes a Checkpoint generation option, so the
-// advancedMode branch is exercised on real data rather than a vacuous empty list.
-const CHECKPOINT_BASE_MODEL = 'SDXL 1.0';
+// Two base models from different families: with only the first selected, the
+// standard picker must not offer the second, so the advanced-mode assertions
+// exercise a real restriction rather than a vacuous one.
+const FIRST_BASE_MODEL = 'Krea 2';
+const OTHER_FAMILY_BASE_MODEL = 'MiniMax H3';
 
-const checkpointResource = {
-  modelType: ModelType.Checkpoint,
-  modelVersionBaseModel: CHECKPOINT_BASE_MODEL,
-} as unknown as ResourceHelper;
+const resource = (modelType: ModelType, modelVersionBaseModel: string) =>
+  ({ modelType, modelVersionBaseModel } as unknown as ResourceHelper);
+
+const offeredBaseModels = (allowed: ReturnType<typeof getAllowedResources>, type: ModelType) =>
+  allowed.find((t) => t.type === type)?.baseModels ?? [];
+
+/** Whether `selectableVersions` (the picker's per-version filter) lets a checkpoint on `baseModel` through. */
+const pickerAcceptsCheckpoint = (
+  allowed: ReturnType<typeof getAllowedResources>,
+  baseModel: string
+) =>
+  selectableVersions([{ id: 1, baseModel }], {
+    skipBaseModel: false,
+    modelBaseModels: allowed
+      .filter((t) => t.type === ModelType.Checkpoint)
+      .flatMap((t) => t.baseModels),
+    excludedIds: [],
+  }).length === 1;
 
 describe('getAllowedResources', () => {
-  it('fixture sanity: the base model resolves to options that include Checkpoint', () => {
-    const group = getBaseModelGroup(CHECKPOINT_BASE_MODEL);
-    const options = getGenerationBaseModelResourceOptions(group);
-    expect(options.some((o) => o.type === ModelType.Checkpoint)).toBe(true);
+  describe('advanced mode off', () => {
+    it('drops Checkpoint and keeps add-ons to the checkpoint family', () => {
+      const allowed = getAllowedResources(
+        [resource(ModelType.Checkpoint, FIRST_BASE_MODEL)],
+        false
+      );
+      expect(allowed.some((t) => t.type === ModelType.Checkpoint)).toBe(false);
+      expect(offeredBaseModels(allowed, ModelType.LORA)).toContain(FIRST_BASE_MODEL);
+      expect(offeredBaseModels(allowed, ModelType.LORA)).not.toContain(OTHER_FAMILY_BASE_MODEL);
+    });
+
+    it('keeps add-ons to the LoRA family when no checkpoint is attached', () => {
+      const allowed = getAllowedResources([resource(ModelType.LORA, FIRST_BASE_MODEL)], false);
+      expect(offeredBaseModels(allowed, ModelType.LORA)).toContain(FIRST_BASE_MODEL);
+      expect(offeredBaseModels(allowed, ModelType.LORA)).not.toContain(OTHER_FAMILY_BASE_MODEL);
+    });
   });
 
-  it('keeps Checkpoint in the allowed list when advanced mode is on', () => {
-    const allowed = getAllowedResources([checkpointResource], true);
-    expect(allowed.some((t) => t.type === ModelType.Checkpoint)).toBe(true);
-  });
+  // An empty list is the picker's "no restriction" state (all types, all base
+  // models) — the same state an image with no resources gets.
+  describe('advanced mode on', () => {
+    it('leaves the picker unrestricted after a checkpoint, so other families and a second checkpoint are offered', () => {
+      const allowed = getAllowedResources([resource(ModelType.Checkpoint, FIRST_BASE_MODEL)], true);
+      expect(allowed).toEqual([]);
+      expect(pickerAcceptsCheckpoint(allowed, OTHER_FAMILY_BASE_MODEL)).toBe(true);
+    });
 
-  it('drops Checkpoint from the allowed list when advanced mode is off', () => {
-    const allowed = getAllowedResources([checkpointResource], false);
-    expect(allowed.some((t) => t.type === ModelType.Checkpoint)).toBe(false);
-    // Non-Checkpoint options still come through, so the off-branch is not just an empty list.
-    expect(allowed.length).toBeGreaterThan(0);
+    it('leaves the picker unrestricted after a LoRA', () => {
+      expect(getAllowedResources([resource(ModelType.LORA, FIRST_BASE_MODEL)], true)).toEqual([]);
+    });
   });
 });

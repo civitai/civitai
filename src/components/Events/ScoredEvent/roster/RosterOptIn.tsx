@@ -1,4 +1,5 @@
 import { Switch, Text } from '@mantine/core';
+import { ShowcaseHatButton } from '~/components/Events/ScoredEvent/ShowcaseHatPicker';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -28,7 +29,7 @@ export function RosterOptIn({ event, compact }: { event: string; compact?: boole
   if (!joined) return null;
 
   const optedIn = status?.optedIn ?? false;
-  return (
+  const optIn = (
     <div className="flex flex-col gap-1">
       <Switch
         size={compact ? 'xs' : 'sm'}
@@ -51,6 +52,14 @@ export function RosterOptIn({ event, compact }: { event: string; compact?: boole
           Saved. You will appear once your account can earn points for your team.
         </Text>
       )}
+    </div>
+  );
+  if (compact) return optIn;
+  // The roster page: the showcase picker sits beside the switch, for the same joined members.
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      {optIn}
+      <ShowcaseHatButton event={event} />
     </div>
   );
 }

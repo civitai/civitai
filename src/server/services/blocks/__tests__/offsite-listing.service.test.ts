@@ -23,6 +23,17 @@ import type {
   SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import type * as S3Utils from '~/utils/s3-utils';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
@@ -219,10 +230,10 @@ const CALLER = 42;
 const OTHER = 99;
 const CLIENT_ID = 'oauth-client-1';
 // Ceiling generous enough for the tests' requestedScopes (0 by default → subset of any).
-const CEILING = 0xffff;
+const CEILING = 0xffffn;
 
 function ownedClient(
-  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+  overrides: Partial<{ id: string; userId: number; allowedScopes: bigint }> = {}
 ) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
@@ -235,7 +246,7 @@ const validInput: SubmitExternalListingInput = {
   // Merged model: every external app links its own OAuth client. A zero requested-scope
   // mask + empty justifications is the minimal valid disclosure.
   connectClientId: CLIENT_ID,
-  requestedScopes: 0,
+  requestedScopes: 0n,
   scopeJustifications: {},
 };
 
@@ -303,7 +314,8 @@ describe('submitExternalListing', () => {
       connectClientId: CLIENT_ID,
       // SERVER-DERIVED from the client's allowedScopes (CEILING), not the input's
       // requestedScopes:0. The disclosed set is always the client's allowed set.
-      connectRequestedScopes: CEILING,
+      // The int4 column holds it as a number.
+      connectRequestedScopes: Number(CEILING),
       connectScopeJustifications: {},
       appBlockId: null,
       contentRating: 'g',
@@ -334,6 +346,17 @@ describe('submitExternalListing', () => {
     };
     expect(listingData.externalUrl).toBeNull();
     expect(listingData.connectClientId).toBe(CLIENT_ID);
+  });
+
+  it('App Developer Terms not accepted: refused before any write', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('REQUIRES an OAuth client: a missing client → NOT_FOUND, no write', async () => {

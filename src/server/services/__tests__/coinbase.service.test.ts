@@ -27,6 +27,10 @@ const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
 // Mock modules
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('process', () => ({
   env: {
     NEXTAUTH_URL: 'https://civitai.com',

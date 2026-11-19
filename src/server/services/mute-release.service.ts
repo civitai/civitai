@@ -1,7 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { invalidateSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
 import { userUpdateCounter } from '~/server/prom/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
@@ -82,17 +80,11 @@ export async function afterMuteReleased({
   updateSource: string;
 }) {
   userUpdateCounter?.inc({ location: `user.service:${updateSource}` });
+  const { afterAccountStandingChanged } = await import(
+    '~/server/services/account-standing.service'
+  );
+  await afterAccountStandingChanged(userId, { kind: 'invalidate', caller: 'moderation' });
   await restoreScamCases(userId, closedCaseIds);
-  try {
-    await invalidateSession(userId, 'moderation');
-  } catch (error) {
-    await logToAxiom({
-      name: 'unmute-session-invalidate-failed',
-      type: 'error',
-      message: (error as Error).message,
-      details: { userId },
-    }).catch(() => undefined);
-  }
 }
 
 /** Every unmute goes through here, or through `releaseMuteInTransaction` + `afterMuteReleased`. */

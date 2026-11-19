@@ -35,6 +35,26 @@ export type ReviewChecklistItem = {
   status: ReviewChecklistItemStatus;
 };
 
+/** Legal's list of mechanics banned in apps (2026-11-03), shown verbatim. */
+export const PROHIBITED_APP_MECHANICS = [
+  'gambling, lotteries, raffles, betting or prediction markets with Buzz',
+  'loot boxes, gacha or mystery goods for Buzz',
+  'sweepstakes without written approval',
+  'moving Buzz value off-platform',
+  'Buzz farming, pyramid schemes or gaming the Creator pool',
+  'financial or crypto features',
+  'taking data beyond granted scopes, or phishing',
+  'anything aimed at minors',
+  "selling access to others' content or accounts",
+] as const;
+
+const prohibitedMechanicsItem: ReviewChecklistItem = {
+  id: 'prohibited-mechanics',
+  label: 'No prohibited mechanics',
+  hint: `Reject if the app includes any of: ${PROHIBITED_APP_MECHANICS.join('; ')}.`,
+  status: 'todo',
+};
+
 /** The off-site listing facts the content checklist derives its auto-checks from. */
 export type OffsiteChecklistData = {
   name: string | null | undefined;
@@ -54,7 +74,7 @@ export type OffsiteChecklistData = {
   // `connectClientId` is set the checklist adds a "sensitive scopes justified" item
   // that WARNS if any sensitive requested scope lacks a non-empty justification.
   connectClientId?: string | null;
-  connectRequestedScopes?: number | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -64,11 +84,11 @@ export type OffsiteChecklistData = {
  * for a non-connect listing or when every sensitive scope is justified.
  */
 export function unjustifiedSensitiveScopeKeys(data: {
-  connectRequestedScopes?: number | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 }): string[] {
-  const sensitiveRequested = (data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0) return [];
+  const sensitiveRequested = BigInt(data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return [];
   const justifications = data.connectScopeJustifications ?? {};
   return tokenScopeMaskToList(sensitiveRequested)
     .filter(({ key }) => {
@@ -173,6 +193,7 @@ export function getOnsiteReviewChecklist(data?: OnsiteChecklistData): ReviewChec
       hint: 'Publisher-supplied imagery is on-brand and not abusive.',
       status: 'todo',
     },
+    prohibitedMechanicsItem,
   ];
 }
 
@@ -240,6 +261,8 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
       hint: 'The declared category matches what the app actually does.',
       status: 'todo',
     },
+    // A listing-media revision changes no app behaviour, so there is nothing to rule out.
+    ...(includeUrlItem ? [prohibitedMechanicsItem] : []),
     // CONNECT sub-kind only (PR3): warn when a sensitive requested scope has no
     // justification. Auto-`warn` if any is missing, `ok` when all are justified.
     ...(isConnect
@@ -249,7 +272,9 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
             label: 'Sensitive permissions justified',
             hint:
               unjustifiedSensitive.length > 0
-                ? `Missing a justification for: ${unjustifiedSensitive.join(', ')}. Approval is blocked until every sensitive scope is justified.`
+                ? `Missing a justification for: ${unjustifiedSensitive.join(
+                    ', '
+                  )}. Approval is blocked until every sensitive scope is justified.`
                 : 'Every requested sensitive permission (money / private data / cross-user writes) carries a justification.',
             status: unjustifiedSensitive.length > 0 ? ('warn' as const) : ('ok' as const),
           },

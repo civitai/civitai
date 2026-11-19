@@ -105,6 +105,22 @@ describe('moveRecurringBidToLatest', () => {
     expect(res.entityId).toBe(6);
   });
 
+  it('skips a newer version that is not commercially available', async () => {
+    bidRecurringFindFirst
+      .mockResolvedValueOnce(recurringBid({ auctionBase: { ...auctionBase, ecosystem: 'Misc' } }))
+      .mockResolvedValueOnce(null);
+    modelVersionFindMany.mockResolvedValue([
+      version({ id: 9, baseModel: 'Flux.2 Klein 9B' }),
+      version({ id: 8, baseModel: 'Flux.3 Klein' }),
+      version({ id: 7, baseModel: 'Qwen 2.1' }),
+      version({ id: 6, name: 'eligible', baseModel: 'Flux.2 Klein 4B' }),
+      version(),
+    ]);
+
+    const res = await moveRecurringBidToLatest({ userId: 1, bidId: 100 });
+    expect(res.entityId).toBe(6);
+  });
+
   it('errors without writing when the bid is already on the latest eligible version', async () => {
     bidRecurringFindFirst.mockResolvedValueOnce(recurringBid());
     modelVersionFindMany.mockResolvedValue([version(), version({ id: 4 })]);

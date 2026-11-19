@@ -16,7 +16,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: bearer
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -62,7 +61,7 @@ const wrappers: {
 const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null, permissions: [] };
 const MEMBER = { ...MODERATOR, isModerator: false };
 
-const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = MODERATOR) => ({
+const nonOauthKey = (apiKeyType: string | undefined, tokenScope: bigint, user = MODERATOR) => ({
   user,
   apiKeyId: 11,
   ...(apiKeyType ? { apiKeyType } : {}),
@@ -70,8 +69,8 @@ const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number, user = 
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number, user = MODERATOR) => nonOauthKey('User', tokenScope, user);
-const oauthToken = (apiKeyType: string, tokenScope: number) => ({
+const personalKey = (tokenScope: bigint, user = MODERATOR) => nonOauthKey('User', tokenScope, user);
+const oauthToken = (apiKeyType: string, tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 12,
   apiKeyType,

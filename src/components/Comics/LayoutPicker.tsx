@@ -1,4 +1,5 @@
-import { ActionIcon, Modal, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Modal, Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconZoomIn } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';

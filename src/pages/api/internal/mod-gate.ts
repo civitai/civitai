@@ -152,9 +152,13 @@ import { verifyReviewAccessToken } from '~/server/services/blocks/review-session
  *
  * That residual is accepted on the same footing as the subresources themselves:
  * the `review-<sha16>` host is a ~64-bit secret (the sha16 hostname) surfaced
- * ONLY to mods. It is mod-only, ephemeral, and exists purely for the
- * pre-approval preview — an attacker who does not already know the exact host
- * can't request anything from it, and the host is torn down after review.
+ * ONLY to mods, and exists purely for the pre-approval preview — an attacker who
+ * does not already know the exact host can't request anything from it. It is NOT
+ * short-lived: a preview can be deployed automatically for every submission, and
+ * it lives until the request is approved, rejected, withdrawn or superseded, with
+ * a hard maximum of 14 days (`REVIEW_PREVIEW_MAX_AGE_MS`). For that whole window
+ * the residual is: anyone holding the host can read the pending bundle's bytes.
+ * Accepted by the operator on 2026-11-08 with the 14-day window stated.
  *
  * Two things that premise quietly needs, checked rather than assumed, because every
  * accepted residual above rests on it. (1) The sha16 is NOT the submitter's own
@@ -250,7 +254,7 @@ import { verifyReviewAccessToken } from '~/server/services/blocks/review-session
  * resolve host → publish request → a file list and answer "does this path name a
  * real file" exactly. The host→request lookup already exists
  * (`findActiveReviewPreviewRows` in that same service reads the host out of the
- * deploy detail, over a population capped by `MAX_CONCURRENT_REVIEW_PREVIEWS`), and
+ * deploy detail, over the pending requests' active previews), and
  * any such list is immutable per review sha, so the steady-state cost would be a
  * cache lookup rather than a per-subrequest database round trip.
  *

@@ -31,7 +31,7 @@
   </header>
 
   <dl
-    class="grid grid-cols-1 gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm sm:grid-cols-4"
+    class="grid grid-cols-1 gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm sm:grid-cols-5"
   >
     <div>
       <dt class="text-dark-2">Blocked by majority (all time)</dt>
@@ -53,6 +53,16 @@
           : 'text-lg font-semibold text-dark-0'}
       >
         {num(data.actions.failing)}
+      </dd>
+    </div>
+    <div>
+      <dt class="text-dark-2">CSAM hold not yet applied (retried on next vote)</dt>
+      <dd
+        class={data.actions.holdsPending
+          ? 'text-lg font-semibold text-red-300'
+          : 'text-lg font-semibold text-dark-0'}
+      >
+        {num(data.actions.holdsPending)}
       </dd>
     </div>
   </dl>

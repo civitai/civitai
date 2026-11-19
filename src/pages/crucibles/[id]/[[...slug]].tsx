@@ -8,8 +8,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
@@ -95,6 +95,7 @@ import { isDefined } from '~/utils/type-guards';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -838,6 +839,24 @@ function CrucibleReviewNotice({
         This crucible is hidden because its text violates our Terms of Service.
       </Alert>
     );
+  if (crucible.coverRestricted && canManage)
+    return (
+      <Alert color="yellow" radius="md" className="mb-6">
+        The cover isn&apos;t shown to visitors because {RESTRICTED_IMAGE_REASON}, and this crucible is
+        left out of feeds. Change the cover to list it.
+      </Alert>
+    );
+  if (crucible.ingestion === CrucibleIngestionStatus.Scanned && !crucible.image) {
+    // A visitor is sent no restricted cover. A manager sent none whose cover is stored falls through to
+    // the review notice below.
+    if (!canManage) return null;
+    if (!crucible.hasCover)
+      return (
+        <Alert color="yellow" radius="md" className="mb-6">
+          This crucible has no cover and is hidden from everyone else until you add one.
+        </Alert>
+      );
+  }
   if (
     crucible.ingestion === CrucibleIngestionStatus.Scanned &&
     crucible.image?.ingestion === ImageIngestionStatus.Scanned

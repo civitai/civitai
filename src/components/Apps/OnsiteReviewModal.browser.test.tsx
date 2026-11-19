@@ -169,6 +169,7 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         // Sub-panel queries the modal mounts (Review-preview / Screenshots / Code
         // diff) — kept network-free with empty/no-op state.
@@ -229,7 +230,9 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
     // Structured manifest render (scopes + slot targets), not a raw JSON dump.
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     await expect.element(page.getByText('model.sidebar_top')).toBeInTheDocument();
     // A first-version submission shows the full-manifest note (no diff).
     await expect
@@ -352,6 +355,83 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
     // Neither spelling renders when the manifest declares no category.
     expect(page.getByText('generation', { exact: true }).elements()).toHaveLength(0);
     expect(page.getByText('Generation', { exact: true }).elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — the issue-tracker link (`bugs`) is surfaced INLINE', () => {
+  // `bugs` is manifest-governed and becomes the store's Support link on approve, so the
+  // reviewer must read it next to Source — as plain text, never a clickable anchor — rather
+  // than inside the collapsed "Other manifest fields" raw-JSON disclosure.
+  const TRACKER = 'https://tracker-7719.example.test/issues';
+
+  test('a first version with `bugs` shows it beside Source, and it is a HANDLED key', async () => {
+    const withBugs = {
+      ...ONSITE_PENDING,
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        repository: 'https://github.com/example/remix-app',
+        bugs: TRACKER,
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: withBugs, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    const support = page.getByTestId('apps-onsite-review-support');
+    await expect.element(support).toBeInTheDocument();
+    await expect.element(support).toHaveTextContent(`Support: ${TRACKER}`);
+    // Plain text, not an outbound link out of the review surface.
+    expect(document.querySelectorAll(`a[href="${TRACKER}"]`).length).toBe(0);
+    // Still only the base fixture's one novel key in the raw-JSON disclosure.
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('🔴 a v2 that changes ONLY `bugs` shows the new link in the same place', async () => {
+    const v2 = {
+      ...ONSITE_PENDING,
+      version: '1.3.0',
+      manifest: { ...ONSITE_PENDING.manifest, version: '1.3.0', bugs: TRACKER },
+      manifestDiffSummary: {
+        kind: 'update',
+        added: ['bugs'],
+        removed: [],
+        changed: [{ field: 'version', from: '1.2.0', to: '1.3.0' }],
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: v2, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect
+      .element(page.getByTestId('apps-onsite-review-support'))
+      .toHaveTextContent(`Support: ${TRACKER}`);
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('a non-string `bugs` (a legacy stored manifest) is shown, marked as producing no link', async () => {
+    const legacy = {
+      ...ONSITE_PENDING,
+      manifest: { ...ONSITE_PENDING.manifest, bugs: { url: TRACKER } },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: legacy, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    const support = page.getByTestId('apps-onsite-review-support');
+    await expect.element(support).toHaveTextContent(/not a URL string/);
+    await expect.element(support).toHaveTextContent(TRACKER);
+  });
+
+  test('no `bugs` renders no Support line', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
+    expect(page.getByTestId('apps-onsite-review-support').elements()).toHaveLength(0);
   });
 });
 
@@ -519,7 +599,9 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
     );
     // Positive control: the modal DID render, so the two zeros below mean "absent",
     // not "nothing mounted".
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
     expect(page.getByText(/^Digital goods/).elements()).toHaveLength(0);
   });
@@ -709,7 +791,9 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
       />
     );
     // Positive control: the modal rendered, so the zero below means "absent".
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByTestId('apps-review-analytics').elements()).toHaveLength(0);
   });
 });
@@ -735,8 +819,10 @@ describe('OnsiteReviewModal — per-scope justifications shown to the mod', () =
         onClose={vi.fn()}
       />
     );
-    // Header uses the renamed "Permissions" copy with the count.
-    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    // The non-sensitive group's heading, with its count.
+    await expect
+      .element(page.getByText('Other permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // The supplied justification is surfaced verbatim under its badge, prefixed
     // with the "Why:" label. Exact match on the full paragraph disambiguates from
     // the raw manifest-JSON panel (which contains the string but not "Why:").
@@ -771,9 +857,13 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
       />
     );
     // Sensitive group header with the sensitive-only count.
-    await expect.element(page.getByText('Sensitive permissions (2)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Sensitive permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // Normal group header counts ONLY the non-sensitive scopes.
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     // The sensitive scopes carry the reusable "Sensitive" indicator; the two
     // sensitive scopes each get one badge (the normal scope does not).
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(2);
@@ -781,6 +871,40 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
     await expect.element(page.getByText('ai:write:budgeted')).toBeInTheDocument();
     await expect.element(page.getByText('buzz:read:self')).toBeInTheDocument();
     await expect.element(page.getByText('models:read:self')).toBeInTheDocument();
+  });
+
+  // The moderator sees the same order as the store listing will show the viewer.
+  test("each group is in the store listing's order, and an unknown scope is not dropped", async () => {
+    const unknown = 'zz:not-a-real:scope';
+    const input = [
+      'models:read:self',
+      unknown,
+      'apps:storage:shared:write',
+      'user:read:self',
+      'ai:write:budgeted',
+    ];
+    const mixed = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-order',
+      slug: 'order-block',
+      manifest: { ...ONSITE_PENDING.manifest, scopes: input },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: mixed, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect
+      .element(page.getByText('Sensitive permissions (2)', { exact: true }))
+      .toBeInTheDocument();
+    const order = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="apps-review-scope-row"]')
+    ).map((row) => row.dataset.scope);
+    expect(order).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:shared:write',
+      'user:read:self',
+      'models:read:self',
+      unknown,
+    ]);
   });
 
   test('a manifest with ONLY normal scopes renders NO "Sensitive permissions" header', async () => {
@@ -797,10 +921,44 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
       <OnsiteReviewModal selection={{ request: normalOnly, mode: 'pending' }} onClose={vi.fn()} />
     );
     // The normal group still shows all of them.
-    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // No sensitive header and no sensitive badge when nothing is sensitive.
     expect(page.getByText(/Sensitive permissions/).elements()).toHaveLength(0);
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — the per-job Buzz budget is shown to the mod', () => {
+  function renderWithPage(pageField: Record<string, unknown>) {
+    const request = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-budget',
+      manifest: { ...ONSITE_PENDING.manifest, scopes: ['ai:write:budgeted'], page: pageField },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request, mode: 'pending' }} onClose={vi.fn()} />
+    );
+  }
+
+  test.each([
+    ['declared 1000', { buzzBudgetPerGen: 1000 }, 'Per-job Buzz budget: 1000', true],
+    ['declared 250', { buzzBudgetPerGen: 250 }, 'Per-job Buzz budget: 250', false],
+    ['undeclared', {}, 'Per-job Buzz budget: 1000 (default)', true],
+    [
+      'fractional (the mint ignores it)',
+      { buzzBudgetPerGen: 12.5 },
+      'Per-job Buzz budget: 1000 (default)',
+      true,
+    ],
+  ])('%s', async (_name, pageField, text, flagged) => {
+    renderWithPage(pageField);
+    const row = page.getByTestId('apps-review-per-job-budget');
+    await expect.element(row).toHaveTextContent(text);
+    expect(page.getByTestId('apps-review-per-job-budget-over').elements()).toHaveLength(
+      flagged ? 1 : 0
+    );
   });
 });
 

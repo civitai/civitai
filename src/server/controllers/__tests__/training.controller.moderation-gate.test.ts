@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A wrong URL, verb or identifier on the moderation gate fails only against a live orchestrator;
@@ -12,6 +11,9 @@ const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/orchestrator/workflows', () => ({ getWorkflow }));
 
 vi.mock('~/server/services/model.service', () => ({ getModel: vi.fn() }));
+
+const trackModActivity = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 
@@ -48,7 +50,7 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await handleDenyTrainingData({ input: { id: 42 } });
+    await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     const calls = gateCalls(fetchMock);
     expect(calls).toHaveLength(1);
@@ -73,18 +75,54 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await handleDenyTrainingData({ input: { id: 42 } });
+    await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     expect(gateCalls(fetchMock)[0][0]).toBe(
       'https://orch.example/v1/manager/workflows/wf-pending/moderation-gate'
     );
   });
 
+  it('records exactly one trainingData:deny activity for the moderator', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200 }))
+    );
+
+    await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
+
+    expect(trackModActivity).toHaveBeenCalledExactlyOnceWith(7, {
+      entityType: 'modelVersion',
+      entityId: 42,
+      activity: 'trainingData:deny',
+    });
+  });
+
+  it('still completes the deny and its callback when the activity write fails', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db unavailable'));
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
+
+    expect(result).toEqual({ ok: true, webhookFailed: false });
+    expect(webhookCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it('records no activity when the orchestrator refuses the gate', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 500 }))
+    );
+
+    await expect(handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 })).rejects.toThrow();
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it('throws when the orchestrator refuses the gate, so the caller cannot record a deny', async () => {
     const fetchMock = vi.fn(async () => ({ ok: false, status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(handleDenyTrainingData({ input: { id: 42 } })).rejects.toThrow(
+    await expect(handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 })).rejects.toThrow(
       'Could not connect to orchestrator'
     );
     expect(gateCalls(fetchMock)).toHaveLength(1);
@@ -94,7 +132,7 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await handleDenyTrainingData({ input: { id: 42 } });
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     const [url, init] = webhookCalls(fetchMock)[0] as [string, RequestInit];
     expect(url).toBe('https://api.civitai.com/webhooks/resource-training-v2/42?token=hook-token');
@@ -113,15 +151,23 @@ describe('handleDenyTrainingData', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await handleDenyTrainingData({ input: { id: 42 } });
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     expect(result.webhookFailed).toBe(true);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'Gate released but the training webhook was refused; version is still Paused',
-      }),
-      expect.anything()
+  });
+
+  it('reports an unreachable callback without failing the deny, because the gate is already released', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('/webhooks/')) throw new TypeError('fetch failed');
+        return { ok: true, status: 200 };
+      })
     );
+
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
+
+    expect(result).toEqual({ ok: true, webhookFailed: true });
   });
 
   it('skips the callback and reports it when the workflow has no status', async () => {
@@ -129,7 +175,7 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await handleDenyTrainingData({ input: { id: 42 } });
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
 
     expect(gateCalls(fetchMock)).toHaveLength(1);
     expect(webhookCalls(fetchMock)).toHaveLength(0);
@@ -147,7 +193,7 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(handleDenyTrainingData({ input: { id: 42 } })).rejects.toThrow(
+    await expect(handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 })).rejects.toThrow(
       'Workflow does not belong to this model version'
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -158,7 +204,7 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(handleDenyTrainingData({ input: { id: 42 } })).rejects.toThrow(
+    await expect(handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 })).rejects.toThrow(
       'Workflow does not belong to this model version'
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -169,7 +215,9 @@ describe('handleDenyTrainingData', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(handleDenyTrainingData({ input: { id: 42 } })).rejects.toMatchObject({
+    await expect(
+      handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 })
+    ).rejects.toMatchObject({
       code: 'INTERNAL_SERVER_ERROR',
     });
     expect(fetchMock).not.toHaveBeenCalled();

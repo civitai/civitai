@@ -8,7 +8,7 @@ import {
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
@@ -16,7 +16,7 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { BOUNTY_AWARD_RULINGS } from '~/shared/constants/bounty.constants';
+import { BOUNTY_AWARD_RULINGS } from '@civitai/shared/bounty-award';
 
 // A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
 const utcToday = () => dayjs.utc(stripTime(new Date()));
@@ -53,7 +53,12 @@ export const bountyDetailsSchema = z.object({
     .optional(),
 });
 
+// May be empty when the domain's cap hides every image; updateEntityImages enforces one stays linked.
+export const bountyImagesSchema = z.array(comfylessImageSchema);
+export const shownImageIdsSchema = z.number().array().optional();
+
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
+
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
   description: getSanitizedStringSchema({ allowBlurbs: true }).refine(
@@ -88,14 +93,15 @@ export const createBountyInputSchema = z.object({
   poi: z.boolean().optional(),
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z
-    .array(
-      imageReferenceInputSchema.extend({
-        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-      })
-    )
-    .min(1, 'At least one example image must be uploaded'),
+  images: bountyImagesSchema.min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
+  // Minted by the client once per new bounty and resent on its retries, with the time it was
+  // minted (epoch ms): the creation charge's ledger prefix derives from both, so a retry after an
+  // unanswered request charges once. Award pricing reads the charge time from the prefix's last
+  // segment, which is why the time travels with the key. Optional for clients from before keys,
+  // which get a new prefix per call as before.
+  idempotencyKey: z.string().uuid().optional(),
+  chargedAt: z.number().int().positive().optional(),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
@@ -110,11 +116,12 @@ export const updateBountyInputSchema = createBountyInputSchema
     poi: true,
     nsfw: true,
     ownRights: true,
-    images: true,
     entryLimit: true,
   })
   .extend({
     id: z.number(),
+    images: bountyImagesSchema,
+    shownImageIds: shownImageIdsSchema,
     startsAt: z.coerce.date(),
     expiresAt: stringToDate(
       z
@@ -130,6 +137,8 @@ export const updateBountyInputSchema = createBountyInputSchema
 export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
 export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
+  images: bountyImagesSchema,
+  shownImageIds: shownImageIdsSchema,
   startsAt: z.string(),
   expiresAt: z.string(),
   lockedProperties: z.string().array().optional(),
@@ -141,7 +150,6 @@ export const addBenefactorUnitAmountInputSchema = z.object({
   bountyId: z.number(),
 });
 
-export type ResolveUnpaidBountyAwardInput = z.infer<typeof resolveUnpaidBountyAwardInputSchema>;
 export const resolveUnpaidBountyAwardInputSchema = z.object({
   bountyId: z.number().int().positive(),
   userId: z.number().int().positive(),

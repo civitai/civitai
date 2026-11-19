@@ -1,4 +1,5 @@
-import { Group, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Group, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconBolt, IconCheck, IconChevronDown } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';

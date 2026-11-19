@@ -58,9 +58,14 @@ const PACKAGE_EXPORTS = {
   '.': './src/index.ts',
   './hot-reads': './src/hot-reads.db.ts',
   './hot-reads-3': './src/hot-reads-3.db.ts',
-  './hot-reads-4': './src/hot-reads-4.db.ts',
   './hot-reads-5': './src/hot-reads-5.db.ts',
   './hot-reads-6': './src/hot-reads-6.db.ts',
+  './hot-reads-7': './src/hot-reads-7.db.ts',
+  './hot-reads-8': './src/hot-reads-8.db.ts',
+  './hot-reads-9': './src/hot-reads-9.db.ts',
+  './hot-reads-10': './src/hot-reads-10.db.ts',
+  './hot-reads-11': './src/hot-reads-11.db.ts',
+  './hot-reads-12': './src/hot-reads-12.db.ts',
   './image': './src/image.db.ts',
   './model': './src/model.db.ts',
   './page-access': './src/page-access.db.ts',
@@ -69,7 +74,11 @@ const PACKAGE_EXPORTS = {
   './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
   './evidence-hold': './src/evidence-hold.db.ts',
   './csam-queue': './src/csam-queue.db.ts',
+  './evidence-archive-queue': './src/evidence-archive-queue.db.ts',
+  './content-deletion': './src/content-deletion.db.ts',
+  './profile-picture-clear': './src/profile-picture-clear.db.ts',
   './test-harness': './src/test/compile-harness.ts',
+  './test/image-uses': './src/test/image-uses.ts',
 };
 
 // Every first-party file reachable from `./src/test/compile-harness.ts`, repo-root-relative.

@@ -11,14 +11,15 @@
  * - Strength slider for LoRA/LoCon/DoRA resources
  */
 
-import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Badge, Group, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { defaultStrength } from '~/shared/utils/resource.utils';
 import { strengthSliderBounds } from '~/shared/constants/generation.constants';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { useAppContext } from '~/providers/AppProvider';
 import { getResourceSfwOnlyMessage } from '~/components/SfwOnlyBadge/sfw-only.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -27,6 +28,7 @@ import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
 
 // =============================================================================
 // Types
@@ -248,6 +250,10 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
+            <PartnerDisclosureIcons
+              partnerService={resource.partnerService}
+              partnerTrains={resource.partnerTrains}
+            />
             {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
@@ -326,15 +332,18 @@ export function ResourceItemContent({
         )}
       </Group>
       {hasStrength && (
-        <div className="flex w-full items-center gap-2">
-          <NumberSlider
+        <div className="mt-2 flex w-full items-center gap-2">
+          <SliderInput
             className="flex-1"
             value={strengthValue ?? defaultStrength(resource)}
-            onChange={(strength) => onStrengthChange(strength ?? 1)}
+            onChange={(strength) => onStrengthChange(strength)}
             min={strengthBounds.min}
             max={strengthBounds.max}
             step={0.05}
+            precision={2}
             disabled={disabled}
+            steppers
+            ariaLabel={`${resource.model.name} strength`}
           />
         </div>
       )}

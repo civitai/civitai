@@ -20,6 +20,8 @@ import {
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
+import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -64,6 +66,8 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
+import { appendSetCookie } from '~/server/utils/set-cookie';
+import { siteCookieJar } from '@civitai/auth/client';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -77,6 +81,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { EventSeed } from '~/server/services/event-seeds.service';
 import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
 import {
   NAV_BANNERS_DISMISSED_COOKIE,
@@ -150,6 +155,7 @@ type CustomAppProps = {
   navBanners?: NavBanner[];
   navBannersDismissed?: string[];
   siteAlerts?: SiteAlertsPayload;
+  eventSeeds?: EventSeed[];
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -192,6 +198,7 @@ function MyApp(props: CustomAppProps) {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
       seed = Date.now(),
       canIndex,
@@ -283,6 +290,7 @@ function MyApp(props: CustomAppProps) {
       navBanners={navBanners}
       navBannersDismissed={navBannersDismissed}
       siteAlerts={siteAlerts}
+      eventSeeds={eventSeeds}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -374,7 +382,11 @@ function MyApp(props: CustomAppProps) {
                     />
                     <GoogleAnalytics />
                     <AccountProvider>
-                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                      <CivitaiSessionProvider
+                        disableHidden={cookies.disableHidden}
+                        showEventCosmetics={cookies.showEventCosmetics}
+                        eventPointPops={cookies.eventPointPops}
+                      >
                         <ErrorBoundary>
                           <BrowserSettingsProvider>
                             <BrowsingLevelProvider>
@@ -478,6 +490,13 @@ function MyApp(props: CustomAppProps) {
 //   };
 // };
 MyApp.getInitialProps = async (appContext: AppContext) => {
+  // 🔴 First, before anything can render or redirect: a page render that Next already gave a
+  // static-asset rule's public `Cache-Control` (a missing `/images/<file>.<ext>`, a case variant of
+  // a real one, their data requests) must not leave with it. See `~/server/utils/static-asset-cache`.
+  if (typeof window === 'undefined') {
+    const { privatizeStaticAssetPageRender } = await import('~/server/utils/static-asset-cache');
+    privatizeStaticAssetPageRender(appContext.ctx.res);
+  }
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
   if (!request) return initialProps;
@@ -507,13 +526,16 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = hasSessionCookie(cookies);
+  // A host-only site's shared-slot cookie is never its session (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+  const siteCookies = siteCookieJar(cookies, request.headers.host) ?? cookies;
+  let hasAuthCookie = hasSessionCookie(siteCookies);
   // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
-  const sessionCookie = sessionCookieKind(cookies);
+  const sessionCookie = sessionCookieKind(siteCookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
-    await import('~/server/utils/server-domain');
+  const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
+    '~/server/utils/server-domain'
+  );
   const serverDomains: ServerDomains = {
     green: serverDomainMap.green,
     blue: serverDomainMap.blue,
@@ -521,7 +543,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
   // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
-  const availableOAuthProviders = await getAvailableOAuthProviders();
+  // `typeof window` block: the module reads the flag client, which must stay out of the client bundle.
+  let availableOAuthProviders: string[] = [];
+  if (typeof window === 'undefined') {
+    const { getAvailableOAuthProviders } = await import('~/server/auth/oauth-providers');
+    availableOAuthProviders = await getAvailableOAuthProviders();
+  }
 
   const region = getRegion(request);
 
@@ -540,11 +567,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     [SHELL_REQ_KEY]?: string;
     [SHELL_RENDERED_REQ_KEY]?: string;
     [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+    [BOT_CACHE_REQ_KEY]?: BotCacheRouteName;
   };
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
   renderRequest[SHELL_REQ_KEY] = shellRender?.route;
   renderRequest[SHELL_RENDERED_REQ_KEY] = undefined;
+  renderRequest[BOT_CACHE_REQ_KEY] = undefined;
   if (!shellRender) {
     const { res } = appContext.ctx;
     for (const name of SHELL_EDGE_HEADERS) {
@@ -617,6 +646,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow?: boolean;
     navBanners?: NavBanner[];
     siteAlerts?: SiteAlertsPayload;
+    eventSeeds?: EventSeed[];
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -675,6 +705,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       liveNow: undefined,
       navBanners: undefined,
       siteAlerts: undefined,
+      eventSeeds: undefined,
       session: null,
     };
   }
@@ -692,13 +723,28 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     liveNow = false,
     navBanners,
     siteAlerts,
+    eventSeeds,
   } = settingsBootstrap;
+
+  // Bot HTML cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the cache
+  // may store and serve to other crawlers, so nothing below may vary it per request.
+  let botCache: { route: BotCacheRouteName; seed: number } | undefined;
+  if (typeof window === 'undefined') {
+    const { resolveBotCacheRoute, botCacheSeed } = await import('~/server/bot-cache/bot-cache');
+    const route = resolveBotCacheRoute(request, appContext.ctx.pathname, {
+      degraded: settingsDegraded,
+    });
+    if (route) botCache = { route, seed: botCacheSeed(request.url) };
+  }
+  renderRequest[BOT_CACHE_REQ_KEY] = botCache?.route;
+
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
-    req: request,
+    // Without the request, region cannot reach a cacheable render's flags.
+    req: botCache ? undefined : request,
   });
 
   const domain = getRequestDomainColor(request);
@@ -758,8 +804,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // user. Scope: the delete this replaces named the LEGACY `civitai-token` family only,
     // so only legacy holders were ever affected either way. Cost of keeping it is near
     // zero: a civ-token's Max-Age comes from its own `exp` (civ-cookie.ts:163), so an
-    // expired one is never in the jar to linger; a stale legacy cookie costs one failed
-    // jose decode per request. Deleting safely needs the endpoint to signal a degraded
+    // expired one is never in the jar to linger; a stale legacy cookie is not decoded
+    // outside a preview. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
   }
@@ -787,21 +833,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
+  let guardCookies: string[] = [];
   if (!guardTo && typeof window === 'undefined') {
     const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
-    guardTo =
-      sharedSlotNavigationSyncUrl({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        cookies,
-      }) ?? undefined;
+    const sync = sharedSlotNavigationSyncUrl({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      cookies,
+    });
+    if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
   // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
   // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
   // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
+    for (const cookie of guardCookies) appendSetCookie(appContext.ctx.res, cookie);
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }
@@ -827,16 +875,19 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       navBanners,
       navBannersDismissed,
       siteAlerts,
+      eventSeeds,
       following,
-      seed: Date.now(),
+      seed: botCache ? botCache.seed : Date.now(),
       hasAuthCookie,
       sessionCookie,
-      region,
+      // No region: it is the requester's, and it decides the consent banner.
+      region: botCache ? undefined : region,
       domain,
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      verifiedBot,
+      // Which crawler asked is not part of the cache key.
+      verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,
   };

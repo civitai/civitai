@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -206,7 +206,7 @@ export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
 export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
 
-export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar" | "Paladin";
 
 export type ChallengeSource = "System" | "Mod" | "User";
 
@@ -260,13 +260,17 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
-export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion" | "Comic";
 
 export type StorylineStatus = "Ongoing" | "Complete";
 
 export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 
+export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
+
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
+
+export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
@@ -276,7 +280,7 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
-export type ServiceDealFileKind = "Preview" | "Final";
+export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
@@ -571,8 +575,6 @@ export interface User {
   roles?: UserRole[];
   membershipOverride?: UserMembershipOverride | null;
   links?: UserLink[];
-  comments?: Comment[];
-  commentReactions?: CommentReaction[];
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
@@ -592,11 +594,8 @@ export interface User {
   appAccessReviewed?: AppAccessRequest[];
   questions?: Question[];
   answers?: Answer[];
-  commentsv2?: CommentV2[];
   questionReactions?: QuestionReaction[];
   answerReactions?: AnswerReaction[];
-  commentV2Reactions?: CommentV2Reaction[];
-  threadMutes?: ThreadMute[];
   commentsV3?: CommentV3[];
   commentV3Reactions?: CommentV3Reaction[];
   commentMutes?: CommentMute[];
@@ -676,6 +675,7 @@ export interface User {
   collaboratingOn?: EntityCollaborator[];
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
+  accessTokens?: AccessToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
@@ -713,6 +713,7 @@ export interface User {
   comicChapterReads?: ComicChapterRead[];
   storylines?: Storyline[];
   storylineCollaborations?: StorylineCollaborator[];
+  storylineFollows?: StorylineFollow[];
   storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
   storylineBranchChoices?: StorylineBranchChoice[];
   storylineCreateClicks?: StorylineCreateClick[];
@@ -772,6 +773,8 @@ export interface User {
   serviceDealsSold?: ServiceDeal[];
   mysteryBoxesSold?: ItemDefinition[];
   gameFrameGames?: GameFrameGame[];
+  giftLinksCreated?: ModelVersionGiftLink[];
+  giftRedemptions?: ModelVersionGiftRedemption[];
 }
 
 export interface CustomerSubscription {
@@ -793,6 +796,28 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface CustomerSubscriptionHistory {
+  id: number;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: JsonValue;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: Date | null;
+  canceledAt: Date | null;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  endedAt: Date | null;
+  closedAt: Date | null;
+  closedReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface MembershipGift {
@@ -1015,12 +1040,10 @@ export interface Model {
   saves?: SavedModel[];
   reports?: ModelReport[];
   engagements?: ModelEngagement[];
-  comments?: Comment[];
   interests?: ModelInterest[];
   licenses?: License[];
   reportStats?: ModelReportStat | null;
   hashes?: ModelHash[];
-  threads?: Thread[];
   resourceReviews?: ResourceReview[];
   metricsDaily?: ModelMetricDaily[];
   baseModelMetrics?: ModelBaseModelMetric[];
@@ -1091,6 +1114,17 @@ export interface ModelEngagement {
   modelId: number;
   model?: Model;
   type: ModelEngagementType;
+  createdAt: Date;
+}
+
+export interface ModelVersionShowcaseItem {
+  modelVersionId: number;
+  site: string;
+  imageId: number;
+  source: string;
+  position: number | null;
+  excluded: boolean;
+  addedById: number;
   createdAt: Date;
 }
 
@@ -1177,6 +1211,7 @@ export interface ModelVersion {
   coveredCheckpoints?: CoveredCheckpoint[];
   wildcardSet?: WildcardSet | null;
   licensingRoot?: LicensingRoot | null;
+  giftLinks?: ModelVersionGiftLink[];
 }
 
 export interface LicensingRoot {
@@ -1372,6 +1407,10 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+  credential: string | null;
+  reviewBatchId: string | null;
+  reviewTier: string | null;
+  declaredSuspect: boolean | null;
 }
 
 export interface ModThreadClaim {
@@ -1395,8 +1434,6 @@ export interface Report {
   statusSetAt: Date | null;
   statusSetBy: number | null;
   model?: ModelReport | null;
-  comment?: CommentReport | null;
-  commentV2?: CommentV2Report | null;
   commentV3?: CommentV3Report | null;
   image?: ImageReport | null;
   resourceReview?: ResourceReviewReport | null;
@@ -1417,6 +1454,7 @@ export interface Report {
   crucible?: CrucibleReport | null;
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
+  postText?: PostTextReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -1430,20 +1468,6 @@ export interface ResourceReviewReport {
 export interface ModelReport {
   modelId: number;
   model?: Model;
-  reportId: number;
-  report?: Report;
-}
-
-export interface CommentReport {
-  commentId: number;
-  comment?: Comment;
-  reportId: number;
-  report?: Report;
-}
-
-export interface CommentV2Report {
-  commentV2Id: number;
-  commentV2?: CommentV2;
   reportId: number;
   report?: Report;
 }
@@ -1529,17 +1553,6 @@ export interface HeldResourceReview {
   holdReasons: string[];
 }
 
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -1551,7 +1564,6 @@ export interface ResourceReview {
   details: string | null;
   userId: number;
   user?: User;
-  thread?: Thread | null;
   createdAt: Date;
   updatedAt: Date;
   exclude: boolean;
@@ -1561,6 +1573,9 @@ export interface ResourceReview {
   reactions?: ResourceReviewReaction[];
   helper?: ResourceReviewHelper | null;
   reports?: ResourceReviewReport[];
+  postId: number | null;
+  post?: Post | null;
+  releasedAt: Date | null;
 }
 
 export interface ResourceReviewReaction {
@@ -1662,9 +1677,9 @@ export interface Post {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   images?: Image[];
+  texts?: PostText[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
-  thread?: Thread | null;
   helper?: PostHelper | null;
   stats?: PostStat | null;
   metrics?: PostMetric[];
@@ -1673,9 +1688,11 @@ export interface Post {
   tagsComposite?: PostTag[];
   tagVotes?: TagsOnPostVote[];
   reports?: PostReport[];
+  textReports?: PostTextReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
+  resourceReviews?: ResourceReview[];
 }
 
 export interface PostMetric {
@@ -1732,9 +1749,9 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
-  thread?: Thread | null;
   tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
@@ -1754,6 +1771,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -1779,9 +1797,11 @@ export interface Image {
   appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
+  serviceOfferingCovers?: ServiceOffering[];
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
@@ -1984,6 +2004,7 @@ export interface Tag {
   tagsOnImageVotes?: TagsOnImageVote[];
   tagsOnPosts?: TagsOnPost[];
   tagsOnArticles?: TagsOnArticle[];
+  systemCategoryArticles?: Article[];
   tagsOnCollection?: TagsOnCollection[];
   tagsOnImageComposite?: ImageTag[];
   tagsOnModelComposite?: ModelTag[];
@@ -2203,6 +2224,7 @@ export interface ApiKey {
   key: string;
   name: string;
   tokenScope: number;
+  tokenScopeWide: bigint | null;
   userId: number;
   user?: User;
   createdAt: Date;
@@ -2225,7 +2247,7 @@ export interface OauthClient {
   redirectUris: string[];
   allowedOrigins: string[];
   grants: string[];
-  allowedScopes: number;
+  allowedScopes: bigint;
   isConfidential: boolean;
   accessMode: string;
   skipConsent: boolean;
@@ -2246,6 +2268,7 @@ export interface OauthClient {
   connectListings?: AppListing[];
   workerClient?: WorkerClient | null;
   workerDevices?: WorkerDevice[];
+  invites?: OauthInvite[];
 }
 
 export interface WorkerClient {
@@ -2436,7 +2459,6 @@ export interface AppBlockBuildAttempt {
 export interface AppListing {
   id: string;
   serialId: number;
-  thread?: Thread | null;
   kind: string;
   slug: string;
   name: string;
@@ -2923,6 +2945,29 @@ export interface AppUserScopeGrant {
   revokedScopes: string[];
   revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
+  confirmWithinLimitMaxJob: number | null;
+}
+
+export interface AppBlockUploadBatch {
+  id: number;
+  userId: number;
+  appBlockId: string;
+  appId: string;
+  blockId: string;
+  version: string | null;
+  itemCount: number;
+  totalBytes: bigint;
+  presignCount: number;
+  presignCounts: number[];
+  blobKeys: string[];
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export interface AppDeveloperTermsAcceptance {
+  userId: number;
+  version: string;
+  acceptedAt: Date;
 }
 
 export interface AppDevForgejoIdentity {
@@ -2939,10 +2984,20 @@ export interface OauthConsent {
   user?: User;
   clientId: string;
   client?: OauthClient;
-  scope: number;
+  scope: bigint;
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OauthInvite {
+  tokenHash: string;
+  clientId: string;
+  client?: OauthClient;
+  email: string;
+  returnUrl: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface TrustedSpokeDomain {
@@ -2955,6 +3010,26 @@ export interface TrustedSpokeDomain {
   updatedAt: Date;
 }
 
+export interface AccessToken {
+  id: number;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+}
+
+export interface ArticleShareCheck {
+  articleId: number;
+  generation: number;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Date;
+}
+
 export interface AdToken {
   id: number;
   token: string;
@@ -2962,39 +3037,6 @@ export interface AdToken {
   user?: User;
   createdAt: Date;
   expiresAt: Date | null;
-}
-
-export interface Comment {
-  id: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  nsfw: boolean;
-  tosViolation: boolean;
-  parent?: Comment | null;
-  parentId: number | null;
-  user?: User;
-  userId: number;
-  model?: Model;
-  modelId: number;
-  locked: boolean | null;
-  hidden: boolean | null;
-  pinnedAt: Date | null;
-  removedByAuthor: boolean;
-  comments?: Comment[];
-  reactions?: CommentReaction[];
-  reports?: CommentReport[];
-}
-
-export interface CommentReaction {
-  id: number;
-  commentId: number;
-  comment?: Comment;
-  userId: number;
-  user?: User;
-  reaction: ReviewReactions;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface UserNotificationSettings {
@@ -3059,7 +3101,6 @@ export interface Question {
   answers?: Answer[];
   metrics?: QuestionMetric[];
   rank?: QuestionRank | null;
-  thread?: Thread | null;
 }
 
 export interface QuestionMetric {
@@ -3085,7 +3126,6 @@ export interface Answer {
   answerFor?: Question | null;
   votes?: AnswerVote[];
   rank?: AnswerRank | null;
-  thread?: Thread | null;
 }
 
 export interface AnswerVote {
@@ -3105,86 +3145,6 @@ export interface AnswerMetric {
   crossCount: number;
   heartCount: number;
   commentCount: number;
-}
-
-export interface CommentV2 {
-  id: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  nsfw: boolean;
-  tosViolation: boolean;
-  userId: number;
-  user?: User;
-  threadId: number;
-  thread?: Thread;
-  childThread?: Thread | null;
-  metadata: JsonValue | null;
-  hidden: boolean | null;
-  pinnedAt: Date | null;
-  reactionCount: number;
-  reactions?: CommentV2Reaction[];
-  reports?: CommentV2Report[];
-}
-
-export interface Thread {
-  id: number;
-  locked: boolean;
-  parentThreadId: number | null;
-  parentThread?: Thread | null;
-  rootThreadId: number | null;
-  rootThread?: Thread | null;
-  questionId: number | null;
-  question?: Question | null;
-  answerId: number | null;
-  answer?: Answer | null;
-  imageId: number | null;
-  image?: Image | null;
-  postId: number | null;
-  post?: Post | null;
-  reviewId: number | null;
-  review?: ResourceReview | null;
-  commentId: number | null;
-  comment?: CommentV2 | null;
-  modelId: number | null;
-  model?: Model | null;
-  articleId: number | null;
-  article?: Article | null;
-  bountyId: number | null;
-  bounty?: Bounty | null;
-  bountyEntryId: number | null;
-  bountyEntry?: BountyEntry | null;
-  clubPostId: number | null;
-  clubPost?: ClubPost | null;
-  comicProjectId: number | null;
-  comicChapterPosition: number | null;
-  comicChapter?: ComicChapter | null;
-  challengeId: number | null;
-  challenge?: Challenge | null;
-  model3dId: number | null;
-  model3d?: Model3D | null;
-  model3dReviewId: number | null;
-  model3dReview?: Model3DReview | null;
-  appListingId: number | null;
-  appListing?: AppListing | null;
-  crucibleId: number | null;
-  crucible?: Crucible | null;
-  storylineId: number | null;
-  storyline?: Storyline | null;
-  metadata: JsonValue;
-  commentCount: number;
-  comments?: CommentV2[];
-  directChildren?: Thread[];
-  children?: Thread[];
-  mutes?: ThreadMute[];
-}
-
-export interface ThreadMute {
-  userId: number;
-  user?: User;
-  threadId: number;
-  thread?: Thread;
-  mutedAt: Date;
 }
 
 export interface CommentTopic {
@@ -3274,17 +3234,6 @@ export interface AnswerReaction {
   id: number;
   answer?: Answer;
   answerId: number;
-  user?: User;
-  userId: number;
-  reaction: ReviewReactions;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface CommentV2Reaction {
-  id: number;
-  comment?: CommentV2;
-  commentId: number;
   user?: User;
   userId: number;
   reaction: ReviewReactions;
@@ -3489,6 +3438,62 @@ export interface EventCosmeticScoreDaily {
   modelLikes: number;
   points: number;
   updatedAt: Date;
+}
+
+export interface EventTurfSticker {
+  id: bigint;
+  event: string;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  data: JsonValue;
+  createdAt: Date;
+  removedAt: Date | null;
+  removedById: number | null;
+}
+
+export interface EventTurfStock {
+  event: string;
+  userId: number;
+  stock: number;
+  refilledAt: Date;
+}
+
+export interface EventAwardResult {
+  id: number;
+  event: string;
+  sourceId: string;
+  kind: string;
+  team: string | null;
+  points: number;
+  at: Date;
+  inputs: JsonValue;
+  frozenAt: Date;
+  voidedAt: Date | null;
+}
+
+export interface FlagDay {
+  id: number;
+  event: string;
+  crucibleId: number;
+  startsAt: Date;
+  cutAt: Date;
+  closesAt: Date;
+  imageIds: number[];
+  createdAt: Date;
+}
+
+export interface EventTurfFlagSticker {
+  id: bigint;
+  event: string;
+  flagDayId: number;
+  imageId: number;
+  userId: number;
+  team: string;
+  cosmeticId: number;
+  count: number;
+  createdAt: Date;
 }
 
 export interface CreatorMilestone {
@@ -3733,6 +3738,7 @@ export interface BoxOpening {
   tierPoolSize: number;
   itemRoll: number;
   rewardStatus: string;
+  guaranteed: boolean;
   createdAt: Date;
 }
 
@@ -3786,6 +3792,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
@@ -3802,7 +3810,8 @@ export interface Article {
   lockedProperties: string[];
   isOfficial: boolean;
   status: ArticleStatus;
-  thread?: Thread | null;
+  systemCategoryId: number | null;
+  systemCategory?: Tag | null;
   reactions?: ArticleReaction[];
   tags?: TagsOnArticle[];
   reports?: ArticleReport[];
@@ -3924,6 +3933,7 @@ export interface Collection {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
+  archivedAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
   invites?: CollectionInvite[];
@@ -4067,7 +4077,6 @@ export interface Bounty {
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
   engagements?: BountyEngagement[];
-  thread?: Thread | null;
   metrics?: BountyMetric[];
   rank?: BountyRank | null;
   stats?: BountyStat | null;
@@ -4088,7 +4097,6 @@ export interface BountyEntry {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
-  thread?: Thread | null;
   reactions?: BountyEntryReaction[];
   metrics?: BountyEntryMetric[];
   rank?: BountyEntryRank | null;
@@ -4203,6 +4211,16 @@ export interface CsamQueueSetAside {
   createdAt: Date;
 }
 
+export interface ImageDeferredBlockEffect {
+  imageId: number;
+  violationType: string | null;
+  notifyOwner: boolean;
+  reportReason: string | null;
+  reportIds: number[];
+  blockedBy: number | null;
+  createdAt: Date;
+}
+
 export interface CsamReportAudit {
   id: number;
   csamReportId: number;
@@ -4239,6 +4257,29 @@ export interface CsamReportArchiveObject {
   namedExpected: number | null;
   namedMissing: number | null;
   uploadedAt: Date;
+}
+
+export interface PersonalDataExport {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: string;
+  modNotesMode: string;
+  holdReasons: string[];
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  manifest: JsonValue | null;
+  error: string | null;
+  attempts: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  builtAt: Date | null;
+  sentAt: Date | null;
+  linkExpiresAt: Date | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
 }
 
 export interface EvidenceHold {
@@ -4305,6 +4346,35 @@ export interface EntityAccess {
   addedAt: Date;
   permissions: number;
   meta: JsonValue | null;
+}
+
+export interface ModelVersionGiftLink {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  createdById: number;
+  createdBy?: User;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  revokedById: number | null;
+  createdAt: Date;
+  redemptions?: ModelVersionGiftRedemption[];
+}
+
+export interface ModelVersionGiftRedemption {
+  giftLinkId: number;
+  giftLink?: ModelVersionGiftLink;
+  userId: number;
+  user?: User;
+  claimedAt: Date;
+  revokedAt: Date | null;
+  revokedById: number | null;
 }
 
 export interface PaidAccess {
@@ -4468,7 +4538,6 @@ export interface ClubPost {
   coverImage?: Image | null;
   entityId: number | null;
   entityType: string | null;
-  thread?: Thread | null;
   reactions?: ClubPostReaction[];
   metrics?: ClubPostMetric[];
 }
@@ -5123,6 +5192,197 @@ export interface NewOrderPlayer {
   fervor: number;
   smiteReceived?: NewOrderSmite[];
   smiteGiven?: NewOrderSmite[];
+  payoutBlockedAt: Date | null;
+  payoutBlockReason: string | null;
+  payoutBlockedBy: number | null;
+  payoutReleaseFrom: Date | null;
+  goldPending: number;
+  goldEarned: number;
+  goldConverted: number;
+}
+
+export interface NewOrderLinkReview {
+  id: number;
+  fingerprint: string;
+  userIds: number[];
+  evidence: JsonValue;
+  buzzMoved: number;
+  autoBlocked: boolean;
+  status: string;
+  reviewedBy: number | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsQuestion {
+  key: string;
+  version: number;
+  kind: string;
+  prompt: string;
+  options: JsonValue;
+  minRank: string;
+  votesToResolve: number;
+  maxVotes: number;
+  threshold: number;
+  active: boolean;
+  createdAt: Date;
+  items?: KnightsQueueItem[];
+  yesNoReferences?: KnightsYesNoReference[];
+}
+
+export interface KnightsQueueItem {
+  id: number;
+  questionKey: string;
+  question?: KnightsQuestion;
+  imageId: number;
+  source: string;
+  minRank: string;
+  votesNeeded: number;
+  escalatedAt: Date | null;
+  priority: number;
+  status: string;
+  expiresAt: Date | null;
+  isHiddenCheck: boolean;
+  resolvedValue: string | null;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  appliedAt: Date | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: number;
+  nextAttemptAt: Date | null;
+  reason: string | null;
+  escalationReason: string | null;
+  prediction: JsonValue | null;
+  externalId: string | null;
+  prompt: string | null;
+  audience: string | null;
+  yesEffect: string | null;
+  noEffect: string | null;
+  meta: JsonValue | null;
+  voteCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsVote {
+  itemId: number;
+  playerId: number;
+  createdAt: Date;
+  questionKey: string;
+  imageId: number;
+  stage: string;
+  answer: string;
+  weight: number;
+  verdict: string;
+  gold: number | null;
+  xp: number;
+  settledAt: Date | null;
+  labelled: boolean;
+  converted: boolean;
+  consequence: string | null;
+  noticedAt: Date | null;
+  blockReason: string | null;
+}
+
+export interface KnightsPlayer {
+  playerId: number;
+  streak: number;
+  lastWatchDay: Date | null;
+  shields: number;
+  shieldWeek: Date;
+  recapDismissedFor: Date | null;
+  startAtSeen: Date | null;
+  recapPopupOptOut: boolean;
+}
+
+export interface KnightsPlayerDay {
+  playerId: number;
+  day: Date;
+  votes: number;
+  goldRecorded: number;
+  watchCompletedAt: Date | null;
+  bonusGold: number;
+}
+
+export interface KnightsNotificationSend {
+  playerId: number;
+  day: Date;
+  kind: string;
+  sentAt: Date;
+  confirmedAt: Date | null;
+}
+
+export interface KnightsGoldConversion {
+  id: number;
+  playerId: number;
+  gold: number;
+  buzz: number;
+  status: string;
+  externalTransactionId: string;
+  buzzTransactionId: string | null;
+  createdAt: Date;
+  lastAttemptAt: Date | null;
+  paidAt: Date | null;
+}
+
+export interface KnightsReferenceImage {
+  id: number;
+  imageId: number;
+  questionKey: string;
+  pool: string;
+  answer: string;
+  source: string;
+  explanation: string | null;
+  status: string;
+  modActivityId: number | null;
+  harvestedAt: Date;
+  answers: number;
+  failures: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsYesNoReference {
+  id: number;
+  imageId: number;
+  questionKey: string;
+  question?: KnightsQuestion;
+  answer: boolean;
+  explanation: string | null;
+  prompt: string | null;
+  active: boolean;
+  createdBy: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsApprenticeAnswer {
+  id: number;
+  playerId: number;
+  referenceId: number | null;
+  yesNoReferenceId: number | null;
+  imageId: number | null;
+  questionKey: string | null;
+  answer: string;
+  correctAnswer: string;
+  correct: boolean;
+  xp: number;
+  createdAt: Date;
+  checkpointSeenAt: Date | null;
+}
+
+export interface KnightsAcolyteLevelGold {
+  playerId: number;
+  level: number;
+  gold: number;
+  createdAt: Date;
+}
+
+export interface KnightsHarvestCursor {
+  name: string;
+  lastActivityId: number;
+  updatedAt: Date;
 }
 
 export interface NewOrderRank {
@@ -5155,10 +5415,6 @@ export interface ReportAutomated {
   report?: Report;
   metadata: JsonValue;
   createdAt: Date;
-}
-
-export interface RestrictedBaseModels {
-  baseModel: string;
 }
 
 export interface Challenge {
@@ -5214,7 +5470,6 @@ export interface Challenge {
   createdAt: Date;
   updatedAt: Date;
   winners?: ChallengeWinner[];
-  threads?: Thread[];
   reports?: ChallengeReport[];
   engagements?: ChallengeEngagement[];
   standings?: ChallengeEntryStanding[];
@@ -5905,6 +6160,7 @@ export interface UserProfile {
   privacySettings: JsonValue;
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
+  showcaseSections: JsonValue;
 }
 
 export interface BountyStat {
@@ -6205,7 +6461,6 @@ export interface ComicChapter {
   createdAt: Date;
   updatedAt: Date;
   panels?: ComicPanel[];
-  thread?: Thread | null;
   reads?: ComicChapterRead[];
 }
 
@@ -6474,7 +6729,6 @@ export interface Model3D {
   engagements?: Model3DEngagement[];
   reports?: Model3DReport[];
   reviews?: Model3DReview[];
-  threads?: Thread[];
   collectionItems?: CollectionItem[];
   metric?: Model3DMetric | null;
 }
@@ -6537,7 +6791,6 @@ export interface Model3DReview {
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
-  thread?: Thread | null;
   post?: Post | null;
   reports?: Model3DReviewReport[];
 }
@@ -6634,6 +6887,7 @@ export interface Placement {
   placerId: number;
   placer?: User;
   data: JsonValue;
+  track: JsonValue | null;
   status: string;
   removedBy: string | null;
   amount: number;
@@ -6697,12 +6951,14 @@ export interface Storyline {
   heroImageId: number | null;
   heroImage?: Image | null;
   heroImagePosition: number;
+  sparkImageId: number | null;
+  sparkImage?: Image | null;
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
+  followers?: StorylineFollow[];
   reports?: StorylineReport[];
   coverUploads?: StorylineCoverUpload[];
-  thread?: Thread | null;
 }
 
 export interface StorylineChapter {
@@ -6773,6 +7029,32 @@ export interface ImageCaption {
   updatedAt: Date;
 }
 
+export interface PostText {
+  id: number;
+  postId: number;
+  post?: Post;
+  userId: number;
+  index: number;
+  content: string;
+  nsfwLevel: number;
+  refused: boolean;
+  csamHeld: boolean;
+  refusedByModerator: boolean;
+  refusedByScan: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  reports?: PostTextReport[];
+}
+
+export interface PostTextReport {
+  reportId: number;
+  report?: Report;
+  postTextId: number | null;
+  postText?: PostText | null;
+  postId: number;
+  post?: Post;
+}
+
 export interface StorylineCollaborator {
   storylineId: number;
   storyline?: Storyline;
@@ -6780,6 +7062,15 @@ export interface StorylineCollaborator {
   user?: User;
   createdAt: Date;
   acceptedAt: Date | null;
+}
+
+export interface StorylineFollow {
+  storylineId: number;
+  storyline?: Storyline;
+  userId: number;
+  user?: User;
+  scope: StorylineFollowScope;
+  createdAt: Date;
 }
 
 export interface StorylineBranchChoice {
@@ -6817,10 +7108,12 @@ export interface StorylineCoverUpload {
 }
 
 export interface StorylineReport {
-  storylineId: number;
-  storyline?: Storyline;
   reportId: number;
   report?: Report;
+  storylineId: number | null;
+  storyline?: Storyline | null;
+  heldStorylineId: number | null;
+  storylineTitle: string | null;
 }
 
 export interface ServiceOffering {
@@ -6830,10 +7123,15 @@ export interface ServiceOffering {
   title: string;
   description: string;
   coverImageId: number | null;
+  coverImage?: Image | null;
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
   maxNsfwLevel: number;
+  declaredNsfwLevel: number | null;
+  ingestion: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  scannedAt: Date | null;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;
@@ -6930,6 +7228,15 @@ export interface ServiceDealEvent {
   createdAt: Date;
 }
 
+export interface ServiceDealFilePurge {
+  id: number;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Date;
+}
+
 export interface ServiceDealFile {
   id: number;
   dealId: number;
@@ -6958,6 +7265,10 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
+  attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }
@@ -7104,7 +7415,6 @@ export interface Crucible {
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];
-  thread?: Thread | null;
 }
 
 export interface CrucibleEngagement {
@@ -7217,6 +7527,54 @@ export interface CreatorProgramPayoutReviewRun {
   evaluatedCount: number;
   flaggedCount: number;
   error: string | null;
+}
+
+export interface KnightsShopItem {
+  id: number;
+  kind: string;
+  name: string;
+  description: string;
+  price: number;
+  buzz: number | null;
+  cosmeticId: number | null;
+  tier: string | null;
+  days: number | null;
+  minRank: string | null;
+  active: boolean;
+  rotating: boolean;
+  sortOrder: number;
+  createdAt: Date;
+  purchases?: KnightsShopPurchase[];
+  changes?: KnightsShopItemChange[];
+}
+
+export interface KnightsShopItemChange {
+  id: number;
+  itemId: number;
+  item?: KnightsShopItem;
+  userId: number;
+  action: string;
+  changes: JsonValue;
+  createdAt: Date;
+}
+
+export interface KnightsShopPurchase {
+  id: number;
+  playerId: number;
+  requestKey: string;
+  externalKey: string;
+  itemId: number;
+  item?: KnightsShopItem;
+  kind: string;
+  gold: number;
+  grant: JsonValue;
+  status: string;
+  conversionId: number | null;
+  dealDay: Date | null;
+  attempts: number;
+  createdAt: Date;
+  lastAttemptAt: Date | null;
+  grantedAt: Date | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

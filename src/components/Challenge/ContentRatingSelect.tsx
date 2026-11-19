@@ -1,5 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Badge, Card, Checkbox, Group, Input, Stack, Text, Tooltip } from '@mantine/core';
+import { Badge, Card, Checkbox, Group, Input, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {

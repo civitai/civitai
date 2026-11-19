@@ -5,6 +5,7 @@
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { isAbort } from '$lib/upload';
   import { EDIT_IMAGE_OPTIONS, type EditImageOption } from '$lib/edit-helpers-core';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
@@ -47,8 +48,9 @@
     };
   });
 
-  const price = $derived(open && browser ? backend().editImageQuote() : null);
   const imageUrl = $derived(pair?.before.blobUrl?.startsWith('http') ? pair.before.blobUrl : null);
+  // Generate stays disabled until this resolves to a price, as Review does for a training run.
+  const price = $derived(open && browser && imageUrl ? backend().editImageQuote(imageUrl) : null);
 
   async function generate() {
     if (!imageUrl || running || !prompt.trim()) return;
@@ -89,6 +91,13 @@
   }
 </script>
 
+{#snippet generateButton(cost: number | null)}
+  <Button onclick={generate} disabled={cost == null || !imageUrl || running || !prompt.trim()}>
+    {#if running}<Spinner class="mr-1.5 size-4" />{:else}<IconBoltFilled size={14} class="mr-1 inline text-buzz" />{/if}
+    Generate {EDIT_IMAGE_OPTIONS} options{cost != null ? ` · ${cost.toLocaleString()}` : ''}
+  </Button>
+{/snippet}
+
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-xl" portalProps={portalProps()}>
     <Dialog.Header>
@@ -110,21 +119,29 @@
       {/if}
       <div class="flex min-w-60 flex-1 flex-col gap-1.5">
         <label for="create-prompt" class="font-mono text-xs uppercase tracking-wider text-dark-2">Edit</label>
-        <Input
-          id="create-prompt"
-          bind:value={prompt}
-          placeholder="e.g. Put the logo on the bag"
-          onkeydown={(e) => {
-            if (e.key === 'Enter') void generate();
-          }}
-        />
-        <Button onclick={generate} disabled={!imageUrl || running || !prompt.trim()}>
-          {#if running}<Spinner class="mr-1.5 size-4" />{:else}<IconBoltFilled size={14} class="mr-1 inline text-buzz" />{/if}
-          Generate {EDIT_IMAGE_OPTIONS} options
-          {#if price}
-            {#await price then cost}{cost != null ? `· ${cost.toLocaleString()}` : ''}{:catch}{''}{/await}
-          {/if}
-        </Button>
+        <Input id="create-prompt" bind:value={prompt} placeholder="e.g. Put the logo on the bag" />
+        {#if price}
+          {#await price}
+            {@render generateButton(null)}
+            <span class="text-xs text-dark-2">Checking the price…</span>
+          {:then cost}
+            {@render generateButton(cost)}
+            {#if cost != null}
+              <span class="text-xs text-dark-2">
+                Costs <IconBoltFilled size={11} class="inline text-buzz" />{cost.toLocaleString()} Buzz for
+                {EDIT_IMAGE_OPTIONS} options, charged when you generate.
+              </span>
+            {:else}
+              <span class="text-xs text-amber-400">Couldn't price this right now — try again in a moment.</span>
+            {/if}
+          {:catch}
+            {@render generateButton(null)}
+            <span class="text-xs text-amber-400">Couldn't price this right now — try again in a moment.</span>
+          {/await}
+        {:else}
+          {@render generateButton(null)}
+        {/if}
+        <BlueFirstNote />
       </div>
     </div>
 

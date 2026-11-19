@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Group, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
+import { ActionIcon, Badge, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconPackage } from '@tabler/icons-react';
 import {

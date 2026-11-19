@@ -1,5 +1,6 @@
 import * as z from 'zod';
-import { notificationCategories } from './constants';
+import { notificationCategories, type NotificationCategory } from './constants';
+import { cursorDate, notificationListCursor } from './cursor';
 
 // The notification producer contract — the single source of truth the notifications app validates
 // POST bodies against and that every caller types against. Moved here (from the monolith's
@@ -64,6 +65,8 @@ export const notificationRow = z.object({
   category: notificationCategory,
   details: z.record(z.string(), z.any()),
   createdAt: z.coerce.date(),
+  /** `createdAt` at full (microsecond) precision, for the list cursor. */
+  cursorAt: z.string(),
   read: z.boolean(),
 });
 export type NotificationRow = z.infer<typeof notificationRow>;
@@ -79,7 +82,8 @@ export type NotificationCategoryCount = z.infer<typeof notificationCategoryCount
 export const queryNotificationsInput = z.object({
   userId: z.number(),
   limit: z.number().optional(),
-  cursor: z.coerce.date().optional(),
+  // A bare date is the cursor of callers built before the keyset cursor; drop it once none is deployed.
+  cursor: z.union([notificationListCursor, cursorDate]).optional(),
   category: notificationCategory.nullish(),
   unread: z.boolean().optional(),
 });
@@ -99,6 +103,12 @@ export const markReadInput = z.object({
   category: notificationCategory.nullish(),
 });
 export type MarkReadInput = z.infer<typeof markReadInput>;
+
+export const markReadByKeysInput = z.object({
+  userId: z.number(),
+  keys: z.array(z.string()).min(1).max(10),
+});
+export type MarkReadByKeysInput = z.infer<typeof markReadByKeysInput>;
 
 export const notificationExistsInput = z.object({ key: z.string() });
 export type NotificationExistsInput = z.infer<typeof notificationExistsInput>;
@@ -125,13 +135,56 @@ export const cleanupNotificationsInput = z.object({
 });
 export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput>;
 
+/** Users per unseen-notification read; the digest job pages through its candidates in batches. */
+export const MAX_UNSEEN_USERS = 1000;
+/** Newest unseen notifications returned per user. */
+export const MAX_UNSEEN_ITEMS = 20;
+/** Per-user count ceiling: past it the count is reported as a floor, so one busy user can't stall a read. */
+export const UNSEEN_COUNT_LIMIT = 1000;
+
+export const unseenNotificationsInput = z.object({
+  /** Each user with the instant after which a notification counts: their window start. */
+  users: z
+    .array(z.object({ userId: z.number().int().positive(), since: z.coerce.date() }))
+    .min(1)
+    .max(MAX_UNSEEN_USERS),
+  /** Types left out of the count and the list (the ones already sent by email when they happened). */
+  excludeTypes: z.array(z.string()).max(1000).default([]),
+  limit: z.number().int().min(1).max(MAX_UNSEEN_ITEMS),
+});
+export type UnseenNotificationsInput = z.input<typeof unseenNotificationsInput>;
+
+export type UnseenNotificationItem = {
+  id: number;
+  type: string;
+  category: NotificationCategory;
+  details: Record<string, unknown>;
+  createdAt: Date;
+};
+
+/** A user with at least one unseen notification in their window; users with none are left out. */
+export type UnseenNotifications = {
+  userId: number;
+  /** Unseen notifications in the window, at most UNSEEN_COUNT_LIMIT. */
+  total: number;
+  /** True when the count stopped at UNSEEN_COUNT_LIMIT. */
+  floor: boolean;
+  /** The newest `limit`, newest first. */
+  items: UnseenNotificationItem[];
+};
+
 // --- System notices (POST /notifications/notices) --------------------------------------------------
 
-export const systemNoticeTypes = ['system-message', 'system-announcement'] as const;
+export const systemNoticeTypes = [
+  'system-message',
+  'system-announcement',
+  'event-reminder',
+] as const;
 export type SystemNoticeType = (typeof systemNoticeTypes)[number];
 export const MAX_NOTICE_RECIPIENTS = 50_000;
 export const MAX_NOTICE_PARAM_LENGTH = 100;
 export const MAX_NOTICE_MESSAGE_LENGTH = 500;
+export const MAX_NOTICE_TITLE_LENGTH = 60;
 
 const placeholderPattern = /\{([A-Za-z0-9_]+)\}/g;
 
@@ -157,9 +210,18 @@ function isSitePath(url: string): boolean {
 }
 const hasHtml = (s: string) => /[<>]/.test(s);
 
+const noticeSendId = z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}');
+export const MAX_NOTICE_EXCLUDE_SEND_IDS = 5;
+
 export const sendSystemNoticesInput = z
   .object({
-    sendId: z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}'),
+    sendId: noticeSendId,
+    /**
+     * Earlier sendIds whose recipients count as alreadySent here. A sendId pins its type, message,
+     * url and title, so changing any of them means a new sendId; this keeps that new send from reaching
+     * the users the old one already did.
+     */
+    excludeSendIds: z.array(noticeSendId).max(MAX_NOTICE_EXCLUDE_SEND_IDS).optional(),
     mode: z.enum(['dry-run', 'send']).default('dry-run'),
     type: z.enum(systemNoticeTypes),
     message: z
@@ -168,6 +230,13 @@ export const sendSystemNoticesInput = z
       .max(MAX_NOTICE_MESSAGE_LENGTH)
       .refine((s) => !hasHtml(s), 'message may not contain HTML'),
     url: z.string().max(1000).refine(isSitePath, 'url must be a path on this site').optional(),
+    /** Push notification title; without one the push is titled with the type's display name. */
+    title: z
+      .string()
+      .min(1)
+      .max(MAX_NOTICE_TITLE_LENGTH)
+      .refine((s) => !hasHtml(s), 'title may not contain HTML')
+      .optional(),
     userIds: z.array(noticeUserId).optional(),
     recipients: z
       .array(

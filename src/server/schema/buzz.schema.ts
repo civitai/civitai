@@ -73,7 +73,17 @@ export const exportUserBuzzTransactionsSchema = z.object(userTransactionFilters)
 export const buzzTransactionDetails = z
   .object({
     user: z.string().optional(),
-    entityId: z.number().optional(),
+    // Some ledger rows store entityId as a string; one unreadable value must not fail the whole list.
+    entityId: z
+      .preprocess(
+        (v) =>
+          typeof v === 'string' && /^\d+$/.test(v) && Number.isSafeInteger(Number(v))
+            ? Number(v)
+            : v,
+        z.number()
+      )
+      .optional()
+      .catch(undefined),
     entityType: z.string().optional(),
     url: z.string().optional(),
     toAccountType: z.enum(buzzAccountTypes).optional(),
@@ -90,13 +100,16 @@ export const getBuzzTransactionResponse = z.object({
   // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
   // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
   // a fee-earning creator saw.
-  type: z.any().transform((value): TransactionType => {
-    const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
-    if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
-    // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
-    // rather than rendering blank.
-    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
-  }),
+  type: z
+    .any()
+    .optional()
+    .transform((value): TransactionType => {
+      const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
+      if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
+      // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
+      // rather than rendering blank.
+      return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+    }),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
   fromAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
@@ -161,6 +174,12 @@ export type UserBuzzTransactionInputSchema = z.infer<typeof userBuzzTransactionI
 export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .omit({
     type: true,
+  })
+  .extend({
+    // Minted by the client once per tip and resent on its retries: the tip's ledger ids derive
+    // from it, so a retry after an unanswered send cannot move the Buzz twice. Optional: without
+    // one, every call is a new tip under a new id, with no dedup.
+    idempotencyKey: z.string().uuid().optional(),
   })
   .check((ctx) => {
     if (

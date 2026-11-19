@@ -274,6 +274,7 @@
       civitaiUrl={data.civitaiUrl}
       canBan={!!data.grants['audit.ban.execute']}
       canViewGenerations={!!data.grants['user.generations.view']}
+      canReportCsam={!!data.grants['csam.report.file']}
       sources={data.sources}
       sourcesFailed={data.sourcesFailed}
       sourcesNotLoaded={data.sourcesNotLoaded}

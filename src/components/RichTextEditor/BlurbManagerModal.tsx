@@ -7,7 +7,6 @@ import {
   Drawer,
   Group,
   Loader,
-  Menu,
   Modal,
   Stack,
   Text,
@@ -15,6 +14,7 @@ import {
   ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconArrowLeft,

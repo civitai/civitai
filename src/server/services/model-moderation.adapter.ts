@@ -240,7 +240,7 @@ export const modelModerationAdapter: ModerationAdapter = {
         message: 'requested label missing from scan results',
         modelId: entityId,
         missingLabels,
-      }).catch(() => null);
+      });
     }
 
     // The union, not the raw `triggeredLabels` field — the verdict below is computed from
@@ -256,7 +256,19 @@ export const modelModerationAdapter: ModerationAdapter = {
     const db = await getDbWithoutLag('model', entityId);
     const model = await db.model.findUnique({
       where: { id: entityId },
-      select: { id: true, nsfw: true, nsfwLevel: true, lockedProperties: true, userId: true },
+      select: {
+        id: true,
+        nsfw: true,
+        nsfwLevel: true,
+        lockedProperties: true,
+        userId: true,
+        minor: true,
+        poi: true,
+        sfwOnly: true,
+        availability: true,
+        sfwName: true,
+        sfwCoverImageId: true,
+      },
     });
     // Deleted between submit and callback — a bare update would throw P2025 and fail the
     // moderation callback, which the orchestrator would then retry forever.
@@ -280,7 +292,7 @@ export const modelModerationAdapter: ModerationAdapter = {
         type: 'warning',
         message: 'nsfw lock appeared between read and write; flag not applied',
         modelId: entityId,
-      }).catch(() => null);
+      });
       return;
     }
     if (result !== 'applied') return;
@@ -294,7 +306,7 @@ export const modelModerationAdapter: ModerationAdapter = {
       // Scores, not just names: during a ramp the question is whether flags are
       // landing near their thresholds (policy needs tuning) or far above them.
       labels,
-    }).catch(() => null);
+    });
   },
 
   // No applyFailure. A model's visibility does not gate on its text scan, so a terminal
@@ -348,7 +360,7 @@ export async function submitModelTextModeration(model: {
       type: 'error',
       message: (e as Error).message,
       modelId: model.id,
-    }).catch(() => null);
+    });
   }
 }
 

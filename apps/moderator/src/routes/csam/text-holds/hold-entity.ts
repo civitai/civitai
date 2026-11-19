@@ -1,12 +1,5 @@
 import { shortAge } from '$lib/format';
-import {
-  chatAuditChatUrl,
-  commentV2Url,
-  entityUrl,
-  modelCommentUrl,
-  userLookupUrl,
-  userUrl,
-} from '$lib/entity-url';
+import { chatAuditChatUrl, commentUrl, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -16,9 +9,10 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'Post',
   'Article',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'UserProfile',
+  'ServiceOffering',
+  'PostText',
 ] as const;
 
 export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
@@ -28,9 +22,10 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   Post: 'Post',
   Article: 'Article',
   ChatMessage: 'Chat message',
-  Comment: 'Model comment',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   UserProfile: 'Profile',
+  ServiceOffering: 'Service',
+  PostText: 'Storyline text',
 };
 
 /** What a moderator can do with a pending hold, in the order the actions are offered. */
@@ -77,12 +72,13 @@ export function decisionLabel(hold: { status: string; decision: string | null })
 /** The types the main app can remove without destroying them; a type outside the list only gets "do nothing". */
 const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
+  'PostText',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 
@@ -128,6 +124,11 @@ export function holdDecisionEnabled(
 export const CSAM_HOLD_CONFIRMS: Partial<
   Record<CsamHoldDecision, { label: string; title: string; description: string }>
 > = {
+  remove: {
+    label: 'Remove content',
+    title: 'Remove the content?',
+    description: 'The content is taken down.',
+  },
   remove_strike: {
     label: 'Remove content + strike',
     title: 'Remove the content and strike the author?',
@@ -157,8 +158,7 @@ export function holdTitle(hold: {
   switch (hold.entityType) {
     case 'ChatMessage':
       return 'Chat';
-    case 'Comment':
-    case 'CommentV2':
+    case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
       return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
@@ -200,18 +200,13 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
-  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
+/** Where the held text lives. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
-    case 'CommentV2':
-      return commentV2Url(civitaiUrl, hold.entityId);
-    case 'Comment':
-      return hold.commentModelId
-        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
-        : null;
+    case 'CommentV3':
+      return commentUrl(civitaiUrl, hold.entityId);
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

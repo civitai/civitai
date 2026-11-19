@@ -155,7 +155,7 @@ function MobileRail(props: BatchSummaryRailProps) {
       <UnstyledButton
         onClick={() => setOpened(true)}
         className={clsx(
-          'fixed inset-x-0 bottom-[var(--footer-height,0px)] z-40 flex items-center justify-between gap-2 border-t border-gray-2 bg-gray-0 px-4 py-3 text-sm lg:hidden dark:border-dark-5 dark:bg-dark-7',
+          'fixed inset-x-0 bottom-0 z-40 flex translate-y-[calc(var(--app-footer-offset,0px)*-1)] items-center justify-between gap-2 border-t border-gray-2 bg-gray-0 px-4 py-3 text-sm transition-transform lg:hidden dark:border-dark-5 dark:bg-dark-7',
           issues.length && 'text-red-7 dark:text-red-4'
         )}
         aria-label="Open summary"

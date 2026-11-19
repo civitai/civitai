@@ -18,16 +18,17 @@ import {
 } from '@mantine/core';
 import type * as z from 'zod';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { GenerationPresetHint } from '~/components/Account/ApiKeyGeneration';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema, simpleBuzzLimitToBudgets } from '~/server/schema/api-key.schema';
 import {
-  TokenScope,
-  TokenScopePresets,
-  tokenScopePresetLabels,
-  tokenScopeGrid,
+  hasScope,
   toggleGridScope,
+  TokenScope,
+  tokenScopeGrid,
+  tokenScopePresetLabels,
+  TokenScopePresets,
 } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import {
@@ -41,7 +42,7 @@ const presetOptions = (
   Object.keys(tokenScopePresetLabels) as (keyof typeof TokenScopePresets)[]
 ).map((key) => ({ value: key, label: tokenScopePresetLabels[key] }));
 
-function getPresetKey(tokenScope: number): string | null {
+function getPresetKey(tokenScope: bigint): string | null {
   for (const [key, value] of Object.entries(TokenScopePresets)) {
     if (tokenScope === value) return key;
   }
@@ -59,7 +60,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
   // Optional deeplink prefill (e.g. the App Blocks CLI scaffold link). These are
   // read once at mount; ApiKeysCard remounts the modal (via `key`) to apply them.
   const startScope = initialTokenScope ?? TokenScope.Full;
-  const [tokenScope, setTokenScope] = useState<number>(startScope);
+  const [tokenScope, setTokenScope] = useState<bigint>(startScope);
   const [preset, setPreset] = useState<string | null>(getPresetKey(startScope));
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [limitAmount, setLimitAmount] = useState<number | ''>(5000);
@@ -71,7 +72,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
     shouldUnregister: false,
     defaultValues: {
       name: initialName ?? '',
-      tokenScope: startScope,
+      tokenScope: Number(startScope),
     },
   });
   const queryUtils = trpc.useUtils();
@@ -93,10 +94,10 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
     },
   });
 
-  const updateTokenScope = (newScope: number) => {
+  const updateTokenScope = (newScope: bigint) => {
     setTokenScope(newScope);
     setPreset(getPresetKey(newScope));
-    form.setValue('tokenScope', newScope);
+    form.setValue('tokenScope', Number(newScope));
   };
 
   const handlePresetChange = (value: string | null) => {
@@ -105,11 +106,11 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
     const newScope = TokenScopePresets[value as keyof typeof TokenScopePresets];
     if (newScope != null) {
       setTokenScope(newScope);
-      form.setValue('tokenScope', newScope);
+      form.setValue('tokenScope', Number(newScope));
     }
   };
 
-  const handleToggleFlag = (flag: number) => {
+  const handleToggleFlag = (flag: bigint) => {
     updateTokenScope(toggleGridScope(tokenScope, flag));
   };
 
@@ -120,7 +121,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
         : null;
     mutate({
       ...values,
-      tokenScope,
+      tokenScope: Number(tokenScope),
       buzzLimit,
     });
   };
@@ -205,6 +206,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
               placeholder="Custom"
               clearable={false}
             />
+            <GenerationPresetHint />
             <Box>
               <Text size="sm" fw={500} mb={4}>
                 Permissions
@@ -227,7 +229,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
                       <Table.Td style={{ textAlign: 'center' }}>
                         {'read' in row && row.read ? (
                           <Checkbox
-                            checked={Flags.hasFlag(tokenScope, row.read)}
+                            checked={hasScope(tokenScope, row.read)}
                             onChange={() => handleToggleFlag(row.read)}
                             styles={{ input: { cursor: 'pointer' } }}
                           />
@@ -240,7 +242,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
                       <Table.Td style={{ textAlign: 'center' }}>
                         {'write' in row && row.write ? (
                           <Checkbox
-                            checked={Flags.hasFlag(tokenScope, row.write)}
+                            checked={hasScope(tokenScope, row.write)}
                             onChange={() => handleToggleFlag(row.write)}
                             styles={{ input: { cursor: 'pointer' } }}
                           />
@@ -253,7 +255,7 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
                       <Table.Td style={{ textAlign: 'center' }}>
                         {'delete' in row && row.delete ? (
                           <Checkbox
-                            checked={Flags.hasFlag(tokenScope, row.delete)}
+                            checked={hasScope(tokenScope, row.delete)}
                             onChange={() => handleToggleFlag(row.delete)}
                             styles={{ input: { cursor: 'pointer' } }}
                           />
@@ -324,5 +326,5 @@ type Props = ModalProps & {
   /** Deeplink prefill — initial key name (defaults to empty). */
   initialName?: string;
   /** Deeplink prefill — initial tokenScope bitmask (defaults to TokenScope.Full). */
-  initialTokenScope?: number;
+  initialTokenScope?: bigint;
 };

@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Badge,
-  Center,
-  Group,
-  Loader,
-  Modal,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Badge, Center, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconChevronDown,

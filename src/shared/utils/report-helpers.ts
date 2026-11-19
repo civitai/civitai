@@ -1,7 +1,6 @@
 export enum ReportEntity {
   Model = 'model',
-  Comment = 'comment',
-  CommentV2 = 'commentV2',
+  CommentV3 = 'commentV3',
   Image = 'image',
   ResourceReview = 'resourceReview',
   Article = 'article',
@@ -20,6 +19,8 @@ export enum ReportEntity {
   GameFrameGame = 'gameFrameGame',
   Storyline = 'storyline',
   ServiceOffering = 'serviceOffering',
+  /** One storyline text item. Moderated in the post report queue, with its post. */
+  PostText = 'postText',
 }
 
 /**
@@ -34,8 +35,7 @@ export enum ReportEntity {
  */
 export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Model]: 'Model',
-  [ReportEntity.Comment]: 'Comment',
-  [ReportEntity.CommentV2]: 'Comment',
+  [ReportEntity.CommentV3]: 'Comment',
   [ReportEntity.Image]: 'Image',
   [ReportEntity.ResourceReview]: 'Review',
   [ReportEntity.Article]: 'Article',
@@ -54,4 +54,5 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.GameFrameGame]: 'Game',
   [ReportEntity.Storyline]: 'Storyline',
   [ReportEntity.ServiceOffering]: 'Service',
+  [ReportEntity.PostText]: 'Text',
 };

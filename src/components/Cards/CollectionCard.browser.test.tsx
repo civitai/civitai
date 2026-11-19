@@ -19,6 +19,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, filePreferences: {} }),
 }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
+  useShowEventCosmetics: () => true,
   useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
     selector({ autoplayGifs: false }),
   useAutoplayGifs: () => false,

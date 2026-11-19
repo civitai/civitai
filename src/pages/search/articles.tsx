@@ -15,6 +15,8 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { articleFeedUrlFromLegacySearch } from '~/components/Article/Infinite/article-feed-search';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
@@ -177,3 +179,13 @@ ArticlesSearch.getLayout = function getLayout(page: React.ReactNode) {
     </SearchLayout>
   );
 };
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features, ctx }) => {
+    if (features?.articleFeedSearch)
+      return {
+        redirect: { destination: articleFeedUrlFromLegacySearch(ctx.query), permanent: false },
+      };
+  },
+});

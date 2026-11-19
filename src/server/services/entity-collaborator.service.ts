@@ -4,11 +4,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readPostCollaboratorsViaKysely,
-  readPostCollaboratorsViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readPostCollaboratorsViaKysely } from '~/server/services/hot-reads-5.reads';
 import type {
   GetEntityCollaboratorsInput,
   RemoveEntityCollaboratorInput,
@@ -170,14 +166,10 @@ export const getEntityCollaborators = async ({
 
   switch (entityType) {
     case EntityType.Post:
-      // Only the owner id is consulted below (the pending/rejected visibility
-      // checks). A bare `findUnique` fetched every Post column, which on this
-      // read path meant three `new Date()` and a `JSON.parse` of `metadata`
-      // per call, all discarded.
-      // ON, the collaborators' users still read through Prisma, with the same select.
-      const read = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-        ? await readPostCollaboratorsViaKysely((await loadKyselyDb()).kyselyRead, dbRead, entityId)
-        : await readPostCollaboratorsViaPrisma(dbRead, entityId);
+      // The owner id and the collaborator rows in one statement; the collaborators' users still
+      // read through Prisma, with `userWithCosmeticsSelect`.
+      const { kyselyRead } = await loadKyselyDb();
+      const read = await readPostCollaboratorsViaKysely(kyselyRead, dbRead, entityId);
       if (!read) {
         return [];
       }

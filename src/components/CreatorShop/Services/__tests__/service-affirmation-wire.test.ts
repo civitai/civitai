@@ -45,6 +45,8 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'yellow' }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));
+// The uploader needs a signed-in session; these tests are about publishing.
+vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));
 
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
 const { ServiceRequestModal } = await import(

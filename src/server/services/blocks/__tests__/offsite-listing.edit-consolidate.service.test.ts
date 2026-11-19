@@ -245,7 +245,7 @@ describe('getMyListingForEdit', () => {
       }),
     });
     // The client's allowedScopes drifted to 13 since the stored snapshot (4).
-    mockRead.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 13n });
 
     const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
     expect(res.connectClientId).toBe('oauth-1');
@@ -314,6 +314,46 @@ describe('getMyListingForEdit', () => {
     expect(editViewReads(mockWrite)).toEqual(['apl_shadow_created']);
     expect(editViewReads(mockRead)).toEqual([]);
     expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
+  });
+
+  it('readOnly: an APPROVED listing with no shadow creates none; the view is the live listing', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), { apl_parent: editViewRow('ss_live') });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue(null);
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7, readOnly: true });
+    expect(res.shadowId).toBeNull();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(res.assets.screenshots[0].id).toBe('ss_live');
+  });
+
+  it('readOnly: an APPROVED listing with a shadow reports it, read from the primary', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), {
+      apl_shadow_existing: editViewRow('ss_shadow'),
+    });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow_existing' });
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7, readOnly: true });
+    expect(res.shadowId).toBe('apl_shadow_existing');
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow_existing']);
+  });
+
+  it('a moderator opening an APPROVED listing with no shadow creates none; the prefill is the live listing', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), { apl_parent: editViewRow('ss_live') });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue(null);
+
+    const res = await getMyListingForEdit({
+      listingId: 'apl_parent',
+      userId: 999,
+      isModerator: true,
+    });
+    expect(res.role).toBe('moderator');
+    expect(res.shadowId).toBeNull();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(res.assets.screenshots[0].id).toBe('ss_live');
   });
 
   /**
@@ -569,11 +609,11 @@ describe('updateRevisionDraft', () => {
     );
     // Client allowedScopes = 13 (UserRead|ModelsRead|ModelsWrite); the form's bogus
     // requestedScopes:4 must be ignored and the derived 13 snapshotted.
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 7, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 7, allowedScopes: 13n });
     await updateRevisionDraft({
       shadowId: 'apl_shadow',
       userId: 7,
-      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(13);
@@ -621,12 +661,12 @@ describe('updateRevisionDraft', () => {
       })
     );
     // Client owned by someone else (999); the shadow/listing is owned by the mod (7).
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13n });
     await updateRevisionDraft({
       shadowId: 'apl_shadow',
       userId: 7,
       isModerator: true,
-      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(13);
@@ -641,13 +681,13 @@ describe('updateRevisionDraft', () => {
         connectClientId: 'oauth-1',
       })
     );
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13n });
     await expect(
       updateRevisionDraft({
         shadowId: 'apl_shadow',
         userId: 7,
         isModerator: false,
-        patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+        patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();

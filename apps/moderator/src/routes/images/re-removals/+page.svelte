@@ -5,7 +5,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
@@ -94,9 +94,12 @@
         )}
       >
         <a href={imageLookupUrl(row.imageId)} class="w-full shrink-0 sm:w-48">
-          <EdgeMedia
-            src={row.url}
-            type={row.mediaType === 'video' ? 'video' : 'image'}
+          <CdnOrRetractedMedia
+            item={{
+              id: row.imageId,
+              url: row.url,
+              type: row.mediaType === 'video' ? 'video' : 'image',
+            }}
             width={400}
             class="w-full rounded-md object-cover"
           />

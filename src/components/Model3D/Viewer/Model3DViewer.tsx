@@ -1,4 +1,5 @@
-import { Alert, Box, Button, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
+import { Alert, Box, Button, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCubeOff,
@@ -12,6 +13,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { env } from '~/env/client';
+import { normalizeModel3DFormat } from '~/shared/orchestrator/model3d-output';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
@@ -123,7 +125,7 @@ function applyBackground(
 }
 
 function isPreviewable(format: string) {
-  return SUPPORTED_PREVIEW_FORMATS.includes(format.toLowerCase());
+  return SUPPORTED_PREVIEW_FORMATS.includes(normalizeModel3DFormat(format));
 }
 
 /** Convert a `data:image/png;base64,...` URL into a `File` for upload. */
@@ -163,8 +165,6 @@ export function Model3DViewer({
     controls: OrbitControls;
     initialCameraPos: THREE.Vector3;
     initialTarget: THREE.Vector3;
-    animationId: number;
-    resizeObserver: ResizeObserver;
     studioTexture: THREE.Texture;
   } | null>(null);
 
@@ -319,8 +319,6 @@ export function Model3DViewer({
       controls,
       initialCameraPos,
       initialTarget,
-      animationId,
-      resizeObserver,
       studioTexture,
     };
 

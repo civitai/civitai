@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -17,6 +18,7 @@ import { SEMANTIC_QUERY_MAX_LENGTH } from '~/server/schema/semantic-image-search
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { trpc } from '~/utils/trpc';
 
 export function SemanticImageSearch() {
@@ -51,8 +53,10 @@ export function SemanticImageSearch() {
     });
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
+  const correctedQuery = data?.pages[0]?.correctedQuery;
 
   const searchKey = JSON.stringify(input);
+  useScrollToTopOnChange(searchKey);
   const [feedbackSentFor, setFeedbackSentFor] = useState<string>();
   const feedbackMutation = trpc.semanticImageSearch.feedback.useMutation({
     onSuccess: () => setFeedbackSentFor(searchKey),
@@ -128,7 +132,8 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Media type"
           placeholder="All types"
-          data={[MediaType.image, MediaType.video]}
+          // No video until the index embeds videos (VECTOR_EMBED_VIDEO).
+          data={[MediaType.image]}
           value={types}
           onChange={(v) => setTypes(v as MediaType[])}
           clearable
@@ -143,6 +148,12 @@ export function SemanticImageSearch() {
           </Link>
           .
         </Alert>
+      )}
+
+      {correctedQuery && !isError && (
+        <Text size="sm">
+          Showing results for <strong>{correctedQuery}</strong>
+        </Text>
       )}
 
       {enabled && !isLoading && !isError && (
@@ -174,7 +185,7 @@ export function SemanticImageSearch() {
             <MasonryColumnsVirtual
               data={items}
               imageDimensions={(d) => ({ width: d?.width ?? 450, height: d?.height ?? 450 })}
-              adjustHeight={({ height }) => Math.max(Math.min(height, 600), 150) + 38}
+              adjustHeight={(args) => adjustImagesCardHeight(args)}
               maxItemHeight={600}
               render={ImagesCardMemoized}
               itemId={(d) => d.id}

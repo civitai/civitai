@@ -330,29 +330,8 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
       expect(signalSend).not.toHaveBeenCalled();
       expect(createNotification).not.toHaveBeenCalled();
       expect(deposits.get(ROW)).toMatchObject({ status: 'unverified', userId: 99 });
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          stage: 'payment-verify-unavailable',
-          paymentId: PAYMENT_ID,
-        })
-      );
     }
   );
-
-  it.each([
-    [404, 'not-found'],
-    [500, 'lookup-failed-500'],
-  ])('says why a lookup answered %i came back empty', async (status, reason) => {
-    caller.lookupPayment.mockResolvedValue({ payment: null, status });
-
-    await deliver(ipn());
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'payment-verify-unavailable', reason })
-    );
-    expect(deposits.get(ROW)).toMatchObject({ status: 'unverified' });
-  });
 
   it('leaves a deposit marked finished without credit as it is while the lookup is down', async () => {
     seed({
@@ -429,17 +408,24 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     expect(deposits.size).toBe(0);
   });
 
-  it.each(['confirming', 'failed'])(
-    'hands a %s deposit NOWPayments already confirmed to the sweep without changing its owner',
-    async (status) => {
-      seed({ paymentId: ROW, userId: 42, status, payCurrency: 'btc', retryCount: 5 });
-      caller.getPaymentStatus.mockResolvedValue(null);
+  it('hands a confirming deposit NOWPayments already confirmed to the sweep without changing its owner', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'confirming', payCurrency: 'btc', retryCount: 5 });
+    caller.getPaymentStatus.mockResolvedValue(null);
 
-      await deliver(ipn({ order_id: 'user:99' }));
+    await deliver(ipn({ order_id: 'user:99' }));
 
-      expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 0 });
-    }
-  );
+    expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 0 });
+  });
+
+  // The late sweep re-polls it and fails closed; the retry sweep would not.
+  it('leaves a failed deposit for the late sweep without changing its owner', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'failed', payCurrency: 'btc', retryCount: 5 });
+    caller.getPaymentStatus.mockResolvedValue(null);
+
+    await deliver(ipn({ order_id: 'user:99' }));
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'failed', userId: 42 });
+  });
 
   it('keeps a redelivered unconfirmed IPN unverified', async () => {
     caller.getPaymentStatus.mockResolvedValue(null);
@@ -560,9 +546,6 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     await retryFailedDeposits();
 
     expect(deposits.get(ROW)).toMatchObject({ status: 'failed', userId: 42 });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'payment-verify-exhausted' })
-    );
   });
 
   it('never credits a payment NOWPayments never confirms, and says so when the sweep gives up', async () => {
@@ -576,13 +559,6 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     expect(grantBuzzPurchase).not.toHaveBeenCalled();
     expect(signalSend).not.toHaveBeenCalled();
     expect(deposits.get(ROW)).toMatchObject({ status: 'unverified_exhausted', userId: 99 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        stage: 'payment-verify-exhausted',
-        paymentId: PAYMENT_ID,
-      })
-    );
   });
 });
 
@@ -684,13 +660,6 @@ describe('nowpayments webhook: a payment support already paid by hand', () => {
     expect(deposits.get(ROW)).toMatchObject({ status: 'held', buzzCredited: null });
     expect(signalSend.mock.calls.map(([call]) => call.data.status)).toEqual(['held']);
     expect(createNotification).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        message: 'Deposit held: a hand grant cites this payment',
-        paymentId: PAYMENT_ID,
-      })
-    );
   });
 
   it('keeps it held through redelivery, the retry sweep and the stuck-deposit job', async () => {

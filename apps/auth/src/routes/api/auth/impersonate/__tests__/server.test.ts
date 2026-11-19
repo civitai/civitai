@@ -32,7 +32,11 @@ const TARGET = 200;
 const activeMod = { id: MOD, isModerator: true, permissions: ['impersonation'] };
 const MOD_SESSION = { sub: String(MOD), jti: 'j', sid: 'family-m', iat0: 1 };
 
-function makeEvent(user: Record<string, unknown> | undefined, userId = TARGET) {
+function makeEvent(
+  user: Record<string, unknown> | undefined,
+  userId = TARGET,
+  impersonatedBy?: number
+) {
   return {
     request: new Request('https://auth.civitai.com/api/auth/impersonate', {
       method: 'POST',
@@ -40,7 +44,7 @@ function makeEvent(user: Record<string, unknown> | undefined, userId = TARGET) {
       body: JSON.stringify({ userId }),
     }),
     cookies: {},
-    locals: { user, session: MOD_SESSION },
+    locals: { user, session: MOD_SESSION, impersonatedBy },
   } as never;
 }
 
@@ -116,5 +120,15 @@ describe('POST /api/auth/impersonate — target', () => {
   it('still lets a moderator impersonate an ordinary user', async () => {
     expect(await statusOf(makeEvent(activeMod))).toBe(200);
     expect(h.mintUserSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('POST /api/auth/impersonate — from an impersonation session', () => {
+  const ORIGINAL_MOD = 50;
+
+  it('403s a start from inside an impersonation session and mints nothing', async () => {
+    expect(await statusOf(makeEvent(activeMod, 300, ORIGINAL_MOD))).toBe(403);
+    expect(h.mintUserSession).not.toHaveBeenCalled();
+    expect(h.trackImpersonation).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,3 @@
-export { answerMetrics } from '~/server/metrics/answer.metrics';
 export { articleMetrics } from '~/server/metrics/article.metrics';
 export { comicProjectMetrics } from '~/server/metrics/comic.metrics';
 export { baseModelMetrics } from '~/server/metrics/basemodel.metrics';
@@ -7,7 +6,6 @@ export { modelMetrics } from '~/server/metrics/model.metrics';
 export { model3dMetrics } from '~/server/metrics/model3d.metrics';
 export { appListingMetrics } from '~/server/metrics/appListing.metrics';
 export { postMetrics } from '~/server/metrics/post.metrics';
-export { questionMetrics } from '~/server/metrics/question.metrics';
 export { tagMetrics } from '~/server/metrics/tag.metrics';
 export { userMetrics } from '~/server/metrics/user.metrics';
 export { collectionMetrics } from '~/server/metrics/collection.metrics';

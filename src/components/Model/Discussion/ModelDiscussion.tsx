@@ -5,7 +5,9 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconClock, IconMessage, IconMessageCircleOff } from '@tabler/icons-react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { CommentSectionProvider } from '~/components/CommentsV3/CommentSectionContext';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
+import { ThreadSort } from '~/server/common/enums';
 
 type ModelDiscussionProps = {
   canDiscuss?: boolean;
@@ -50,7 +52,16 @@ export const ModelDiscussion = forwardRef<HTMLDivElement, ModelDiscussionProps>(
             </JoinPopover>
           )}
         </div>
-        <ModelDiscussionV2 modelId={modelId} modelUserId={modelUserId} />
+        {/* No deep links: the page's comment links open the thread dialog, not the cards. */}
+        <CommentSectionProvider
+          entityType="model"
+          entityId={modelId}
+          ownerId={modelUserId}
+          deepLinks={false}
+          initialSort={ThreadSort.Newest}
+        >
+          <ModelDiscussionV2 modelUserId={modelUserId} />
+        </CommentSectionProvider>
       </div>
     ) : (
       <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>

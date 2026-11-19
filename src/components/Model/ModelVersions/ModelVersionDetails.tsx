@@ -11,16 +11,14 @@ import {
   Card,
   Group,
   Loader,
-  Menu,
   Modal,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import {
   IconBellCheck,
@@ -148,11 +146,13 @@ import {
   getEffectiveCommercialUse,
   getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
-  getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
+  isNonCommercialBaseModel,
+  NOT_COMMERCIALLY_AVAILABLE_LABEL,
+  notCommerciallyAvailableMessage,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelGroup, isMatureRestricted } from '~/shared/constants/basemodel.constants';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -173,6 +173,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
+import { useLockReviewAction } from '~/components/Model/LockReview/useLockReviewAction';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { notifyIfPublishHeld } from '~/utils/model-publish-toast';
@@ -197,7 +198,14 @@ export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
 }
 
-function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds = false }: Props) {
+function ModelVersionDetailsContent({
+  model,
+  version,
+  image,
+  onFavoriteClick,
+  ds = false,
+  initialMobile,
+}: Props) {
   useMetricSubscription('ModelVersion', version.id);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -241,7 +249,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
     modelVersionId: version.id,
     modelVersion: permissionData,
   });
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ unmeasured: initialMobile });
 
   // Live metrics for model version stats
   const liveMetrics = useLiveMetrics('ModelVersion', version.id, {
@@ -265,6 +273,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
 
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
+  // Non-commercial bases can't be bought or charged a fee, so no price, fee or sale is shown. The
+  // lock stays for a viewer without access: the file endpoint still refuses them.
+  const isNonCommercial = isNonCommercialBaseModel(version.baseModel);
+  const notCommerciallyLocked = isNonCommercial && !canDownload;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -563,8 +575,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
-  const baseModelRestrictsMature =
-    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
+  const baseModelRestrictsMature = isMatureRestricted(version.baseModel, 'images');
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -610,21 +621,41 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
           onSelectFileId={setSelectedFileId}
           canDownload={canDownload}
           downloadPrice={
-            !hasDownloadPermissions && !isLoadingAccess && displayTerms?.download
+            !isNonCommercial &&
+            !hasDownloadPermissions &&
+            !isLoadingAccess &&
+            displayTerms?.download
               ? displayTerms.download.price
               : undefined
           }
           listedPrice={
-            hasDownloadPermissions && isOwnerOrMod && displayTerms?.download
+            !isNonCommercial && hasDownloadPermissions && isOwnerOrMod && displayTerms?.download
               ? displayTerms.download.price
               : undefined
           }
           acceptsBlueBuzz={paidAccessAcceptsBlue}
           isLoadingAccess={isLoadingAccess}
           archived={archived}
+          notCommerciallyLocked={notCommerciallyLocked}
           onPurchase={() => onPurchase('download')}
         />
       </Card.Section>
+      {notCommerciallyLocked && (
+        <Card.Section
+          withBorder
+          inheritPadding
+          py="xs"
+          px="sm"
+          data-testid="not-commercially-available"
+        >
+          <Text size="sm" fw={600}>
+            {NOT_COMMERCIALLY_AVAILABLE_LABEL}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {notCommerciallyAvailableMessage(version.baseModel)}
+          </Text>
+        </Card.Section>
+      )}
     </Card>
   ) : null;
 
@@ -649,6 +680,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
@@ -757,7 +789,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                 </Stack>
               )}
               <ModelVersionSaleBanner
-                sale={saleForViewer}
+                sale={isNonCommercial ? null : saleForViewer}
                 isOwner={isOwner}
                 isModerator={!!user?.isModerator}
               />
@@ -1004,6 +1036,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                         </div>
                       </ActionTooltip>
                     )}
+                    <LockReviewActionButton ds={ds} model={model} />
                   </div>
                   {canGenerate ? (
                     <div className="relative flex w-full">
@@ -1013,14 +1046,24 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                         wildcardSetId={version.wildcardSetId}
                         data-tour="model:create"
                         data-activity="create:model"
-                        disabled={isLoadingAccess || !!model.mode}
+                        disabled={
+                          isLoadingAccess ||
+                          !!model.mode ||
+                          (isNonCommercial && generationRequiresPurchase)
+                        }
                         generationPrice={
-                          generationRequiresPurchase && !isLoadingAccess && displayTerms
+                          !isNonCommercial &&
+                          generationRequiresPurchase &&
+                          !isLoadingAccess &&
+                          displayTerms
                             ? generationPrice(displayTerms)
                             : undefined
                         }
                         listedPrice={
-                          !generationRequiresPurchase && isOwnerOrMod && displayTerms
+                          !isNonCommercial &&
+                          !generationRequiresPurchase &&
+                          isOwnerOrMod &&
+                          displayTerms
                             ? generationPrice(displayTerms) || undefined
                             : undefined
                         }
@@ -1033,6 +1076,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                       )}
                     </div>
                   ) : null}
+                  {canGenerate &&
+                    !isLoadingAccess &&
+                    isNonCommercial &&
+                    generationRequiresPurchase && (
+                      <Text size="xs" c="dimmed" data-testid="not-commercially-available-generate">
+                        {NOT_COMMERCIALLY_AVAILABLE_LABEL}.{' '}
+                        {notCommerciallyAvailableMessage(version.baseModel)}
+                      </Text>
+                    )}
                 </Stack>
               </Card>
               {/* Component-only model message */}
@@ -1049,7 +1101,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               )}
               {/* Download Section */}
               <ModelVersionSaleBanner
-                sale={saleForViewer}
+                sale={isNonCommercial ? null : saleForViewer}
                 isOwner={isOwner}
                 isModerator={!!user?.isModerator}
               />
@@ -1138,7 +1190,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
             modelId={model.id}
             versionId={version.id}
             modelType={model.type}
-            deadline={paidAccessEndsAt ?? undefined}
+            deadline={isNonCommercial ? undefined : paidAccessEndsAt ?? undefined}
           />
           <ModelFileAlert
             versionId={version.id}
@@ -1192,7 +1244,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                       </Link>
                       <Text size="xs" c="dimmed">
                         Collection
-                        {collection.itemCount > 0
+                        {collection.itemCount
                           ? ` - ${collection.itemCount.toLocaleString()} items`
                           : ''}
                       </Text>
@@ -1241,13 +1293,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                   userPreferences={user?.filePreferences}
                   canDownload={canDownload}
                   downloadPrice={
-                    !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
+                    !isNonCommercial &&
+                    !hasDownloadPermissions &&
+                    !isLoadingAccess &&
+                    paidAccessTerms?.download
                       ? paidAccessTerms.download.price
                       : undefined
                   }
                   acceptsBlueBuzz={paidAccessAcceptsBlue}
                   isLoadingAccess={isLoadingAccess}
                   archived={archived}
+                  notCommerciallyLocked={notCommerciallyLocked}
                   onPurchase={() => onPurchase('download')}
                   isPrimary={isComponentOnlyModel}
                   linkedComponents={requiredLinkedComponents}
@@ -1531,7 +1587,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                     </PageGroup>
                   </div>
                   {/* Generation License Fee */}
-                  {Number(version.licensingFee ?? 0) > 0 && (
+                  {!isNonCommercial && Number(version.licensingFee ?? 0) > 0 && (
                     <div className={classes.detailRow}>
                       <span className={classes.detailLabel}>Generation License Fee</span>
                       <Group gap={4} wrap="nowrap">
@@ -1753,7 +1809,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
                           controlRef={controlRef}
                           styles={{ control: { display: 'none' } }}
                         >
-                          <RenderHtml html={version.description} />
+                          <RenderHtml html={version.description} withMentions />
                         </ContentClamp>
                       </Box>
                     )}
@@ -1971,11 +2027,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick, ds
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
               minor={model.minor}
+              initialMobile={initialMobile}
             />
           )}
           {model.description ? (
             <ContentClamp maxHeight={460}>
-              <RenderHtml html={model.description} />
+              <RenderHtml html={model.description} withMentions />
             </ContentClamp>
           ) : null}
         </Stack>
@@ -1991,14 +2048,37 @@ type Props = {
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
   /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
   ds?: boolean;
+  /** Phone layout until the container is measured, from the request's user agent. */
+  initialMobile?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {
   const dialog = useDialogContext();
   return (
     <Modal {...dialog} title="About this version" size="lg" centered>
-      <RenderHtml html={description} />
+      <RenderHtml html={description} withMentions />
     </Modal>
+  );
+}
+
+function LockReviewActionButton({ ds, model }: { ds: boolean; model: ModelById }) {
+  const action = useLockReviewAction(model);
+  if (!action.show) return null;
+
+  return (
+    <ActionTooltip ds={ds} label={action.tooltip ?? action.label}>
+      <div className="flex-1">
+        <ActionButton
+          ds={ds}
+          color="gray"
+          disabled={action.disabled}
+          onClick={action.open}
+          aria-label={action.label}
+        >
+          <IconLock size={18} />
+        </ActionButton>
+      </div>
+    </ActionTooltip>
   );
 }
 

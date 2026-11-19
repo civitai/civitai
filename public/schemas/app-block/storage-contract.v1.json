@@ -6,8 +6,9 @@
     "blockedLink": "https://contract-blocked.example/x",
     "scannerDown": "contract-scanner-down",
     "note": "A runner's moderation scanner rejects any string leaf, object key or document key containing blockedText (category blocked) or blockedLink (category link), and fails (an outage) on scannerDown. The moderation cases describe an app whose shared-data moderation is ENFORCED, which the host decides per app: where it runs in shadow, the scan runs after the write and neither a hit nor a scanner outage refuses it, and where it is off nothing is scanned.",
-    "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min, marks and counters 30/min, reports 20/day. A report is a mark, so it also spends one from the marks-and-counters bucket. Shared document creates and updates spend the shared write budget, per (app, viewer), three token buckets refilling continuously: burst 10 (one token back every 6 minutes), daily 50 (one back every 28.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
-    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed."
+    "rateLimits": "Each fixed-window limit is per (app, viewer): reads 300/min (an anonymous reader per client IP), private document writes and every delete 120/min, marks and counters 30/min, reports 20/day. A report is a mark, so it also spends one from the marks-and-counters bucket. Shared document creates and updates spend the document store's shared write budget, per (app, viewer), three token buckets refilling continuously: burst 30 (one token back every minute), daily 300 (one back every 4.8 minutes), and rejections 10 (one back every 30 minutes). A write takes one burst and one daily token and is refused while either, or the rejection bucket, is empty; a write that does not land gives both back, and if the refusal was about the request rather than an outage it also spends one rejection token.",
+    "keys": "A document key is 1-128 characters of [A-Za-z0-9._:-] and must not consist only of dots: URL clients rewrite `.` and `..` path segments, so such a key could never be addressed.",
+    "publish": "Server-side publish, behind a per-app host flag that is OFF by default; while off (and on a host that predates it) both paths answer 404 not_found exactly as an unknown route, so no case below exercises them. POST /_publish/<to> {from, keys, prune?} copies the CALLING viewer's own private documents at keys from the private collection <from> into the shared collection <to> (write: own), authored by that viewer, in one transaction; the server reads the documents itself, never from the request. Reply 200 {created, updated, unchanged, pruned, skipped: [{key, reason}], pruneIncomplete}, every list in key order. A copy whose content equals its private document is unchanged: not written, not scanned, no seq. skipped reasons: missing (no private document), not_author (another user's copy, never touched), hidden (the viewer's own copy a moderator hid, never rewritten). keys: 1-500, no duplicates, else 400 invalid_request with details.reason empty_keys, too_many_keys (details.max 500) or duplicate_key (details.key). Each copy passes the same checks as a shared put (publish scope, min-trust gate, collection schema, ownedModelVersions, moderation, the viewer's and the app's ceilings); any refusal refuses the whole publish and writes nothing, with details.key naming the document where it applies. A private document changed between the check and the write: 409 version_conflict, details.reason source_changed. prune: true also deletes the viewer's own visible copies in <to> whose key has no private document in <from>, at most 500 per call (pruneIncomplete: true when more remain). Prune is scoped by <from>, not by where a copy came from: if several private collections feed one shared collection, a prune from one of them deletes the copies published from the others. Budget: a publish spends one token of its own per (app, viewer) bucket, burst 10 and daily 10, one back every 2.4 hours, never the shared write budget; one that changes nothing, or does not land, gives it back; refused: 429 rate_limited, details {bucket: publish, retryAfter}. POST /_unpublish/<to> {keys} deletes the viewer's own copies at keys in one transaction, reply 200 {deleted, skipped: [{key, reason: missing | not_author}]}, and spends one private-write/delete token per call."
   },
   "storage": {
     "collections": {
@@ -32,6 +33,22 @@
         "visibility": "shared",
         "write": "none",
         "counters": ["plays"]
+      },
+      "cards": {
+        "visibility": "private",
+        "schema": {
+          "type": "object",
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "tags": {
+              "type": "array",
+              "maxItems": 3,
+              "items": { "enum": ["red", "green", "blue"] }
+            }
+          }
+        }
       }
     }
   },
@@ -769,6 +786,855 @@
       ]
     },
     {
+      "name": "update operators: PATCH $inc, $mark and $unmark tally a document like the deprecated routes",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 3
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 3
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 4
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "POST",
+          "path": "/plays/u1/counters/plays",
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 5
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/plays/u1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "author": {
+                "kind": "counter"
+              },
+              "counters": {
+                "plays": 5
+              },
+              "data": {}
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/q1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v3@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": 2
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$inc": {
+              "views": 2
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "value": 2
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/q1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 2
+              },
+              "counters": {
+                "views": 2
+              },
+              "viewer": {
+                "marks": ["vote"]
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": false,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": false,
+              "count": 1
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "report"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "marked": true,
+              "count": "$absent"
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$unmark": "report"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/posts/q1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 1,
+                "report": "$absent"
+              },
+              "counters": {
+                "views": 2
+              }
+            }
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PATCH",
+          "path": "/plays/u1",
+          "body": {
+            "$inc": {
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        },
+        {
+          "as": "anon@A",
+          "method": "PATCH",
+          "path": "/posts/q1",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 401,
+            "code": "sign_in_required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "update operators: refused PATCH bodies",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/posts/r1",
+          "body": {
+            "data": {
+              "status": "open"
+            }
+          },
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "empty_patch"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {},
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "empty_patch"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": ["$mark", "vote"],
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$set": {
+              "status": "closed"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "unknown_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1
+            },
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "multiple_operators"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "vote",
+            "$unmark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "multiple_operators"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "vote",
+            "status": "closed"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "report",
+            "reason": "marks carry no payload"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "status": "closed"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "merge_patch_unsupported"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1,
+              "plays": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {}
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$unmark": ["vote"]
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request",
+            "body": {
+              "details": {
+                "reason": "malformed_operator"
+              }
+            }
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": "1"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 1.5
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 0
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "views": 101
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$inc": {
+              "likes": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "body": {
+            "$mark": "star"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/prefs/k",
+          "body": {
+            "$inc": {
+              "views": 1
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/prefs/k",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$inc": {
+              "views": 1
+            }
+          },
+          "expect": {
+            "status": 404,
+            "code": "not_found"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/absent",
+          "body": {
+            "$unmark": "report"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/nope/k",
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 404,
+            "code": "collection_not_declared"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "PATCH",
+          "path": "/posts/r1",
+          "query": {
+            "ifVersion": "1"
+          },
+          "body": {
+            "$mark": "vote"
+          },
+          "expect": {
+            "status": 400,
+            "code": "invalid_request"
+          }
+        },
+        {
+          "as": "v2@A",
+          "method": "GET",
+          "path": "/posts/r1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "data": {
+                "status": "open"
+              },
+              "version": 1,
+              "marks": {
+                "vote": 0
+              },
+              "counters": {
+                "views": 0
+              },
+              "viewer": {
+                "marks": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a collection schema: every document write must match it; counters and marks are not document bodies",
+      "steps": [
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "title": "Lantern",
+              "tags": ["red"]
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "key": "c1",
+              "version": 1
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "title": "Lantern",
+              "tags": ["red", "mauve"]
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/tags/1\": must be one of the schema's enum values",
+              "details": {
+                "collection": "cards",
+                "pointer": "/tags/1",
+                "keyword": "enum"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/cards/c1",
+          "body": {
+            "data": {
+              "tags": ["red"]
+            },
+            "ifVersion": 1
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/title\": is required",
+              "details": {
+                "collection": "cards",
+                "pointer": "/title",
+                "keyword": "required"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "POST",
+          "path": "/cards",
+          "body": {
+            "data": {
+              "title": "Kite",
+              "color": "red"
+            }
+          },
+          "expect": {
+            "status": 400,
+            "code": "schema_violation",
+            "body": {
+              "message": "document does not match the schema of collection cards at \"/color\": is not a property the schema allows",
+              "details": {
+                "collection": "cards",
+                "pointer": "/color",
+                "keyword": "additionalProperties"
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "GET",
+          "path": "/cards/c1",
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1,
+              "data": {
+                "title": "Lantern",
+                "tags": ["red"]
+              }
+            }
+          }
+        },
+        {
+          "as": "v1@A",
+          "method": "PUT",
+          "path": "/prefs/p1",
+          "body": {
+            "data": {
+              "title": 7,
+              "color": "mauve"
+            }
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "version": 1
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "request errors",
       "steps": [
         {
@@ -885,7 +1751,7 @@
         },
         {
           "as": "v1@A",
-          "method": "PATCH",
+          "method": "POST",
           "path": "/prefs/k",
           "expect": {
             "status": 405,

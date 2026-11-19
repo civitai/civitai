@@ -25,7 +25,13 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, inboxStatuses, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
+import {
+  inReadWindow,
+  markAllReadSql,
+  memberReadWindow,
+  unreadCountSql,
+} from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -41,9 +47,13 @@ import {
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
   assertChatNameAllowed,
+  canSetOwnChatStatus,
   createMessage,
+  joinChatMember,
+  signalJoined,
   maxUsersPerChat,
   resolveChatRecipients,
+  scopeChatPreviews,
   signalChatMembersUpdated,
   upsertChat,
   deleteChatMessage,
@@ -62,6 +72,7 @@ import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwDbError,
   throwInternalServerError,
   throwNotFoundError,
@@ -70,6 +81,7 @@ import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -193,25 +205,22 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
 
     // A deleted conversation is gone from this user's list until the other side
     // writes again, at which point it returns holding only what came after the
-    // watermark. `latestChat` is a static selector and cannot be scoped per
-    // member, so the preview is trimmed here instead.
-    return chats
-      .map((chat) => {
-        const scoped = { ...chat, chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)) };
-        const clearedAt = scoped.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
-        if (!clearedAt) return scoped;
-
-        const messages = scoped.messages.filter((msg) => msg.createdAt > clearedAt);
-        return messages.length ? { ...scoped, messages } : null;
-      })
-      .filter(isDefined);
+    // watermark.
+    // Decided on the clear watermark alone, before the preview is scoped: an
+    // exit empties the preview but must not take the chat out of the list.
+    const listed = chats.filter((chat) => {
+      const clearedAt = chat.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+      return !clearedAt || chat.messages.some((msg) => msg.createdAt > clearedAt);
+    });
+    return (await scopeChatPreviews(listed, userId)).map((chat) => ({
+      ...chat,
+      chatMembers: chat.chatMembers.map(scopeMemberPrivacy(userId)),
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
-
-const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(', ');
 
 /**
  * Get number of unread messages for user
@@ -224,32 +233,13 @@ export const getUnreadMessagesForUserHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const parts = await Promise.all(
+      unreadCountSql(ctx.user.id).map((sql) =>
+        dbRead.$queryRaw<{ chatId: number; cnt: number }[]>(sql)
+      )
+    );
 
-    // The badge counts what the Inbox tab holds, so the membership filter is
-    // `chatBucketFor`'s inbox case spelled in SQL. Requests (filteredAt set) are
-    // deliberately absent: a filtered request that still lights the header badge
-    // is not filtered.
-    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId"          as "chatId",
-             count(msg.id)::integer as "cnt"
-      from "ChatMember" memb
-             left join "ChatMessage" msg
-                       on msg."chatId" = memb."chatId" and
-                          (msg.id > memb."lastViewedMessageId" or
-                           memb."lastViewedMessageId" is null
-                            ) and
-                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
-                          msg."deletedAt" is null
-      where memb."userId" = ${userId}
-        and memb.status in (${Prisma.raw(inboxStatusLiterals)})
-        and memb."notifyLevel" <> 'None'
-        and memb."filteredAt" is null
-        and msg."userId" != ${userId}
-      group by memb."chatId"
-    `;
-
-    return unread;
+    return parts.flat();
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -364,7 +354,7 @@ export const updateChatHandler = async ({
     await createMessage({
       chatId: existing.id,
       contentType: ChatMessageType.Markdown,
-      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      content: groupRenamedNote(name),
       userId: -1,
     });
 
@@ -540,6 +530,7 @@ export const modifyUserHandler = async ({
         id: true,
         userId: true,
         status: true,
+        leftAt: true,
         isOwner: true,
         user: {
           select: {
@@ -573,7 +564,7 @@ export const modifyUserHandler = async ({
     });
 
     if (!existing) {
-      throw throwBadRequestError(`Could not find chat member`);
+      throw throwNotFoundError(`Could not find chat member`);
     }
 
     const ownerMember = existing.chat.chatMembers.find((cm) => cm.isOwner);
@@ -593,6 +584,9 @@ export const modifyUserHandler = async ({
     } else {
       if (userId !== existing.userId) {
         throw throwBadRequestError(`Cannot modify chat status for another user`);
+      }
+      if (status && status !== existing.status && !canSetOwnChatStatus(existing.status, status)) {
+        throw throwBadRequestError(`Cannot change from ${existing.status} to ${status}`);
       }
     }
 
@@ -634,22 +628,66 @@ export const modifyUserHandler = async ({
 
     // TODO if a moderator rejoins, auto-rejoin other users
 
+    // Already there (a stale tab, a double click): nothing to write. Rewriting
+    // kickedAt or leftAt would also move the point a member's reads stop at.
+    if (status === existing.status) {
+      // primary: the row this request is about, read back as it stands
+      return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    }
+
+    if (status === ChatMemberStatus.Joined) {
+      const notice = await dbWrite.$transaction((tx) =>
+        joinChatMember(tx, {
+          chatId: existing.chat.id,
+          memberId: chatMemberId,
+          username: existing.user.username ?? `User ${existing.userId}`,
+          from: existing.status,
+        })
+      );
+      if (!notice) {
+        // primary: re-read after a lost compare-and-set
+        const now = await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+        // Joined by another tab or a send in between: what was asked for holds.
+        if (now.status === ChatMemberStatus.Joined) return now;
+        throw throwConflictError('This membership changed; reload and try again.');
+      }
+      await signalJoined({ chatId: existing.chat.id, userId: existing.userId, notice });
+      await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
+      // primary: returns the row this request just wrote
+      return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    }
+
     const extra = {
-      joinedAt: status === ChatMemberStatus.Joined ? new Date() : undefined,
       ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
-      kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
+      // Kicking someone who already left must not reopen what was said since.
+      kickedAt:
+        status === ChatMemberStatus.Kicked
+          ? existing.status === ChatMemberStatus.Left && existing.leftAt
+            ? existing.leftAt
+            : new Date()
+          : undefined,
       pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
-      // Accepting is what ends a request; leaving the mark set would strand the
-      // conversation in Requests forever.
-      filteredAt: status === ChatMemberStatus.Joined ? null : undefined,
       ...deriveMuteColumns({ isMuted, notifyLevel }),
     };
 
-    const resp = await dbWrite.chatMember.update({
-      where: { id: chatMemberId },
-      data: { status, ...rest, ...extra },
-    });
+    // A status change applies only to the status it was decided against, so a
+    // concurrent change (a kick, a join) is never overwritten.
+    let resp;
+    if (status) {
+      const { count } = await dbWrite.chatMember.updateMany({
+        where: { id: chatMemberId, status: existing.status },
+        data: { status, ...extra },
+      });
+      if (count === 0) throw throwConflictError('This membership changed; reload and try again.');
+      // primary: returns the row this request just wrote
+      resp = await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    } else {
+      resp = await dbWrite.chatMember.update({
+        where: { id: chatMemberId },
+        data: { ...rest, ...extra },
+      });
+    }
 
     const statusChanged = !!status && status !== existing.status;
 
@@ -686,8 +724,9 @@ export const modifyUserHandler = async ({
       // written, and letting an unreachable signals service throw reported the
       // action as failed after it had actually succeeded.
       await withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
-          method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          timeoutMs: 10_000,
+          method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
         })
@@ -698,11 +737,7 @@ export const modifyUserHandler = async ({
           chatId: existing.chat.id,
           contentType: ChatMessageType.Markdown,
           content: `${existing.user.username} ${
-            status === ChatMemberStatus.Joined
-              ? 'joined'
-              : status === ChatMemberStatus.Left
-              ? 'left'
-              : 'was kicked'
+            status === ChatMemberStatus.Left ? 'left' : 'was kicked'
           }`,
           userId: -1,
         });
@@ -799,27 +834,13 @@ export const clearChatHandler = async ({
   }
 };
 
-/**
- * Mark all messages as read for active chats
- */
 export const markAllAsReadHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
 
-    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>`
-      update "ChatMember"
-      set "lastViewedMessageId" = data.last_msg
-      from (select *
-            from (select cm.id, cm."lastViewedMessageId" as last_viewed, max(msg.id) as last_msg
-                  from "ChatMember" cm
-                         join "ChatMessage" msg on cm."chatId" = msg."chatId"
-                  where cm."userId" = ${userId}
-                    and cm.status = 'Joined'
-                  group by 1, 2) d
-            where d.last_viewed is distinct from d.last_msg) as data
-      where "ChatMember".id = data.id
-      returning "chatId", "lastViewedMessageId"
-    `;
+    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>(
+      markAllReadSql(userId)
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -906,22 +927,7 @@ export const getInfiniteMessagesHandler = async ({
       throw throwNotFoundError(`No chat found for ID (${input.chatId})`);
     }
 
-    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
-    const createdAt: { lt?: Date; gt?: Date } = {};
-    if (!thisMember) {
-      createdAt.lt = new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Left) {
-      createdAt.lt = thisMember.leftAt ?? new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Kicked) {
-      createdAt.lt = thisMember.kickedAt ?? new Date(1970);
-    } else if (thisMember.status === ChatMemberStatus.Ignored) {
-      // TODO do we need ignoredAt?
-      createdAt.lt = new Date(1970);
-    }
-    // Deleted-conversation watermark. Combines with the status limits above
-    // rather than replacing them — a member who cleared and later left is bounded
-    // on both ends.
-    if (thisMember?.clearedAt) createdAt.gt = thisMember.clearedAt;
+    const createdAt = memberReadWindow(chat.chatMembers.find((cm) => cm.userId === userId));
 
     const dateLimit = Object.keys(createdAt).length ? { createdAt } : {};
 
@@ -943,7 +949,7 @@ export const getInfiniteMessagesHandler = async ({
       item.referenceMessage &&
       (item.referenceMessage.chatId !== input.chatId ||
         !!item.referenceMessage.deletedAt ||
-        (!!thisMember?.clearedAt && item.referenceMessage.createdAt <= thisMember.clearedAt))
+        !inReadWindow(createdAt, item.referenceMessage.createdAt))
         ? { ...item, referenceMessage: null }
         : item
     );
@@ -987,6 +993,7 @@ export const getMessageByIdHandler = async ({
     const msg = await dbWrite.chatMessage.findFirst({
       where: { id: input.messageId, deletedAt: null },
       select: {
+        createdAt: true,
         content: true,
         contentType: true,
         user: {
@@ -1009,6 +1016,7 @@ export const getMessageByIdHandler = async ({
                 status: true,
                 leftAt: true,
                 kickedAt: true,
+                clearedAt: true,
               },
             },
           },
@@ -1016,8 +1024,8 @@ export const getMessageByIdHandler = async ({
       },
     });
 
-    // TODO fix this and above to check for the user status too (by date)
-    if (!msg || !msg.chat.chatMembers.map((cm) => cm.userId).includes(userId)) {
+    const me = msg?.chat.chatMembers.find((cm) => cm.userId === userId);
+    if (!msg || !me || !inReadWindow(memberReadWindow(me), msg.createdAt)) {
       throw throwNotFoundError(`No message found for ID (${input.messageId})`);
     }
 
@@ -1334,6 +1342,7 @@ export const isTypingHandler = async ({
           select: {
             userId: true,
             isOwner: true,
+            status: true,
             user: {
               select: {
                 username: true,
@@ -1347,7 +1356,12 @@ export const isTypingHandler = async ({
 
     if (!existing) return;
     const existingUser = existing.chatMembers.find((cm) => cm.userId === userId);
-    if (!existingUser) return;
+    // Invited counts: their first message joins them.
+    if (
+      existingUser?.status !== ChatMemberStatus.Joined &&
+      existingUser?.status !== ChatMemberStatus.Invited
+    )
+      return;
 
     if (muted) {
       const owner = existing.chatMembers.find((cm) => cm.isOwner === true);

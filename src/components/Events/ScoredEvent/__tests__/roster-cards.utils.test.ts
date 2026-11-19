@@ -8,6 +8,7 @@ import {
   rosterPricePoints,
   rosterRanks,
   ROSTER_NEW_MS,
+  showcaseHat,
   slotPlan,
 } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
 
@@ -157,6 +158,38 @@ describe('podiumHero', () => {
   it('has no hero for a member with no hats, nor one whose hats have no art', () => {
     expect(podiumHero([]).label).toBe('none');
     expect(podiumHero([hat(4, true, null)]).hero).toBeUndefined();
+  });
+
+  it('heroes a showcase pick over the worn hat while the showcase is live, and only then', () => {
+    const hats = [hat(1, true), hat(2, false), { ...hat(3, false), picked: true }];
+    const live = podiumHero(hats, true);
+    expect(live.hero?.cosmeticId).toBe(3);
+    expect(live.label).toBe('showcase');
+    expect(live.rest.map((h) => h.cosmeticId)).toEqual([1, 2]);
+    // After the event the pick is kept but shown nowhere: the card goes back to the worn hat.
+    expect(podiumHero(hats, false).hero?.cosmeticId).toBe(1);
+  });
+});
+
+describe('showcaseHat', () => {
+  const hat = (
+    cosmeticId: number,
+    worn: boolean,
+    picked = false,
+    url: string | null = `u${cosmeticId}`
+  ) => ({
+    cosmeticId,
+    name: `h${cosmeticId}`,
+    url,
+    worn,
+    picked,
+  });
+
+  it('is the pick, else the first hat in shelf order, the same default the server resolves', () => {
+    expect(showcaseHat([hat(1, true), hat(2, false, true)])?.cosmeticId).toBe(2);
+    expect(showcaseHat([hat(5, false), hat(6, false)])?.cosmeticId).toBe(5);
+    expect(showcaseHat([hat(7, false, true, null), hat(8, false)])?.cosmeticId).toBe(8);
+    expect(showcaseHat([])).toBeUndefined();
   });
 });
 

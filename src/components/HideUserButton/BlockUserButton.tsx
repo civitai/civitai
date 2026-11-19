@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Menu, Stack, Switch, Text } from '@mantine/core';
+import { Button, Stack, Switch, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconUserCancel, IconUserCheck } from '@tabler/icons-react';
 import { useState } from 'react';

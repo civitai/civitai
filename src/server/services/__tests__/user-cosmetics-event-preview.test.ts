@@ -13,7 +13,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
 
-const { getUserCreator, equipCosmetic, getCosmeticsAndProfilePicturesForUsers } = await import(
+const { equipCosmetic, getCosmeticsAndProfilePicturesForUsers } = await import(
   '~/server/services/user.service'
 );
 const { getLeaderboardHandler } = await import('~/server/controllers/user.controller');
@@ -111,15 +111,8 @@ afterEach(() => {
 });
 
 describe('user-level cosmetic reads carry no event hats', () => {
-  it('the creator card returns what the user wears, not what they placed on content', async () => {
-    dbMock.dbRead.user.findFirst.mockImplementation((async (args: {
-      select: { cosmetics: { where?: Where } };
-    }) => ({ id: OWNER, settings: null, cosmetics: cosmeticsFor(args.select) })) as never);
-    dbMock.dbRead.model.count.mockResolvedValue(0 as never);
-
-    const creator = await getUserCreator({ id: OWNER });
-    expect(creator?.cosmetics.map((x) => x.cosmetic.id)).toEqual([1]);
-  });
+  // The creator card (a Kysely read) leaving out a cosmetic placed on content is pinned against a
+  // real database: hot-reads-2.kysely-parity.test.ts, its COSMETIC_ON_ENTITY row.
 
   it('the leaderboard returns what each user wears', async () => {
     dbMock.dbRead.user.findMany.mockImplementation((async (args: {
@@ -178,8 +171,11 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 
-  const profileHats = async (viewer: { sessionUserId?: number; isModerator?: boolean }) =>
-    hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
+  const profileHats = async (viewer: {
+    sessionUserId?: number;
+    isModerator?: boolean;
+    eventViewer?: { id?: number; isModerator?: boolean };
+  }) => hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
 
   it('hides them before launch from a signed-out viewer and a viewer the flag is off for', async () => {
     expect(await profileHats({})).toHaveLength(0);
@@ -193,7 +189,15 @@ describe('the profile shows event hats only to viewers the event is open to', ()
 
   it('shows them to a tester and a moderator', async () => {
     expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(2);
-    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(2);
+    expect(
+      await profileHats({ sessionUserId: 99, eventViewer: { id: 99, isModerator: true } })
+    ).toHaveLength(2);
+  });
+
+  // `isModerator` decides only what the profile itself shows; whether a moderator counts for the
+  // event is the caller's eventViewerOf, which a scoped token can lose.
+  it('does not take the profile moderator flag as the event viewer', async () => {
+    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(0);
   });
 
   it("gives the owner no exception: their own hats follow the flag like anyone else's", async () => {

@@ -177,6 +177,7 @@ test('the mock still covers the whole hidden-preferences barrel', async () => {
   const actual = await vi.importActual<typeof HiddenPreferences>('~/hooks/hidden-preferences');
 
   expect(Object.keys(actual).sort()).toEqual([
+    'useClearHiddenPreferences',
     'useHiddenPreferencesData',
     'useQueryHiddenPreferences',
     'useToggleHiddenPreferences',

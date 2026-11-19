@@ -31,7 +31,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     who SENT an offer, or for a bystander.
  *   - CAPABILITY CREEP: a pending offer confers ZERO capability until accepted (the same
  *     consent principle as an unaccepted seat), so it must light "Invites" and must NOT
- *     light "My apps". Asserted explicitly, because the cheapest possible implementation —
+ *     light "My builds". Asserted explicitly, because the cheapest possible implementation —
  *     OR-ing the new probe into both booleans — would pass every "the tab appears" case.
  */
 
@@ -284,7 +284,7 @@ describe('🔴 THE LEAK DIRECTION: only the ADDRESSEE is notified', () => {
 
 // ---------------------------------------------------------------------------
 
-describe('🔴 A PENDING OFFER CONFERS ZERO CAPABILITY — it must not light "My apps"', () => {
+describe('🔴 A PENDING OFFER CONFERS ZERO CAPABILITY — it must not light "My builds"', () => {
   it('a live transfer offer leaves hasEditableApps FALSE', async () => {
     // The cheapest wrong implementation — OR the new probe into both booleans — passes
     // every "the tab appears" case above and fails only here.

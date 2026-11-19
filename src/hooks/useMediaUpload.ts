@@ -8,7 +8,7 @@ import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { preprocessFile } from '~/utils/media-preprocessors';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -17,6 +17,8 @@ import { isReadFailure, pickOriginal } from '~/utils/unreadable-pick';
 // Max number of images uploading concurrently to S3. Tune here if we hit
 // throttling from the bucket or want to let more through.
 const MAX_CONCURRENT_UPLOADS = 2;
+
+const UPLOADS_IN_PROGRESS_MESSAGE = 'Your files are still uploading. Leave anyway?';
 
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
@@ -69,8 +71,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   });
   const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
+  // Files accepted but not yet completed. count only includes a file once its upload completes,
+  // so without this a slow upload lets later picks pass the limit.
+  const [reserved, setReserved] = useState(0);
+  const reservedRef = useRef(0);
+  const adjustReserved = (delta: number) => {
+    reservedRef.current = Math.max(0, reservedRef.current + delta);
+    setReserved(reservedRef.current);
+  };
   // How many more files can be added: a pick past this is cut short.
-  const remaining = Math.max(0, uploadSettings.maxItems - count);
+  const remaining = Math.max(0, uploadSettings.maxItems - count - reserved);
   const canAdd =
     remaining > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
@@ -91,12 +101,33 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   // preparing or uploading would reuse its index.
   const lastIndexRef = useRef(0);
 
+  // Warns before the page unloads while a pick is being prepared or uploaded, since an unload ends
+  // it. Added and removed with the work itself, not in an effect: on /posts/create the pick runs on
+  // after this hook's component has unmounted (see "after the dropzone unmounts" in the tests).
+  const busyRef = useRef(0);
+  const warnBeforeUnloadRef = useRef((event: BeforeUnloadEvent) => {
+    event.preventDefault();
+    return (event.returnValue = UPLOADS_IN_PROGRESS_MESSAGE);
+  });
+  function hold(n = 1) {
+    if (n <= 0) return;
+    if (busyRef.current === 0) window.addEventListener('beforeunload', warnBeforeUnloadRef.current);
+    busyRef.current += n;
+  }
+  function release() {
+    busyRef.current--;
+    if (busyRef.current === 0)
+      window.removeEventListener('beforeunload', warnBeforeUnloadRef.current);
+  }
+
   async function runWorker() {
     try {
       while (jobQueueRef.current.length > 0) {
         const job = jobQueueRef.current.shift()!;
         if (job.aborted) {
           URL.revokeObjectURL(job.processing.objectUrl);
+          adjustReserved(-1);
+          release();
           continue;
         }
         const onComplete = onCompleteRef.current;
@@ -110,10 +141,18 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           URL.revokeObjectURL(data.objectUrl);
         } catch (e) {
           console.error(e);
-          onComplete(
-            { status: 'error', ...data, url: data.objectUrl, index: job.index },
-            job.context
-          );
+          // A throw here would end this worker and strand the jobs behind it, unuploaded.
+          try {
+            onComplete(
+              { status: 'error', ...data, url: data.objectUrl, index: job.index },
+              job.context
+            );
+          } catch (e) {
+            console.error(e);
+          }
+        } finally {
+          adjustReserved(-1);
+          release();
         }
       }
     } finally {
@@ -121,8 +160,9 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     }
   }
 
+  /** Returns how many jobs it took on; each releases its own reservation when it ends. */
   function enqueueJobs(jobs: UploadJob[]) {
-    if (!jobs.length) return;
+    if (!jobs.length) return 0;
 
     // Dedupe against anything currently queued or already uploading.
     // Guards against accidental double-enqueue (rapid re-drops, effect re-fires,
@@ -142,7 +182,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     const uniqueJobs = jobs.filter((j) => !inFlight.has(pickOriginal(j.processing.file)));
     for (const job of jobs)
       if (!uniqueJobs.includes(job)) URL.revokeObjectURL(job.processing.objectUrl);
-    if (!uniqueJobs.length) return;
+    if (!uniqueJobs.length) return 0;
 
     // Pre-register pending entries so the UI reflects queued items.
     if (fileUploadContext) {
@@ -172,6 +212,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       });
     }
 
+    hold(uniqueJobs.length);
     jobQueueRef.current.push(...uniqueJobs);
     while (activeWorkersRef.current < MAX_CONCURRENT_UPLOADS && jobQueueRef.current.length > 0) {
       activeWorkersRef.current++;
@@ -181,6 +222,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
         console.error('runWorker unexpectedly threw', e);
       });
     }
+    return uniqueJobs.length;
   }
   // #endregion
 
@@ -190,6 +232,9 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     context?: TContext
   ) {
     setLoading(true);
+    hold();
+    let reservedHere = 0;
+    let handedToJobs = 0;
     try {
       const start = Math.max(count, lastIndexRef.current) + 1;
       const { maxSize } = uploadSettings;
@@ -207,8 +252,13 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = data.slice(0, remaining);
+      const sliced = data.slice(
+        0,
+        Math.max(0, uploadSettings.maxItems - count - reservedRef.current)
+      );
       if (sliced.length) lastIndexRef.current = start + sliced.length - 1;
+      reservedHere = sliced.length;
+      adjustReserved(reservedHere);
 
       // process media metadata
       const mapped = (
@@ -228,8 +278,11 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             }
             if (!data) return null;
             // A generated video's file carries the worker's ComfyUI graph, whose Model path and
-            // engine would override the generator's meta and fail the on-site check.
-            const isOnSiteVideo = data.type === 'video' && !!fileMeta?.civitaiResources;
+            // engine would override the generator's meta and fail the on-site check. The
+            // generator's meta drops empty arrays, so a job with no resources (e.g. an
+            // interpolated video) has no civitaiResources: the workflow id marks it as generated.
+            const isOnSiteVideo =
+              data.type === 'video' && (!!fileMeta?.civitaiResources || !!generationWorkflowId);
             const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
             // Merge civitaiResources arrays by modelVersionId instead of overwriting
             const mergedCivitaiResources = (() => {
@@ -262,7 +315,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             const meta = embeddedMeta;
 
             if (meta) {
-              const audit = await auditMetaData(meta, false);
+              const audit = auditPostImageMeta(meta, false);
               if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
             }
 
@@ -311,9 +364,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           jobs.push({ processing, index, context, aborted: false });
         }
       }
-      enqueueJobs(jobs);
+      handedToJobs = enqueueJobs(jobs);
     } catch (error: any) {
       setError(error);
+    } finally {
+      adjustReserved(handedToJobs - reservedHere);
+      release();
     }
     setLoading(false);
   }
@@ -337,6 +393,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   return {
     canAdd,
     remaining,
+    reserved,
     upload: processFiles,
     error,
     files,

@@ -1,14 +1,22 @@
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      const session = await getServerAuthSession({ req, res });
+      const session = await getApiAuthSession(
+        { req, res },
+        {
+          whenBanned: 'anonymous',
+          scope: { anyOf: [TokenScope.AIServicesRead, TokenScope.ModelsRead] },
+        }
+      );
 
       // 🔴 civitai#3845 TIER 1. The catch below used to answer EVERY failure with
       // `400 { message: e.message }` on a `PublicEndpoint`, so a
@@ -40,9 +48,15 @@ export default PublicEndpoint(
         query: queryInput.data,
         user: session?.user,
         browsingLevel: getRequestBrowsingLevel({ features, user: session?.user }),
-        // No request headers: the verified-crawler header is only stripped on proxied paths, and
-        // this route's signed-out answers are edge-cached for everyone.
-        mediaViewer: { user: session?.user, features, req: { headers: {} } as typeof req },
+        // The media viewer carries the credential, because a token is not a session whatever owner or
+        // moderator presents it. It carries no request headers: the verified-crawler header is only
+        // stripped on proxied paths, and this route's signed-out answers are edge-cached for everyone.
+        mediaViewer: {
+          ...getRequestCredential(req),
+          user: session?.user,
+          features,
+          req: { headers: {} } as typeof req,
+        },
       });
       return res.status(200).json(queryResult);
     } catch (e) {

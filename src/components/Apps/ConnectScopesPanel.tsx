@@ -1,6 +1,8 @@
-import { Card, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Card, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconInfoCircle, IconKey } from '@tabler/icons-react';
 import { ConnectScopeRow } from '~/components/Apps/ConnectScopeRow';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import {
   isSensitiveTokenScope,
   tokenScopeMaskToList,
@@ -28,11 +30,12 @@ export function ConnectScopesPanel({
 }: {
   connectClientName?: string | null;
   /** The disclosed TokenScope bitmask the listing requests. */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** Per-scope rationale keyed by TokenScope enum-key (e.g. `{ ModelsWrite: '…' }`). */
   justifications?: Record<string, string> | null;
 }) {
-  const scopes = tokenScopeMaskToList(requestedScopes);
+  // The mask arrives from tRPC as a number; widened before it is decoded.
+  const scopes = tokenScopeMaskToList(BigInt(requestedScopes));
   const sensitiveScopes = scopes.filter((s) => isSensitiveTokenScope(s.bit));
   const normalScopes = scopes.filter((s) => !isSensitiveTokenScope(s.bit));
 
@@ -71,7 +74,7 @@ export function ConnectScopesPanel({
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -84,7 +87,7 @@ export function ConnectScopesPanel({
                   </Tooltip>
                 </Group>
                 {sensitiveScopes.map((s) => (
-                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label} sensitive>
+                  <ConnectScopeRow key={s.key} scopeKey={s.key} label={s.label} sensitive>
                     <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
                   </ConnectScopeRow>
                 ))}
@@ -94,7 +97,7 @@ export function ConnectScopesPanel({
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
             </Group>
             {normalScopes.length === 0 ? (
@@ -104,7 +107,7 @@ export function ConnectScopesPanel({
             ) : (
               <Stack gap={8} data-testid="connect-scopes-normal-group">
                 {normalScopes.map((s) => (
-                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label}>
+                  <ConnectScopeRow key={s.key} scopeKey={s.key} label={s.label}>
                     <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
                   </ConnectScopeRow>
                 ))}

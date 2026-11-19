@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Image, Loader, Menu, Modal, Text } from '@mantine/core';
+import { Button, Image, Loader, Modal, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useCallback } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

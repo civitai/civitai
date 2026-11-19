@@ -29,6 +29,8 @@ next-env.d.ts
 
 # production
 /build
+# Standalone server bundles (`pnpm run build:registry-adapter`)
+/dist/
 
 # misc
 .DS_Store

@@ -1,4 +1,5 @@
 import React from 'react';
+import { TEXT_ENCODER_LOCKED_BASES } from '@civitai/shared/training-text-encoder';
 import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
@@ -70,6 +71,9 @@ type BaseTrainingSettingsType = {
 
 // nb: could allow the other for either allowing custom or being strict
 type TypeTrainingBaseModel = TrainingDetailsBaseModel; // TrainingDetailsBaseModelList
+
+// Typed so a key the trainer doesn't know fails typecheck instead of silently locking nothing.
+const textEncoderLockedBases: readonly TypeTrainingBaseModel[] = TEXT_ENCODER_LOCKED_BASES;
 
 type SelectTrainingSettingsType = {
   type: 'select';
@@ -167,6 +171,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 'ai-toolkit' } },
       mageflow: { all: { default: 'ai-toolkit' } },
       ideogram4: { all: { default: 'ai-toolkit' } },
+      minimaxh3image: { all: { default: 'ai-toolkit' } },
       acestep_15: { all: { default: 'ai-toolkit' } },
       yue2: { all: { default: 'ai-toolkit' } },
       acestep_15_xl_base: { all: { default: 'ai-toolkit' } },
@@ -315,6 +320,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       ideogram4: {
         all: { default: 1, min: 1, max: 1 },
       },
+      minimaxh3image: { all: { default: 1, min: 1, max: 1 } },
       ltx2: { all: { default: 2, min: 1, max: 4 } },
       ltx23: { all: { default: 2, min: 1, max: 4 } },
       ltx25: { all: { default: 2, min: 1, max: 4 } },
@@ -364,6 +370,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 3000 } },
       ming: { all: { default: 3000 } },
       qwen21: { all: { default: 3000 } },
+      minimaxh3image: { all: { default: 3000 } },
     },
   },
   {
@@ -395,6 +402,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: { all: { default: 300 } },
       ming: { all: { default: 300 } },
       qwen21: { all: { default: 300 } },
+      minimaxh3image: { all: { default: 300 } },
     },
   },
   {
@@ -426,6 +434,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 1024 } },
       mageflow: { all: { default: 1024 } },
       ideogram4: { all: { default: 1024 } },
+      minimaxh3image: { all: { default: 1024 } },
       ltx2: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       ltx23: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       ltx25: { all: { disabled: true, default: 960, min: 960, max: 960 } },
@@ -487,6 +496,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { disabled: true } },
       mageflow: { all: { disabled: true } },
       ideogram4: { all: { disabled: true } },
+      minimaxh3image: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       yue2: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
@@ -538,6 +548,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { disabled: true } },
       mageflow: { all: { disabled: true } },
       ideogram4: { all: { disabled: true } },
+      minimaxh3image: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       yue2: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
@@ -622,6 +633,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 1e-4 } },
       mageflow: { all: { default: 1e-4 } },
       ideogram4: { all: { default: 1e-4 } },
+      minimaxh3image: { all: { default: 1e-4 } },
       acestep_15: { all: { default: 1e-4 } },
       yue2: { all: { default: 1e-4 } },
       acestep_15_xl_base: { all: { default: 1e-4 } },
@@ -639,37 +651,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1e-5,
     overrides: {
       anime: { all: { default: 1e-4 } },
-      flux_dev: { all: { disabled: true, default: 0, max: 0 } },
-      flux2_dev: { all: { disabled: true, default: 0, max: 0 } },
-      // flux2_dev_edit: { all: { disabled: true, default: 0, max: 0 } }, // Disabled for now
-      chroma: { all: { disabled: true, default: 0, max: 0 } },
-      qwen_image: { all: { disabled: true, default: 0, max: 0 } },
-      zimageturbo: { all: { disabled: true, default: 0, max: 0 } },
-      zimagebase: { all: { disabled: true, default: 0, max: 0 } },
-      flux2klein_4b: { all: { disabled: true, default: 0, max: 0 } },
-      flux2klein_9b: { all: { disabled: true, default: 0, max: 0 } },
-      ltx2: { all: { disabled: true, default: 0, max: 0 } },
-      ltx23: { all: { disabled: true, default: 0, max: 0 } },
-      ltx25: { all: { disabled: true, default: 0, max: 0 } },
-      minimaxh3: { all: { disabled: true, default: 0, max: 0 } },
-      // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
-      // sd3_large: { all: { disabled: true, default: 0, max: 0 } },
-      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
-      wan_2_2_t2v_a14b: { all: { disabled: true, default: 0, max: 0 } },
-      hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
-      anima: { all: { disabled: true, default: 0, max: 0 } },
-      boogu: { all: { disabled: true, default: 0, max: 0 } },
-      ming: { all: { disabled: true, default: 0, max: 0 } },
-      qwen21: { all: { disabled: true, default: 0, max: 0 } },
-      krea2: { all: { disabled: true, default: 0, max: 0 } },
-      mageflow: { all: { disabled: true, default: 0, max: 0 } },
-      ideogram4: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15: { all: { disabled: true, default: 0, max: 0 } },
-      yue2: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
-      acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
+      ...Object.fromEntries(
+        textEncoderLockedBases.map((base) => [
+          base,
+          { all: { disabled: true, default: 0, max: 0 } },
+        ])
+      ),
     },
   },
   {
@@ -707,11 +694,49 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 'constant' } },
       mageflow: { all: { default: 'constant' } },
       ideogram4: { all: { default: 'constant' } },
+      minimaxh3image: { all: { default: 'constant' } },
       acestep_15: { all: { default: 'constant' } },
       yue2: { all: { default: 'constant' } },
       acestep_15_xl_base: { all: { default: 'constant' } },
       acestep_15_xl_sft: { all: { default: 'constant' } },
     },
+  },
+  {
+    name: 'lrWarmupSteps',
+    label: 'LR warmup steps',
+    hint: 'Gradually raise the learning rate at the start. Available with constant learning rate. Leave blank to keep the scheduler default.',
+    type: 'int',
+    min: 0,
+    max: 10000,
+    step: 1,
+    default: undefined,
+  },
+  {
+    name: 'captionDropoutRate',
+    label: 'Caption dropout',
+    hint: 'Chance of training without a caption, from 0 to 1. Leave blank to keep the model default (0.05).',
+    type: 'number',
+    min: 0,
+    max: 1,
+    step: 0.01,
+    default: undefined,
+  },
+  {
+    name: 'rankDropout',
+    label: 'Rank dropout',
+    hint: 'Randomly skip part of the LoRA during training to help reduce overfitting. Leave blank or use 0 to keep it off.',
+    type: 'number',
+    min: 0,
+    max: 0.99,
+    step: 0.01,
+    default: undefined,
+  },
+  {
+    name: 'trainConv',
+    label: 'Train convolution layers',
+    hint: 'Train additional image-detail layers. Uses more memory. Available for SD 1.5 and SDXL-family models only; off by default.',
+    type: 'bool',
+    default: false,
   },
   {
     // TODO [bw] actually conditional on lrScheduler, cosine_with_restarts/polynomial
@@ -778,6 +803,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { disabled: true, default: 0, max: 0 } },
       mageflow: { all: { disabled: true, default: 0, max: 0 } },
       ideogram4: { all: { disabled: true, default: 0, max: 0 } },
+      minimaxh3image: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15: { all: { disabled: true, default: 0, max: 0 } },
       yue2: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
@@ -813,6 +839,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 32 } },
       mageflow: { all: { default: 32 } },
       ideogram4: { all: { default: 32 } },
+      minimaxh3image: { all: { default: 16 } },
       acestep_15: { all: { default: 32 } },
       yue2: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
@@ -867,6 +894,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 32 } },
       mageflow: { all: { default: 32 } },
       ideogram4: { all: { default: 32 } },
+      minimaxh3image: { all: { default: 16 } },
       acestep_15: { all: { default: 32 } },
       yue2: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
@@ -904,6 +932,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       krea2: { all: { default: 0 } },
       mageflow: { all: { default: 0 } },
       ideogram4: { all: { default: 0 } },
+      minimaxh3image: { all: { default: 0 } },
       acestep_15: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       yue2: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, min: 0, max: 0 } },
@@ -997,6 +1026,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       ideogram4: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      minimaxh3image: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       ltx2: { all: { default: optimizerArgMapVideo.AdamW8Bit } },

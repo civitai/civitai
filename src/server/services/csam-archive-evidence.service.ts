@@ -1,18 +1,23 @@
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
+import { archiveQueueState } from '@civitai/db-queries/evidence-archive-queue';
+import { EVIDENCE_VERIFIED_KEY } from '@civitai/shared/held-url';
 import { dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { setCsamArchiveIncomplete } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveIncompleteReason } from '~/server/metrics/csam-archive.metrics';
 import type { CsamArchiveObjectKind } from '~/server/services/csam.service-new';
-import { getCsamS3Client } from '~/server/services/csam.service-new';
+import { getCsamS3Client } from '~/server/services/csam-bucket';
+import { GENERATOR_EVIDENCE_VERSION } from '~/server/services/generator-evidence/evidence-meta';
 
 type S3 = Pick<S3Client, 'send'>;
 
 /** The `CsamReport.details` key that marks a report's evidence copy verified. */
-export const EVIDENCE_VERIFIED_AT = 'evidenceVerifiedAt';
+export const EVIDENCE_VERIFIED_AT = EVIDENCE_VERIFIED_KEY;
 
 type Candidate = { id: number; type: string };
 
@@ -26,7 +31,28 @@ type ArchiveObjectRow = {
   namedMissing: number | null;
 };
 
-type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale'>;
+type CheckFailure = Exclude<
+  CsamArchiveIncompleteReason,
+  'skipped' | 'stale' | 'unsupported' | 'queue_failing'
+>;
+
+// Mirrors the `unsupported` filter in getCsamsToArchive: generator evidence, and a generated-image
+// report naming no URL. Both stay unarchived, so their users' image-retention hold cannot lift until a
+// dedicated archiver for them stamps `archivedAt`.
+const UNSUPPORTED_SQL = sql<boolean>`(
+  COALESCE(r.details -> 'generatorEvidence' ->> 'version' = ${String(
+    GENERATOR_EVIDENCE_VERSION
+  )}, false)
+  OR (
+    r.type::text = 'GeneratedImage'
+    AND NOT COALESCE(jsonb_path_exists(r.details, '$.generatedImages[*].blobs[*].url ? (@ != "" && @ != null)'), false)
+  )
+)`;
+
+/** A sent report not archived after this long is stale, and so is a queue row this old. */
+const STALE_HOURS = 6;
+// Inlined, never bound: a bound JS number reaches make_interval as int8 (42883).
+const STALE_INTERVAL = sql.raw(`make_interval(hours => ${STALE_HOURS})`);
 
 const MEDIA_KIND: Partial<Record<string, CsamArchiveObjectKind>> = {
   Image: 'images',
@@ -129,6 +155,8 @@ export async function checkCsamArchiveEvidence({
   const counts: Record<CsamArchiveIncompleteReason, number> = {
     skipped: 0,
     stale: 0,
+    unsupported: 0,
+    queue_failing: 0,
     images_missing: 0,
     object_missing: 0,
     entries_mismatch: 0,
@@ -136,17 +164,30 @@ export async function checkCsamArchiveEvidence({
     check_error: 0,
   };
 
-  const [pending] = await dbWrite.$queryRaw<{ skipped: number; stale: number }[]>`
+  // A queued report waits out the stale window on its row's age, so an archiver that never claims
+  // the row (stopped, or wedged on another row) still shows as stale.
+  const queueState = archiveQueueState('r', STALE_HOURS * 60);
+  const unarchived = sql<boolean>`(r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NULL)`;
+  const {
+    rows: [pending],
+  } = await sql<{ skipped: number; stale: number; unsupported: number; queue_failing: number }>`
     SELECT
-      count(*) FILTER (WHERE details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
+      count(*) FILTER (WHERE r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
+      count(*) FILTER (WHERE ${unarchived} AND ${UNSUPPORTED_SQL})::int AS unsupported,
       count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND "reportSentAt" < now() - interval '6 hours'
-      )::int AS stale
-    FROM "CsamReport"
-    WHERE "reportSentAt" IS NOT NULL AND "archivedAt" IS NULL
-  `;
+        WHERE ${unarchived} AND NOT ${UNSUPPORTED_SQL}
+          AND r."reportSentAt" < now() - ${STALE_INTERVAL}
+          AND s.state IS DISTINCT FROM 'queued'
+      )::int AS stale,
+      count(*) FILTER (WHERE s.state = 'failing')::int AS queue_failing
+    FROM "CsamReport" r
+    CROSS JOIN LATERAL (SELECT ${queueState} AS state) s
+    WHERE r."reportSentAt" IS NOT NULL
+  `.execute(kyselyWrite);
   counts.skipped = pending?.skipped ?? 0;
   counts.stale = pending?.stale ?? 0;
+  counts.unsupported = pending?.unsupported ?? 0;
+  counts.queue_failing = pending?.queue_failing ?? 0;
 
   // Reports archived before objects were recorded have nothing to check against and are left out.
   const candidates = await dbWrite.$queryRaw<Candidate[]>`
@@ -201,7 +242,7 @@ export async function checkCsamArchiveEvidence({
       reportType: report.type,
       verified: !failure,
       reason: failure ?? undefined,
-    }).catch(() => undefined);
+    });
   }
 
   setCsamArchiveIncomplete(counts, now);

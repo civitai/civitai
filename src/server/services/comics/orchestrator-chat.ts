@@ -26,13 +26,13 @@ type ChatMessage = {
  *
  * The CEILING is measured. undici's default headers timeout was measured at
  * 300.7s (`UND_ERR_HEADERS_TIMEOUT`) against a server that accepts and never
- * responds, and `submitWorkflow` only bounds an attempt with
- * `AbortSignal.timeout` on the whatIf path — a real submit like this one is
- * unbounded client-side. If the wait outlives the headers timeout the fetch
- * throws instead of returning a graceful 202, and `submitWorkflowWithRetry`
- * re-submits: it retries on ANY throw, it is NOT gated on an error allow-list.
- * This body carries no `externalId`, so the orchestrator cannot dedupe and the
- * user is billed for up to 3 chat completions. 120s keeps a 2.5x margin.
+ * responds. `submitWorkflow` now bounds every real submit, but it raises an
+ * attempt's budget to cover a requested `wait` (wait + 15s here), so this wait
+ * is never cut off client-side; an attempt that does time out is not retried.
+ * A network error still is, and this body carries no `externalId`, so the
+ * orchestrator cannot dedupe it: a wait that outlived the headers timeout would
+ * throw instead of returning a graceful 202, and the retry could bill a second
+ * chat completion. 120s keeps a 2.5x margin.
  *
  * The FLOOR is measured, with a caveat about the population. From
  * `orchestration_jobs_duration_seconds{job_type="chatCompletion"}` over 7d, on

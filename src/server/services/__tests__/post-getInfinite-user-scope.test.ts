@@ -38,7 +38,12 @@ const baseInput = {
 };
 
 async function run(input: Partial<Parameters<typeof getPostsInfinite>[0]>) {
-  return getPostsInfinite({ ...baseInput, ...input } as Parameters<typeof getPostsInfinite>[0])
+  return getPostsInfinite({
+    asModerator: true,
+    asOwner: true,
+    ...baseInput,
+    ...input,
+  } as Parameters<typeof getPostsInfinite>[0])
     .then((result) => ({ result }))
     .catch((error) => {
       if (error instanceof QueryIssued) return { result: undefined };
@@ -92,7 +97,7 @@ describe('getPostsInfinite user scope', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).toContain(`p."userId" = ?`);
     expect(issued[0]).not.toContain(`p."availability" != 'Private'`);
-    expect(issued[0]).toContain(`p."publishedAt" IS NULL`);
+    expect(issued[0]).toContain(`AND p."publishedAt" IS NULL`);
   });
 
   it("searches the owner's own posts by title", async () => {
@@ -101,7 +106,8 @@ describe('getPostsInfinite user scope', () => {
     await run({ username: 'Alice', user: viewer, query: 'Cat' });
 
     expect(issued[0]).toContain('p.title ILIKE ?');
-    expect(bound[0]).toContain('Cat%');
+    // One creator's posts: the words anywhere in the title.
+    expect(bound[0]).toContain('%Cat%');
   });
 
   it('keeps the public feed unscoped and public when no username is given', async () => {
@@ -111,5 +117,58 @@ describe('getPostsInfinite user scope', () => {
     expect(issued).toHaveLength(1);
     expect(issued[0]).not.toContain(`p."userId" = ?`);
     expect(issued[0]).toContain(`p."availability" != 'Private'`);
+  });
+
+  // A profile names its account by id: older usernames such as 'foo-bar' slugify to 'foobar',
+  // which is no account, so a username lookup returns an empty profile.
+  describe('a profile scoped by account id', () => {
+    const legacyOwner = { id: 42, username: 'foo-bar', isModerator: false } as SessionUser;
+
+    it('scopes to that account without a username lookup', async () => {
+      await run({ userId: 42, username: 'foobar' });
+
+      expect(findFirst).not.toHaveBeenCalled();
+      expect(issued).toHaveLength(1);
+      expect(issued[0]).toContain(`p."userId" = ?`);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).toContain(`p."availability" != 'Private'`);
+    });
+
+    it('serves the owner their own drafts when the id is theirs', async () => {
+      await run({ userId: 42, user: legacyOwner, draftOnly: true });
+
+      expect(issued).toHaveLength(1);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).not.toContain(`p."availability" != 'Private'`);
+      // With the ` AND ` prefix: the draft sort's CASE also says `p."publishedAt" IS NULL`.
+      expect(issued[0]).toContain(`AND p."publishedAt" IS NULL`);
+    });
+
+    it('does not make a viewer whose name has the same slug the owner', async () => {
+      const lookalike = { id: 7, username: 'foobar', isModerator: false } as SessionUser;
+
+      await run({ userId: 42, user: lookalike, draftOnly: true });
+
+      expect(issued).toHaveLength(1);
+      expect(bound[0]).toContain(42);
+      expect(issued[0]).toContain(`p."availability" != 'Private'`);
+      expect(issued[0]).toContain(`AND p."publishedAt" <= NOW()`);
+      expect(issued[0]).not.toContain(`AND p."publishedAt" IS NULL`);
+    });
+  });
+});
+
+describe('getPostsInfinite title search', () => {
+  it("matches the words anywhere in a title within one creator's posts", async () => {
+    findFirst.mockResolvedValue({ id: 99 });
+    await run({ username: 'alice', query: '50% off_now' });
+    expect(issued[0]).toContain('p.title ILIKE ?');
+    expect(bound[0]).toContain('%50\\% off\\_now%');
+  });
+
+  it('keeps a title-prefix match across every creator', async () => {
+    await run({ query: 'neon' });
+    expect(bound[0]).toContain('neon%');
+    expect(bound[0]).not.toContain('%neon%');
   });
 });

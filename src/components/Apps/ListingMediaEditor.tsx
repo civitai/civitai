@@ -9,6 +9,10 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 const SCAN_SETTLED_REFETCH_MS = 3000;
 
@@ -209,6 +213,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   //    shadow EXISTS — i.e. once the owner has actually changed something. With no
   //    edits there is nothing to review (and no shadow id to submit).
   const submitRevision = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
   async function handleSubmit() {
     if (!shadowId) return;
     try {
@@ -436,6 +441,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               lines above it. There is nothing to submit: their change is already live.
               🔴 Do NOT widen this to `isModerator` — a moderator WITH a shadow has a
               real revision that still needs submitting for re-approval. */}
+          {isApproved && !modDirectLiveEdit && shadowId && <AppDeveloperTermsCheckbox />}
           {isApproved && !modDirectLiveEdit && (
             <Group justify="flex-end" align="center">
               {!shadowId && (
@@ -447,7 +453,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
                 onClick={() => void handleSubmit()}
                 loading={submitRevision.isPending}
                 // No shadow ⇒ nothing has changed ⇒ there is no revision to submit.
-                disabled={!meetsFloor || !shadowId}
+                disabled={!meetsFloor || !shadowId || !termsAccepted}
                 leftSection={<IconSend size={16} />}
                 data-testid="apps-listing-media-submit"
               >

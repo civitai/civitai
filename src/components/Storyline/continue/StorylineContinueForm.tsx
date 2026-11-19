@@ -51,6 +51,7 @@ export function StorylineContinueForm({
   onStartOwn,
   ownerAdd = false,
   inserting = false,
+  branch = false,
   submitting,
   outcome,
   error,
@@ -84,6 +85,8 @@ export function StorylineContinueForm({
   ownerAdd?: boolean;
   /** The owner's post goes between two chapters, not after the last. */
   inserting?: boolean;
+  /** The parent already has a main-path chapter: this starts a branch. */
+  branch?: boolean;
   submitting?: boolean;
   outcome?: StorylineSubmitOutcome | null;
   error?: string | null;
@@ -114,7 +117,13 @@ export function StorylineContinueForm({
 
   if (outcome)
     return (
-      <StorylineSubmitted outcome={outcome} price={price} inserting={inserting} onLeave={onLeave} />
+      <StorylineSubmitted
+        outcome={outcome}
+        price={price}
+        inserting={inserting}
+        branch={branch}
+        onLeave={onLeave}
+      />
     );
 
   if (
@@ -136,7 +145,9 @@ export function StorylineContinueForm({
         <Stack gap={6} className="min-w-0">
           <div>
             <Text fw={600} lineClamp={2}>
-              {ownerAdd
+              {branch
+                ? `Start a branch in ${storyline.title}`
+                : ownerAdd
                 ? `Add the next chapter to ${storyline.title}`
                 : `Continue ${storyline.title}`}
             </Text>
@@ -214,6 +225,8 @@ export function StorylineContinueForm({
         <Text size="sm" c="dimmed">
           {inserting
             ? 'It goes in here right away, and the chapters after it move down one. No review, no cost.'
+            : branch
+            ? 'It joins your storyline right away as a side path after this chapter. No review, no cost.'
             : 'It joins your storyline as the next chapter right away. No review, no cost.'}
         </Text>
       )}
@@ -261,11 +274,13 @@ function StorylineSubmitted({
   outcome,
   price,
   inserting,
+  branch,
   onLeave,
 }: {
   outcome: StorylineSubmitOutcome;
   price: number;
   inserting: boolean;
+  branch: boolean;
   onLeave?: () => void;
 }) {
   if (outcome === 'added')
@@ -274,6 +289,8 @@ function StorylineSubmitted({
         <Text size="sm">
           {inserting
             ? 'Inserted into your storyline.'
+            : branch
+            ? 'Added to your storyline as a branch.'
             : 'Added to your storyline as the next chapter.'}
         </Text>
       </Alert>

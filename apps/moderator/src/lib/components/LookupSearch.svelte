@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { cn } from '@civitai/ui/utils.js';
 
   // The search box for the Retool lookup pages. Three of them had identical copies of the state +
   // effect + navigation triple; the copies had NOT drifted, but there is no reason for a page to own it.
@@ -13,7 +14,12 @@
   // `path` sends the search somewhere other than the current route. Chat Audit needs it: its tabs are
   // sub-routes, and searching from Stats must land on Chats rather than re-rendering Stats with a term
   // it does not use.
-  let { q, placeholder, path }: { q: string; placeholder: string; path?: string } = $props();
+  let {
+    q,
+    placeholder,
+    path,
+    class: className,
+  }: { q: string; placeholder: string; path?: string; class?: string } = $props();
 
   // Local copy so typing doesn't navigate; re-synced whenever a search lands (incl. back/forward).
   let term = $state(untrack(() => q));
@@ -29,7 +35,7 @@
   };
 </script>
 
-<form onsubmit={submit} class="mb-6 flex max-w-xl gap-2">
+<form onsubmit={submit} class={cn('mb-6 flex max-w-xl gap-2', className)}>
   <Input bind:value={term} {placeholder} class="flex-1" />
   <Button type="submit">Search</Button>
 </form>

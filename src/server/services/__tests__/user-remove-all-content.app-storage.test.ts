@@ -178,7 +178,6 @@ vi.mock('~/server/search-index', async (importOriginal) => {
   return {
     ...actual,
     modelsSearchIndex: idx,
-    imagesSearchIndex: idx,
     imagesMetricsSearchIndex: idx,
     articlesSearchIndex: idx,
     collectionsSearchIndex: idx,
@@ -217,6 +216,7 @@ vi.mock('~/server/services/auction.service', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { removeAllContent } from '~/server/services/user.service';
+import { deleteImages } from '~/server/services/image.service';
 import { APP_USER_STORAGE_MAX_SCHEMAS } from '~/server/services/apps/user-storage-purge.service';
 
 const TARGET = 42;
@@ -443,8 +443,22 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       where: { userId: TARGET },
     });
     // The evidence deletes are raw, so each can carry the legal hold in its own statement.
-    for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
-      const deleted = dbMock.dbWrite.$executeRaw.mock.calls
+    // The images, uploaded late ones included, go through `deleteImages`, its guard naming the
+    // account.
+    expect(
+      vi
+        .mocked(deleteImages)
+        .mock.calls.some(([, opts]) =>
+          ((opts.onlyWhere as Prisma.Sql | undefined)?.values ?? []).includes(TARGET)
+        ),
+      'Image'
+    ).toBe(true);
+    for (const table of ['Model', 'Post', 'Article']) {
+      const deleted = [
+        ...dbMock.dbWrite.$executeRaw.mock.calls,
+        ...dbMock.dbWrite.$queryRaw.mock.calls,
+      ]
+        .filter(([strings]) => Array.isArray(strings))
         .map(flatten)
         .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
       expect(deleted, table).toBe(true);

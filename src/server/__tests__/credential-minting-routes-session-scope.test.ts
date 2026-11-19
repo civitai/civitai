@@ -21,12 +21,11 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: bearer
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyService>()),
-  addApiKey: vi.fn(async () => 'minted-api-key'),
+  mintApiKey: vi.fn(async () => 'minted-api-key'),
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'minted-orchestrator-token'),
@@ -69,7 +68,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   getUserSettings: vi.fn(async () => ({ features: {} })),
 }));
 
-const { addApiKey } = await import('~/server/services/api-key.service');
+const { mintApiKey } = await import('~/server/services/api-key.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 const { enableAppAssistant, mintAppAssistantToken } = await import(
   '~/server/services/app-assistant/app-assistant.service'
@@ -91,7 +90,7 @@ const routes: {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
     handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
-    minted: () => addApiKey,
+    minted: () => mintApiKey,
   },
   {
     name: 'GET /api/training-studio/host',
@@ -130,7 +129,7 @@ const USER = {
   emailVerified: new Date('2026-01-01'),
 };
 
-const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 11,
   apiKeyType,
@@ -138,9 +137,9 @@ const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number) => nonOauthKey('User', tokenScope);
+const personalKey = (tokenScope: bigint) => nonOauthKey('User', tokenScope);
 
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 12,
   apiKeyType: 'Access',
@@ -206,10 +205,22 @@ async function call(
   return { status: statusCode, body: body as Record<string, unknown> | undefined };
 }
 
+const accountRow = { muted: false, bannedAt: null as Date | null };
+
 beforeEach(() => {
   vi.clearAllMocks();
   hubSession.current = null;
   bearerSession.mockResolvedValue(null);
+  accountRow.muted = false;
+  // Answers only the restriction read, by its exact select; other user reads stay unmocked.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { ...accountRow }
+      : null) as never);
 });
 
 describe.each(routes)('$name credential requirements', (route) => {
@@ -283,6 +294,21 @@ describe('the minted credential is still returned to an allowed caller', () => {
       token: 'minted-assistant-token',
       expiresAt: '2099-01-01T00:00:00Z',
     });
+  });
+});
+
+describe('orchestrator-key and a restricted account', () => {
+  it('refuses to issue a key to a restricted account, before any stored key is touched', async () => {
+    hubSession.current = { user: USER };
+    accountRow.muted = true;
+    dbMock.dbWrite.apiKey.findMany.mockResolvedValue([
+      { id: 1, key: 'stored-hash', userId: USER.id },
+    ] as never);
+    const { status } = await call(routes[0]);
+    expect(status).toBe(403);
+    expect(mintApiKey).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 });
 

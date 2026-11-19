@@ -69,7 +69,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       ...target,
       grantId: grant.grantId,
       ...extra,
-    }).catch(() => undefined);
+    });
 
   try {
     const subject = await getRunnerDevTunnelUser(grant.userId);

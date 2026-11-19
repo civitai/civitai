@@ -1,3 +1,18 @@
+import { buildKohyaInput, type KohyaRunParams } from './kohya-training';
+import { kohyaDefaults } from './data/kohya';
+import {
+  isFlux2,
+  MODEL_CARDS,
+  trainingLearningRates,
+  versionStepDefault,
+} from './data/trainingModels';
+import {
+  parseAiToolkitOptions,
+  trainingIgnoredWarnings,
+  type AiToolkitOptions,
+} from '@civitai/shared/training-options';
+import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
+import type { TrainingRunInput } from './train-core';
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
@@ -19,10 +34,12 @@ import {
   workflowToDetail,
   workflowToRow,
   type ArchiveKind,
+  type DatasetItem,
   type GenerationItem,
   type TrainingDetail,
   type TrainingRow,
 } from '$lib/data/trainingRows';
+import { withoutCallbacks } from '$lib/workflow-redaction';
 import type { Media } from '$lib/data/trainingModels';
 
 export type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
@@ -45,11 +62,7 @@ export function resolveCurrencies(
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
 
-/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
- *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
-export function isFlux2(engine?: string): boolean {
-  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
-}
+export { isFlux2 };
 
 const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
 
@@ -61,6 +74,9 @@ function describeHtmlPage(body: string): string {
     code ? ` (HTTP ${code})` : ''
   } — try again in a minute`;
 }
+
+// Callback configuration is the server's own and never the user's to fix.
+const CALLBACK_ERROR_KEY = /(^|[.$[])callbacks\b/i;
 
 /** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
  *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
@@ -74,6 +90,7 @@ export function describeSubmitError(error: unknown, status?: number): string {
     | undefined;
   if (e?.errors && typeof e.errors === 'object') {
     const fields = Object.entries(e.errors)
+      .filter(([key]) => !CALLBACK_ERROR_KEY.test(key))
       .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join('; ') : val}`)
       .join(' | ');
     if (fields) return `${e.title ?? 'validation failed'} — ${fields}`;
@@ -82,6 +99,24 @@ export function describeSubmitError(error: unknown, status?: number): string {
     e?.detail ??
     e?.title ??
     (status ? `the training service answered HTTP ${status}` : 'no data returned')
+  );
+}
+
+// The orchestrator's refusal of a training submit whose dataset blobs aren't ready yet. The message is a
+// fallback for an orchestrator that predates the code; a different code never matches on the message.
+const NOT_READY_CODE = 'trainingDataNotReady';
+const NOT_READY_MESSAGE = /^trainingData blob '[^']*' is not available for training yet/;
+
+export function isTrainingDataNotReady(error: unknown, status: number | undefined): boolean {
+  if (status !== 400 || !error || typeof error !== 'object') return false;
+  const e = error as { code?: unknown; errors?: Record<string, unknown> };
+  if (e.code != null) return e.code === NOT_READY_CODE;
+  const { messages, ...otherErrors } = e.errors ?? {};
+  return (
+    Object.keys(otherErrors).length === 0 &&
+    Array.isArray(messages) &&
+    messages.length > 0 &&
+    messages.every((m) => typeof m === 'string' && NOT_READY_MESSAGE.test(m))
   );
 }
 
@@ -95,6 +130,29 @@ export function blobIdFromAir(air: string): string {
   if (idx >= 0) return air.slice(idx + marker.length).split('?')[0];
   if (air.startsWith('urn:air:')) return (air.split('@').pop() ?? air).split('?')[0];
   return air.split('?')[0];
+}
+
+/** More blobs than any dataset the app builds; a bigger request is refused. */
+export const MAX_DATASET_BLOBS = 2000;
+
+/** A request body's list of dataset blob ids. */
+export const isDatasetBlobIds = (v: unknown): v is string[] =>
+  Array.isArray(v) &&
+  v.length <= MAX_DATASET_BLOBS &&
+  v.every((id) => typeof id === 'string' && id.length > 0 && id.length < 512);
+
+/** Runs `fn` over `items` with at most `concurrency` in flight. No new item starts once `stop()` is true. */
+export async function forEachPooled<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+  stop: () => boolean = () => false
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !stop()) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
 /** The orchestrator's authenticated GET URL for one of the caller's dataset blobs (fetch with
@@ -114,14 +172,25 @@ export async function listTrainingWorkflows(client: OrchestratorClient): Promise
 }
 
 /** The caller's workflows carrying every one of `tags`, newest first, within the retention window. */
-export async function queryRecentWorkflows(client: OrchestratorClient, tags: string[]) {
+export async function queryRecentWorkflows(
+  client: OrchestratorClient,
+  tags: string[],
+  opts: { signal?: AbortSignal } = {}
+) {
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
     query: { tags, take: 100, fromDate, hideMatureContent: false },
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return data.items ?? [];
+  return (data.items ?? []).map((w) => withoutCallbacks(w));
+}
+
+/** Server-side single-workflow reads, returned without the workflow's `callbacks`. */
+export async function readWorkflow(client: OrchestratorClient, workflowId: string) {
+  const result = await getWorkflow({ client, path: { workflowId } });
+  return { ...result, data: result.data && withoutCallbacks(result.data) };
 }
 
 /** Workflow statuses that end a run — a poll stops on any of them. */
@@ -269,20 +338,40 @@ export async function whatIfCost(
  * 1/3/6 prompts and for ['green'] vs ['yellow','blue']), not by any contract. If the orchestrator
  * ever starts pricing either, this type must grow the field or Review misquotes silently.
  */
-export interface TrainingWhatIfInput {
+export interface TrainingWhatIfInput
+  extends AiToolkitOptions,
+    Partial<KohyaRunParams>,
+    Partial<
+      Pick<
+        TrainingRunInput,
+        | 'batchSize'
+        | 'unetLr'
+        | 'textEncoderLr'
+        | 'lrScheduler'
+        | 'optimizer'
+        | 'networkDim'
+        | 'networkAlpha'
+        | 'noiseOffset'
+        | 'minSnrGamma'
+        | 'flipAugmentation'
+        | 'shuffleTokens'
+        | 'keepTokens'
+      >
+    > {
   ecosystem: string;
   modelVariant?: string;
   /** The base checkpoint AIR. Required by the `flux2-dev` path; on ai-toolkit it pins the base the
    * submit will pin (shared-ecosystem cards like Illustrious would otherwise quote/train the
    * ecosystem default). Price-neutral, but the whatif and the real submit MUST stay identical. */
   model?: string;
-  /** Non-default engine (e.g. `flux2-dev`); when set the whatif uses the `imageResourceTraining` shape. */
+  /** Defaults to AI Toolkit; the quote uses the chosen engine's submission contract. */
   engine?: string;
   /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
   version?: string;
   /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
   editTraining?: boolean;
-  /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
+  /** Omitted, the orchestrator prices its per-ecosystem default step budget, which need not be the
+   *  Review step's default (`versionStepDefault`). */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
   epochs?: number;
@@ -293,15 +382,55 @@ export interface TrainingWhatIfInput {
 // epoch/repeat/resolution budget rather than deriving one, so a "from" quote uses a modest fixed config.
 const WHATIF_FLUX2 = { resolution: 1024, maxTrainEpochs: 10, numRepeats: 200, trainBatchSize: 1 };
 
-/** Price a training run without submitting it (`whatif`). Most models use the ai-toolkit path (its
- * ecosystem resolves the base); a few (Flux.2) have no ai-toolkit ecosystem and train via `flux2-dev`,
- * priced through the `imageResourceTraining` shape with an explicit base AIR. Returns the total Buzz cost,
- * or null if the orchestrator returned no estimate. No real dataset is needed — the URL is never fetched. */
+export interface TrainingQuote {
+  cost: number | null;
+  warnings: string[];
+}
+
 export async function trainingWhatIf(
   client: OrchestratorClient,
   input: TrainingWhatIfInput
 ): Promise<number | null> {
+  return (await trainingPreview(client, input)).cost;
+}
+
+export async function trainingPreview(
+  client: OrchestratorClient,
+  input: TrainingWhatIfInput
+): Promise<TrainingQuote> {
   const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
+  if (input.engine === 'kohya') {
+    const version =
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.air === input.model) ??
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.ecosystem === input.ecosystem);
+    if (!version) throw new Error('Unsupported Kohya model family.');
+    const defaults = kohyaDefaults(version);
+    const config = buildKohyaInput(
+      {
+        ...defaults,
+        ...input,
+        steps: input.steps ?? versionStepDefault(version.key),
+        epochs: input.epochs ?? defaults.epochs,
+        trigger: '',
+        prompts: WHATIF_SAMPLE_PROMPTS,
+      },
+      { type: 'zip', sourceUrl: 'https://fake', count },
+      'none'
+    );
+    const cost = await whatIfCost(
+      client,
+      { $type: 'training', priority: 'normal', input: config } as unknown as WorkflowStepTemplate,
+      'training whatif'
+    );
+    return { cost, warnings: [] };
+  }
+
+  const { lr, textEncoderLr } = trainingLearningRates(
+    input.ecosystem,
+    input.optimizer,
+    input.unetLr,
+    input.textEncoderLr
+  );
   // The SDK type marks server-computed fields (defaultSteps, usesStepPricing, …) as required outputs we
   // must not send; cast past them, as the main app's training step builders do.
   const step = (isFlux2(input.engine)
@@ -324,6 +453,23 @@ export async function trainingWhatIf(
         priority: 'normal',
         input: {
           engine: 'ai-toolkit',
+          ...(parseAiToolkitOptions(
+            { ...input, engine: input.engine ?? 'ai-toolkit' },
+            input
+          ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
+          batchSize: input.batchSize,
+          lr,
+          textEncoderLr,
+          trainTextEncoder: textEncoderLr === undefined ? undefined : textEncoderLr > 0,
+          lrScheduler: input.lrScheduler,
+          optimizerType: input.optimizer?.toLowerCase(),
+          networkDim: input.networkDim,
+          networkAlpha: input.networkAlpha,
+          noiseOffset: input.noiseOffset,
+          flipAugmentation: input.flipAugmentation,
+          shuffleTokens: input.shuffleTokens,
+          keepTokens: input.keepTokens,
+          ...(['sd1', 'sdxl'].includes(input.ecosystem) ? { minSnrGamma: input.minSnrGamma } : {}),
           ecosystem: input.ecosystem,
           ...(input.model ? { model: input.model } : {}),
           ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
@@ -336,7 +482,13 @@ export async function trainingWhatIf(
         },
       }) as unknown as WorkflowStepTemplate;
 
-  return whatIfCost(client, step, 'training whatif');
+  const { data, error } = await submitWorkflow({
+    client,
+    body: { steps: [step], currencies: WHATIF_CURRENCIES },
+    query: { whatif: true },
+  });
+  if (!data) throw new Error(`training whatif failed: ${describeSubmitError(error)}`);
+  return { cost: data.cost?.total ?? null, warnings: trainingIgnoredWarnings(data.steps) };
 }
 
 /** Mint a short-lived presigned URL for a single dataset blob. The browser POSTs the file straight to
@@ -355,7 +507,7 @@ export async function getTrainingWorkflow(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<TrainingDetail | null> {
-  const { data, error } = await getWorkflow({ client, path: { workflowId } });
+  const { data, error } = await readWorkflow(client, workflowId);
   if (!data) {
     if (error?.status === 404) return null;
     throw new Error(`getWorkflow failed: ${error?.detail ?? 'no data returned'}`);
@@ -363,12 +515,12 @@ export async function getTrainingWorkflow(
   return workflowToDetail(data);
 }
 
-/** A run's dataset (blob airs + captions) — for Remix / "reuse a dataset". Empty for a run whose dataset
- *  isn't blob-backed (older or Flux.2). The token scopes to the caller, so this only reads their own runs. */
+/** A run's dataset (blob airs + captions, and an edit run's pair paths) — for Remix / "reuse a dataset".
+ *  Empty for a run whose dataset isn't blob-backed (older or Flux.2). The token scopes to the caller, so this only reads their own runs. */
 export async function getRunDataset(
   client: OrchestratorClient,
   workflowId: string
-): Promise<{ air: string; caption: string }[]> {
+): Promise<DatasetItem[]> {
   const detail = await getTrainingWorkflow(client, workflowId);
   return detail?.dataset ?? [];
 }
@@ -398,7 +550,7 @@ export async function createEpochArchive(
   workflowId: string,
   kind: ArchiveKind
 ): Promise<EpochArchive[]> {
-  const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: wf, error: getError } = await readWorkflow(client, workflowId);
   if (!wf) {
     if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
     throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);

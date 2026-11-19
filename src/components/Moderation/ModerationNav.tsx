@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBadge, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -37,6 +37,7 @@ export function ModerationNav() {
           hidden: !features.serviceStatus,
         },
         { label: 'Site Alerts', href: '/moderator/site-alerts' },
+        { label: 'Remix Apps', href: '/moderator/remix-apps', hidden: !features.remixApps },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',

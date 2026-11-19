@@ -1,0 +1,461 @@
+{
+  "associations:none": [],
+  "associations:of a type": [
+    {
+      "toModelId": null,
+      "toArticleId": 55
+    },
+    {
+      "toModelId": null,
+      "toArticleId": 56
+    },
+    {
+      "toModelId": 6202,
+      "toArticleId": null
+    },
+    {
+      "toModelId": 6203,
+      "toArticleId": null
+    }
+  ],
+  "associations:of any type": [
+    {
+      "toModelId": null,
+      "toArticleId": 55
+    },
+    {
+      "toModelId": null,
+      "toArticleId": 56
+    },
+    {
+      "toModelId": 6202,
+      "toArticleId": null
+    },
+    {
+      "toModelId": 6203,
+      "toArticleId": null
+    }
+  ],
+  "associations:one": [
+    {
+      "toModelId": 6201,
+      "toArticleId": null
+    }
+  ],
+  "banned-at:dangling": {
+    "bannedAt": {
+      "$date": "2026-03-04T05:06:07.089Z"
+    }
+  },
+  "banned-at:missing": null,
+  "banned-at:owner": {
+    "bannedAt": null
+  },
+  "download-files:another version": [
+    {
+      "id": 7205,
+      "url": "u5",
+      "name": "other.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 1,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    }
+  ],
+  "download-files:by id, owner": [
+    {
+      "id": 7201,
+      "url": "u1",
+      "name": "model.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {
+        "fp": "fp16",
+        "size": "full"
+      },
+      "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-MODEL"
+        }
+      ]
+    },
+    {
+      "id": 7202,
+      "url": "u2",
+      "name": "config.yaml",
+      "overrideName": "override.yaml",
+      "type": "Config",
+      "metadata": null,
+      "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    },
+    {
+      "id": 7203,
+      "url": "u3",
+      "name": "old.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 99,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    },
+    {
+      "id": 7204,
+      "url": "u4",
+      "name": "sensitive.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-SENSITIVE"
+        }
+      ]
+    }
+  ],
+  "download-files:by id, public only": [
+    {
+      "id": 7201,
+      "url": "u1",
+      "name": "model.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {
+        "fp": "fp16",
+        "size": "full"
+      },
+      "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-MODEL"
+        }
+      ]
+    },
+    {
+      "id": 7203,
+      "url": "u3",
+      "name": "old.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 99,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    }
+  ],
+  "download-files:default, a type": [
+    {
+      "id": 7202,
+      "url": "u2",
+      "name": "config.yaml",
+      "overrideName": "override.yaml",
+      "type": "Config",
+      "metadata": null,
+      "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    }
+  ],
+  "download-files:default, a type with none": [],
+  "download-files:default, an empty type": [
+    {
+      "id": 7201,
+      "url": "u1",
+      "name": "model.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {
+        "fp": "fp16",
+        "size": "full"
+      },
+      "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-MODEL"
+        }
+      ]
+    },
+    {
+      "id": 7202,
+      "url": "u2",
+      "name": "config.yaml",
+      "overrideName": "override.yaml",
+      "type": "Config",
+      "metadata": null,
+      "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    },
+    {
+      "id": 7204,
+      "url": "u4",
+      "name": "sensitive.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-SENSITIVE"
+        }
+      ]
+    }
+  ],
+  "download-files:default, owner": [
+    {
+      "id": 7201,
+      "url": "u1",
+      "name": "model.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {
+        "fp": "fp16",
+        "size": "full"
+      },
+      "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-MODEL"
+        }
+      ]
+    },
+    {
+      "id": 7202,
+      "url": "u2",
+      "name": "config.yaml",
+      "overrideName": "override.yaml",
+      "type": "Config",
+      "metadata": null,
+      "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": []
+    },
+    {
+      "id": 7204,
+      "url": "u4",
+      "name": "sensitive.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {},
+      "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-SENSITIVE"
+        }
+      ]
+    }
+  ],
+  "download-files:default, public only": [
+    {
+      "id": 7201,
+      "url": "u1",
+      "name": "model.safetensors",
+      "overrideName": null,
+      "type": "Model",
+      "metadata": {
+        "fp": "fp16",
+        "size": "full"
+      },
+      "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
+      "hashes": [
+        {
+          "hash": "SHA-MODEL"
+        }
+      ]
+    }
+  ],
+  "download-files:no files": [],
+  "engagements:another user": [
+    {
+      "modelVersionId": 6301,
+      "type": "Notify"
+    }
+  ],
+  "engagements:no versions": [],
+  "engagements:none engaged": [],
+  "engagements:two engaged": [
+    {
+      "modelVersionId": 6301,
+      "type": "Notify"
+    },
+    {
+      "modelVersionId": 6302,
+      "type": "Notify"
+    }
+  ],
+  "owner:a deleted owner with no username": {
+    "value": {
+      "model": {
+        "user": {
+          "id": 6103,
+          "username": null,
+          "deletedAt": {
+            "$date": "2026-01-02T03:04:05.678Z"
+          },
+          "image": null,
+          "profilePicture": null,
+          "cosmetics": []
+        }
+      }
+    }
+  },
+  "owner:an owner with a dangling picture id and NULL-data cosmetics": {
+    "value": {
+      "model": {
+        "user": {
+          "id": 6102,
+          "username": "dangling",
+          "deletedAt": null,
+          "image": null,
+          "profilePicture": null,
+          "cosmetics": [
+            {
+              "data": null,
+              "cosmetic": {
+                "id": 6501,
+                "data": {
+                  "url": "b.png"
+                },
+                "type": "Badge",
+                "source": "Trophy",
+                "name": "Badge"
+              }
+            },
+            {
+              "data": "plain",
+              "cosmetic": {
+                "id": 6502,
+                "data": {
+                  "gradient": [1, 2]
+                },
+                "type": "NamePlate",
+                "source": "Purchase",
+                "name": "Plate"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "owner:an owner with a picture and cosmetics": {
+    "value": {
+      "model": {
+        "user": {
+          "id": 6101,
+          "username": "owner",
+          "deletedAt": null,
+          "image": "o.png",
+          "profilePicture": {
+            "id": 6401,
+            "name": null,
+            "url": "avatar-url",
+            "nsfwLevel": 2,
+            "hash": "h1",
+            "userId": 6101,
+            "ingestion": "Scanned",
+            "type": "video",
+            "width": 64,
+            "height": null,
+            "metadata": {
+              "nested": [1, null],
+              "profile": true
+            }
+          },
+          "cosmetics": [
+            {
+              "data": {
+                "x": 1
+              },
+              "cosmetic": {
+                "id": 6501,
+                "data": {
+                  "url": "b.png"
+                },
+                "type": "Badge",
+                "source": "Trophy",
+                "name": "Badge"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "poi-owner:a POI model": {
+    "poi": true,
+    "userId": 6102
+  },
+  "poi-owner:a missing model": null,
+  "poi-owner:a model": {
+    "poi": false,
+    "userId": 6101
+  },
+  "user-id:dangling": {
+    "id": 6102
+  },
+  "user-id:missing": null,
+  "user-id:owner": {
+    "id": 6101
+  },
+  "user-id:viewer": {
+    "id": 6104
+  },
+  "user-reviews:an empty model list": [],
+  "user-reviews:any, unbounded": [
+    {
+      "modelId": 6201,
+      "modelVersionId": 6301
+    },
+    {
+      "modelId": 6202,
+      "modelVersionId": 6302
+    },
+    {
+      "modelId": 6203,
+      "modelVersionId": 6304
+    }
+  ],
+  "user-reviews:no reviews": [],
+  "user-reviews:not recommended": [
+    {
+      "modelId": 6202,
+      "modelVersionId": 6302
+    }
+  ],
+  "user-reviews:recommended, bounded to models": [
+    {
+      "modelId": 6201,
+      "modelVersionId": 6301
+    }
+  ]
+}

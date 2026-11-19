@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
  * WHAT BROKE (#5102). #5082 (`b599d8d2da`, 2026-09-23) added `showWarningNotification` to
  * `~/components/HideUserButton/BlockUserButton`. Five browser suites under
  * `src/components/Apps` reach that module through
- * `OffsiteReviewQueue → AppListingDetailBody → AppListingComments → CommentsV2/Comment`, and
+ * `OffsiteReviewQueue → AppListingDetailBody → AppListingComments → CommentsV3/CommentItem`, and
  * each mocked `~/utils/notifications` with a factory naming only `showSuccessNotification`
  * and `showErrorNotification`. A wholesale factory REPLACES the module, so the new named
  * import had nothing to bind to:
@@ -252,7 +252,7 @@ describe('vi.mock(~/utils/notifications) — the #5102 regression', () => {
       FIXED_BY_5102.filter((f) => offenders.includes(f)),
       'these files broke `preview / component-tests` for ~a day (#5102) because a wholesale ' +
         "`vi.mock('~/utils/notifications', …)` factory omitted `showWarningNotification`, which " +
-        'they reach via AppListingDetailBody → AppListingComments → CommentsV2/Comment → ' +
+        'they reach via AppListingDetailBody → AppListingComments → CommentsV3/CommentItem → ' +
         'BlockUserButton. Spread the original: ' +
         '`async (importOriginal) => ({ ...(await importOriginal<typeof NotificationsModule>()), … })`'
     ).toEqual([]);

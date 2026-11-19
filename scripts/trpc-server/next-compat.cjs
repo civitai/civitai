@@ -55,6 +55,8 @@ const localePath = require('next/dist/shared/lib/i18n/normalize-locale-path');
 const pathPrefix = require('next/dist/shared/lib/router/utils/add-path-prefix');
 const routeRegex = require('next/dist/shared/lib/router/utils/route-regex');
 const routeMatcher = require('next/dist/shared/lib/router/utils/route-matcher');
+const sortedRoutes = require('next/dist/shared/lib/router/utils/sorted-routes');
+const bodyStreams = require('next/dist/server/body-streams');
 const nextConstants = require('next/dist/lib/constants');
 const instrumentationGlobals = require('next/dist/server/lib/router-utils/instrumentation-globals.external');
 const httpAgentEnv = require('next/dist/server/setup-http-agent-env');
@@ -128,6 +130,18 @@ const getRouteMatcher = expectExport(
   'getRouteMatcher',
   'function'
 );
+const getSortedRoutes = expectExport(
+  sortedRoutes,
+  `${NEXT}/shared/lib/router/utils/sorted-routes`,
+  'getSortedRoutes',
+  'function'
+);
+const getCloneableBody = expectExport(
+  bodyStreams,
+  `${NEXT}/server/body-streams`,
+  'getCloneableBody',
+  'function'
+);
 const NEXT_QUERY_PARAM_PREFIX = expectExport(
   nextConstants,
   `${NEXT}/lib/constants`,
@@ -182,11 +196,61 @@ function buildHeaderRoute(item, caseSensitive) {
 }
 
 /**
+ * Concrete request paths a page answers, one per shape: a sample segment for `[x]`, one and two
+ * segments for `[...x]`, none and one for `[[...x]]`.
+ */
+function examplePaths(page) {
+  const fill = (optional, rest) =>
+    page
+      .replace(/\/\[\[\.\.\.[^\]]+\]\]/g, optional)
+      .replace(/\[\.\.\.[^\]]+\]/g, rest)
+      .replace(/\[[^\]]+\]/g, 'x');
+  return [...new Set([fill('', 'a/b'), fill('/a', 'a')])];
+}
+
+/**
+ * A literal path in the shape of a custom-route `source`: the locale prefix Next adds dropped,
+ * each named parameter replaced by a sample segment. Used to ask whether a source written for one
+ * concrete value (`/api/v1/models/123`) lands on a served dynamic page. Best effort: a source with
+ * regex groups may produce a path that matches nothing, which only weakens this direction; the
+ * other direction (`pageConflict` below) does not depend on it.
+ */
+function sourceExample(source) {
+  return source
+    .replace(/^\/:nextInternalLocale\([^)]*\)/, '')
+    .replace(/:[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?[*+?]?/g, 'x');
+}
+
+/**
+ * The first served page that `route` (a compiled redirect or rewrite) can apply to, or null. It is
+ * matched as resolve-routes matches it (the default locale added under i18n, and stripped again for
+ * internal routes), and also against the bare path, so a source written without the locale prefix
+ * is caught too. `has` / `missing` conditions are ignored: a route that applies to SOME requests
+ * for a served page is already one this server would answer differently.
+ */
+function pageConflict(routing, route, pages, matchPage) {
+  for (const page of pages) {
+    for (const path of examplePaths(page)) {
+      const localized = localizedPathname(routing.i18n, path);
+      if (route.match(routeMatchPathname(routing, localized, route)) || route.match(path)) {
+        return page;
+      }
+    }
+  }
+  const found = matchPage(sourceExample(route.source));
+  return found.page || null;
+}
+
+/**
  * Builds the routing rules this server applies before a route module runs. Throws when the
  * manifest uses a feature this server does not implement, so the process refuses to start
  * rather than serving requests Next would have routed differently.
+ *
+ * `pages` is the list this server will serve. `redirects()` and rewrites are NOT ported, so this
+ * also refuses to start when any redirect (user or internal) or any afterFiles/fallback rewrite
+ * could apply to one of those pages (beforeFiles rewrites are refused outright, as before).
  */
-function createRouting({ routesManifest, nextConfig }) {
+function createRouting({ routesManifest, nextConfig, pages = [] }) {
   const basePath = nextConfig.basePath || '';
   if (basePath) throw new Error('trpc-server: basePath is not supported');
   if (nextConfig.trailingSlash)
@@ -210,12 +274,45 @@ function createRouting({ routesManifest, nextConfig }) {
     buildHeaderRoute(item, caseSensitive)
   );
   const i18n = nextConfig.i18n || null;
+  const routing = { headers, i18n };
 
-  // `redirects()` are deliberately NOT ported. Next answers a redirected path (the trailing-slash
-  // and repeated-slash 308s, every user redirect) before any route runs, and the router in front
-  // of this server sends it only single-segment `/api/trpc/<seg>` paths, which none of them match.
-  // A redirected path that does arrive is not a page here, so it gets the plain 404.
-  return { headers, i18n };
+  // `redirects()` and rewrites are NOT ported, and that is only correct while none of them can
+  // apply to a served page. The repeated-slash 308 and the internal trailing-slash 308 never can:
+  // the page matcher serves no path with an empty segment or a trailing slash (those get the plain
+  // 404). Every other redirect and every afterFiles/fallback rewrite is checked here against the
+  // served pages, and one that can reach a page stops the boot, so a config change that would
+  // make this server answer differently from Next cannot ship silently.
+  if (pages.length > 0) {
+    const matchPage = createPageMatcher(pages);
+    const custom = [
+      ...(routesManifest.redirects || []).map((item) => ['redirect', item]),
+      ...(Array.isArray(rewrites)
+        ? rewrites.map((item) => ['rewrite', item])
+        : [...(rewrites.afterFiles || []), ...(rewrites.fallback || [])].map((item) => [
+            'rewrite',
+            item,
+          ])),
+    ];
+    for (const [kind, item] of custom) {
+      const page = pageConflict(routing, buildHeaderRoute(item, caseSensitive), pages, matchPage);
+      if (page) {
+        throw new Error(
+          `trpc-server: ${kind} ${item.source} can apply to served page ${page}; this server does not port ${kind}s`
+        );
+      }
+    }
+  }
+  return routing;
+}
+
+/** The pathname resolve-routes matches custom routes against: the default locale prefixed under i18n. */
+function localizedPathname(i18n, pathname) {
+  if (!i18n) return pathname;
+  const initial = normalizeLocalePath(pathname, i18n.locales);
+  if (initial.detectedLocale || initial.pathname.startsWith('/_next/')) return pathname;
+  return initial.pathname === '/'
+    ? `/${i18n.defaultLocale}`
+    : addPathPrefix(initial.pathname || '', `/${i18n.defaultLocale}`);
 }
 
 /**
@@ -238,16 +335,7 @@ function resolveRouting(routing, req) {
   const parsedUrl = parseUrl(req.url || '');
 
   // i18n: the default locale is added to the path for matching (resolve-routes ~L141).
-  let pathname = parsedUrl.pathname || '/';
-  if (routing.i18n) {
-    const initial = normalizeLocalePath(pathname, routing.i18n.locales);
-    if (!initial.detectedLocale && !initial.pathname.startsWith('/_next/')) {
-      pathname =
-        initial.pathname === '/'
-          ? `/${routing.i18n.defaultLocale}`
-          : addPathPrefix(initial.pathname || '', `/${routing.i18n.defaultLocale}`);
-    }
-  }
+  const pathname = localizedPathname(routing.i18n, parsedUrl.pathname || '/');
 
   // headers() entries come first in the route list and accumulate.
   const resHeaders = {};
@@ -342,18 +430,24 @@ function stripInternalQuery(req) {
  * Maps a request path to one of the served pages. `pages` maps a page (`/api/trpc/[trpc]`) to
  * anything; only the keys are used. Static pages match exactly; dynamic ones through Next's own
  * route matcher, which throws `DecodeError` on a malformed `%` escape exactly as it does inside
- * router-server.
+ * router-server. Dynamic pages are tried in the order Next's filesystem router tries them
+ * (`getSortedRoutes`, as `sortDynamicRoutes` in `router-utils/filesystem.js`): `[id]` before
+ * `[...rest]` before `[[...rest]]`, and a deeper static segment before a dynamic one, so when two
+ * served dynamic pages can both match a path the one Next would pick wins.
  *
  * Returns { page } | { notFound: true } | { decodeError: true }.
  */
 function createPageMatcher(pages) {
   const statics = new Set();
-  const dynamics = [];
+  const dynamicPages = [];
   for (const page of pages) {
-    if (/\[[^\]]+\]/.test(page))
-      dynamics.push({ page, match: getRouteMatcher(getRouteRegex(page)) });
+    if (/\[[^\]]+\]/.test(page)) dynamicPages.push(page);
     else statics.add(page);
   }
+  const dynamics = getSortedRoutes(dynamicPages).map((page) => ({
+    page,
+    match: getRouteMatcher(getRouteRegex(page)),
+  }));
   return function matchPage(pathname) {
     // Next never invokes a route for a trailing-slash path (it 308s first, and this server does
     // not port redirects), so this server does not serve one either.
@@ -368,6 +462,65 @@ function createPageMatcher(pages) {
       }
     }
     return { notFound: true };
+  };
+}
+
+/**
+ * Next's request-body cap for a request the proxy runs on: router-server wraps every request body
+ * in `getCloneableBody(req, experimental.proxyClientMaxBodySize)` (resolve-routes), and for a
+ * non-GET/HEAD request next-server hands the proxy a clone of it (`cloneBodyStream`) and then,
+ * whatever the proxy answered, `finalize()`s it: it waits for the whole body to arrive and swaps
+ * the request's stream for the copy. The copy stops at the cap (10 MiB by default), dropping the
+ * chunk that crossed it and logging a warning, so the route sees a TRUNCATED body. Called with
+ * Next's own function, in the same order, for the pages this server applies the proxy policy to.
+ */
+async function applyProxyBodyLimit(req, nextConfig) {
+  if (req.method === 'GET' || req.method === 'HEAD') return;
+  const limit = nextConfig.experimental && nextConfig.experimental.proxyClientMaxBodySize;
+  const body = getCloneableBody(req, limit);
+  body.cloneBodyStream();
+  await body.finalize();
+}
+
+/**
+ * Loads route modules by page. `load(page)` returns (or resolves to) the compiled module.
+ *
+ * `preload(pages)` loads each one at boot and returns the pages that failed. A failure (a throw
+ * while loading, or a module with no `handler` export) is logged and that page is left unloaded
+ * rather than ending the process, as Next's own preload ignores a failing entry. `get(page)` then
+ * retries the load on each request until it succeeds, and rejects while it fails, which the
+ * server answers with its 500. A page that loaded is kept.
+ */
+function createRouteModuleLoader(load, log) {
+  const modules = new Map();
+  async function tryLoad(page) {
+    const mod = await load(page);
+    if (!mod || typeof mod.handler !== 'function') {
+      throw new Error(`[trpc-server] ${page} has no exported handler(req, res, ctx)`);
+    }
+    modules.set(page, mod);
+    return mod;
+  }
+  return {
+    async preload(pages) {
+      const failed = [];
+      for (const page of pages) {
+        try {
+          await tryLoad(page);
+        } catch (err) {
+          failed.push(page);
+          log(
+            `[trpc-server] failed to load ${page}; requests to it retry the load and answer 500 while it fails`,
+            err
+          );
+        }
+      }
+      return failed;
+    },
+    get(page) {
+      const mod = modules.get(page);
+      return mod ? Promise.resolve(mod) : tryLoad(page);
+    },
   };
 }
 
@@ -392,7 +545,9 @@ function sendBadRequest(res) {
 }
 
 module.exports = {
+  applyProxyBodyLimit,
   applyRoutingHeaders,
+  createRouteModuleLoader,
   ensureInstrumentationRegistered,
   expectExport,
   installGlobalBehaviors,

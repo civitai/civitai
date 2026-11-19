@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as shared from '@civitai/app-assistant';
 import * as appKey from '~/components/Apps/AppAssistant/appKey';
 import * as appTools from '~/components/Apps/AppAssistant/appTools';
+import * as coverArt from '~/components/Apps/AppAssistant/coverArt';
 import * as instructions from '~/components/Apps/AppAssistant/assistantInstructions';
 import * as subagents from '~/components/Apps/AppAssistant/assistantSubagents';
 import * as gate from '~/components/Apps/AppAssistant/assistantGate';
@@ -27,6 +28,9 @@ describe('App Assistant’s rules, one place for the page and the server runner'
     expect(sandboxClient.createSandboxClient).toBe(shared.createSandboxClient);
     expect(sandboxClient.SandboxApiError).toBe(shared.SandboxApiError);
     expect(openApp).toBe(shared.openApp);
+    // generate_app_cover: the runner offers the same tool the page does.
+    expect(coverArt.createCoverArt).toBe(shared.createCoverArt);
+    expect(coverArt.appCoverWorkflow).toBe(shared.appCoverWorkflow);
   });
 });
 

@@ -35,19 +35,29 @@ vi.mock('~/server/controllers/model-file.controller', () => ({
 import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
 import { modelFileRouter } from '~/server/routers/model-file.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const OWNER = 7;
 const OTHER = 8;
 
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.ModelsRead,
+};
+
 function caller(
   router: typeof modelFileRouter,
-  user: { id: number; isModerator: boolean } | undefined
+  user: { id: number; isModerator: boolean } | undefined,
+  credential: Partial<typeof SCOPED_KEY> = {}
 ) {
   return router.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
+    ...credential,
     req: { headers: {} },
     res: { setHeader: () => undefined, removeHeader: () => undefined },
     cache: { edgeTTL: user ? 0 : 60 },
@@ -70,26 +80,44 @@ describe('modelFile.getByVersionId url scope (wiring)', () => {
     const result = await caller(modelFileRouter, { id: OWNER, isModerator: false }).getByVersionId({
       id: 10,
     });
-    expect(result.files[0].url).toBe('model/7/a.safetensors');
+    expect(result!.files[0].url).toBe('model/7/a.safetensors');
+  });
+
+  it('strips the url for the version owner on a scoped key', async () => {
+    const result = await caller(
+      modelFileRouter,
+      { id: OWNER, isModerator: false },
+      SCOPED_KEY
+    ).getByVersionId({ id: 10 });
+    expect(result!.files[0].url).toBeUndefined();
+  });
+
+  it('returns the url to the version owner on a full-access key', async () => {
+    const result = await caller(
+      modelFileRouter,
+      { id: OWNER, isModerator: false },
+      { ...SCOPED_KEY, tokenScope: TokenScope.Full }
+    ).getByVersionId({ id: 10 });
+    expect(result!.files[0].url).toBe('model/7/a.safetensors');
   });
 
   it('strips the url for a signed-in non-owner', async () => {
     const result = await caller(modelFileRouter, { id: OTHER, isModerator: false }).getByVersionId({
       id: 10,
     });
-    expect(result.files[0].url).toBeUndefined();
+    expect(result!.files[0].url).toBeUndefined();
   });
 
   it('strips the url for an anonymous caller', async () => {
     const result = await caller(modelFileRouter, undefined).getByVersionId({ id: 10 });
-    expect(result.files[0].url).toBeUndefined();
+    expect(result!.files[0].url).toBeUndefined();
   });
 
   it('keeps it for a moderator', async () => {
     const result = await caller(modelFileRouter, { id: OTHER, isModerator: true }).getByVersionId({
       id: 10,
     });
-    expect(result.files[0].url).toBe('model/7/a.safetensors');
+    expect(result!.files[0].url).toBe('model/7/a.safetensors');
   });
 });
 

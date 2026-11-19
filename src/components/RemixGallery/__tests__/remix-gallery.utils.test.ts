@@ -4,6 +4,7 @@ import { requiresImageDbPath } from '~/server/schema/image.schema';
 import { ownContentPickerFilters } from '~/components/Image/image.utils';
 import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
 import {
+  teamWaiverOffer,
   dedupeGalleryItems,
   freeRefusalExplanation,
   freeRefusalOutcome,
@@ -520,5 +521,34 @@ describe('the remix surface names the shared budget too', () => {
     });
 
     expect(spent.reason).toContain(SHARED_ALLOWANCE_NOTE);
+  });
+});
+
+describe('teamWaiverOffer', () => {
+  const standing = { team: 'Pink', remaining: 3, resetsAt: new Date('2026-11-04T00:00:00Z') };
+
+  it('offers the waiver for a verified remix to an open gallery, naming the team', () => {
+    const offer = teamWaiverOffer({ verified: true, open: true, standing });
+    expect(offer.available).toBe(true);
+    expect(offer.note).toMatch(/Free for Team Pink/);
+    expect(offer.note).toMatch(/3 free team remixes left today/);
+  });
+
+  it.each([
+    ['an unverified remix', { verified: false, open: true, standing }],
+    ['a closed gallery', { verified: true, open: false, standing }],
+    ['no waiver', { verified: true, open: true, standing: null }],
+  ])('says nothing for %s', (_label, input) => {
+    expect(teamWaiverOffer(input)).toEqual({ available: false, note: null });
+  });
+
+  it("says the day's waivers are spent, leaving the ordinary choice", () => {
+    const offer = teamWaiverOffer({
+      verified: true,
+      open: true,
+      standing: { ...standing, remaining: 0 },
+    });
+    expect(offer.available).toBe(false);
+    expect(offer.note).toMatch(/used today's free team remixes/);
   });
 });

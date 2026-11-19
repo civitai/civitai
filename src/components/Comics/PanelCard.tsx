@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Loader, Menu, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Loader, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCopy,

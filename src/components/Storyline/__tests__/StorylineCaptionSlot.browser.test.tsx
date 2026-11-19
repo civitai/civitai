@@ -75,6 +75,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ storylines: mocks.enabled }),
+  useOptionalFeatureFlags: () => ({ storylines: mocks.enabled }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => (mocks.userId ? { id: mocks.userId } : null),
@@ -94,7 +95,7 @@ const pendingLink = {
   parentChapter: null,
 };
 
-const box = () => page.getByRole('textbox', { name: 'Caption for this picture' });
+const box = () => page.getByRole('textbox', { name: 'Caption (shown in the story)' });
 
 beforeEach(() => {
   mocks.pending = null;

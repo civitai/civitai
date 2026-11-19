@@ -36,7 +36,7 @@ const MODERATOR = 573;
 // A literal, not the app's constant: -1 is what the main-app expiry job writes, so a fixture that
 // followed a changed constant would keep passing while the filter stopped matching real rows.
 const SYSTEM = -1;
-const modelQueue = REPORT_ENTITIES.find((e) => e.reportTable === 'ModelReport')!.label;
+const modelQueue = REPORT_ENTITIES.find((e) => e.reportTable === 'ModelReport')!;
 
 beforeAll(async () => {
   const pg = await freshPglite();
@@ -61,6 +61,8 @@ beforeAll(async () => {
       (3, 'Actioned', '2026-09-15T10:00:00Z', NULL);
     INSERT INTO "ModelReport" VALUES (1, 11), (2, 12), (3, 13);
     INSERT INTO "PostReport" VALUES (1, 21), (2, 22), (3, 23);
+    -- Report 1 was filed on a CommentV2 comment and mirrored; report 3 was filed on CommentV3 alone.
+    INSERT INTO "CommentV3Report" VALUES (1, 31), (3, 33);
   `);
   holder.dbRead = new Kysely({ dialect: pgliteDialect(pg) });
   holder.pg = pg;
@@ -73,8 +75,8 @@ describe('getRecentQueueActivity', () => {
       `SELECT "statusSetAt" FROM "Report" WHERE id = 3`
     );
 
-    expect(activity.get(modelQueue)).toEqual({
-      type: `${modelQueue} reports`,
+    expect(activity.get(modelQueue.type)).toEqual({
+      type: `${modelQueue.label} reports`,
       at: rows[0]!.statusSetAt,
       moderator: null,
     });
@@ -89,5 +91,12 @@ describe('getReportHistory', () => {
       [3, null],
       [1, 'a-moderator'],
     ]);
+  });
+
+  // The old comment queues are gone, so a report filed before the tables merged must list here.
+  it('lists every comment report under the one comment type, mirrored or not', async () => {
+    const { items } = await getReportHistory(ReportEntity.CommentV3);
+
+    expect(items.map((r) => r.id)).toEqual([3, 1]);
   });
 });

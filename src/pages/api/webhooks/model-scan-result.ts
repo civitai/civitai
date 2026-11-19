@@ -10,7 +10,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 const logWebhook = (data: MixedObject) => {
-  logToAxiom({ name: 'model-scan-result', type: 'error', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'model-scan-result', type: 'error', ...data }, 'webhooks');
 };
 
 export default WebhookEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {

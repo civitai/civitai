@@ -1,5 +1,6 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { IconProps } from '@tabler/icons-react';
 import { IconHelpCircle } from '@tabler/icons-react';
 import { forwardRef } from 'react';

@@ -24,7 +24,8 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
-  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_MAX,
+  CRUCIBLE_MIN_VIEW_SECONDS_MIN,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
@@ -188,9 +189,9 @@ export const createCrucibleInputBaseSchema = z.object({
     .optional(),
   minViewSeconds: z
     .number()
-    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s), {
-      message: 'Unsupported minimum view time',
-    })
+    .int()
+    .min(CRUCIBLE_MIN_VIEW_SECONDS_MIN)
+    .max(CRUCIBLE_MIN_VIEW_SECONDS_MAX)
     .nullish(),
   maxClipSeconds: z
     .number()
@@ -198,6 +199,10 @@ export const createCrucibleInputBaseSchema = z.object({
       message: 'Unsupported maximum clip length',
     })
     .nullish(),
+  // Minted by the client once per creation and resent on its retries: the setup fee's and the
+  // seed's ledger ids derive from it, so a retry after an unanswered request charges each once.
+  // Optional for clients from before keys, which get new ids per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 type CrucibleSettings = {
@@ -277,6 +282,10 @@ export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
 export const submitEntrySchema = z.object({
   crucibleId: z.number(),
   imageId: z.number(),
+  // Minted by the client once per entry and resent on its retries: the entry fee's ledger ids
+  // derive from it, so a retry after an unanswered submit cannot charge the fee again. Optional
+  // for clients from before keys, which get a new id per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type CheckCrucibleEntryEligibilitySchema = z.infer<
@@ -319,6 +328,16 @@ export const submitVoteSchema = z
 
 // Schema for getting a judging pair
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
+export type DismissJudgingPairSchema = z.infer<typeof dismissJudgingPairSchema>;
+export const dismissJudgingPairSchema = z
+  .object({
+    crucibleId: z.number(),
+    entryIds: z.tuple([z.number().int(), z.number().int()]),
+  })
+  .refine(({ entryIds: [a, b] }) => a !== b, {
+    message: 'A pair needs two different entries',
+    path: ['entryIds'],
+  });
 export type GetJudgingProgressSchema = z.infer<typeof getJudgingProgressSchema>;
 export const getJudgingProgressSchema = z.object({
   crucibleId: z.number(),
@@ -410,7 +429,9 @@ export const updateCrucibleSchema = z.object({
     .nullish(),
   minViewSeconds: z
     .number()
-    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s))
+    .int()
+    .min(CRUCIBLE_MIN_VIEW_SECONDS_MIN)
+    .max(CRUCIBLE_MIN_VIEW_SECONDS_MAX)
     .nullish(),
   maxClipSeconds: z
     .number()

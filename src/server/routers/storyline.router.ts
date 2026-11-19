@@ -1,7 +1,12 @@
+import { CacheTTL } from '~/server/common/constants';
+import { rateLimit } from '~/server/middleware.trpc';
+import { addPostText, deletePostText, setPostText } from '~/server/services/post-text.service';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   addOwnerChapterSchema,
   createStorylineSchema,
   getStorylinesInfiniteSchema,
+  followStorylineSchema,
   insertStorylineChapterSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
@@ -12,6 +17,9 @@ import {
   setCanonChapterSchema,
   setFirstChapterSchema,
   setStorylineImageCaptionSchema,
+  addStorylineTextSchema,
+  setStorylineTextSchema,
+  storylineTextIdSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
   getStorylineSchema,
@@ -55,6 +63,9 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  followStoryline,
+  getStorylineFollow,
+  unfollowStoryline,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -76,6 +87,10 @@ import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 
 const storylineReadProcedure = publicProcedure.use(isFlagProtected('storylines'));
 const storylineWriteProcedure = guardedProcedure.use(isFlagProtected('storylines'));
+// Text items between a chapter's images, behind their own flag.
+const storylineTextProcedure = guardedProcedure
+  .use(isFlagProtected('storylines'))
+  .use(isFlagProtected('storylineText'));
 const storylineMemberProcedure = protectedProcedure.use(isFlagProtected('storylines'));
 
 export const storylineRouter = router({
@@ -101,6 +116,7 @@ export const storylineRouter = router({
       via: input.via,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      withTexts: !!ctx.features.storylineText,
     })
   ),
 
@@ -152,6 +168,7 @@ export const storylineRouter = router({
       limit: input.limit,
       viewer: ctx.user,
       browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+      userId: input.userId,
     })
   ),
 
@@ -210,6 +227,25 @@ export const storylineRouter = router({
       removePendingChapter({ postId: input.postId, userId: ctx.user.id })
     ),
 
+  getFollow: storylineMemberProcedure
+    .input(storylineIdSchema)
+    .query(({ input, ctx }) => getStorylineFollow({ storylineId: input.id, userId: ctx.user.id })),
+
+  follow: storylineMemberProcedure.input(followStorylineSchema).mutation(({ input, ctx }) =>
+    followStoryline({
+      storylineId: input.storylineId,
+      scope: input.scope,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  unfollow: storylineMemberProcedure
+    .input(storylineIdSchema)
+    .mutation(({ input, ctx }) =>
+      unfollowStoryline({ storylineId: input.id, userId: ctx.user.id })
+    ),
+
   getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>
     getStorylineEarlyAccessStatus(ctx.user.id)
   ),
@@ -224,11 +260,12 @@ export const storylineRouter = router({
     .input(setStorylineTakedownSchema)
     .mutation(({ input }) => setStorylineTakedown(input)),
 
-  create: storylineWriteProcedure
-    .input(createStorylineSchema)
-    .mutation(({ input, ctx }) =>
-      createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+  create: storylineWriteProcedure.input(createStorylineSchema).mutation(({ input, ctx }) => {
+    // A creator turns sparks off through their remix gallery, which only this flag shows them.
+    if (input.sparkImageId && !ctx.features.remixGallery)
+      throw throwAuthorizationError('Starting a story from an image is not available yet');
+    return createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  }),
 
   update: storylineWriteProcedure
     .input(updateStorylineSchema)
@@ -246,6 +283,24 @@ export const storylineRouter = router({
     .input(setStorylineImageCaptionSchema)
     .mutation(({ input, ctx }) =>
       setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  addText: storylineTextProcedure
+    .input(addStorylineTextSchema)
+    .mutation(({ input, ctx }) => addPostText({ ...input, userId: ctx.user.id })),
+
+  // The editor autosaves as the author types, and each save that changes the text bills a scan.
+  setText: storylineTextProcedure
+    .input(setStorylineTextSchema)
+    .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
+    .mutation(({ input, ctx }) =>
+      setPostText({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  deleteText: storylineTextProcedure
+    .input(storylineTextIdSchema)
+    .mutation(({ input, ctx }) =>
+      deletePostText({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
   setFirstChapter: storylineWriteProcedure

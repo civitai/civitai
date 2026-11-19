@@ -151,6 +151,23 @@ describe('restoreUser image recovery', () => {
     );
   });
 
+  it('withdraws an app-data removal the job has not reached yet', async () => {
+    mockDbWrite.user.findFirst.mockResolvedValueOnce({
+      id: USER_ID,
+      deletedAt: new Date('2026-07-28T00:00:00Z'),
+      meta: { appDataRemoval: 'requested', strikeFlaggedForReview: true },
+    });
+
+    await restore();
+
+    // The request belongs to the deletion it came with, like the removal choice above.
+    expect(mockDbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ deletedAt: null, meta: { strikeFlaggedForReview: true } }),
+      })
+    );
+  });
+
   it('refuses an account that is not deleted before touching any image state', async () => {
     mockDbWrite.user.findFirst.mockResolvedValueOnce({ id: USER_ID, deletedAt: null, meta: {} });
 

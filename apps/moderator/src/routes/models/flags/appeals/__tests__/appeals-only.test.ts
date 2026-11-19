@@ -65,6 +65,12 @@ describe('Model Flag Appeals', () => {
   );
 
   it('no longer carries the detection verdict actions', () => {
-    expect(Object.keys(actions!).sort()).toEqual(['overturnAppeal', 'splitAppeal', 'upholdAppeal']);
+    expect(Object.keys(actions!).sort()).toEqual([
+      'approveLockReview',
+      'overturnAppeal',
+      'rejectLockReview',
+      'splitAppeal',
+      'upholdAppeal',
+    ]);
   });
 });

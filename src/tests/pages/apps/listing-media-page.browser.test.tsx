@@ -66,6 +66,12 @@ const state = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
 }));

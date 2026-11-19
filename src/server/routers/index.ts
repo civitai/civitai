@@ -15,6 +15,9 @@ const routers = {
     import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter),
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
+  appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
+  appHibernation: () =>
+    import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),
   blockImageUpload: () =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter),
   blockImagePicker: () =>
@@ -23,7 +26,6 @@ const routers = {
     import('~/server/routers/platform-feedback.router').then((m) => m.platformFeedbackRouter),
   account: () => import('./account.router').then((m) => m.accountRouter),
   announcement: () => import('./announcement.router').then((m) => m.announcementRouter),
-  answer: () => import('./answer.router').then((m) => m.answerRouter),
   apiKey: () => import('./apiKey.router').then((m) => m.apiKeyRouter),
   article: () => import('./article.router').then((m) => m.articleRouter),
   auth: () => import('./auth.router').then((m) => m.authRouter),
@@ -33,9 +35,7 @@ const routers = {
   buzz: () => import('./buzz.router').then((m) => m.buzzRouter),
   chat: () => import('./chat.router').then((m) => m.chatRouter),
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
-  comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
-  commentv2: () => import('./commentv2.router').then((m) => m.commentv2Router),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
   content: () => import('./content.router').then((m) => m.contentRouter),
@@ -54,6 +54,8 @@ const routers = {
   model3d: () => import('./model3d.router').then((m) => m.model3dRouter),
   modelFile: () => import('./model-file.router').then((m) => m.modelFileRouter),
   modelVersion: () => import('./model-version.router').then((m) => m.modelVersionRouter),
+  modelVersionGift: () =>
+    import('./model-version-gift.router').then((m) => m.modelVersionGiftRouter),
   notification: () => import('./notification.router').then((m) => m.notificationRouter),
   partner: () => import('./partner.router').then((m) => m.partnerRouter),
   placement: () => import('./placement.router').then((m) => m.placementRouter),
@@ -62,13 +64,32 @@ const routers = {
   postPreset: () => import('./post-preset.router').then((m) => m.postPresetRouter),
   postIntent: () => import('./post-intent.router').then((m) => m.postIntentRouter),
   promotion: () => import('./promotion.router').then((m) => m.promotionRouter),
-  question: () => import('./question.router').then((m) => m.questionRouter),
   ratingReview: () => import('./rating-review.router').then((m) => m.ratingReviewRouter),
   reaction: () => import('./reaction.router').then((m) => m.reactionRouter),
   report: () => import('./report.router').then((m) => m.reportRouter),
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  imageSearchUpload: () =>
+    import('./image-search-upload.router').then((m) => m.imageSearchUploadRouter),
+  semanticArticleSearch: () =>
+    import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
+  semanticComicSearch: () =>
+    import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticChallengeSearch: () =>
+    import('./semantic-challenge-search.router').then((m) => m.semanticChallengeSearchRouter),
+  semanticModelSearch: () =>
+    import('./semantic-model-search.router').then((m) => m.semanticModelSearchRouter),
+  semanticModel3DSearch: () =>
+    import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
+  semanticStorylineSearch: () =>
+    import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
+  semanticCollectionSearch: () =>
+    import('./semantic-collection-search.router').then((m) => m.semanticCollectionSearchRouter),
+  semanticBountySearch: () =>
+    import('./semantic-bounty-search.router').then((m) => m.semanticBountySearchRouter),
+  semanticCrucibleSearch: () =>
+    import('./semantic-crucible-search.router').then((m) => m.semanticCrucibleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),
@@ -91,6 +112,7 @@ const routers = {
   wildcardSet: () => import('./wildcard-set.router').then((m) => m.wildcardSetRouter),
   newsletter: () => import('./newsletter.router').then((m) => m.newsletterRouter),
   system: () => import('./system.router').then((m) => m.systemRouter),
+  experiments: () => import('~/server/routers/experiments.router').then((m) => m.experimentsRouter),
   hiddenPreferences: () =>
     import('./hidden-preferences.router').then((m) => m.hiddenPreferencesRouter),
   userReferralCode: () =>
@@ -100,6 +122,7 @@ const routers = {
     import('~/server/routers/user-profile.router').then((m) => m.userProfileRouter),
   cosmetic: () => import('~/server/routers/cosmetic.router').then((m) => m.cosmeticRouter),
   event: () => import('~/server/routers/event.router').then((m) => m.eventRouter),
+  hatTurf: () => import('~/server/routers/hat-turf.router').then((m) => m.hatTurfRouter),
   csam: () => import('~/server/routers/csam.router').then((m) => m.csamRouter),
   userPaymentConfiguration: () =>
     import('./user-payment-configuration.router').then((m) => m.userPaymentConfigurationRouter),
@@ -132,6 +155,7 @@ const routers = {
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter),
   orchestrator: () =>
     import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter),
+  remixApp: () => import('~/server/routers/remix-app.router').then((m) => m.remixAppRouter),
   moderator: () => import('~/server/routers/moderator').then((m) => m.modRouter),
   entityCollaborator: () =>
     import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter),

@@ -50,6 +50,8 @@ const engineSwitch = vi.hoisted(() => ({ isEventPointsEnabled: vi.fn() }));
 vi.mock('~/server/events/points/enabled', () => engineSwitch);
 
 vi.mock('~/server/events', () => ({ eventEngine: engine }));
+const turf = vi.hoisted(() => ({ getTurfEvent: vi.fn(async (): Promise<unknown> => undefined) }));
+vi.mock('~/server/events/turf/turf.service', () => turf);
 // The real cosmeticScoreKey: the service joins scores to hats with it.
 vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -317,11 +319,17 @@ describe('getMyEventHats', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('reads the placed covers as signed out without the owner view', async () => {
+    at(LIVE_NOW);
+    await service.getMyEventHats({ event: 'birthday2026', user, asOwner: false });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: undefined }));
+  });
+
   // An unplaced hat has no score row; reading hats from the scores would drop it, and a hat you
   // just bought would not appear until it had earned something.
   it('lists every owned hat, placed or not, with its score and where it is', async () => {
     at(LIVE_NOW);
-    const hats = await service.getMyEventHats({ event: 'birthday2026', user });
+    const hats = await service.getMyEventHats({ event: 'birthday2026', user, asOwner: true });
     expect(hats.map((h) => [h.cosmeticId, h.claimKey])).toEqual([
       [31, 'claimed'],
       [32, 'txn-9'],
@@ -567,7 +575,11 @@ describe('getPlaceableEventContent', () => {
       { entityType: 'Image', entityId: 1, id: 101 },
       { entityType: 'Article', entityId: 3, id: 103 },
     ]);
-    const content = await service.getPlaceableEventContent({ event: 'birthday2026', user });
+    const content = await service.getPlaceableEventContent({
+      event: 'birthday2026',
+      user,
+      asOwner: true,
+    });
     expect(content.map((c) => [c.entityType, c.entityId, c.title, c.image?.id ?? null])).toEqual([
       ['Image', 1, null, 101],
       ['Model', 2, 'Velvet LoRA', null],
@@ -577,12 +589,19 @@ describe('getPlaceableEventContent', () => {
     expect(covers).toHaveBeenCalledTimes(1);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
+
+  it('reads covers as signed out for a caller on a scoped key or app token', async () => {
+    await seedImages([{ id: 50, publishedAt: '2026-10-01T00:00:00Z' }], [{ id: 1, post: 50 }]);
+    covers.mockResolvedValue([]);
+    await service.getPlaceableEventContent({ event: 'birthday2026', user, asOwner: false });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: undefined }));
+  });
 });
 
 describe('getPlaceableEventContentPage', () => {
   const user = { id: 9 };
   const page = (input: { entityType: 'Image' | 'Model' | 'Article' | 'Post'; cursor?: number }) =>
-    service.getPlaceableEventContentPage({ event: 'birthday2026', user, ...input });
+    service.getPlaceableEventContentPage({ event: 'birthday2026', user, asOwner: true, ...input });
   const ids = (n: number, from = 100) => Array.from({ length: n }, (_, i) => ({ id: from - i }));
   usePostgresImages();
   beforeEach(() => {
@@ -660,6 +679,18 @@ describe('getPlaceableEventContentPage', () => {
       ...postImages(3, 20, 900).map((i) => i.id),
     ]);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
+  });
+
+  it('reads the page covers as signed out without the owner view', async () => {
+    await seedImages([{ id: 1, publishedAt: '2026-10-25T00:00:00Z' }], postImages(1, 3, 100));
+    covers.mockClear();
+    await service.getPlaceableEventContentPage({
+      event: 'birthday2026',
+      user,
+      asOwner: false,
+      entityType: 'Image',
+    });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: undefined }));
   });
 
   // The cursor is still the last image id shown, so a page an older client asked for still lands.
@@ -748,6 +779,28 @@ describe('getPlaceableEventContentPage', () => {
 
 describe('getEventStandings decoration', () => {
   const viewer = { id: 1 };
+
+  // The turf board shows only once turf is live (the live override applied), never in shadow.
+  it.each([
+    ['live', true],
+    ['shadow', false],
+    ['off', false],
+  ])('turfLive with turf mode %s is %s', async (mode, expected) => {
+    turf.getTurfEvent.mockResolvedValueOnce({ turf: { mode } });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.turfLive).toBe(expected);
+  });
+
+  it('turfLive is false for an event without turf, or when its config cannot be read', async () => {
+    turf.getTurfEvent.mockResolvedValueOnce(undefined);
+    expect((await service.getEventStandings({ event: 'birthday2026', viewer })).turfLive).toBe(
+      false
+    );
+    turf.getTurfEvent.mockRejectedValueOnce(new Error('sysRedis down'));
+    expect((await service.getEventStandings({ event: 'birthday2026', viewer })).turfLive).toBe(
+      false
+    );
+  });
 
   it("returns each team's join hat art", async () => {
     engine.getJoinHats.mockResolvedValueOnce([{ team: 'Yellow', url: 'cap-y' }]);

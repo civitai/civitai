@@ -1,4 +1,5 @@
 import type { NextApiResponse } from 'next';
+import { AppDeveloperTermsNotAcceptedError } from '~/shared/constants/app-developer-terms.constants';
 import { isProd } from '~/env/other';
 import {
   submitVersionParseErrorMessage,
@@ -137,6 +138,14 @@ export default AuthedEndpoint(
         // stays absent; the service must not invent a value.
         sourceCommit: parsed.data.sourceCommit,
         sourceDirty: parsed.data.sourceDirty,
+        // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
+        // for this submitter, so with the flag off it is never verified or stored.
+        // (The verifier module is loaded only when a token was sent.)
+        githubOidcToken: parsed.data.githubOidcToken
+          ? await (
+              await import('~/server/services/blocks/github-actions-oidc.service')
+            ).actionsOidcTokenForSubmit(user, parsed.data.githubOidcToken)
+          : undefined,
       });
       // The stable subset, as the CLI route answers: never the file or manifest diff against the
       // previous approved version, which is moderator review material.
@@ -146,12 +155,52 @@ export default AuthedEndpoint(
         version: result.version,
         status: 'pending',
         listing: result.listing ?? null,
+        storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+        // Only when a GitHub Actions token was verified: whether its run was stored.
+        ...(result.actionsRunSourceRecorded === undefined
+          ? {}
+          : { actionsRunSourceRecorded: result.actionsRunSourceRecorded }),
       });
     } catch (err) {
       // Service throws plain Errors with human-readable messages (bundle too
       // large, missing manifest, invalid blockId / version / name, etc).
       // Surface as 400 so the form can render them inline.
-      res.status(400).json({ message: (err as Error).message });
+      if (err instanceof AppDeveloperTermsNotAcceptedError) {
+        res.status(403).json({ message: err.message });
+        return;
+      }
+      // A GitHub Actions OIDC token that failed verification: 400 (fix the pipeline) or 503 (GitHub's
+      // keys or the replay store did not answer; re-run). The message never contains the token.
+      const { isGithubActionsOidcRefusal } = await import(
+        '~/server/services/blocks/github-actions-oidc-refusal'
+      );
+      if (isGithubActionsOidcRefusal(err)) {
+        res.status(err.status).json({
+          message: err.message,
+          code: 'github_oidc_token_rejected',
+          reason: err.reason,
+        });
+        return;
+      }
+      const [
+        { isStorageMigrationRefusal },
+        { isStorageHookRefusal },
+        { isManifestValidationRefusal },
+      ] = await Promise.all([
+        import('~/server/services/apps/storage-schema-migrations'),
+        import('~/server/services/apps/storage-hooks'),
+        import('~/server/services/blocks/manifest-submit-validation'),
+      ]);
+      // A schema-migration refusal also carries the structured list (collection, pointer,
+      // keyword, old → new) so a client can show each breaking change.
+      res.status(400).json({
+        message: (err as Error).message,
+        ...(isStorageMigrationRefusal(err) ? { storageBreakingChanges: err.breaking } : {}),
+        // A permission-hook refusal carries one entry per refused hook (collection, file, reason).
+        ...(isStorageHookRefusal(err) ? { storageHookErrors: err.problems } : {}),
+        // A manifest the approve-time validator refuses carries every validator error.
+        ...(isManifestValidationRefusal(err) ? { manifestErrors: err.errors } : {}),
+      });
     }
   },
   ['POST']

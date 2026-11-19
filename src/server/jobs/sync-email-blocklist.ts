@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { upsertBlocklist } from '~/server/services/blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const log = createLogger('jobs:sync-email-blocklist', 'blue');
 
@@ -27,7 +28,7 @@ function parseUpstream(text: string): string[] {
 export const syncEmailBlocklist = createJob('sync-email-blocklist', '0 3 * * 0', async () => {
   let upstreamText: string;
   try {
-    const res = await fetch(UPSTREAM_URL);
+    const res = await outboundFetch(UPSTREAM_URL, { timeoutMs: 60_000 });
     if (!res.ok) throw new Error(`upstream returned ${res.status}`);
     upstreamText = await res.text();
   } catch (error) {

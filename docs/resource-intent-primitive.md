@@ -568,7 +568,7 @@ version of this section said the study had been "removed before merge" and was
 since the runnable evaluator was in the tree the whole time.
 
 It has two parts, both drawn under ONE eligibility rule — the publicly searchable image
-(`imageWhere` in `src/server/search-index/images.search-index.ts`) with a public,
+(the retired images search index's `imageWhere`) with a public,
 non-empty prompt and no attached model flagged POI or minor, since those prompts go to the vendor. The matched draw is shared:
 part one takes a prefix, part two the first `sampleSize`; part one's unmatched half is
 a separate draw. **Part one** measures **stage-1 agreement** against that
@@ -694,7 +694,6 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent-hybrid.seam.test.ts` — the service, the real matcher (seed, label re-rank, `basePool`) and the real Jev wire parse together, checked against a verbatim copy of the offline screen's functions on synthetic rows.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
-- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks, from a module-load trace, that the dry run loads neither the database nor the search client (on any host), and that it prints its queries and the pre-registration and exits 0 with every `PRISMA_*` variable removed. The in-process suites cannot see a load-time import cycle; this can.
 - `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.
 - `src/server/services/__tests__/resource-intent-pool-merge.seam.test.ts` — the POOL_MERGE arm (service, real matcher, real cooc scoring and merge) against a verbatim copy of the co-occurrence screen's code with a `baseModel`, plus literal lists for the no-`baseModel` order; `resource-intent-pool-merge.test.ts` — both merge shapes on literal lists; `resource-intent.pool-merge.service.test.ts` — arm selection, cache key, fallback, study mode, shadow row and the pinned `RESOURCE_INTENT_POOL_MERGE_SPEC_HASH`.
 - `src/server/services/__tests__/resource-intent-checkpoint.seam.test.ts` — checkpoint mode's build side (attachment counting through a payload round trip) and both arms (ATTACH_BM, BASE_BM, and the fallback) against a verbatim copy of the offline checkpoint screen's code on synthetic rows; `resource-intent.checkpoint.service.test.ts` — no vendor call, the cache key, the fallback, study mode, the shadow row, and the add-on path unchanged; `resource-intent-cooc.checkpoint.test.ts` — the section's encoding, validation, loading and build.

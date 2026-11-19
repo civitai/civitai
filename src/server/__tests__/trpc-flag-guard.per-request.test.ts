@@ -4,7 +4,7 @@ import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 
 /**
- * `isFlagProtected(flag)` guards a procedure on ONE flag. It used to answer by building the whole
+ * `isFlagProtected(flag)` guards a procedure on a flag (or on any of several). It used to answer by building the whole
  * registry (`getFeatureFlags(ctx)`), so a request whose (user, host, region) was not in the
  * short-lived whole-result cache paid one Flipt evaluation per Flipt-backed flag in the registry
  * to read a single key. Behind the dark `trpc-flag-guard-per-request` switch it reads the key from
@@ -123,8 +123,8 @@ const batchRouter = router({
   hubsA: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
   hubsB: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
   hubsC: publicProcedure.use(isFlagProtected('userHubs')).query(() => 'ok'),
-  reviewA: publicProcedure.use(isFlagProtected('collectionAiReview')).query(() => 'ok'),
-  reviewB: publicProcedure.use(isFlagProtected('collectionAiReview')).query(() => 'ok'),
+  reviewA: publicProcedure.use(isFlagProtected('creatorShop')).query(() => 'ok'),
+  reviewB: publicProcedure.use(isFlagProtected('creatorShop')).query(() => 'ok'),
 });
 
 const batch = (caller: Caller) =>
@@ -144,16 +144,16 @@ beforeEach(() => {
 describe.each(impls)('one HTTP request ($name lazy object)', ({ build }) => {
   it('evaluates each guarded flag once for a whole batch, not the registry per procedure', async () => {
     flipt.overrides['user-hubs'] = true;
-    flipt.overrides['collection-ai-review'] = null; // static ['mod'] decides: a free user is refused
+    flipt.overrides['creator-shop'] = null; // static ['mod'] decides: a free user is refused
     const caller = batchRouter.createCaller(
       ctxFor(build, makeUser(), makeReq('civitai.com', 'US'))
     ) as unknown as Caller;
 
     expect(await batch(caller)).toEqual([true, true, true, false, false]);
-    // Three procedures on `userHubs` and two on `collectionAiReview` share one request: one
+    // Three procedures on `userHubs` and two on `creatorShop` share one request: one
     // evaluation per distinct flag, plus the switch itself.
     expect(flipt.calls.map((c) => c.flag).sort()).toEqual([
-      'collection-ai-review',
+      'creator-shop',
       SWITCH_KEY, // 'trpc-flag-guard-per-request' — the list is sorted
       'user-hubs',
     ]);
@@ -162,7 +162,7 @@ describe.each(impls)('one HTTP request ($name lazy object)', ({ build }) => {
   it('with the switch off, the guard takes the whole-registry path and answers the same', async () => {
     flipt.overrides[SWITCH_KEY] = null; // dark: no Flipt answer, static `[]` = off
     flipt.overrides['user-hubs'] = true;
-    flipt.overrides['collection-ai-review'] = null;
+    flipt.overrides['creator-shop'] = null;
     const caller = batchRouter.createCaller(
       ctxFor(build, makeUser(), makeReq('civitai.com', 'US'))
     ) as unknown as Caller;
@@ -170,5 +170,30 @@ describe.each(impls)('one HTTP request ($name lazy object)', ({ build }) => {
     expect(await batch(caller)).toEqual([true, true, true, false, false]);
     // The kill switch really switches: the old path evaluates the registry's Flipt keys.
     expect(flipt.calls.length).toBeGreaterThan(10);
+  });
+});
+
+describe('a procedure guarded on either of two flags', () => {
+  // The semantic image search: the old search pages reach it on `imageSearch`, the images feed on
+  // `feedSearch`, so rolling the feed out must not require the other flag too.
+  const eitherRouter = router({
+    search: publicProcedure.use(isFlagProtected('imageSearch', 'feedSearch')).query(() => 'ok'),
+  });
+  const callFor = (flags: { imageSearch: boolean; feedSearch: boolean }) => {
+    flipt.overrides['semantic-image-search'] = flags.imageSearch;
+    flipt.overrides['search-v3-feed'] = flags.feedSearch;
+    const caller = eitherRouter.createCaller(
+      ctxFor(getFeatureFlagsLazyProto, makeUser(), makeReq('civitai.com', 'US'))
+    ) as unknown as Caller;
+    return allowed(caller.search());
+  };
+
+  it('lets in a viewer who has only one of them', async () => {
+    expect(await callFor({ imageSearch: false, feedSearch: true })).toBe(true);
+    expect(await callFor({ imageSearch: true, feedSearch: false })).toBe(true);
+  });
+
+  it('refuses a viewer who has neither', async () => {
+    expect(await callFor({ imageSearch: false, feedSearch: false })).toBe(false);
   });
 });

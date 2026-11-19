@@ -57,17 +57,10 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   ) => res.status(500).json({ error: 'error', message: (e as Error).message }),
 }));
 
-// The capture points: the two services the handler hands its `actor` to.
+// The capture point: the service the handler hands its `actor` to.
 const setTos = vi.fn(async () => ({ count: 1, notified: 0, rewardedReports: 0 }));
-vi.mock('~/server/services/comment.service', () => ({
-  bulkSetCommentTosViolation: (...a: unknown[]) => setTos(...(a as [])),
-}));
-vi.mock('~/server/services/commentsv2.service', () => ({
-  bulkSetCommentV2TosViolation: vi.fn(async () => ({
-    count: 0,
-    notified: 0,
-    rewardedReports: 0,
-  })),
+vi.mock('~/server/services/commentv3/moderation.service', () => ({
+  bulkSetCommentV3TosViolation: (...a: unknown[]) => setTos(...(a as [])),
 }));
 
 import handler from '~/pages/api/mod/comment/remove-as-tos';
@@ -150,6 +143,16 @@ describe('comment.removeAsTos: the address recorded in the audit trail', () => {
       expect(setTos.mock.calls.length).toBe(0);
       await recordedIp({ 'cf-connecting-ip': '203.0.113.7' });
       expect(setTos.mock.calls.length).toBe(1);
+    });
+
+    it('flags the comment ids it was sent, answers their counts, and audits the ids', async () => {
+      const { req, res } = createMocks({ 'cf-connecting-ip': '203.0.113.7' });
+      await handler(req, res);
+      expect(setTos).toHaveBeenCalledWith(expect.objectContaining({ ids: [1] }));
+      expect(res._json()).toEqual({ comments: { count: 1, notified: 0, rewardedReports: 0 } });
+      expect(mockRetoolAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'ok', affected: { commentIds: [1] } })
+      );
     });
 
     it('POSITIVE CONTROL: the harness can observe two DIFFERENT addresses', async () => {

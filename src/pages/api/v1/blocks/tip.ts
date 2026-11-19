@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -48,7 +49,7 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
  * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
  * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
- * `buzzBudget` + `BLOCK_BUZZ_CAP_PER_DAY` pair. Those caps are what let
+ * `buzzBudget` + per-user daily cap pair. Those caps are what let
  * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no
  * longer effectively-unbounded spend). Over either cap → clean 4xx (never a 500).
  *
@@ -165,6 +166,13 @@ export const baseHandler = withAxiom(async function handler(
     // Per-instance rate limit (fail-CLOSED on redis error — money path).
     const rateLimit = await checkBlockTipRateLimit(claims.blockInstanceId);
     if (!rateLimit.allowed) {
+      recordBlockClaimsRateLimitRefusal({
+        claims,
+        surface: 'rest',
+        bucket: 'tip',
+        endpoint: 'tip',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
       // TRANSIENT: a rate-limited attempt moved no money — a retry once the window
       // clears must be allowed to execute, so this is NOT cached under the idem key.
       res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));

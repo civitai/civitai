@@ -2,6 +2,7 @@ import { randomBytes, randomInt } from 'crypto';
 import { isSystemAccountMeta, type SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { toSessionUser } from './session';
+import { logNewAccountMethodSwitch } from './last-method';
 import type { NormalizedProfile } from './providers';
 
 // Username assignment — mirrors the main app's NextAuth `events.createUser` / `setUserName`
@@ -107,7 +108,8 @@ export async function isLinkedAccount(provider: string, providerAccountId: strin
 export async function findOrCreateUser(
   provider: string,
   profile: NormalizedProfile,
-  scope: string | null = null
+  scope: string | null = null,
+  { lastMethod }: { lastMethod?: string | null } = {}
 ): Promise<SessionUser> {
   // 1. Already-linked account.
   const linked = await db
@@ -188,6 +190,7 @@ export async function findOrCreateUser(
       })
       .execute();
     await assignUsername(userId, [profile.email, profile.name, profile.username]);
+    logNewAccountMethodSwitch(lastMethod, provider);
   }
 
   // Read back via db — read-your-writes (the user may have just been created on primary).
@@ -241,9 +244,20 @@ export async function linkAccountToUser(
   return 'linked';
 }
 
+/** A magic link for an address that may only sign in to an account that already has it. */
+export class NoAccountForEmailError extends Error {
+  constructor() {
+    super('No account for this email address');
+    this.name = 'NoAccountForEmailError';
+  }
+}
+
 // Email magic-link sign-in: clicking the verified link proves email ownership, so the user is
-// created (or matched) with emailVerified set.
-export async function findOrCreateUserByEmail(email: string): Promise<SessionUser> {
+// created (or matched) with emailVerified set. `allowCreate: false` matches an existing user only.
+export async function findOrCreateUserByEmail(
+  email: string,
+  { allowCreate = true, lastMethod }: { allowCreate?: boolean; lastMethod?: string | null } = {}
+): Promise<SessionUser> {
   const existing = await db
     .selectFrom('User')
     .select(['id', 'meta'])
@@ -252,6 +266,7 @@ export async function findOrCreateUserByEmail(email: string): Promise<SessionUse
   if (existing && isSystemAccountMeta(existing.meta)) throw new SystemAccountSignInError();
 
   let userId = existing?.id;
+  if (!userId && !allowCreate) throw new NoAccountForEmailError();
   if (!userId) {
     const created = await db
       .insertInto('User')
@@ -260,6 +275,7 @@ export async function findOrCreateUserByEmail(email: string): Promise<SessionUse
       .executeTakeFirstOrThrow();
     userId = created.id;
     await assignUsername(userId, [email]);
+    logNewAccountMethodSwitch(lastMethod, 'email');
   } else {
     // Mark verified if it wasn't already.
     await db

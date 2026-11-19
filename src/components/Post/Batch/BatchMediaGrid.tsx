@@ -1,4 +1,5 @@
-import { Button, NumberInput, Progress, Radio, RingProgress, Text, Tooltip } from '@mantine/core';
+import { Button, NumberInput, Progress, Radio, RingProgress, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowsShuffle,
   IconPhotoPlus,

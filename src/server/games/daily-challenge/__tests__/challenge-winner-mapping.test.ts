@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as LoggingClient from '~/server/logging/client';
 import { freshPersistedWinner } from './persisted-winner.fixture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -68,7 +69,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };
 });
 
@@ -106,6 +107,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -122,8 +124,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -422,6 +424,44 @@ describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
     expect(mockCreateChallengeWinner).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ userId: 100, imageId: 1, place: 1, buzzAwarded: 500 })
+    );
+  });
+});
+
+describe('pickWinnersForChallenge with a judged entry whose note is not a verdict', () => {
+  it('ranks the other entries and still awards them', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockDbReadQueryRaw.mockResolvedValueOnce([
+      ...[
+        { imageId: 1, userId: 100, username: 'Alice' },
+        { imageId: 2, userId: 200, username: 'Bob' },
+      ].map((row) => ({
+        ...row,
+        note: JSON.stringify({
+          score: { theme: 10, aesthetic: 8, humor: 8, wittiness: 8 },
+          summary: `entry by ${row.username}`,
+        }),
+      })),
+      { imageId: 3, userId: 300, username: 'Carol', note: 'challenge-review-380-3' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'Alice', creatorId: 100, reason: 'first' },
+        { creator: 'Bob', creatorId: 200, reason: 'second' },
+      ],
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
+    expect(mockCreateChallengeWinner).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ userId: 100, place: 1 })
     );
   });
 });

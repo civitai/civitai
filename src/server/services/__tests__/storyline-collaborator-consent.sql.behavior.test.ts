@@ -186,3 +186,85 @@ describe('the open feed of a collaborators-only storyline', () => {
     expect(await openFeed(INVITEE)).toHaveLength(1);
   });
 });
+
+// Last: it re-opens VETERAN's endorsement, which the feed tests above read as accepted.
+describe('re-asking the collaborators the backfill accepted', () => {
+  const ACCEPTED_IN_APP = 6;
+  // Accepted in the millisecond it was made: equal stamps, but after invitations shipped.
+  const ACCEPTED_INSTANTLY = 7;
+  // Pending since the day invitations shipped, made before the invite notification was: never told.
+  const NEVER_TOLD = 8;
+  const invitesSince = async (lastSent: Date) => {
+    const { storylineInviteNotifications } = await import(
+      '~/server/notifications/storyline.notifications'
+    );
+    const query = await storylineInviteNotifications[
+      'storyline-collaborator-invited'
+    ].prepareQuery?.({ lastSent: lastSent.toISOString() } as never);
+    return (await db.pg.query<{ userId: number }>(query as string)).rows
+      .map((row) => row.userId)
+      .sort((a, b) => a - b);
+  };
+  const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000);
+  const createdAt = async (userId: number) =>
+    (
+      await db.pg.query<{ createdAt: Date }>(
+        `SELECT "createdAt" FROM "StorylineCollaborator" WHERE "storylineId" = 4 AND "userId" = $1`,
+        [userId]
+      )
+    ).rows[0]?.createdAt;
+  let invitedBefore: number[] = [];
+
+  beforeAll(async () => {
+    await db.pg.exec(`
+      CREATE TABLE IF NOT EXISTS "UserEngagement" ("userId" integer, "targetUserId" integer, type text);
+      CREATE TABLE IF NOT EXISTS "UserNotificationSettings" ("userId" integer, type text);
+      INSERT INTO "User" (id, username) VALUES (${ACCEPTED_IN_APP}, 'accepted-in-app'),
+        (${ACCEPTED_INSTANTLY}, 'accepted-instantly'), (${NEVER_TOLD}, 'never-told');
+      DELETE FROM "StorylineCollaborator" WHERE "userId" = ${INVITEE};
+      INSERT INTO "StorylineCollaborator" ("storylineId", "userId", "createdAt", "acceptedAt") VALUES
+        (4, ${ACCEPTED_IN_APP}, '2026-10-31', '2026-11-01'),
+        (4, ${ACCEPTED_INSTANTLY}, '2026-11-01', '2026-11-01'),
+        (4, ${INVITEE}, '2026-10-31', NULL),
+        (4, ${NEVER_TOLD}, '2026-10-30 09:23', NULL);
+    `);
+    expect(await acceptedAt(VETERAN)).toEqual(new Date('2026-10-20'));
+    invitedBefore = await invitesSince(minutesFromNow(-1));
+    // Applied from a client whose session is not in UTC, as a hand-applier's may be.
+    await db.pg.exec(`
+      SET TimeZone = 'America/Los_Angeles';
+      ${migration('20261218120000_storyline_collaborator_reask')}
+      RESET TimeZone;
+    `);
+  });
+
+  it('puts a backfilled collaborator back to pending and sends them the invite', async () => {
+    expect(invitedBefore).toEqual([]);
+    expect(await acceptedAt(VETERAN)).toBeNull();
+    expect(await invitesSince(minutesFromNow(-1))).toContain(VETERAN);
+  });
+
+  it('sends the invite to a collaborator pending since before the notification existed', async () => {
+    expect(await acceptedAt(NEVER_TOLD)).toBeNull();
+    expect(await invitesSince(minutesFromNow(-1))).toEqual([VETERAN, NEVER_TOLD]);
+  });
+
+  // A notification run that recorded its start after the UPDATE began, but read the replica before
+  // the rows arrived, moves its watermark past them. The next runs must still find them.
+  it('is still found by a run whose watermark passed the UPDATE', async () => {
+    expect(await invitesSince(minutesFromNow(30))).toEqual([VETERAN, NEVER_TOLD]);
+  });
+
+  it('leaves an invitation accepted in the app, or still pending, alone', async () => {
+    expect(await acceptedAt(ACCEPTED_IN_APP)).toEqual(new Date('2026-11-01'));
+    expect(await acceptedAt(ACCEPTED_INSTANTLY)).toEqual(new Date('2026-11-01'));
+    expect(await acceptedAt(INVITEE)).toBeNull();
+    expect(await createdAt(INVITEE)).toEqual(new Date('2026-10-31'));
+  });
+
+  it('re-run, changes nothing', async () => {
+    const before = [await createdAt(VETERAN), await createdAt(NEVER_TOLD)];
+    await db.pg.exec(migration('20261218120000_storyline_collaborator_reask'));
+    expect([await createdAt(VETERAN), await createdAt(NEVER_TOLD)]).toEqual(before);
+  });
+});

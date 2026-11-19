@@ -9,9 +9,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowUp,

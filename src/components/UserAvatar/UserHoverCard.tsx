@@ -1,5 +1,6 @@
 import type { Popover } from '@mantine/core';
-import { HoverCard, Skeleton, Stack, Text } from '@mantine/core';
+import { Skeleton, Stack, Text } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import dynamic from 'next/dynamic';
 import type { ReactElement, ReactNode } from 'react';
 import { createContext, useContext, useSyncExternalStore } from 'react';

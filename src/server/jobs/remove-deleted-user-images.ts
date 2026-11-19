@@ -1,3 +1,6 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
 import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -9,12 +12,17 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 /**
  * Ceiling on users reached per run, and the second of the two limits on throughput — raising the
@@ -33,7 +41,7 @@ export const DEFAULT_IMAGES_PER_RUN = 0;
 
 /**
  * Two cursors because the populations move in opposite directions and one cursor cannot serve
- * both: a fresh self-deletion has to be purged within a tick or two, while the 74,828-account
+ * both: a fresh self-deletion has to be purged within a tick or two, while the account
  * backlog takes months. FRESH is an ascending high-water mark over accounts deleted after the
  * mark; BACKLOG is a descending cursor over everything below it. Collapsing them back into a
  * single cursor strands every new deletion behind the whole backlog — in *either* direction,
@@ -138,7 +146,10 @@ async function drainUser(
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
       // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
-      const deleted = await deleteImages(batch, undefined, { onlyWhere: Prisma.sql`NOT ${held}` });
+      const deleted = await deleteImages(batch, {
+        actor: { system: 'remove-deleted-user-images' },
+        onlyWhere: Prisma.sql`NOT ${held}`,
+      });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
     }
@@ -161,22 +172,21 @@ async function drainUser(
     )) {
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
-      deletedPosts += await dbWrite.$executeRaw`
-        WITH doomed AS (
-          SELECT p.id FROM "Post" p
-          WHERE p.id IN (${Prisma.join(batch)})
-            AND p."userId" = ${userId}
-            AND EXISTS (
-              SELECT 1 FROM "User" u
-              WHERE u.id = ${userId}
-                AND u."deletedAt" IS NOT NULL
-                AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
-            )
-            AND NOT ${held}
-        ),
-        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
-        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-      `;
+      const deleted = await deletePostRows(kyselyOver(dbWrite), {
+        ids: batch,
+        actor: { system: 'remove-deleted-user-images' },
+        where: fromPrismaSql(Prisma.sql`
+          "userId" = ${userId}
+          AND EXISTS (
+            SELECT 1 FROM "User" u
+            WHERE u.id = ${userId}
+              AND u."deletedAt" IS NOT NULL
+              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+          )
+          AND NOT ${held}
+          AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}`),
+      });
+      deletedPosts += deleted.length;
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
@@ -268,6 +278,7 @@ async function blockUserImages(
       const touched: TouchedImage[] = [];
 
       if (hide.length) {
+        // An existing CSAM reason is kept, and the reason is recorded so a restore puts it back.
         // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it. The
         // `ingestion <> 'Blocked'` guard is what preserves the real prior ingestion in metadata —
         // re-running over an already-blocked row would record 'Blocked' as its own predecessor.
@@ -276,9 +287,11 @@ async function blockUserImages(
             UPDATE "Image"
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
-                "blockedFor" = ${BlockedReason.Moderated},
+                "blockedFor" = CASE WHEN "blockedFor" = ${
+                  BlockedReason.CSAM
+                } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}
@@ -296,7 +309,7 @@ async function blockUserImages(
           ...(await dbWrite.$queryRaw<TouchedImage[]>`
             UPDATE "Image"
             SET "blockedFor" = ${BlockedReason.Moderated},
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(repoint)})
               AND "userId" = ${userId}
@@ -335,6 +348,9 @@ async function blockUserImages(
     };
   } catch (error) {
     return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
+  } finally {
+    // Every exit: a later run skips the rows this one already blocked.
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
   }
 }
 
@@ -381,13 +397,13 @@ async function drainPage(
     canceled = result.canceled;
 
     if (result.error)
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'remove-deleted-user-images',
         message: (result.error as Error).message,
         error: safeError(result.error),
         userId: user.id,
-      }).catch(() => undefined);
+      });
 
     if (result.drained) {
       deletedUsers += 1;
@@ -424,11 +440,11 @@ export const removeDeletedUserImages = createJob(
     // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
     // the delete path reads the marker's other objects too, after its DELETE has committed.
     if (!markerView) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'remove-deleted-user-images',
         message: 'hold marker view missing: nothing drained this run',
-      }).catch(() => undefined);
+      });
       return {
         skipped: 'hold-marker-view-missing',
         deletedImages: 0,
@@ -536,7 +552,7 @@ export const removeDeletedUserImages = createJob(
       }
     }
 
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'remove-deleted-user-images',
       deletedImages,
@@ -546,7 +562,7 @@ export const removeDeletedUserImages = createJob(
       freshDeletedUsers: freshRun.deletedUsers,
       candidates,
       budget,
-    }).catch(() => undefined);
+    });
 
     return { deletedImages, blockedImages, deletedUsers, wrapped };
   },

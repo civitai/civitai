@@ -1,3 +1,5 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import {
@@ -7,26 +9,30 @@ import {
 } from '@civitai/shared/post-scheduling';
 import { createPostHandler, updatePostHandler } from '~/server/controllers/post.controller';
 import type { ProtectedContext } from '~/server/createContext';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { withPostScheduleLock } from '~/server/services/post-schedule-lock';
 import { logToAxiom } from '~/server/logging/client';
 import { trpcSlowLogThresholdMs } from '~/server/logging/trpc-slow-log';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
-import { getDailyPostLimit } from '~/server/schema/post.schema';
+import { getDailyPostLimit } from '~/server/services/usage-limit-config.service';
 import type { ScheduleBatchInput, ValidateBatchScheduleInput } from '~/server/schema/post.schema';
-import {
-  addImageTechniques,
-  addImageTools,
-  queueImageSearchIndexUpdate,
-} from '~/server/services/image.service';
+import { addImageTechniques, addImageTools, deleteImages } from '~/server/services/image.service';
 import {
   canViewModelVersion,
   MODEL_VERSION_NOT_FOUND,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
-import { addPostImage } from '~/server/services/post.service';
+import {
+  addPostImage,
+  creditResourcesToImages,
+  findCreditableModelVersion,
+} from '~/server/services/post.service';
+import { refreshHasReceivedReviews } from '~/server/redis/caches';
+import {
+  announceReviewsInBackground,
+  unreleasedReviewIdsOfPosts,
+} from '~/server/services/resourceReview.visibility';
 import {
   handleLogError,
   throwBadRequestError,
@@ -62,7 +68,7 @@ async function loadBatchScheduleContext(user: SessionUser, now: Date) {
     SELECT "publishedAt" FROM "Post" WHERE "userId" = ${user.id} AND "publishedAt" >= ${startOfTodayUtc}
   `;
   return {
-    dailyLimit: getDailyPostLimit(user),
+    dailyLimit: await getDailyPostLimit(user),
     existingPublishedAts: rows.map((row) => row.publishedAt),
   };
 }
@@ -103,14 +109,18 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
 /** Drops a half-made post and its image rows but keeps the uploaded files: the creator retries
  *  with the same upload keys, which `deletePost` would have removed from storage. */
 async function discardFailedPost(postId: number) {
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([postId]);
   const images = await dbWrite.image.findMany({ where: { postId }, select: { id: true } });
-  await dbWrite.image.deleteMany({ where: { postId } });
-  if (images.length)
-    await queueImageSearchIndexUpdate({
-      ids: images.map((image) => image.id),
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-  await dbWrite.post.delete({ where: { id: postId } });
+  const actor = { system: 'post-batch-rollback' };
+  await deleteImages(
+    images.map((image) => image.id),
+    { actor, updatePosts: false, keepStoredFiles: true }
+  );
+  await deletePostRows(kyselyOver(dbWrite), { ids: [postId], actor });
+  announceReviewsInBackground({
+    reviewIds: unreleasedReviewIds,
+    onReviews: (reviews) => refreshHasReceivedReviews(reviews),
+  });
 }
 
 const IDEMPOTENCY_TTL_SECONDS = 60 * 60;
@@ -211,6 +221,8 @@ async function runScheduleBatch({
   );
   steps.alreadyCreated = alreadyCreated.size;
   const toCreate = input.posts.filter((_, index) => !alreadyCreated.has(index));
+  // Checked once per call, not per post: every post is credited with the same versions.
+  let resourceVersions: Awaited<ReturnType<typeof findCreditableModelVersion>>[] = [];
   if (toCreate.length)
     await timed(steps, 'validateMs', async () => {
       const validation = await validateBatchSchedule({
@@ -220,6 +232,9 @@ async function runScheduleBatch({
       if (!validation.ok)
         throw throwBadRequestError(validation.issues.map((issue) => issue.message).join(' '));
       if (input.modelVersionId) await assertCanUseModelVersion(input.modelVersionId, user);
+      resourceVersions = await Promise.all(
+        input.resourceIds.map((id) => findCreditableModelVersion(id, user))
+      );
     });
 
   const created: ScheduleBatchResult['created'] = [];
@@ -253,6 +268,16 @@ async function runScheduleBatch({
         steps.addImageMaxMs = Math.max(steps.addImageMaxMs, ms);
         imageIds.push(attached.id);
       }
+      // On-site generations already carry their resources and refuse hand-credited ones.
+      if (resourceVersions.length)
+        await timed(steps, 'resourcesMs', () =>
+          creditResourcesToImages({
+            imageIds,
+            modelVersions: resourceVersions,
+            user,
+            skipOnSite: true,
+          })
+        );
       if (input.tools.length)
         await timed(steps, 'toolsMs', () =>
           addImageTools({
@@ -317,6 +342,7 @@ type BatchSteps = {
   addImageMaxMs: number;
   toolsMs: number;
   techniquesMs: number;
+  resourcesMs: number;
   publishMs: number;
 };
 type TimedStep =
@@ -325,6 +351,7 @@ type TimedStep =
   | 'createPostMs'
   | 'toolsMs'
   | 'techniquesMs'
+  | 'resourcesMs'
   | 'publishMs';
 
 async function timed<T>(steps: BatchSteps, step: TimedStep, run: () => Promise<T>): Promise<T> {
@@ -359,7 +386,8 @@ function logSlowBatchSteps(steps: BatchSteps, durationMs: number, userId: number
     toolsMs: round(steps.toolsMs),
     techniquesMs: round(steps.techniquesMs),
     publishMs: round(steps.publishMs),
-  }).catch(() => undefined);
+    payload: { resourcesMs: round(steps.resourcesMs) },
+  });
 }
 
 export async function scheduleBatch(args: {
@@ -381,6 +409,7 @@ export async function scheduleBatch(args: {
     addImageMaxMs: 0,
     toolsMs: 0,
     techniquesMs: 0,
+    resourcesMs: 0,
     publishMs: 0,
   };
   try {

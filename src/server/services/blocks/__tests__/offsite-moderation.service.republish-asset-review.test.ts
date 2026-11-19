@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
@@ -21,6 +22,18 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // The onsite drift warn is a dynamic import of the logging client; the canonical
 // mock keeps that graph out of this suite.
 import '~/__tests__/mocks/logging.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
+
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;
 
@@ -224,6 +237,20 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // The IMMEDIATE arm — unchanged assets must behave exactly as they did before.
 // ---------------------------------------------------------------------------
+
+describe('republishOwnListing — App Developer Terms', () => {
+  it('refuses an owner who has not accepted, before the listing goes live', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    wire({ recorded: baseline() });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
 
 describe('republishOwnListing — assets UNCHANGED ⇒ immediate (no behaviour change)', () => {
   it('goes live, writes no re-review artifact, and reports `approved` with no reviewReason', async () => {

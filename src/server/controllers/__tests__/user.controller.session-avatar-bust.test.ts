@@ -39,7 +39,6 @@ const {
   mockUpdateUserById,
   mockGetUserById,
   mockIngestImageById,
-  mockDeleteImageById,
   mockGetUserSettings,
   mockPatchUserSettings,
 } = vi.hoisted(() => ({
@@ -48,7 +47,6 @@ const {
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
   mockIngestImageById: vi.fn(),
-  mockDeleteImageById: vi.fn(),
   mockGetUserSettings: vi.fn(),
   mockPatchUserSettings: vi.fn(),
 }));
@@ -80,12 +78,14 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImageById: mockIngestImageById,
-  deleteImageById: mockDeleteImageById,
 }));
-vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
+vi.mock('~/server/search-index', () => ({
+  usersSearchIndex: { queueUpdate: vi.fn().mockResolvedValue(undefined) },
+}));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
 import { REDIS_KEYS } from '@civitai/redis';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import {
@@ -124,7 +124,6 @@ beforeEach(() => {
   mockGetUserById.mockResolvedValue({ profilePictureId: 42 });
   mockUpdateUserById.mockResolvedValue({ id: USER_ID, profilePictureId: 99 });
   mockIngestImageById.mockResolvedValue(undefined);
-  mockDeleteImageById.mockResolvedValue(undefined);
   mockGetUserSettings.mockResolvedValue({});
   mockPatchUserSettings.mockResolvedValue({});
 
@@ -245,10 +244,15 @@ describe('user.setSettings — session-projected settings keys', () => {
 
 describe('user.completeOnboarding — Profile step writes identity unconditionally', () => {
   it('busts on a Profile re-submit even when the onboarding bit is already set', async () => {
-    // The Profile step writes `username`/`email` whether or not the bitmask advances, but the bust
-    // used to be gated on the bitmask alone. A re-submit therefore changed the username in the
-    // database and left the old one in the session for the rest of its 4h TTL.
+    // The Profile step writes `username` whether or not the bitmask advances, but the bust used to
+    // be gated on the bitmask alone. A re-submit therefore changed the username in the database and
+    // left the old one in the session for the rest of its 4h TTL.
     warmSessionCache();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      email: 'ada@example.test',
+      emailVerified: new Date(),
+      username: 'ada',
+    } as never);
 
     await completeOnboardingHandler({
       ctx: { user: { id: USER_ID, onboarding: OnboardingSteps.Profile }, domain: 'blue' },

@@ -6,7 +6,7 @@ import {
   isModelSupported,
 } from '@civitai/shared/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
+import { getFeatureFliptKey, type FeatureFlagKey } from '~/server/services/feature-flags.service';
 import {
   audioSampleOverrideSchema,
   trainingDetailsObj,
@@ -22,18 +22,19 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 import {
-  catalogFlagKeys,
+  hostFlagKeys,
   MODEL_CARDS,
   PARAM_DEFAULTS,
 } from '../../../apps/training-studio/src/lib/data/trainingModels';
 
 const models = [
-  ['qwen21', BM.Qwen21, 'image'],
-  ['ming', BM.Ming, 'image'],
-  ['yue2', BM.YuE2, 'audio'],
+  ['qwen21', BM.Qwen21, 'image', 'qwen21-training', 32],
+  ['ming', BM.Ming, 'image', 'ming-training', 32],
+  ['yue2', BM.YuE2, 'audio', 'yue2-training', 32],
+  ['minimaxh3image', BM.MiniMaxH3Image, 'image', 'minimaxh3-image-training', 16],
 ] as const;
 
-describe.each(models)('%s training identity', (key, id, media) => {
+describe.each(models)('%s training identity', (key, id, media, flagKey, networkSize) => {
   it('persists the base-model identity used to publish the trained LoRA', () => {
     const info = trainingModelInfo[key];
     expect(info.baseModel).toBe(baseModelById.get(id)?.name);
@@ -55,7 +56,7 @@ describe.each(models)('%s training identity', (key, id, media) => {
   it('keeps Studio completion lookup on the same checkpoint and ecosystem', () => {
     const info = trainingModelInfo[key];
     const card = MODEL_CARDS.find((c) => c.type === key)!;
-    expect(card.flagKey).toBe(`${key}-training`);
+    expect(card.flagKey).toBe(flagKey);
     expect(card.media).toBe(media);
     expect(card.versions[0]).toMatchObject({
       key,
@@ -65,8 +66,8 @@ describe.each(models)('%s training identity', (key, id, media) => {
     });
     expect(PARAM_DEFAULTS[key]).toMatchObject({
       batchSize: 1,
-      networkDim: 32,
-      networkAlpha: 32,
+      networkDim: networkSize,
+      networkAlpha: networkSize,
       textEncoderLr: 0,
       lrScheduler: 'constant',
     });
@@ -74,8 +75,8 @@ describe.each(models)('%s training identity', (key, id, media) => {
 });
 
 describe('Training Studio embed model gates', () => {
-  it('maps every gated Studio card to a feature flag the host can evaluate', () => {
-    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(catalogFlagKeys().sort());
+  it('maps every Studio gate to a feature flag the host can evaluate', () => {
+    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(hostFlagKeys().sort());
   });
 
   it('asks Flipt the same key the standalone Studio asks', () => {
@@ -116,6 +117,70 @@ describe('trainer base models', () => {
     'studio %s mirrors a published base model',
     (_, version) => {
       expect(baseModels).toContain(version.baseModel);
+    }
+  );
+});
+
+describe('Training Studio follows the classic trainer model flags', () => {
+  // The main-app trainer's `features.<x>Training` tile/version gates (TrainingSubmitModelSelect)
+  // that ask Flipt, by `trainingModelInfo` key. Studio must gate the same model with the same key.
+  const CLASSIC_GATES: Record<string, FeatureFlagKey> = {
+    krea2: 'krea2Training',
+    boogu: 'booguTraining',
+    mageflow: 'mageflowTraining',
+    flux2klein_9b: 'fluxTwoKleinTraining',
+    flux2klein_4b: 'fluxTwoKleinTraining',
+    ernie: 'ernieTraining',
+    hidream_o1: 'hidreamO1Training',
+    anima: 'animaTraining',
+    minimaxh3: 'minimaxh3Training',
+    minimaxh3image: 'minimaxh3ImageTraining',
+    zimageturbo: 'zimageturboTraining',
+    ltx25: 'ltx25Training',
+    ltx23: 'ltx23Training',
+    ming: 'mingTraining',
+    qwen21: 'qwen21Training',
+    yue2: 'yue2Training',
+  };
+
+  it.each(Object.entries(CLASSIC_GATES))('%s is gated in Studio by %s', (key, feature) => {
+    const card = MODEL_CARDS.find((c) => c.versions.some((v) => v.key === key));
+    const version = card?.versions.find((v) => v.key === key);
+    const gates = [card?.flagKey, version?.flagKey].filter(Boolean);
+    expect(gates).toContain(getFeatureFliptKey(feature));
+  });
+
+  // Open to everyone in Studio by product decision, though the classic trainer still gates them.
+  it.each(['flux2_dev', 'zimagebase', 'ltx2'])('%s is open to everyone in Studio', (key) => {
+    const card = MODEL_CARDS.find((c) => c.versions.some((v) => v.key === key))!;
+    expect([card.flagKey, card.versions.find((v) => v.key === key)!.flagKey]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+});
+
+// `training:status.blockedModels` holds the classic trainer's `trainingDetails.baseModel` keys, and
+// Training Studio matches them against its catalog's version keys. A Studio key that drifts from the
+// classic key for the same checkpoint would make a block a silent no-op in Studio.
+describe('blocked-model keys are shared by both trainers', () => {
+  const classicByAir = new Map(
+    Object.entries(trainingModelInfo).map(([key, info]) => [info.air, key] as const)
+  );
+  // Edit (pair) cards reuse a base's checkpoint under their own key; a submit resolves them by AIR.
+  const shared = MODEL_CARDS.filter((c) => !c.retired && !c.pairs).flatMap((c) =>
+    c.versions.filter((v) => classicByAir.has(v.air))
+  );
+
+  it('pins Krea 2 to the same key in both catalogs', () => {
+    const studio = MODEL_CARDS.find((c) => c.type === 'krea2')!.versions[0]!;
+    expect(classicByAir.get(studio.air)).toBe(studio.key);
+  });
+
+  it.each(shared.map((v) => [v.key, v.air] as const))(
+    'Studio version %s uses the classic key for its checkpoint',
+    (key, air) => {
+      expect(classicByAir.get(air)).toBe(key);
     }
   );
 });

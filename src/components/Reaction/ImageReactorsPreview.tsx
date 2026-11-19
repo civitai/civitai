@@ -1,4 +1,5 @@
-import { ActionIcon, Anchor, HoverCard, Loader, Popover, Stack, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Loader, Stack, Text } from '@mantine/core';
+import { HoverCard, Popover } from '~/components/MantineOverlays';
 import { IconUsers } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';

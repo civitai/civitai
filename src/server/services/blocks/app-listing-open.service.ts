@@ -3,6 +3,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { Tracker } from '~/server/clickhouse/client';
 import type { Session } from '~/types/session';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
+import { referrerHostOf, type AppSurface } from '~/shared/utils/app-store-telemetry';
 
 /**
  * App store PLAY recording — one `App_Open` row per on-site app launch.
@@ -41,11 +43,17 @@ import type { Session } from '~/types/session';
  * for. If that becomes a real case, carry the listing id in `details` as well.
  *
  * 🔴 WHAT THIS DOES **NOT** COVER, stated here because the gap is invisible from the
- * store card: OFF-SITE listings. Their CTA is a plain `target="_blank"` anchor to a third
- * party, so no on-platform request follows the click and there is nothing trustworthy to
- * record. An off-site listing's play count is therefore structurally 0, not "0 so far" —
- * do not read the two as the same number, and do not "fix" it with a client beacon, which
- * would put a spoofable count beside a trusted one under one label.
+ * store card: OFF-SITE listings. An off-site listing's play count is structurally 0, not
+ * "0 so far" — do not read the two as the same number, and do not "fix" it with a client
+ * beacon, which would put a spoofable count beside a trusted one under one label. Off-site
+ * traffic is measured by a DIFFERENT type, `App_Visit`, written server-side by the
+ * `/apps/go/<listingId>` redirect the store's Visit links go through
+ * (`app-listing-visit.service.ts`) and derived into `visit_count` by the listing metrics job
+ * under the same de-dupe as plays — never into `open_count`.
+ *
+ * 🔴 TRUST `surface`, NOT `from`: `from` is `home` for a My apps launch and `store` for
+ * everything else. And `surface` comes from the launch URL's `?src=`, which is NOT re-applied
+ * after the embedded app navigates, so a reload after in-app navigation reads `direct`.
  *
  * 🔴 FIRE-AND-FORGET, AND IT MUST STAY THAT WAY. This sits on the app-LAUNCH critical
  * path, which the run route's own resolver comment already protects (its two listing
@@ -70,6 +78,8 @@ export type AppOpenRequestContext = Pick<GetServerSidePropsContext, 'req' | 'res
 export async function recordAppListingOpen({
   appBlockId,
   subListingId,
+  launchOrigin = 'store',
+  surface = 'direct',
   session,
   ctx,
 }: {
@@ -80,6 +90,10 @@ export async function recordAppListingOpen({
    * still counts toward the parent's play.
    */
   subListingId?: string | null;
+  /** The run chrome's launch origin (`?from=home`), as the resolver already parsed it. */
+  launchOrigin?: AppsRunOrigin;
+  /** Which surface built the launch link (`?src=`), `direct` when untagged. */
+  surface?: AppSurface;
   session: Session | null;
   ctx: AppOpenRequestContext;
 }): Promise<void> {
@@ -97,10 +111,50 @@ export async function recordAppListingOpen({
     // into one play at read time instead of trusting the raw row count.
     await tracker.action({
       type: 'App_Open',
-      details: subListingId ? { appBlockId, subListingId } : { appBlockId },
+      details: appOpenDetails({
+        appBlockId,
+        subListingId,
+        launchOrigin,
+        surface,
+        referer: ctx.req?.headers?.referer,
+      }),
     });
   } catch {
     // Swallowed deliberately — see the fire-and-forget note above. A play that goes
     // unrecorded is a slightly low number; a throw here is a failed app launch.
   }
+}
+
+/**
+ * The `details` of one `App_Open` row. Pure, so its exact shape is pinned by a unit test: ids,
+ * two closed values and a bare hostname — nothing a listing author or a URL query can fill
+ * with text. `subListingId` and `referrerHost` are present only when known.
+ */
+export function appOpenDetails({
+  appBlockId,
+  subListingId,
+  launchOrigin,
+  surface,
+  referer,
+}: {
+  appBlockId: string;
+  subListingId?: string | null;
+  launchOrigin: AppsRunOrigin;
+  surface: AppSurface;
+  referer: unknown;
+}): {
+  appBlockId: string;
+  subListingId?: string;
+  from: AppsRunOrigin;
+  surface: AppSurface;
+  referrerHost?: string;
+} {
+  const referrerHost = referrerHostOf(referer);
+  return {
+    appBlockId,
+    ...(subListingId ? { subListingId } : {}),
+    from: launchOrigin,
+    surface,
+    ...(referrerHost ? { referrerHost } : {}),
+  };
 }

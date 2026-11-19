@@ -4,10 +4,16 @@ import { Queue } from '~/components/ImageGeneration/Queue';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import type { GenerationResultsView } from '~/store/generation-panel.store';
 
-export function GenerationResults({ view }: { view: GenerationResultsView }) {
+export function GenerationResults({
+  view,
+  className,
+}: {
+  view: GenerationResultsView;
+  className?: string;
+}) {
   return (
     <GeneratedRequestsProvider>
-      <ScrollArea scrollRestore={{ key: view }}>
+      <ScrollArea scrollRestore={{ key: view }} className={className}>
         {view === 'queue' ? <Queue /> : <Feed />}
       </ScrollArea>
     </GeneratedRequestsProvider>

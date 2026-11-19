@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { UNMARKED_SOURCE_IMAGE_HINT } from '~/shared/constants/mature-source.constants';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser } from '~/utils/metadata';
 import type { ImageStatusAnnotation } from './ImageUploadMultipleInput';
 
 /**
  * Per-image badges for a source-images input: the graph's own `annotations`
- * computed (e.g. upscale) win, and moderators additionally see whether each
- * image carries AI metadata.
+ * computed (e.g. upscale) win, and otherwise each image shows whether it
+ * carries AI metadata, so users can learn of a PG-13 cap before generating.
  */
 export function useSourceImageAnnotations(
   images: { url: string }[] | null | undefined,
@@ -30,11 +30,10 @@ export function useSourceImageAnnotations(
 function useAiMetadataAnnotations(
   images: { url: string }[] | null | undefined
 ): (ImageStatusAnnotation | null)[] | undefined {
-  const currentUser = useCurrentUser();
   const [results, setResults] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    if (!currentUser?.isModerator || !images?.length) return;
+    if (!images?.length) return;
 
     for (const { url } of images) {
       if (url in results) continue;
@@ -46,15 +45,15 @@ function useAiMetadataAnnotations(
         setResults((prev) => ({ ...prev, [url]: hasAiMeta }));
       });
     }
-  }, [currentUser?.isModerator, images]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [images]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return useMemo(() => {
-    if (!currentUser?.isModerator || !images?.length) return undefined;
+    if (!images?.length) return undefined;
     return images.map(({ url }) => {
       if (!(url in results)) return null;
       return results[url]
-        ? { label: 'AI Meta', color: 'green', tooltip: 'Valid AI metadata detected' }
-        : { label: 'No AI Meta', color: 'yellow', tooltip: 'No AI metadata found in image' };
+        ? { label: 'AI Meta', color: 'green', tooltip: 'AI generation metadata detected' }
+        : { label: 'No AI Meta', color: 'yellow', tooltip: UNMARKED_SOURCE_IMAGE_HINT };
     });
-  }, [currentUser?.isModerator, images, results]);
+  }, [images, results]);
 }

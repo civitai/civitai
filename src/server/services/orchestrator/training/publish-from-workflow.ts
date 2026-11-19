@@ -1,3 +1,4 @@
+import { Air } from '@civitai/orchestration-client';
 import type {
   ImageResourceTrainingOutput,
   ImageResouceTrainingModerationStatus,
@@ -14,16 +15,21 @@ import { upsertModel } from '~/server/services/model.service';
 import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
-import type {
-  TrainingDetailsBaseModelList,
-  TrainingDetailsObj,
+import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
+import type * as z from 'zod';
+import {
+  aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
+  type TrainingDetailsBaseModelList,
+  type TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import {
   trainingBaseModelTypesAudio,
@@ -31,7 +37,8 @@ import {
   trainingModelInfo,
   type TrainingBaseModelType,
 } from '~/utils/training';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { type BaseModel, isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   ModelFileVisibility,
   ModelStatus,
@@ -60,7 +67,7 @@ function mapLoraTypeToTrainingModelType(
 
 /** The training step's input, read defensively — the client types `input` loosely and a foreign run may
  * carry only some of these. `model` is the AIR (imageResourceTraining path); `ecosystem`/`modelVariant`
- * identify an AI Toolkit base. */
+ * identify an AI Toolkit base. The AI-Toolkit hyperparameters sit alongside under their trainingDetails names. */
 type TrainingStepInputLike = {
   model?: string;
   ecosystem?: string;
@@ -68,8 +75,54 @@ type TrainingStepInputLike = {
   epochs?: number;
   steps?: number;
   triggerWord?: string;
-  samples?: { prompts?: string[] };
-};
+  samples?: { prompts?: string[]; negativePrompt?: string | null };
+} & Record<string, unknown>;
+
+type AiToolkitParams = z.infer<typeof aiToolkitTrainingDetailsParams>;
+
+/** For the required hyperparameters only: used when the step lacks one or carries a value
+ * `trainingDetails` rejects, so the stored params always parse. */
+const REQUIRED_HYPERPARAMETER_DEFAULTS = {
+  resolution: null,
+  lr: 0,
+  textEncoderLr: null,
+  trainTextEncoder: false,
+  lrScheduler: 'constant',
+  optimizerType: 'adamw',
+  networkDim: null,
+  networkAlpha: null,
+  noiseOffset: null,
+  minSnrGamma: null,
+  flipAugmentation: false,
+  shuffleTokens: false,
+  keepTokens: 0,
+} satisfies Partial<AiToolkitParams>;
+
+// Written from the run's identity instead; `continueFrom` would make a wizard retrain of the published
+// version continue from the source LoRA.
+const NON_HYPERPARAMETER_KEYS = new Set<string>([
+  'engine',
+  'ecosystem',
+  'modelVariant',
+  'continueFrom',
+]);
+
+/** The run's hyperparameters, read from the step input for every key the AI-Toolkit trainingDetails
+ * schema declares, so a knob added to the schema is carried without touching this list. */
+function readStepHyperparameters(input: TrainingStepInputLike) {
+  const params: Record<string, unknown> = { ...REQUIRED_HYPERPARAMETER_DEFAULTS };
+  const rejected: string[] = [];
+  for (const [key, field] of Object.entries(aiToolkitTrainingDetailsParams.shape)) {
+    if (NON_HYPERPARAMETER_KEYS.has(key) || input[key] === undefined) continue;
+    const parsed = field.safeParse(input[key]);
+    if (parsed.success) params[key] = parsed.data;
+    else rejected.push(key);
+  }
+  return {
+    params: params as typeof REQUIRED_HYPERPARAMETER_DEFAULTS & Partial<AiToolkitParams>,
+    rejected,
+  };
+}
 
 export function getTrainingStep(workflow: Workflow) {
   const step = workflow.steps?.find((s) => (s as { $type?: string }).$type === 'training') as
@@ -139,10 +192,19 @@ function refuse(message: string): never {
  * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
-  const { step } = getTrainingStep(workflow);
-  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
-  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
-    refuse(TRAINING_NOT_APPROVED_MESSAGE);
+  if (!isTrainingModerationApproved(workflow)) refuse(TRAINING_NOT_APPROVED_MESSAGE);
+}
+
+/** The test `assertTrainingModerationApproved` applies, as a boolean: false for a run with no
+ *  readable training step. */
+export function isTrainingModerationApproved(workflow: Workflow): boolean {
+  let output: TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  try {
+    output = getTrainingStep(workflow).step.output as typeof output;
+  } catch {
+    return false;
+  }
+  return output?.moderationStatus === APPROVED_TRAINING_MODERATION_STATUS;
 }
 
 /**
@@ -168,6 +230,17 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   ][];
 
   let match = input.model ? entries.find(([, info]) => info.air === input.model) : undefined;
+  if (!match && input.engine === 'kohya' && input.model) {
+    const family = Air.parseSafe(input.model)?.ecosystem;
+    const key =
+      family === 'pony'
+        ? 'pony'
+        : family === 'illustrious' || family === 'noobai'
+        ? 'illustrious'
+        : undefined;
+    match = entries.find(([name]) => name === key);
+    if (!match) match = entries.find(([, info]) => info.aiToolkit?.ecosystem === family);
+  }
   if (!match && input.ecosystem) {
     match = entries.find(
       ([, info]) =>
@@ -191,6 +264,28 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
     trainingKey,
     info,
   };
+}
+
+async function customKohyaBaseModel(input: TrainingStepInputLike): Promise<BaseModel | undefined> {
+  if (input.engine !== 'kohya' || !input.model) return;
+  if (Object.values(trainingModelInfo).some((info) => info.air === input.model)) return;
+  const air = Air.parseSafe(input.model);
+  if (air?.source !== 'civitai') return;
+  const versionId = Number(air.version);
+  const modelId = Number(air.id);
+  if (
+    !Number.isSafeInteger(versionId) ||
+    versionId <= 0 ||
+    !Number.isSafeInteger(modelId) ||
+    modelId <= 0
+  )
+    throw throwBadRequestError('The custom training checkpoint has an invalid model version.');
+  const checkpoint = await dbWrite.modelVersion.findFirst({
+    where: { id: versionId, modelId },
+    select: { baseModel: true },
+  });
+  if (!checkpoint) throw throwBadRequestError('The custom training checkpoint could not be found.');
+  return checkpoint.baseModel as BaseModel;
 }
 
 function toIso(value?: string | null): string | undefined {
@@ -302,6 +397,8 @@ export async function createDraftModelFromWorkflow({
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
   // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
   assertTrainingModerationApproved(workflow);
+  if (!user.isModerator && (await studioWithheldWorkflowIds(user.id, [workflow.id])).length > 0)
+    throw throwNotFoundError('Training run not found');
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =
@@ -348,21 +445,24 @@ export async function createDraftModelFromWorkflow({
     trainingKey,
     info: trainingInfo,
   } = mapTrainingBaseModelToBaseModel(workflow);
+  if (!user.isModerator && isHiddenBaseModel(baseModel)) {
+    const message = `${baseModel} models can't be created from Training Studio yet.`;
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
   const { step } = getTrainingStep(workflow);
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
 
+  const customBaseModel = await customKohyaBaseModel(input);
   const trigger = meta.trigger || input.triggerWord || undefined;
-  const modelName =
+  const modelName = truncateModelName(
     name?.trim() ||
-    meta.name?.trim() ||
-    workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
-    trigger ||
-    'Trained LoRA';
+      meta.name?.trim() ||
+      workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
+      trigger ||
+      'Trained LoRA'
+  );
 
-  // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
-  // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the
-  // orchestrator workflow, which stays the source of truth) with the length knobs carried from the step.
   const mediaType = (trainingBaseModelTypesVideo as readonly string[]).includes(
     trainingBaseModelType
   )
@@ -373,32 +473,40 @@ export async function createDraftModelFromWorkflow({
 
   const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
 
+  const hyperparameters = readStepHyperparameters(input);
+  const kohyaParams =
+    input.engine === 'kohya'
+      ? studioKohyaTrainingDetailsParams.parse({
+          ...input,
+          engine: 'kohya',
+          loraType: 'lora',
+          targetSteps: input.steps,
+        })
+      : undefined;
+  // A rejected value is stored as its default or dropped, which reads like a real value.
+  if (!kohyaParams && hyperparameters.rejected.length)
+    logToAxiom({
+      name: 'training-studio-publish-param-rejected',
+      type: 'warning',
+      workflowId: workflow.id,
+      keys: hyperparameters.rejected,
+    }).catch(() => undefined);
+
   const trainingDetails: TrainingDetailsObj = {
     type: trainingModelType ?? 'Character',
     mediaType,
-    baseModel: trainingKey,
+    baseModel: customBaseModel ? input.model : trainingKey,
     baseModelType: trainingBaseModelType,
-    params: {
+    params: kohyaParams ?? {
       engine: 'ai-toolkit',
       ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
-      ...(typeof input.steps === 'number' && { steps: input.steps }),
-      ...(typeof input.epochs === 'number' && { epochs: input.epochs }),
-      resolution: null,
-      lr: 0,
-      textEncoderLr: null,
-      trainTextEncoder: false,
-      lrScheduler: 'constant',
-      optimizerType: 'adamw',
-      networkDim: null,
-      networkAlpha: null,
-      noiseOffset: null,
-      minSnrGamma: null,
-      flipAugmentation: false,
-      shuffleTokens: false,
-      keepTokens: 0,
+      ...hyperparameters.params,
     },
     samplePrompts: input.samples?.prompts ?? [],
+    ...(input.engine === 'kohya' && input.samples?.negativePrompt
+      ? { negativePrompt: input.samples.negativePrompt }
+      : {}),
   };
 
   const model = await upsertModel({
@@ -424,7 +532,7 @@ export async function createDraftModelFromWorkflow({
   const modelVersion = await upsertModelVersion({
     modelId: model.id,
     name: 'v1',
-    baseModel,
+    baseModel: customBaseModel ?? baseModel,
     uploadType: ModelUploadType.Trained,
     status: ModelStatus.Draft,
     trainedWords: trigger ? [trigger] : [],
@@ -526,6 +634,8 @@ export async function assertTrainingSourcePublishable({
   if (meta?.trainingStudioModerationApproved === true) return;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
+    // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
+    allowRestricted: callerId !== ownerId,
   });
   let workflow: Workflow;
   try {
@@ -564,6 +674,7 @@ export async function stampWorkflowPublished({
   try {
     const token = await getOrchestratorToken(ownerId, undefined, {
       bypassCache: callerId !== ownerId,
+      allowRestricted: callerId !== ownerId,
     });
     const workflow = await getWorkflow({ token, path: { workflowId } });
     const metadata = {

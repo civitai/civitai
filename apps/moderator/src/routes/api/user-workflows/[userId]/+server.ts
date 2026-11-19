@@ -5,6 +5,7 @@ import { requireIdParam, requirePermission } from '$lib/server/api-guard';
 import {
   ORCHESTRATOR_TIMEOUT_MS,
   getUserGeneratedWorkflows,
+  getUserWorkflowsByIds,
   isWorkflowSource,
 } from '$lib/server/user-workflows.service';
 
@@ -17,6 +18,17 @@ const PAGES = [...RESTRICTION_PAGES, '/retool/user-lookup'];
 export const GET: RequestHandler = async ({ params, url, locals }) => {
   const userId = requireIdParam(locals, params.userId, PAGES, 'userId');
   requirePermission(locals, 'user.generations.view');
+  // Present, even empty or all junk, means the moderator asked for a narrowed view: it must never fall
+  // through to the account's whole history.
+  const ids = url.searchParams.get('ids');
+  if (ids !== null) {
+    try {
+      return json(await getUserWorkflowsByIds(userId, ids));
+    } catch (e) {
+      console.error('[user-workflows] by-id query failed', e);
+      return json({ error: 'Could not reach the orchestrator.' }, { status: 503 });
+    }
+  }
   const cursor = url.searchParams.get('cursor');
   // An absent `take` must stay absent, not become `Number(null)` === 0 — the service clamps to a
   // minimum of 1, so an omitted param would read as an account that generated almost nothing.

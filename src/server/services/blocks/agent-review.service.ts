@@ -1,7 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
-import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  assertAppsNamespaceWritable,
+  getDp1Target,
+  k8sFetch,
+  unwrap,
+} from '~/server/services/blocks/apps-pipeline.service';
 import {
   AGENT_REVIEW_SECTIONS,
   isAgentSectionFailureMarker,
@@ -63,9 +68,9 @@ export function agentReviewName(publishRequestId: string): string {
 
 export type StartAgentReviewArgs = {
   publishRequestId: string;
-  /** Calling moderator's id — recorded for audit; the agent produces mod
-   *  decision-support, so the trigger is always moderator-bound. */
-  modUserId: number;
+  /** Calling moderator's id, or `null` for the automatic start when a review preview goes live
+   *  (review-autodeploy.service, under the platform's daily agent-review budget). */
+  modUserId: number | null;
   /**
    * Re-run only these analyses. Omitted (or all three) ⇒ a full run.
    *
@@ -225,7 +230,12 @@ export async function startAgentReview(
         // a `{ error: … }` forward would re-report an old failure as if it were this run's.
         if (value == null) continue;
         if (isAgentSectionFailureMarker(value)) continue;
-        carried[section] = value;
+        // The old run's impersonation record does not describe this run: the check runs again
+        // when this run reports, and until then there is no record (so no fast lane).
+        carried[section] =
+          section === 'securityAudit'
+            ? (await import('./app-impersonation.logic')).stripImpersonationRecord(value)
+            : value;
       }
       // The model string describes the run that produced the carried content; keep it so a
       // partially-seeded report is not attributed to nothing.
@@ -257,7 +267,8 @@ export async function startAgentReview(
 
   // (e) Mint the per-review callback bearer bound to this publishRequestId. NOT
   // the fleet-wide BLOCK_BUILD_CALLBACK_SECRET — that must never reach the agent
-  // pod. Short-TTL + review-scoped: a leaked token can only touch THIS report.
+  // pod. Short-TTL + request-scoped: a leaked token can only write a still-`running`
+  // report of THIS publish request (the token binds the request, not one run's row).
   const { signAgentCallbackToken, deriveAgentHooksToken } = await import('./review-session');
   const callbackToken = signAgentCallbackToken({ publishRequestId });
   // Derive the per-review agent GATEWAY secret (no storage / no migration): the
@@ -281,11 +292,9 @@ export async function startAgentReview(
   // (f) Provision the apply Job. On failure, flip the row to failed so it never
   // lingers `running`, then rethrow.
   try {
-    // COST CEILING (audit #5): enforcement is POD-SIDE only — the runner self-aborts
-    // (status 'cost-capped') once its LLM spend crosses COST_CAP_USD. There is NO
-    // civitai-side spend ceiling in P1 (no per-mod/day budget, no global cap): an
-    // accepted risk while the feature is DARK (mod-only, flag-gated), to revisit
-    // before widening.
+    // COST CEILING (audit #5): per review, POD-SIDE — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses COST_CAP_USD. AUTOMATIC starts are also bounded
+    // by a platform-wide daily budget (review-autodeploy.service); a moderator's start is not.
     await provisionAgentReviewJob({
       agentName,
       publishRequestId,
@@ -318,6 +327,23 @@ export async function startAgentReview(
       });
     throw err;
   }
+
+  // AUDIT: who started this run. An automatic start (no moderator) is recorded as `system`.
+  // Fire-and-forget: the audit must never fail the start.
+  const { logToAxiom } = await import('~/server/logging/client');
+  logToAxiom(
+    {
+      name: 'app-blocks.review.agent-start',
+      type: 'info',
+      publishRequestId,
+      reportId,
+      slug: request.slug,
+      actor: args.modUserId == null ? 'system' : 'moderator',
+      modUserId: args.modUserId,
+      sections: targeted ? requested : null,
+    },
+    'webhooks'
+  );
 
   return { reportId, agentName };
 }
@@ -363,6 +389,7 @@ type ProvisionAgentReviewJobArgs = {
 export async function provisionAgentReviewJob(
   args: ProvisionAgentReviewJobArgs
 ): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('agent review Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.agentName}-apply`;
@@ -548,6 +575,8 @@ export async function deleteAgentReviewResources(args: {
   slug: string;
   publishRequestId: string;
 }): Promise<void> {
+  // Build-only environments start no agent review Job, so there is nothing to tear down there.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   let target: Awaited<ReturnType<typeof getDp1Target>>;
   try {
     target = await getDp1Target();

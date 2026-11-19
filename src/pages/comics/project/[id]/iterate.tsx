@@ -1,5 +1,6 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { ActionIcon, Alert, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -10,6 +11,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
+  notifyIfReferenceImagesSkipped,
 } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
@@ -152,6 +154,7 @@ function ComicIteratePage() {
 
   // ── Mutations ──
   const iterateGenerateMutation = trpc.comics.iterateGenerate.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to generate' }),
   });
 
@@ -160,6 +163,7 @@ function ComicIteratePage() {
   });
 
   const createPanelFromImageMutation = trpc.comics.enhancePanel.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to create panel' }),
   });
 

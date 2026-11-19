@@ -1,9 +1,7 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { PGlite } from '@electric-sql/pglite';
-import fs from 'fs';
-import fsAsync from 'fs/promises';
 import JSZip from 'jszip';
-import type { Readable } from 'stream';
+import { Readable } from 'stream';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -31,7 +29,7 @@ const {
   cancelReport,
   getObject,
   csamBucketObject,
-  fetchBlobAsFile,
+  generatedFile,
   getFileForModelVersion,
 } = vi.hoisted(() => ({
   submitReport: vi.fn(),
@@ -41,7 +39,7 @@ const {
   cancelReport: vi.fn(),
   getObject: vi.fn(),
   csamBucketObject: vi.fn(),
-  fetchBlobAsFile: vi.fn(),
+  generatedFile: vi.fn(),
   getFileForModelVersion: vi.fn(),
 }));
 
@@ -82,11 +80,6 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
           : getObject(command.input.Key),
     },
   }),
-}));
-
-vi.mock('~/utils/file-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile,
 }));
 
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
@@ -214,7 +207,11 @@ beforeEach(async () => {
     ContentType: 'image/png',
     ContentLength: stored.length,
   }));
-  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
+  // Each generated-image URL answers with `generatedFile`'s file, or an error response for null.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const file = await generatedFile(String(input));
+    return file ? new Response(file) : new Response(null, { status: 404 });
+  });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
     where.id === 10
       ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
@@ -475,10 +472,13 @@ describe('zip and generated files: fileViewedByEsp is false', () => {
       input: { Key: string };
     }) => csamBucketObject(command.input.Key)) as never);
     csamBucketObject.mockImplementation(async (key: string) => ({
-      Body: {
-        transformToByteArray: async () =>
-          new Uint8Array(key === 'evidence-key' ? evidence : supplemental),
-      },
+      Body: Object.assign(
+        Readable.from([Buffer.from(key === 'evidence-key' ? evidence : supplemental)]),
+        {
+          transformToByteArray: async () =>
+            new Uint8Array(key === 'evidence-key' ? evidence : supplemental),
+        }
+      ),
     }));
     const report = {
       ...imageReport([]),
@@ -502,20 +502,6 @@ describe('zip and generated files: fileViewedByEsp is false', () => {
       url: 'https://example.invalid/td.zip',
     });
     vi.mocked(globalThis.fetch).mockResolvedValue(new Response(new Uint8Array(zip)));
-    // The zip passes through the job's disk; here, through memory.
-    let written = Buffer.alloc(0);
-    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-    vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
-    vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-    vi.spyOn(fsAsync, 'writeFile').mockImplementation(async (_, data) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of data as Readable) chunks.push(Buffer.from(chunk));
-      written = Buffer.concat(chunks);
-    });
-    vi.spyOn(fs, 'readFile').mockImplementation(((
-      _: unknown,
-      done: (e: Error | null, data: Buffer) => void
-    ) => done(null, written)) as never);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 7, model: { id: 3 } }]);
     const report = {
       ...imageReport([]),
@@ -529,7 +515,7 @@ describe('zip and generated files: fileViewedByEsp is false', () => {
   });
 
   it('sends every generated file as not viewed', async () => {
-    fetchBlobAsFile.mockResolvedValue(new File(['generated'], 'generated.png'));
+    generatedFile.mockResolvedValue(new File(['generated'], 'generated.png'));
     const report = {
       ...imageReport([]),
       type: 'GeneratedImage',

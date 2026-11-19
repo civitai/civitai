@@ -21,6 +21,7 @@ import {
 } from '~/store/post-image-transmitter.store';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { isPickSnapshot } from '~/utils/unreadable-pick';
@@ -76,7 +77,7 @@ export function PostImageDropzone({
   // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
   const pickedFilesRef = useRef(new WeakSet<File>());
   const [unreadablePicks, setUnreadablePicks] = useState(0);
-  const { files, canAdd, remaining, error, upload, progress, loading } = useMediaUpload<{
+  const { files, canAdd, remaining, reserved, error, upload, progress, loading } = useMediaUpload<{
     postId: number;
   }>({
     count: images.length,
@@ -158,7 +159,7 @@ export function PostImageDropzone({
             upload(fileData, { postId: data.id });
           },
           onError(error) {
-            showCreatePostError(error.message);
+            showCreatePostError(error);
           },
         }
       );
@@ -221,8 +222,16 @@ export function PostImageDropzone({
   useEffect(() => {
     async function handleSrc() {
       if (!src) return;
-      const files = await orchestratorMediaTransmitter.getFiles(src);
+      const { files, failedCount } = await orchestratorMediaTransmitter.getFiles(src);
       if (files.length) handleUpload([...files]);
+      if (failedCount)
+        showErrorNotification({
+          title: `${failedCount} file${
+            failedCount !== 1 ? 's' : ''
+          } from the generator didn't load`,
+          error: { message: 'Add them with Import from Generator below.' },
+          autoClose: false,
+        });
     }
     handleSrc();
   }, [orchestratorTransferredMedia]); // eslint-disable-line
@@ -252,7 +261,7 @@ export function PostImageDropzone({
         Import from Generator
       </Button>
       <Text size="sm" c={remaining === 0 ? 'orange' : 'dimmed'} ta="center" aria-live="polite">
-        {images.length} / {maxItems} files
+        {images.length + reserved} / {maxItems} files
       </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && <UploadNotice />}

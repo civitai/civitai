@@ -1,0 +1,168 @@
+.dropdown {
+  padding: 0;
+  overflow: hidden;
+}
+
+.sheet {
+  flex: 0 0 auto;
+  /* Without it the sheet is as wide as its content, short of the screen when the content is short. */
+  width: 100%;
+  height: auto;
+  max-height: 85dvh;
+  border-radius: 16px 16px 0 0;
+}
+
+.sheetBody {
+  padding: 0;
+}
+
+.panel {
+  font-size: 13px;
+}
+
+.pad {
+  padding: 12px 14px;
+}
+
+.showHats {
+  align-items: center;
+}
+
+@media (max-width: $mantine-breakpoint-sm) {
+  /* A tap row taller than the switch, centred in a slimmer pad: at 44px in the 12px pad the row
+     read as too much padding around one switch. */
+  .showHatsPad {
+    padding-block: 6px;
+  }
+
+  .showHats {
+    min-height: 36px;
+  }
+}
+
+.divider {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
+.yourHat {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.yourHatText {
+  min-width: 0;
+}
+
+.yourHatRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mantine-color-dimmed);
+}
+
+.hatName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supply {
+  margin-top: 10px;
+}
+
+.supplyRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+
+.num {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.dim {
+  color: var(--mantine-color-dimmed);
+}
+
+.countdown {
+  color: light-dark(var(--mantine-color-green-8), var(--mantine-color-green-4));
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  height: 6px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-8));
+
+  & b {
+    display: block;
+    height: 100%;
+  }
+}
+
+.place {
+  color: var(--mantine-color-white);
+}
+
+.standingsHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.standingsTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-8));
+
+  & span {
+    flex-basis: 0;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+}

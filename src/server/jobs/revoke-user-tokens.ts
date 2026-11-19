@@ -58,12 +58,12 @@ export async function revokeRecentlyBannedUserTokens() {
 
           if (await revokeUserTokens(row.id, { retryDelaysMs: [] })) return 'confirmed';
           if (row.ageHours >= ALERT_HOURS && !row.revocation?.alertedAt) {
-            await logToAxiom({
+            logToAxiom({
               type: 'error',
               name: 'user-token-revocation-unconfirmed',
               userId: row.id,
               message: `orchestrator token revocation for user ${row.id} still unconfirmed after ${ALERT_HOURS}h`,
-            }).catch(() => null);
+            });
             await markTokenRevocation(row.id, 'alertedAt', row.since);
           }
           return 'unconfirmed';
@@ -73,7 +73,7 @@ export async function revokeRecentlyBannedUserTokens() {
             name: NAME,
             userId: row.id,
             message: (error as Error).message,
-          }).catch(() => null);
+          });
           return 'unconfirmed';
         }
       })

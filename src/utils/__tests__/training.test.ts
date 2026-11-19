@@ -3,7 +3,9 @@ import {
   isValidRapid,
   isInvalidRapid,
   isInvalidAiToolkit,
+  canGenerateWithEpochs,
   paidMemberHostFlag,
+  networkDimSizeHint,
 } from '~/utils/training';
 
 /**
@@ -84,6 +86,18 @@ describe('isInvalidAiToolkit', () => {
   });
 });
 
+describe('canGenerateWithEpochs', () => {
+  it('is true for any signed-in user, member or not', () => {
+    const nonMember = { id: 1, isMember: false, isModerator: false };
+    expect(canGenerateWithEpochs(nonMember)).toBe(true);
+  });
+
+  it('is false with no user', () => {
+    expect(canGenerateWithEpochs(null)).toBe(false);
+    expect(canGenerateWithEpochs(undefined)).toBe(false);
+  });
+});
+
 describe('paidMemberHostFlag', () => {
   it('is true only for a paid member', () => {
     expect(paidMemberHostFlag({ isPaidMember: true })).toBe(true);
@@ -97,5 +111,23 @@ describe('paidMemberHostFlag', () => {
   it('is undefined (unknown) with no user, never a definite false', () => {
     expect(paidMemberHostFlag(null)).toBeUndefined();
     expect(paidMemberHostFlag(undefined)).toBeUndefined();
+  });
+});
+
+describe('networkDimSizeHint', () => {
+  it('scales the size with the dim entered for a measured base type', () => {
+    expect(networkDimSizeHint('sdxl', 32)).toBe(
+      'At dim 32 the file is about 218MB (≈6.8MB per dim).'
+    );
+    expect(networkDimSizeHint('sdxl', 8)).toBe('At dim 8 the file is about 54MB (≈6.8MB per dim).');
+    expect(networkDimSizeHint('sd15', 32)).toBe(
+      'At dim 32 the file is about 36MB (≈1.1MB per dim).'
+    );
+  });
+
+  it('gives no size for an unmeasured base type or an empty dim', () => {
+    expect(networkDimSizeHint('wan', 32)).toBeNull();
+    expect(networkDimSizeHint('sdxl', 0)).toBeNull();
+    expect(networkDimSizeHint('sdxl', undefined)).toBeNull();
   });
 });

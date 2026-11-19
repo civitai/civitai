@@ -18,6 +18,8 @@ export const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 export const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 export const DEVICE_ID_TOKEN_TYPE = 'urn:civitai:token-type:device-id';
 export const JWT_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:jwt';
+/** The only grant a service client holds: it gets resource tokens from the token route, nothing else. */
+export const SERVICE_GRANT = 'urn:civitai:grant:service';
 /** A worker device id, as sent in `subject_token` or read from a Salad token's machine id. */
 export const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 /** The civitai system account (User id -1): owner of system OAuth apps, the first-party convention. */

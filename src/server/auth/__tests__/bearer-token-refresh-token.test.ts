@@ -17,6 +17,7 @@ type Row = {
   key: string;
   userId: number;
   tokenScope: number;
+  tokenScopeWide?: bigint | null;
   lastUsedAt: Date | null;
   buzzLimit: null;
   clientId: string | null;
@@ -109,6 +110,20 @@ const ROWS: Row[] = [
     type: 'Worker',
     expiresAt: future(),
   },
+  {
+    // Written after tokenScopeWide existed: UserRead | AppsRead (2^31) | AppDataRead (2^32), split
+    // the way the writer splits it (the 32-bit column holds UserRead alone).
+    id: 19,
+    key: 'oauth-apps',
+    userId: 109,
+    tokenScope: 1,
+    tokenScopeWide: 6442450945n,
+    lastUsedAt: null,
+    buzzLimit: null,
+    clientId: 'client-apps',
+    type: 'Access',
+    expiresAt: future(),
+  },
 ];
 
 /**
@@ -178,8 +193,19 @@ describe('getSessionFromBearerToken credential type', () => {
     expect(session?.user?.id).toBe(101);
     expect(session?.apiKeyId).toBe(11);
     expect(session?.apiKeyType).toBe('Access');
-    expect(session?.tokenScope).toBe(SCOPE);
+    expect(session?.tokenScope).toBe(11n);
     expect(session?.subject).toEqual({ type: 'oauth', id: 'client-a' });
+  });
+
+  it('reads the scope from tokenScopeWide when it is set, bits 31 and 32 included', async () => {
+    const session = await getSessionFromBearerToken('oauth-apps');
+    expect(session?.apiKeyId).toBe(19);
+    expect(session?.tokenScope).toBe(6442450945n);
+  });
+
+  it('falls back to tokenScope for a row with no tokenScopeWide', async () => {
+    const session = await getSessionFromBearerToken('oauth-access');
+    expect(session?.tokenScope).toBe(11n);
   });
 
   it('accepts a personal API key', async () => {

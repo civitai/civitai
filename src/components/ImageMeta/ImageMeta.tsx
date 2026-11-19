@@ -6,12 +6,11 @@ import {
   CopyButton,
   Divider,
   Group,
-  Popover,
   SimpleGrid,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';

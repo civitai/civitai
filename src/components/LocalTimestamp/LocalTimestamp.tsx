@@ -1,4 +1,4 @@
-import { Tooltip } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useEffect, useState } from 'react';
 import type { DiscordTimestampStyle } from '~/utils/timestamp-helpers';
 import {

@@ -1,4 +1,5 @@
-import { Menu, Stack, Text } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   ImageMenuItems,
   type ImageContextMenuProps,

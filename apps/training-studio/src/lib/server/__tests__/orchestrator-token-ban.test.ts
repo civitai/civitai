@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// This app mints its own orchestrator key, so it refuses a banned account the same way the main
-// app's mint does: before the insert, and again after it.
+// This app mints its own orchestrator key, so it refuses a restricted account the same way the main
+// app's mint does: before any cache, and again after the insert.
 
 type Call = { op: string; table: string; values?: unknown; where: unknown[][] };
 const state = vi.hoisted(() => ({
   calls: [] as Call[],
   banned: [] as boolean[],
   deleted: false,
+  muted: false,
+  cached: null as string | null,
 }));
 
 function chain(op: string, table: string) {
@@ -22,6 +24,7 @@ function chain(op: string, table: string) {
     executeTakeFirst: async () => ({
       bannedAt: state.banned.shift() ? new Date() : null,
       deletedAt: state.deleted ? new Date() : null,
+      muted: state.muted,
     }),
   };
   return builder;
@@ -35,7 +38,7 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../redis', () => ({
-  getSysRedis: () => ({ hGet: async () => null, packed: { hGet: async () => null } }),
+  getSysRedis: () => ({ hGet: async () => state.cached, packed: { hGet: async () => null } }),
 }));
 vi.mock('../redis-atomic', () => ({ hSetWithTTL: vi.fn(async () => undefined) }));
 
@@ -48,6 +51,8 @@ beforeEach(() => {
   state.calls = [];
   state.banned = [];
   state.deleted = false;
+  state.muted = false;
+  state.cached = null;
   delete process.env.ORCHESTRATOR_MODE;
   process.env.NEXTAUTH_SECRET ??= 'test-secret';
 });
@@ -77,5 +82,23 @@ describe('orchestratorToken', () => {
     state.deleted = true;
     await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
     expect(ops()).toEqual([]);
+  });
+
+  it('serves a cached key to an account in good standing', async () => {
+    state.cached = 'cached-key';
+    await expect(orchestratorToken(USER)).resolves.toBe('cached-key');
+  });
+
+  it('refuses a muted account, even with a key cached from before the mute', async () => {
+    state.muted = true;
+    state.cached = 'cached-key';
+    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
+    expect(ops()).toEqual([]);
+  });
+
+  it('refuses a banned account with a key still cached', async () => {
+    state.banned = [true];
+    state.cached = 'cached-key';
+    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
   });
 });

@@ -8,8 +8,7 @@ import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-sc
 
 export const SCAM_ENTITY_TYPES = [
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'ResourceReview',
   'User',
   'UserProfile',
@@ -19,8 +18,7 @@ export const SCAM_TRIGGER_TEXT_CHARS = 2000;
 
 const SCAM_CLEANUP: Record<ScamEntityType, ScamCleanup> = {
   ChatMessage: 'chatMessages',
-  Comment: 'comments',
-  CommentV2: 'commentsV2',
+  CommentV3: 'comments',
   ResourceReview: 'none',
   User: 'none',
   UserProfile: 'none',

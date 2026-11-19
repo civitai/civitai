@@ -10,7 +10,16 @@ export const BLOCKLIST_TYPES = [
   'PromptBenignPhrase',
   'NegativeBenignPhrase',
   'ProfanityBenignWord',
+  'AppProtectedBrandTerm',
+  'SemanticSearchPoiRefuse',
+  'SemanticSearchMinorSafe',
 ] as const;
+
+/** The semantic search query rule types, read by the main app's query audit. */
+export const QUERY_RULE_TYPES: readonly BlocklistType[] = [
+  'SemanticSearchPoiRefuse',
+  'SemanticSearchMinorSafe',
+];
 
 export type BlocklistType = (typeof BLOCKLIST_TYPES)[number];
 
@@ -59,4 +68,23 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' A few tokens are also exempt in code regardless of this list, because' +
     " obscenity's own patterns match them more broadly than the word they stand for (see LIBRARY_OVERMATCH_TOKENS)." +
     ' That exemption covers flagging, not the censoring of already-published text, and cannot be changed from here.',
+  SemanticSearchPoiRefuse:
+    'Names of real people a semantic search query must not ask for, ON TOP of the list built into' +
+    ' the site (which stays as it is: add only names it misses). A query that names one is refused' +
+    ' for everyone but moderators. Matched as whole words, case-insensitive. Use the dry run below to' +
+    ' check a query before and after an edit; changes apply within a few minutes.',
+  SemanticSearchMinorSafe:
+    'Words that make a semantic search query read as being about minors, ON TOP of the list built' +
+    ' into the site (add only words it misses). A query containing one is narrowed to safe results' +
+    ' for everyone but moderators, and refused for moderators. Matched as whole words, plurals' +
+    ' included, case-insensitive. Use the dry run below to check a query; changes apply within a few' +
+    ' minutes.',
+  AppProtectedBrandTerm:
+    'Brand, product and company names that flag an app. The agent review flags a submission whose' +
+    ' name or slug contains one (look-alike spellings included) and sends it to the normal review' +
+    ' queue for a person to decide. A listing that calls itself unofficial or not affiliated is' +
+    " still flagged. The same check badges an approved app's listing edit that changes its name," +
+    ' icon or cover. Enter the name as people write it, one per entry. An EMPTY list does not pass' +
+    ' submissions: it marks every impersonation check incomplete, so nothing reaches the fast lane' +
+    ' until this list has entries.',
 };

@@ -100,6 +100,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -116,8 +117,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -288,6 +289,14 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    // A field emptied by bans still refunds the banned entrants' waiting paid reviews.
+    const { refundBannedEntrantReviews } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(refundBannedEntrantReviews).toHaveBeenCalledTimes(1);
+    expect(refundBannedEntrantReviews).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1, reviewMeTagId: 12 })
+    );
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: 1 })
     );

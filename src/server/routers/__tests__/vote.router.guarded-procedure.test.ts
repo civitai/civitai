@@ -5,18 +5,11 @@ import {
   RESTRICTED_ACCOUNT_MESSAGE,
 } from '~/server/common/content-restriction';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import type * as AnswerController from '~/server/controllers/answer.controller';
 import type * as TagController from '~/server/controllers/tag.controller';
 
-const { setAnswerVoteHandler, addTagVotesHandler, removeTagVotesHandler } = vi.hoisted(() => ({
-  setAnswerVoteHandler: vi.fn(async () => 'voted'),
+const { addTagVotesHandler, removeTagVotesHandler } = vi.hoisted(() => ({
   addTagVotesHandler: vi.fn(async () => 'added'),
   removeTagVotesHandler: vi.fn(async () => 'removed'),
-}));
-
-vi.mock('~/server/controllers/answer.controller', async (importOriginal) => ({
-  ...(await importOriginal<typeof AnswerController>()),
-  setAnswerVoteHandler,
 }));
 
 vi.mock('~/server/controllers/tag.controller', async (importOriginal) => ({
@@ -25,7 +18,6 @@ vi.mock('~/server/controllers/tag.controller', async (importOriginal) => ({
   removeTagVotesHandler,
 }));
 
-import { answerRouter } from '../answer.router';
 import { tagRouter } from '../tag.router';
 
 const member = {
@@ -64,12 +56,6 @@ function ctxFor(user: unknown) {
 }
 
 const cases = [
-  {
-    name: 'answer.vote',
-    handler: setAnswerVoteHandler,
-    expected: 'voted',
-    call: (user: unknown) => answerRouter.createCaller(ctxFor(user)).vote({ id: 5, vote: true }),
-  },
   {
     name: 'tag.addTagVotes',
     handler: addTagVotesHandler,

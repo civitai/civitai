@@ -1,81 +1,83 @@
 <script lang="ts">
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { browser } from '$app/environment';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { keepLast } from '$lib/keep-last.svelte';
   import { LINK_CLASS } from '$lib/format';
-  import { commentV2Url, entityUrl, modelCommentUrl } from '$lib/entity-url';
-  import type { Account } from './user-account';
+  import { commentUrl } from '$lib/entity-url';
+  import WalkPager from '$lib/components/WalkPager.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { fetchComments, type CommentCursor } from './user-account';
   import CommentList from './CommentList.svelte';
 
   let {
-    account,
     userId,
     canBulkAct,
     civitaiUrl,
   }: {
-    account: Promise<Account> | null;
     userId: number;
     canBulkAct: boolean;
     civitaiUrl: string;
   } = $props();
 
-  const modelUrl = (modelId: number | null, commentId: number) =>
-    modelId ? modelCommentUrl(civitaiUrl, modelId, commentId) : null;
+  // The cursors walked so far, so Previous is an index move. The panel remounts per account, so no
+  // cursor carries over to the next one.
+  let cursors = $state<(CommentCursor | null)[]>([null]);
+  let index = $state(0);
+  // Bumped by a delete, so the page and its total come back from the server rather than being patched.
+  let refreshed = $state(0);
+  // Each answer carries the index it was asked for. A failed turn keeps the previous rows on screen,
+  // and the pager must keep describing those rather than the page that never arrived.
+  const comments = keepLast(() => {
+    if (!browser) return null;
+    const at = index;
+    return fetchComments(userId, cursors[at], refreshed).then((p) => ({ ...p, index: at }));
+  });
+
+  // Always a new `cursors`, even going back: after a failed turn `index` may already hold the target,
+  // and only a changed source makes `keepLast` ask again.
+  const goTo = (from: number, next: CommentCursor | null) => {
+    cursors = next ? [...cursors.slice(0, from + 1), next] : cursors.slice(0, Math.max(1, from));
+    index = next ? from + 1 : Math.max(0, from - 1);
+  };
 </script>
 
-<section class="mb-4 grid gap-4 lg:grid-cols-2">
-  {#await account}
+<section class="mb-4">
+  {#if comments.value}
+    {@const p = comments.value}
+    <CommentList
+      title="Comments"
+      rows={p.items}
+      total={p.total}
+      loading={comments.loading}
+      onDeleted={() => refreshed++}
+      {userId}
+      {canBulkAct}
+    >
+      {#snippet link(c)}
+        <a href={commentUrl(civitaiUrl, c.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+          {c.entityType} {c.entityId}
+        </a>
+      {/snippet}
+      {#snippet footer()}
+        {#if comments.failed}
+          <ErrorAlert class="mt-3" message="Could not load that page of comments." />
+        {/if}
+        <WalkPager
+          index={p.index}
+          hasNext={!!p.next && !comments.loading}
+          onBack={() => goTo(p.index, null)}
+          onNext={() => goTo(p.index, p.next)}
+        />
+      {/snippet}
+    </CommentList>
+  {:else if comments.failed}
+    <div class="flex items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <p class="text-sm text-red-300">Could not load comments.</p>
+      <Button size="xs" variant="outline" onclick={() => refreshed++}>Retry</Button>
+    </div>
+  {:else}
     <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
       <p class="text-sm text-dark-2">Loading comments…</p>
     </div>
-  {:then result}
-    {#if result}
-      <CommentList
-        title="Model comments"
-        rows={result.comments.items}
-        truncated={result.comments.truncated}
-        field="commentIds"
-        {userId}
-        {canBulkAct}
-      >
-        {#snippet link(c)}
-          {#if modelUrl(c.modelId, c.id)}
-            <a href={modelUrl(c.modelId, c.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-              model {c.modelId}
-            </a>
-          {/if}
-        {/snippet}
-        {#snippet badges(c)}
-          {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-        {/snippet}
-      </CommentList>
-
-      <!-- Retool's "Other Comments" half: image, article, bounty and post threads. -->
-      <CommentList
-        title="Other comments"
-        rows={result.commentsV2.items}
-        truncated={result.commentsV2.truncated}
-        field="commentV2Ids"
-        {userId}
-        {canBulkAct}
-      >
-        {#snippet link(c)}
-          <!-- Always linkable, even for an entity type with no page of its own: the resolver works
-               from the comment id, so the label degrades but the link does not. -->
-          <a href={commentV2Url(civitaiUrl, c.id)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-            {#if entityUrl(civitaiUrl, c.entityType, c.entityId)}
-              {c.entityType} {c.entityId}
-            {:else}
-              comment {c.id}
-            {/if}
-          </a>
-        {/snippet}
-        {#snippet badges(c)}
-          {#if c.tosViolation}<Badge variant="destructive">ToS</Badge>{/if}
-        {/snippet}
-      </CommentList>
-    {/if}
-  {:catch}
-    <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-      <p class="text-sm text-red-300">Could not load comments.</p>
-    </div>
-  {/await}
+  {/if}
 </section>

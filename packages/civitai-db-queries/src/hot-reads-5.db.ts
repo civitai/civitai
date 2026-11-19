@@ -1,11 +1,10 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-// Kysely ports of high-volume Prisma reads, served behind the default-off server Flipt flag
-// `kysely-hot-reads-5`; off, the Prisma reads run unchanged. The app-side wrappers
+// Kysely ports of high-volume Prisma reads. The app-side wrappers
 // (<civitai>/src/server/services/hot-reads-5.reads.ts) map these rows to the exact Prisma payload,
-// and <civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts compares the two
-// against a real database.
+// and <civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts pins them, against
+// a real database, to the values the Prisma reads returned.
 //
 // Each read is a single-table lookup by key, or a join where Prisma issued one query per relation.
 // Every statement reads base TABLES only, never a view: the parity suite fails if one of them names
@@ -178,6 +177,7 @@ export function getModelVersionForFile(db: Kysely<DB>, modelVersionId: number) {
       'ModelVersion.createdAt',
       'ModelVersion.requireAuth',
       'ModelVersion.usageControl',
+      'ModelVersion.baseModel',
       'Model.id as modelId',
       'Model.name as modelName',
       'Model.type as modelType',

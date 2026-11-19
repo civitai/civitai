@@ -19,8 +19,14 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListing: { updateMany: ReturnType<typeof vi.fn> };
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
+  appBlock: {
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appBlockPublishRequest: { create: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
 };
@@ -32,12 +38,23 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListing: { updateMany: vi.fn(async () => ({ count: 1 })) },
-    appBlock: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlock: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-reset', status: 'suspended' })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
-  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
+  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(write)
+  );
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
     appBlockPublishRequest: { findFirst: vi.fn(async () => null) },
@@ -51,7 +68,22 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: mockNotify,
+}));
+// LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the reset hands the shared static server
+// after it commits. Its own behaviour (flag, Jobs, readiness list) is pinned in
+// live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  takeDown: vi.fn(async (_slug: string): Promise<{ liveNote?: string }> => ({})),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  takeDownLiveApp: (slug: string) => live.takeDown(slug),
+  restoreLiveAppSoon: () => undefined,
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
@@ -110,6 +142,13 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite));
   mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockWrite.$queryRaw.mockReset().mockResolvedValue([]);
+  mockWrite.appBlock.findUnique
+    .mockReset()
+    .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
+  mockWrite.appBlock.count.mockReset().mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockReset().mockResolvedValue([{ userId: 7 }]);
+  mockWrite.apiKey.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlockPublishRequest.create
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
@@ -117,6 +156,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
   mockNotify.mockReset().mockResolvedValue(undefined);
+  live.takeDown.mockReset().mockResolvedValue({});
 });
 
 describe('resetOnsiteListingToPending', () => {
@@ -131,11 +171,20 @@ describe('resetOnsiteListingToPending', () => {
       where: { id: 'apl_1', kind: 'onsite', status: 'approved' },
       data: { status: 'pending' },
     });
-    // (2) backing block approved → suspended (the real runtime stop).
+    // (2) backing block approved → suspended (the real runtime stop), and its app tokens go.
     expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
       where: { id: 'apb_1', status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-reset', type: { in: ['Access', 'Refresh'] } },
+    });
+    // The client's block rows are locked before the flip, so a concurrent suspension waits on it.
+    expect(mockWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    const orchestrator = await import('~/server/services/orchestrator/civitai');
+    expect(orchestrator.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 7 });
     // (3) fresh pending block publish request cloned from the last approved (owner-owned).
     const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
     expect(reqArg).toMatchObject({
@@ -348,5 +397,57 @@ describe('resetOnsiteListingToPending', () => {
     }).catch((err) => {
       expect(err).toBeInstanceOf(OffsiteModerationError);
     });
+  });
+});
+
+// The re-approval publishes again; until then the app's subdomain must not serve the old version.
+describe('resetOnsiteListingToPending — live unpublish', () => {
+  const READINESS_NOTE = "my-app keeps serving: it is the static server's readiness app";
+
+  it('takes the app down after the reset commits', async () => {
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(live.takeDown).toHaveBeenCalledTimes(1);
+    expect(live.takeDown).toHaveBeenCalledWith('my-app');
+    expect(live.takeDown.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    expect(res).not.toHaveProperty('liveNote');
+  });
+
+  it('the readiness app: the reset succeeds and returns the note', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(res).toMatchObject({
+      appListingId: 'apl_1',
+      status: 'pending',
+      liveNote: READINESS_NOTE,
+    });
+  });
+
+  it('a failing live step never fails the reset', async () => {
+    live.takeDown.mockRejectedValue(new Error('k8s down'));
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(res).toMatchObject({ appListingId: 'apl_1', status: 'pending' });
+    expect(live.takeDown).toHaveBeenCalledWith('my-app');
+  });
+
+  it('a reset that lost its race takes nothing down', async () => {
+    mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    await expect(
+      resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'reason here' },
+        reviewerUserId: MOD,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(live.takeDown).not.toHaveBeenCalled();
   });
 });

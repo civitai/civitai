@@ -60,6 +60,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * A moderator's global-search OAuth-client option — the SECRET-FREE projection
@@ -225,6 +229,7 @@ function ExternalCreateForm() {
     onBeforeFire: applyNormalizedUrl,
   });
 
+  const termsAccepted = useAppDeveloperTermsAccepted();
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
       setSubmitted(res);
@@ -335,7 +340,7 @@ function ExternalCreateForm() {
   function handleDetailsKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     e.preventDefault();
-    if (isCreateDetailsStepComplete(values, allowedScopes)) handleCreateDraft();
+    if (termsAccepted && isCreateDetailsStepComplete(values, allowedScopes)) handleCreateDraft();
   }
 
   function handleCreateDraft() {
@@ -803,6 +808,20 @@ function ExternalCreateForm() {
                 data-testid="apps-offsite-submit-source-repo"
               />
 
+              {/* Optional public issue-tracker / support link. Any https host. */}
+              <TextInput
+                label="Issue tracker"
+                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link — e.g. your repository's issues page."
+                placeholder="https://github.com/your-org/your-app/issues"
+                value={values.issueTrackerUrl}
+                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.issueTrackerUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                disabled={busy}
+                data-testid="apps-offsite-submit-issue-tracker"
+              />
+
               <Group grow align="flex-start">
                 <Select
                   label="Category"
@@ -842,6 +861,8 @@ function ExternalCreateForm() {
                 disabled={busy}
               />
 
+              <AppDeveloperTermsCheckbox />
+
               <Group justify="space-between">
                 <Button
                   variant="default"
@@ -854,7 +875,7 @@ function ExternalCreateForm() {
                 <Button
                   onClick={handleCreateDraft}
                   loading={busy}
-                  disabled={!isCreateDetailsStepComplete(values, allowedScopes)}
+                  disabled={!termsAccepted || !isCreateDetailsStepComplete(values, allowedScopes)}
                   leftSection={<IconExternalLink size={16} />}
                   data-testid="apps-offsite-submit-create"
                 >

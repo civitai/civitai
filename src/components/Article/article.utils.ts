@@ -8,6 +8,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
 import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import type { SemanticArticleSearchInput } from '~/server/schema/semantic-article-search.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -19,7 +20,7 @@ export const useArticleFilters = () => {
   return removeEmpty(storeFilters);
 };
 
-const articleQueryParamSchema = z
+export const articleQueryParamSchema = z
   .object({
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
@@ -88,5 +89,59 @@ export const useQueryArticles = (
     fetchedArticles: flatData?.length,
     isLoading: isLoading || loadingPreferences,
     ...rest,
+  };
+};
+
+/** The articles feed's filters that the semantic search takes, with the query. */
+export function toSemanticArticleSearchInput(
+  filters: Partial<GetInfiniteArticlesSchema>,
+  query: string,
+  browsingLevel: number
+): Omit<SemanticArticleSearchInput, 'limit'> {
+  return {
+    query,
+    browsingLevel,
+    tagIds: filters.tags,
+    usernames: filters.username ? [filters.username] : undefined,
+    period: filters.period,
+    followed: filters.followed,
+    favorites: filters.favorites,
+    hidden: filters.hidden,
+    collectionId: filters.collectionId,
+  };
+}
+
+/**
+ * The articles feed answered by the semantic search: the feed's filters that the search takes, with
+ * the query. Idle without a query.
+ */
+export const useSemanticArticleFeed = (
+  filters: Partial<GetInfiniteArticlesSchema>,
+  query: string | undefined
+) => {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const input = toSemanticArticleSearchInput(filters, query ?? '', browsingLevel);
+  const { data, ...rest } = trpc.semanticArticleSearch.search.useInfiniteQuery(input, {
+    enabled: !!query,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    ...withPlaceholderData({ keepPreviousData: true }),
+    // The feed's retry banner and its fall-back to the plain feed drive every attempt.
+    retry: 0,
+    trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+  });
+  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const { items, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'articles',
+    data: flatData,
+    showHidden: !!filters.hidden,
+    isRefetching: rest.isRefetching,
+  });
+  return {
+    ...rest,
+    articles: items,
+    isLoading: rest.isLoading || loadingPreferences,
+    correctedQuery: data?.pages[0]?.correctedQuery,
+    // Identifies the search, so the feed can scroll to the top when it changes.
+    searchKey: query ? JSON.stringify(input) : undefined,
   };
 };

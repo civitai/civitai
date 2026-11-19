@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -5,7 +6,10 @@ import type * as AccountDeletionImages from '~/server/services/account-deletion-
 import type * as HatSync from '~/server/events/points/sync';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
-/** Restoring a closed account cannot hand it the shared moderation account's reserved username. */
+/**
+ * Restoring a closed account cannot hand it the shared moderation account's reserved username,
+ * and cannot restore a banned account at all.
+ */
 
 vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserRestrictionService>()),
@@ -86,6 +90,92 @@ describe('restoreUser and the reserved username', () => {
     setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });
     await expect(restore('CivitaiModeration')).resolves.toEqual(
       expect.objectContaining({ id: USER_ID })
+    );
+  });
+});
+
+describe('restoreUser and a banned account', () => {
+  const DELETED_AT = new Date('2026-07-28T00:00:00Z');
+  const deleted = (bannedAt: Date | null) =>
+    dbMock.dbWrite.user.findFirst.mockImplementation(
+      async ({ where, select }: { where: { id?: number }; select?: Record<string, boolean> }) =>
+        where.id === USER_ID
+          ? {
+              id: USER_ID,
+              deletedAt: DELETED_AT,
+              meta: {},
+              // Only what the read selects, so a read that stops selecting the ban cannot see it.
+              ...(select?.bannedAt ? { bannedAt } : {}),
+            }
+          : null
+    );
+  const landsFirst = () =>
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record found', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+  const guardedWrite = expect.objectContaining({
+    where: expect.objectContaining({ id: USER_ID, deletedAt: DELETED_AT, bannedAt: null }),
+  });
+
+  it('refuses a banned account and leaves its images hidden', async () => {
+    deleted(new Date('2026-07-27T00:00:00Z'));
+    await expect(restore('back')).rejects.toThrow(/is banned; unban the account/);
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses, in the purge-disarm transaction, when a ban lands before the write', async () => {
+    deleted(null);
+    landsFirst();
+    const write = dbMock.dbWrite.user.update;
+    await expect(restore('back')).rejects.toThrow(/banned, restored or deleted again meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
+    // The guarded write and the purge disarm commit or roll back together, the write first so it
+    // takes the row lock before anything else is written.
+    const batch = dbMock.dbWrite.$transaction.mock.calls[0][0] as unknown[];
+    expect(batch).toHaveLength(2);
+    expect(batch[0]).toBe(write.mock.results[0].value);
+  });
+
+  it('passes any other failure of the write through unchanged', async () => {
+    deleted(null);
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(new Error('connection reset'));
+    await expect(restore('back')).rejects.toThrow('connection reset');
+  });
+
+  it('refuses the model reclaim too, in the same transaction, when a ban lands first', async () => {
+    deleted(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }]);
+    landsFirst();
+    await expect(
+      restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
+    ).rejects.toThrow(/banned, restored or deleted again meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
+    // One batch: the guarded write, the purge disarm, the reclaim and its ownership record.
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(4);
+  });
+
+  it('reports how many models the reclaim moved, and none when there was nothing to reclaim', async () => {
+    deleted(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }, { id: 502 }, { id: 503 }]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, { count: 2 }, 2]);
+    await expect(
+      restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
+    ).resolves.toMatchObject({ modelsRestored: 2, modelIds: [501, 502, 503] });
+
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0]);
+    await expect(restore('back')).resolves.toMatchObject({ modelsRestored: 0, modelIds: [] });
+  });
+
+  it('restores an account that is not banned', async () => {
+    deleted(null);
+    await expect(restore('back')).resolves.toEqual(expect.objectContaining({ id: USER_ID }));
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ deletedAt: null }) })
     );
   });
 });

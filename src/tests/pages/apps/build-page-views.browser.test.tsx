@@ -57,6 +57,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', async () => {
 });
 vi.mock('~/components/Apps/AppsBuildBody', () => ({
   AppsBuildBody: () => <div data-testid="build-body" />,
+  AppsBuildRequestView: () => <div data-testid="request-view" />,
 }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({
   AppsPageLayout: ({ actions, children }: { actions?: ReactNode; children: ReactNode }) => (
@@ -75,6 +76,7 @@ const ASSISTANT = {
   sandboxUrl: 'https://sandbox.example',
   subagents: false,
   remoteRunner: true,
+  hibernate: false,
 };
 const MEMBER = { id: 12, isModerator: false };
 const MODERATOR = { id: 2, isModerator: true };
@@ -125,6 +127,13 @@ describe('/apps/build — which view the page mounts', () => {
     workspaceLoaded = true;
   });
 
+  test('🔴 the request view mounts the request view in the layout, and no build body', async () => {
+    await renderPage({ mode: 'request' });
+    await expect.element(page.getByTestId('request-view')).toBeInTheDocument();
+    expect(seen('build-body')).toBe(0);
+    expect(seen('workspace')).toBe(0);
+  });
+
   test('the build view mounts the build body and never the workspace', async () => {
     await renderPage({ mode: 'build' });
     expect(seen('build-body')).toBe(1);
@@ -140,7 +149,7 @@ describe('/apps/build — which view the page mounts', () => {
     expect(seen('build-body')).toBe(0);
   });
 
-  test('a NON-author in the assistant view gets no "My apps" switch, and ?view=apps does nothing', async () => {
+  test('a NON-author in the assistant view gets no "My builds" switch, and ?view=apps does nothing', async () => {
     (Router as unknown as { query: Record<string, string> }).query = { view: 'apps' };
     await renderPage(ASSISTANT);
     expect(seen('workspace')).toBe(1);
@@ -158,7 +167,7 @@ describe('/apps/build — which view the page mounts', () => {
   });
 
   /**
-   * 🔴 THE COHORT EVERY "My apps" LINK IS POINTED AT `?view=apps` FOR: a NON-moderator author who
+   * 🔴 THE COHORT EVERY "My builds" LINK IS POINTED AT `?view=apps` FOR: a NON-moderator author who
    * also holds the App Assistant. The server hands them the assistant view, so a bare
    * `/apps/build` opens the assistant; `?view=apps` must open their app list instead.
    */

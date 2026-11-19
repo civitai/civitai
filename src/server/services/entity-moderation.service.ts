@@ -8,6 +8,7 @@ import type {
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import type { RatedEntitySnapshot } from '~/server/services/text-scan/rated-entities';
 
 type SlimMatchedTermsText = { text: string[] };
 type SlimMatchedTermsPrompt = { positivePrompt: string[]; negativePrompt: string[] };
@@ -271,7 +272,15 @@ export type ModerationAdapter = {
     textHash: string;
     /** Per-label prompt ids the workflow was submitted with. */
     promptIds?: PromptIds;
+    /** `readRating` taken before the verdict was written; undefined when the adapter has none. */
+    ratingBefore?: RatedEntitySnapshot | null;
   }) => Promise<void>;
+
+  /**
+   * The entity's stored rating, read by the text-scan callback before it writes the verdict. Any
+   * recompute after that write applies the new floor, so a read taken later can miss the raise.
+   */
+  readRating?: (entityId: number) => Promise<RatedEntitySnapshot | null>;
 
   /**
    * Optional: business logic to apply after a terminal-failure callback

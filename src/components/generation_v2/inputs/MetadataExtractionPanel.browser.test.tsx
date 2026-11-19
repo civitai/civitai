@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
 
@@ -93,6 +94,14 @@ async function selectFile(file: File) {
   });
   Object.defineProperty(input!, 'files', { configurable: true, value: [file] });
   input!.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+async function dropLink(dataTransfer: DataTransfer) {
+  await renderWithProviders(<MetadataExtractionPanel />);
+  page
+    .getByText('Drop an image or video here or click to select')
+    .element()
+    .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
 }
 
 describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
@@ -200,6 +209,48 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
     await expect
       .element(page.getByText('No generation metadata found in this image or video.'))
       .toBeInTheDocument();
+  });
+
+  test('uses the stored metadata and preview URL when a site video is dropped', async () => {
+    const store = makeStore();
+    storeMock.mockReturnValue(store);
+    const url = 'https://example.test/site-video.mp4';
+    const transfer = new DataTransfer();
+    setMediaDragData(transfer, { url, mediaId: 42, type: 'video' });
+    await dropLink(transfer);
+
+    await vi.waitFor(() =>
+      expect(getGenerationDataMock).toHaveBeenCalledWith(
+        { id: 42, type: 'video', withPreview: true },
+        expect.objectContaining({ enabled: true })
+      )
+    );
+    expect(store.setIsVideo).toHaveBeenCalledWith(true);
+    expect(store.setFileUrl).toHaveBeenCalledWith(url);
+    expect(videoMetadataParserMock).not.toHaveBeenCalled();
+  });
+
+  test('parses a dropped external video using its MIME-based extension', async ({
+    onTestFinished,
+  }) => {
+    const url = 'https://example.test/media';
+    const fetchSpy = vi
+      .spyOn(window, 'fetch')
+      .mockResolvedValueOnce(
+        new Response('video bytes', { headers: { 'Content-Type': 'video/mp4; codecs=avc1' } })
+      );
+    onTestFinished(() => fetchSpy.mockRestore());
+    const transfer = new DataTransfer();
+    transfer.setData('text/uri-list', url);
+    await dropLink(transfer);
+
+    expect(fetchSpy).toHaveBeenCalledWith(url);
+    await vi.waitFor(() =>
+      expect(videoMetadataParserMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'media.mp4' })
+      )
+    );
+    expect(exifParserMock).not.toHaveBeenCalled();
   });
 
   test('store.metadata present ENABLES resolveImageMeta and passes the metadata as query arg', async () => {

@@ -23,13 +23,15 @@ const WEBHOOK_ROUTES = [
   'adjust-tag-level',
   'ban-user',
   'custom-challenge',
-  'daily-challenge/backfill-theme-elements',
   'daily-challenge/cycle',
-  'daily-challenge/re-review',
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
-  'mark-poi-images-search',
+  'image/kono-set-nsfw-level',
+  'knights/notification-types',
+  'knights/reset-player',
+  'knights/shop/cosmetics',
+  'knights/shop/membership',
   'mod-rules',
   'mute-user-pending-review',
   'new-order/manage-queue',
@@ -190,23 +192,40 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'App Blocks author submit: moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'v1/blocks/submit-version':
     'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
-  'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
+  'download/[...key]': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
-  'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/training/[modelVersionId]': FULL_CREDENTIAL,
+  'download/vault/[vaultItemId]':
+    'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
+  'search/token':
+    'site search token: moderators skip the POI and private-model rules, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'training-studio/check-text':
     'passed to the edit-prompt audit, the same flag the generator gives auditPromptServer',
+  'training-studio/model-status':
+    'moderators are answered with no withheld runs: they may see a taken-down run in full',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
   'v1/me': 'reports the flag',
+  'v1/model-files/[id]/tensor-metadata':
+    'moderator rights from a bearer credential follow the download credential gate',
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
+  'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
+  'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
+  'v1/model-versions/[id]/gifts/[giftId]/claims/[userId]': 'owner-or-moderator gift claim removal',
+  'v1/model-versions/[id]/gifts/batch/[batchId]': 'owner-or-moderator gift batch revoke',
+  'v1/model-versions/[id]/gifts/batch/[batchId]/claims':
+    'owner-or-moderator gift batch claimer list',
+  'v1/model-versions/[id]/gifts/index': 'owner-or-moderator gift list; mint is owner-only',
   'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
+  'v1/models/index':
+    'the system account keeps its moderator rights on its own keys when listing models',
   'v1/permissions/check': 'entity access check that also admits owners and public entities',
   'webhooks/stripe': 'a lost dispute skips banning a payer who is a moderator; not a caller gate',
 };
@@ -508,19 +527,31 @@ describe('namesIdentifier and callsImported', () => {
  * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
  */
 const FULL_SCOPE_SESSION_ROUTES = [
+  // App Assistant's preview strip and page tool: the caller's own app's recent activity.
+  'apps/assistant/activity',
   'apps/assistant/preview',
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
+  // App Assistant's save of the caller's own app to its source repo.
+  'apps/assistant/source-save',
   'apps/assistant/token',
   // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
   'apps/dev/entry-url',
+  // The dev-tunnel host's errors from the caller's own live preview, for App Assistant.
+  'apps/dev/preview-errors',
   'auth/freshdesk',
   // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
   'blocks/submit-version',
+  // Raw key download, moderators only.
+  'download/[...key]',
+  // A training run's epoch file, owner or moderator only.
+  'download/training/[modelVersionId]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',
   'v1/block-tokens/index',
+  // A creator's own engagement counts and tipped Buzz: no read scope maps to them yet.
+  'v1/creator/engagement',
 ];
 
 describe('routes under src/pages/api outside the moderator wrappers', () => {

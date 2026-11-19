@@ -21,14 +21,14 @@ import { PURGE_INCOMPLETE } from '$lib/purge-result';
  * "failed" invites a second purge.
  */
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   // Every lookup finds the account.
   return {
-    dbRead: capturingDb([], [{ id: 8675309 }]),
-    dbWrite: capturingDb([], [{ id: 8675309 }]),
+    dbRead: capturingDb([], [{ id: 990100034 }]),
+    dbWrite: capturingDb([], [{ id: 990100034 }]),
   };
 });
 const { recordModActivity } = vi.hoisted(() => ({

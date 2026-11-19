@@ -8,12 +8,12 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Modal,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCalendarEvent, IconDots, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
@@ -43,6 +43,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate, fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
 
 const titleColorSwatches: Record<string, string> = {
   blue: '#60a5fa',
@@ -79,7 +80,7 @@ const eventFormSchema = z.object({
   active: z.boolean().default(false),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
   coverImage: z
-    .object({ id: z.number().optional(), url: z.string() })
+    .object({ id: z.number().optional(), url: z.string(), restricted: z.boolean().optional() })
     .passthrough()
     .nullable()
     .optional(),
@@ -94,7 +95,7 @@ type ChallengeEventItem = {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
-  coverImage: { id?: number; url: string } | null;
+  coverImage: { id?: number; url: string; restricted?: boolean } | null;
   _count: { challenges: number };
 };
 
@@ -126,6 +127,7 @@ function EventFormModal({
       coverImage: event?.coverImage ?? null,
     },
   });
+  const coverImageWatch = form.watch('coverImage');
 
   const upsertMutation = trpc.challenge.upsertEvent.useMutation({
     onSuccess: () => {
@@ -228,6 +230,7 @@ function EventFormModal({
             description="Wide banner shown on the challenges page. Suggested 1600x600."
             withNsfwLevel={false}
           />
+          <MatureRestrictedBadge restricted={coverImageWatch?.restricted} />
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>
               Cancel

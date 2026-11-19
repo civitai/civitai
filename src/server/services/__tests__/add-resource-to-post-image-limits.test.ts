@@ -6,6 +6,7 @@ import {
 } from '~/server/common/constants';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import type * as CommonService from '~/server/services/common.service';
+import type * as RestrictedImagesService from '~/server/services/restricted-images.service';
 import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
 
@@ -17,6 +18,10 @@ import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
  * The module scaffold mirrors update-post-image-hidemeta-bust.test.ts.
  */
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
@@ -49,6 +54,7 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
   createImageResources: vi.fn(),
@@ -58,7 +64,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
@@ -86,13 +91,22 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
 }));
+const { flagImagesOnRestrictedVersions } = vi.hoisted(() => ({
+  flagImagesOnRestrictedVersions: vi.fn(async () => ({ flagged: 0, postIds: [] as number[] })),
+}));
+vi.mock('~/server/services/restricted-images.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof RestrictedImagesService>()),
+  flagImagesOnRestrictedVersions,
+}));
 const { hasEntityAccess } = vi.hoisted(() => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/common.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommonService>()),
   hasEntityAccess,
 }));
 
-const { addResourceToPostImage, createPost } = await import('~/server/services/post.service');
+const { addResourceToPostImage, createPost, creditResourcesToImages } = await import(
+  '~/server/services/post.service'
+);
 
 const IMAGE_ID = 101;
 const OTHER_IMAGE_ID = 102;
@@ -288,6 +302,40 @@ describe('addResourceToPostImage post cache busting', () => {
   });
 });
 
+describe('addResourceToPostImage restricted base models', () => {
+  it('applies the restricted-base-model rule to the images it credited', async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    await add([IMAGE_ID, OTHER_IMAGE_ID]);
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledTimes(1);
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledWith({
+      modelVersionIds: [NEW_VERSION_ID],
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+    });
+  });
+
+  it("refreshes a flagged image's post caches after flagging it", async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [], imageIds: [IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([{ postId: 7, meta: null, type: 'image' }]);
+    flagImagesOnRestrictedVersions.mockResolvedValueOnce({ flagged: 1, postIds: [7] });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await add([IMAGE_ID]);
+    // bustCachesForPosts' one post query, issued once the flag is set.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const params = (dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]).slice(1);
+    expect(params).toContainEqual(expect.objectContaining({ values: [7] }));
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
+      flagImagesOnRestrictedVersions.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('has nothing to apply when every resource was already credited', async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [] });
+    tx.imageResourceNew.createManyAndReturn.mockResolvedValue([]);
+    await add();
+    expect(flagImagesOnRestrictedVersions).not.toHaveBeenCalled();
+  });
+});
+
 describe('addResourceToPostImage on-site generations', () => {
   const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
 
@@ -302,6 +350,55 @@ describe('addResourceToPostImage on-site generations', () => {
     arrange({ adding: ModelType.LORA, existing: [] });
     mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'video' }]);
     await expect(add()).resolves.toBeDefined();
+  });
+});
+
+describe('creditResourcesToImages, as a batch credits a post', () => {
+  const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
+  const version = (id: number, type: ModelType) =>
+    ({ id, model: { id: id + 1, type } } as Parameters<
+      typeof creditResourcesToImages
+    >[0]['modelVersions'][number]);
+
+  it('skips on-site generations by their stored meta and credits the rest in one insert', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+      { id: OTHER_IMAGE_ID, postId: null, meta: onSiteMeta, type: 'image' },
+    ]);
+
+    await creditResourcesToImages({
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+      modelVersions: [version(40, ModelType.LORA), version(41, ModelType.Checkpoint)],
+      user,
+      skipOnSite: true,
+    });
+
+    expect(tx.imageResourceNew.createManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(tx.imageResourceNew.createManyAndReturn.mock.calls[0][0].data).toEqual([
+      { imageId: IMAGE_ID, modelVersionId: 40, detected: false },
+      { imageId: IMAGE_ID, modelVersionId: 41, detected: false },
+    ]);
+  });
+
+  it('checks the limits against every version being added together', async () => {
+    arrange({
+      adding: ModelType.Checkpoint,
+      existing: rows(MAX_MANUAL_CHECKPOINTS_PER_IMAGE - 1, ModelType.Checkpoint, false),
+    });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+    ]);
+
+    await expect(
+      creditResourcesToImages({
+        imageIds: [IMAGE_ID],
+        modelVersions: [version(40, ModelType.Checkpoint), version(41, ModelType.Checkpoint)],
+        user,
+        skipOnSite: true,
+      })
+    ).rejects.toThrow(manualResourceLimitMessages.checkpoints);
+    expectNothingWritten();
   });
 });
 

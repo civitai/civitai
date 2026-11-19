@@ -37,36 +37,56 @@ export type SupportMenuItem = {
 };
 
 /**
- * One list for the footer Support menu and the user menu's Get help group, so the two cannot drift.
+ * The "Report a bug" entry, shared by the Support menus and the floating help menu.
  *
- * `opened`: whether the surface showing the items is open. The bug-report area is queried only
- * then, and only when signed in (the panel cannot accept a submission without a session).
+ * `opened`: whether the surface showing it is open. The bug-report area is queried only then, and
+ * only when signed in (the panel cannot accept a submission without a session). Until the answer is
+ * in, or when the area is not collecting, it is the ticket portal link: shown rather than hidden so
+ * no menu silently loses its bug path.
  */
-export function useSupportMenuItems({ opened }: { opened: boolean }): SupportMenuItem[] {
+export function useReportBugItem({ opened }: { opened: boolean }): SupportMenuItem {
   const currentUser = useCurrentUser();
   const { data: bugReportArea } = trpc.feedback.getArea.useQuery(
     { area: SITE_BUG_REPORT_AREA },
     { enabled: opened && !!currentUser }
   );
   const canReportInProduct = !!currentUser && !!bugReportArea?.enabled;
+  return canReportInProduct
+    ? {
+        id: 'support-report-bug',
+        label: 'Report a bug',
+        icon: IconBug,
+        onClick: () => dialogStore.trigger({ component: FeedbackDrawer }),
+      }
+    : {
+        id: 'support-report-bug',
+        label: 'Report a bug',
+        icon: IconBug,
+        href: SUPPORT_LINKS.bugTicket,
+      };
+}
+
+/** The CivBot entry, or null when the assistant is not available to this user. */
+export function useAssistantItem(): SupportMenuItem | null {
   const assistant = useAssistantAvailable();
+  if (!assistant) return null;
+  return {
+    id: 'support-assistant',
+    label: 'Get help fast',
+    icon: IconMessageChatbot,
+    onClick: () => useAssistantPanelStore.setState({ opened: true }),
+  };
+}
+
+/**
+ * One list for the footer Support menu and the user menu's Get help group, so the two cannot drift.
+ */
+export function useSupportMenuItems({ opened }: { opened: boolean }): SupportMenuItem[] {
+  const reportBug = useReportBugItem({ opened });
+  const assistant = useAssistantItem();
 
   const items: SupportMenuItem[] = [
-    canReportInProduct
-      ? {
-          id: 'support-report-bug',
-          label: 'Report a bug',
-          icon: IconBug,
-          onClick: () => dialogStore.trigger({ component: FeedbackDrawer }),
-        }
-      : // No session, or the area is not collecting: the ticket portal is the only honest
-        // destination left. Shown rather than hidden so the menu never silently loses its bug path.
-        {
-          id: 'support-report-bug',
-          label: 'Report a bug',
-          icon: IconBug,
-          href: SUPPORT_LINKS.bugTicket,
-        },
+    reportBug,
     {
       id: 'support-education',
       label: 'Education Hub',
@@ -81,13 +101,7 @@ export function useSupportMenuItems({ opened }: { opened: boolean }): SupportMen
       href: SUPPORT_LINKS.discord,
     },
   ];
-  if (assistant)
-    items.push({
-      id: 'support-assistant',
-      label: 'Get help fast',
-      icon: IconMessageChatbot,
-      onClick: () => useAssistantPanelStore.setState({ opened: true }),
-    });
+  if (assistant) items.push(assistant);
   items.push({
     id: 'support-portal',
     label: 'Support Portal',

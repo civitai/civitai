@@ -18,6 +18,7 @@ import { useChatStore } from '~/components/Chat/ChatProvider';
 import { DealAccountabilitySheet } from '~/components/CreatorShop/Services/deals/DealAccountabilitySheet';
 import { DealActionsPanel } from '~/components/CreatorShop/Services/deals/DealActionsPanel';
 import { DealEscrowPanel } from '~/components/CreatorShop/Services/deals/DealEscrowPanel';
+import { DealAttachmentsPanel } from '~/components/CreatorShop/Services/deals/DealAttachmentsPanel';
 import { DealFilesPanel } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
@@ -30,11 +31,13 @@ import {
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDeal } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { pluralize } from '~/shared/utils/pluralize';
 import { formatDate } from '~/utils/date-helpers';
 
 const DATE = 'MMM D, YYYY h:mm A';
+const DISPUTE_WINDOW_HOURS = SERVICE_DEAL_DISPUTE_WINDOW_MS / 3_600_000;
 
 function deadlineLines(deal: ServiceDealView) {
   const { deadlines, viewerRole } = deal;
@@ -74,6 +77,11 @@ function deadlineLines(deal: ServiceDealView) {
   if (deadlines.autoCancelAt)
     lines.push(
       `Unanswered, the cancellation goes through on ${formatDate(deadlines.autoCancelAt, DATE)}.`
+    );
+  // Buyers looked for a dispute button mid-deal; it only appears once the delivery is accepted.
+  if (viewerRole === 'buyer' && (deal.status === 'Accepted' || deal.status === 'InRevision'))
+    lines.push(
+      `If the final files have a problem, you can open a dispute for ${DISPUTE_WINDOW_HOURS} hours after you accept them. Before then, ask for a revision or request cancellation.`
     );
   return lines;
 }
@@ -137,7 +145,8 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
   // A mature deal opened on green redirects to red. Exits stay open on the server either way.
   return (
     <Gated contentNsfwLevel={deal.maxNsfwLevel} meta={{ title: 'Service deal', deIndex: true }}>
-      <Stack gap="lg" py="md">
+      {/* Room under the last card for the fixed footer bar and its floating buttons on a phone. */}
+      <Stack gap="lg" pt="md" pb={{ base: 96, sm: 'md' }}>
         <Stack gap={4}>
           <Text size="sm" c="dimmed">
             Deal #{deal.id} ·{' '}
@@ -205,6 +214,7 @@ export function ServiceDealPage({ dealId }: { dealId: number }) {
               )}
               <DealActionsPanel deal={deal} />
               <DealFilesPanel deal={deal} />
+              <DealAttachmentsPanel deal={deal} />
               <Paper withBorder radius="md" p="md">
                 <Stack gap={6}>
                   <Text fw={600}>The request</Text>

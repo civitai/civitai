@@ -185,7 +185,9 @@ describe('listForks', () => {
     await expect(caller.listForks(input)).resolves.toBeNull();
     expect(mocks.getStoreVisibleListingSummary).toHaveBeenCalledWith(
       { id: 'apl_parent_7010' },
-      { redCapable: false, scope: 'full', floor: 'public' }
+      // 🔴 With the viewer's own browsing level (signed in, no mature opt-in → PG|PG13 = 3), so an
+      // R/X parent this viewer cannot see reads as not visible.
+      { redCapable: false, scope: 'full', floor: 'public', viewerBrowsingLevel: 3 }
     );
     expect(mocks.listListingForks).not.toHaveBeenCalled();
   });
@@ -216,6 +218,8 @@ describe('listForks', () => {
       scope: 'full',
       floor: 'public',
       redCapable: false,
+      // 🔴 R/X forks are listed only to a viewer whose level includes that rating.
+      viewerBrowsingLevel: 3,
     });
   });
 });

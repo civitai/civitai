@@ -63,7 +63,7 @@ export async function sweepDeletedRemixGallerySubmissions({
         message: 'releasing a submission whose image was deleted failed',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 

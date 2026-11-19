@@ -162,6 +162,8 @@ export function AdsProvider({
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
+      // The gift claim page holds a live gift code in its props, readable by any script on the page.
+      !router.pathname.startsWith('/gift/') &&
       !router.asPath.split('?')[0].endsWith('/edit');
 
   function handleLoadedError() {

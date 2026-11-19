@@ -28,7 +28,7 @@ vi.mock('$lib/server/db', async () => {
   // A row, not an empty result: `purgeAllContent` — the control in "the audit row belongs to the
   // endpoint" — stops at its own existence check without one, and would then report "not logged"
   // for the wrong reason.
-  const rows = [{ id: 8675309 }];
+  const rows = [{ id: 990100034 }];
   return { dbRead: capturingDb([], rows), dbWrite: capturingDb([], rows) };
 });
 vi.mock('../mod-activity', () => ({ recordModActivity, recordModActivityBatch }));
@@ -46,7 +46,7 @@ vi.mock('$app/server', () => ({
 
 const { deleteAccount, purgeAllContent } = await import('../user-actions.service');
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 const MAY_HAVE_COMPLETED =
   'Account deletion could not be confirmed. It may already have completed — re-check the account before retrying.';
 

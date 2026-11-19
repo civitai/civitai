@@ -47,7 +47,7 @@ import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
  * This file imports no React/Mantine so it stays a pure unit.
  */
 export type AppsNavVisibility = {
-  /** Store hub (`/apps`) — visible exactly when the store is. */
+  /** Apps hub (`/apps`, the viewer's app home; the store is `/apps/store`) — visible exactly when the store is. */
   marketplace: boolean;
 };
 

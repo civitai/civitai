@@ -1,4 +1,5 @@
-import { HoverCard, List, Text, ThemeIcon } from '@mantine/core';
+import { List, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertTriangle } from '@tabler/icons-react';
 
 /** One problem on a submission row (from the server's `computeListingProblems`).

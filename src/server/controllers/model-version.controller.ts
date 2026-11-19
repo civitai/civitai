@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -18,8 +19,15 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
-import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
+import type {
+  GetModelVersionsByIdsInput,
+  LicensingSourceRejection,
+} from '~/server/schema/model-version.schema';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isHiddenBaseModel,
+} from '~/shared/constants/basemodel.constants';
 import {
   baseModelLicenses,
   constants,
@@ -50,7 +58,6 @@ import type {
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
@@ -62,7 +69,9 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
+  getExplorationPromptsById,
   getVersionById,
+  getVersionsByIds,
   getWorkflowIdFromModelVersion,
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
@@ -92,7 +101,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import { getViewableModelVersionIds } from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -107,8 +120,9 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
@@ -124,12 +138,47 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
-export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
+// A version the viewer may not see reads as one that does not exist: no rows, or NOT_FOUND.
+const canViewVersion = async (id: number, ctx: Context) =>
+  (await getViewableModelVersionIds([id], ownerOrModeratorViewer(ctx))).has(id);
+
+export const getModelVersionRunStrategiesHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    return getModelVersionRunStrategies({ modelVersionId: id });
+    if (!(await canViewVersion(id, ctx))) return [];
+    return await getModelVersionRunStrategies({ modelVersionId: id });
   } catch (e) {
     throw throwDbError(e);
   }
+};
+
+export const getVersionsByIdsHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionsByIdsInput;
+  ctx: Context;
+}) =>
+  getVersionsByIds({
+    ...input,
+    browsingLevel: getRequestBrowsingLevel(ctx),
+    viewer: ownerOrModeratorViewer(ctx),
+  });
+
+export const getExplorationPromptsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (!(await canViewVersion(input.id, ctx))) return [];
+  return getExplorationPromptsById(input);
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
@@ -142,10 +191,13 @@ const loadModelVersion = async ({
   input,
   ctx,
   forceWriteDb,
+  publicRead,
 }: {
   input: GetModelVersionSchema;
   ctx: Context;
   forceWriteDb: boolean;
+  /** The public read: a version the viewer may not see by its status is not found. */
+  publicRead: boolean;
 }) => {
   const { id, withFiles } = input;
 
@@ -164,6 +216,7 @@ const loadModelVersion = async ({
         steps: true,
         clipSkip: true,
         status: true,
+        publishedAt: true,
         createdAt: true,
         trainingDetails: true,
         trainingStatus: true,
@@ -221,7 +274,21 @@ const loadModelVersion = async ({
         },
       },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    const hiddenByStatus =
+      publicRead &&
+      !!version &&
+      !canViewModelVersionStatus({
+        viewer: ownerViewer,
+        ownerId: version.model.user.id,
+        modelStatus: version.model.status as ModelStatus,
+        versionStatus: version.status as ModelStatus,
+        publishedAt: version.publishedAt,
+      });
+    if (
+      hiddenByStatus ||
+      (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
+    )
       throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
@@ -238,23 +305,7 @@ const loadModelVersion = async ({
         linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
       ),
     ].filter(Boolean);
-    const linkedFileDataMap = new Map<
-      number,
-      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
-    >();
-    if (linkedFileIds.length > 0) {
-      const fileData = await dbRead.modelFile.findMany({
-        where: { id: { in: linkedFileIds } },
-        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
-      });
-      for (const f of fileData)
-        linkedFileDataMap.set(f.id, {
-          name: f.name,
-          sizeKB: f.sizeKB,
-          type: f.type,
-          metadata: f.metadata as Record<string, unknown> | null,
-        });
-    }
+    const linkedFileDataMap = await getLinkedFileData(linkedFileIds);
 
     const linkedComponents = selectLiveLinkedComponents(
       linkedComponentResources.map((r) => {
@@ -271,9 +322,7 @@ const loadModelVersion = async ({
           fileName: fileData?.name ?? s.fileName,
           sizeKB: fileData?.sizeKB,
           fileType: fileData?.type,
-          fileMetadata: fileData?.metadata as
-            | { format?: string | null; size?: string | null; fp?: string | null }
-            | undefined,
+          fileMetadata: fileData?.metadata ?? undefined,
           isRequired: s.isRequired,
         };
       }),
@@ -342,7 +391,7 @@ const loadModelVersion = async ({
       })
     )[id];
     const isOwnerOrMod =
-      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+      !!ownerViewer && (ownerViewer.id === version.model.user.id || !!ownerViewer.isModerator);
     const eaDonationGoal =
       paidAccess && isOwnerOrMod
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
@@ -364,6 +413,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
       // A .com face has no per-version description; the .red one is not shown in its place.
       description: withSfwFace ? null : version.description,
       model: {
@@ -379,8 +429,23 @@ const loadModelVersion = async ({
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
+      // Training data keeps its own public view (the router's strip); other non-Public files are the
+      // owner's and moderators'. Only they get downloadName, which the editor shows in place of a
+      // trainer blob id: it is built from the real model name, which a .com face hides.
+      files: (isOwnerOrMod
+        ? version.files?.map((file) => ({
+            ...file,
+            downloadName: getDownloadFilename({
+              model,
+              modelVersion: version,
+              file,
+              versionFiles: version.files,
+            }),
+          }))
+        : version.files?.filter(
+            (file) => file.visibility === 'Public' || file.type === 'Training Data'
+          )) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
@@ -395,7 +460,7 @@ const loadModelVersion = async ({
 export const getModelVersionHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: false });
+}) => loadModelVersion({ ...params, forceWriteDb: false, publicRead: true });
 
 // Owner-only entry point. Always reads from the primary DB so freshly-mutated
 // files / linked components are visible regardless of replication lag. The
@@ -404,7 +469,12 @@ export const getModelVersionHandler = async (params: {
 export const getModelVersionForEditHandler = async (params: {
   input: GetModelVersionSchema;
   ctx: Context;
-}) => loadModelVersion({ ...params, forceWriteDb: true });
+}) => {
+  // The router's ownership guard reads the user alone; the owner's editor view also needs a
+  // session or a full-access key.
+  if (!ownerOrModeratorViewer(params.ctx)) throw throwAuthorizationError();
+  return loadModelVersion({ ...params, forceWriteDb: true, publicRead: false });
+};
 
 export const toggleNotifyEarlyAccessHandler = async ({
   input,
@@ -493,18 +563,32 @@ export const upsertModelVersionHandler = async ({
           },
         })
       : null;
+    // The form only offers hidden base models to moderators; this holds API clients to the same rule.
+    // A version already on a hidden base model can still be edited.
+    if (
+      !ctx.user.isModerator &&
+      input.baseModel !== storedVersion?.baseModel &&
+      isHiddenBaseModel(input.baseModel)
+    ) {
+      throw throwBadRequestError(`${input.baseModel} is not available for new models yet`);
+    }
     const storedUsageControl = storedVersion?.usageControl;
+    // A stored Internal/External control is the service's to judge (assertOwnerUsageControlChange); the
+    // gate coercing it to Download would turn an unrelated owner edit into a refused change.
+    const storedIsModeratorManaged =
+      storedUsageControl === ModelUsageControl.InternalGeneration ||
+      storedUsageControl === ModelUsageControl.ExternalGeneration;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
-      (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
+      (!updatesExistingVersion ||
+        (storedUsageControl !== ModelUsageControl.Generation && !storedIsModeratorManaged));
 
     if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
-      // `ctx.features` resolves off the SESSION tier, which lags a membership change, so a creator who
-      // just upgraded is denied something they now pay for. Re-evaluate the SAME flag with the fresh
-      // subscription tier rather than comparing the tier ourselves: env overrides (the deploy-free kill
-      // switch), region rules and domain gating all still apply, and the availability list stays the one
-      // source of truth for which tiers qualify.
+      // `ctx.features` resolves off the SESSION tier, which lags a membership change. The registry default
+      // (['user']) doesn't depend on tier, but an env override can restrict the flag to tiers again, so
+      // re-evaluate the SAME flag with the fresh subscription tier rather than comparing the tier
+      // ourselves: env overrides, region rules and domain gating all still apply.
       const hasFeature =
         !!ctx.features.generationOnlyModels ||
         !!getFeatureFlagsLazy({
@@ -520,9 +604,8 @@ export const upsertModelVersionHandler = async ({
       input.usageControl = gate.usageControl;
 
       // The gate coerces instead of rejecting, so a write that passes on the wrong branch produces no
-      // record anywhere. Emit the deciding branch, and on the membership branch the fresh subscription
-      // tier next to the session one — ctx.features resolves off the session tier, which lags a
-      // membership change (CU 868kmy9f3).
+      // record anywhere. Emit the deciding branch, and on a denial the fresh subscription tier next to
+      // the session one — ctx.features resolves off the session tier, which lags a membership change.
       logToAxiom({
         name: 'model-version-usage-control-gate',
         type: 'info',
@@ -534,17 +617,17 @@ export const upsertModelVersionHandler = async ({
         storedUsageControl: storedUsageControl ?? null,
         appliedUsageControl: input.usageControl ?? null,
         sessionTier: ctx.user.tier ?? null,
-        subscriptionTier:
-          gate.outcome === 'tier' || gate.outcome === 'denied' ? await actorTier() : null,
-      }).catch(() => null);
+        subscriptionTier: gate.outcome === 'denied' ? await actorTier() : null,
+      });
     }
 
-    if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage internal generation models');
-    }
-
-    if (input.usageControl === ModelUsageControl.ExternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage external generation models');
+    // Updates are judged against the stored control in upsertModelVersion, so an owner can resubmit a
+    // moderator-set value unchanged.
+    if (!updatesExistingVersion && !ctx.user.isModerator) {
+      if (input.usageControl === ModelUsageControl.InternalGeneration)
+        throw throwBadRequestError('Only moderators can manage internal generation models');
+      if (input.usageControl === ModelUsageControl.ExternalGeneration)
+        throw throwBadRequestError('Only moderators can manage external generation models');
     }
 
     // Denied/Paused are moderation decisions. Updates are judged against the stored value in
@@ -744,7 +827,7 @@ export const upsertModelVersionHandler = async ({
           sourceModelType: source?.modelType ?? null,
           baseModel: input.baseModel ?? null,
           sourceBaseModel: source?.baseModel ?? null,
-        }).catch(() => null);
+        });
         input.licensingSourceVersionId = null;
         licensingSourceCoercedReason = rejectedReason;
       }
@@ -1239,8 +1322,16 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
 };
 
 // Only available for SD 1.5 and SDXL 1.0 models for now
-export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
+export async function getVersionLicenseHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No version with id ${input.id}`);
     const version = await getVersionById({
       id: input.id,
       select: {
@@ -1306,7 +1397,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
 }) => {
   const { payWithBlue, ...rest } = input;
   try {
-    return earlyAccessPurchase({
+    return await earlyAccessPurchase({
       ...rest,
       userId: ctx.user.id,
       buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],
@@ -1325,14 +1416,17 @@ export const modelVersionDonationGoalHandler = async ({
   ctx: Context;
 }) => {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No model version with id ${input.id}`);
+    const viewer = ownerOrModeratorViewer(ctx);
     // `await` is load-bearing: without it the rejected promise escapes this
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
     return await modelVersionDonationGoal({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1340,14 +1434,21 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+export async function getModelVersionOwnerHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
+  if (!(await canViewVersion(input.id, ctx))) throw throwNotFoundError();
+  // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
+  // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readModelVersionOwnerViaKysely(
-          await getKyselyWithoutLag('modelVersion', input.id),
-          input.id
-        )
-      : undefined) ??
+    (await readModelVersionOwnerViaKysely(
+      await getKyselyWithoutLag('modelVersion', input.id),
+      input.id
+    )) ??
     (await getVersionById({
       ...input,
       select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
@@ -1487,6 +1588,7 @@ export async function publishPrivateModelVersionHandler({
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');
   }
+  await assertNoFailedScanFiles({ id: version.id });
 
   if (!version.posts.length) {
     const post = await createModelVersionPostFromTraining({

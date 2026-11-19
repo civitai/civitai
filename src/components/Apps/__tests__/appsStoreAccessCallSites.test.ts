@@ -143,12 +143,23 @@ const STORE_GATE_SITES = [
   'components/Apps/AppListingsMarketplaceBody.tsx',
   'components/Apps/useAppsNavSections.ts',
   'components/Apps/RelatedListings.tsx',
+  // The track-record line under the creator card on a listing page: its query (a store read)
+  // fires only with store access. Pinned structurally only, like `RelatedListings.tsx`.
+  'components/Apps/DeveloperTrackRecord.tsx',
+  // The profile Apps tab's grid (`/user/<name>/apps`): its store read fires only with store
+  // access. The tab and the page gate on `canShowProfileAppsTab` (outside these roots), which
+  // `components/Profile/__tests__/profile-apps-tab.test.ts` covers behaviourally.
+  'components/Apps/UserAppsGrid.tsx',
   'components/Apps/resolveAppsPageAccess.ts',
   // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel
   // entry above, and the reason note 1 in this header carries an explicit carve-out. The
   // page itself is runtime-gated; this ONE anchor points at a store-gated route.
   'pages/apps/activity.tsx',
+  // `/apps` is the viewer's "My apps" home now; its body keeps the same store gate as its
+  // SSR resolver (`resolveAppsHomeAccess` → `resolveAppsPageAccess`).
   'pages/apps/index.tsx',
+  // 🔴 THE STORE, MOVED HERE FROM `/apps`. Same page, same gate, new address.
+  'pages/apps/store.tsx',
   'pages/apps/store-preview/[slug].tsx',
 ] as const;
 

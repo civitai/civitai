@@ -13,10 +13,12 @@ describe('the tools a subagent gets', () => {
   it('are exactly these read-only tools', () => {
     expect([...APP_ASSISTANT_SUBAGENT_TOOLS].sort()).toEqual([
       'get_guide',
+      'read_docs',
       'sandbox__dev_server_logs',
       'sandbox__dev_server_status',
       'sandbox__list_dir',
       'sandbox__read_file',
+      'sandbox__read_files',
     ]);
     expect(APP_ASSISTANT_SUBAGENTS.tools).toBe(APP_ASSISTANT_SUBAGENT_TOOLS);
   });

@@ -7,6 +7,18 @@ import {
   ratedEntityDerivedNsfwLevelText,
 } from '@civitai/shared/rated-entity-sql';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
+import type * as Hooks from '~/server/events/points/hooks';
+
+const { onStorySparkPostsHidden, onStorySparkPostsRestored } = vi.hoisted(() => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+}));
 
 // Hand-listed, as in challenge-moderation-adapter.test.ts: article-rating-review.helpers imports it.
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -47,20 +59,10 @@ beforeEach(() => {
 });
 
 describe.each([
-  ['Post', updatePostNsfwLevels, 'p', 'EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)'],
-  [
-    'BountyEntry',
-    updateBountyEntryNsfwLevels,
-    'be',
-    `EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" = be.id)`,
-  ],
-  [
-    'Bounty',
-    updateBountyNsfwLevels,
-    'b',
-    `EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'Bounty' AND ic."entityId" = b.id)`,
-  ],
-] as const)('%s recompute', (entityType, fn, alias, imageGuard) => {
+  ['Post', updatePostNsfwLevels, 'p'],
+  ['BountyEntry', updateBountyEntryNsfwLevels, 'be'],
+  ['Bounty', updateBountyNsfwLevels, 'b'],
+] as const)('%s recompute', (entityType, fn, alias) => {
   it('is the moderator override, else the shared derived level', async () => {
     await fn([1, 2]);
     expect(sentText()).toContain(
@@ -68,11 +70,6 @@ describe.each([
         ratedEntityDerivedNsfwLevelText(entityType, alias)
       )})`
     );
-  });
-
-  it('touches only entities that have images, as the old inner join did', async () => {
-    await fn([1, 2]);
-    expect(sentText()).toContain(imageGuard);
   });
 
   it('writes only when the final value differs', async () => {
@@ -83,6 +80,54 @@ describe.each([
   it('binds the ids as parameters', async () => {
     await fn([1, 2]);
     expect(sentText()).toMatch(/IN \(\$1,\$2\)/);
+  });
+});
+
+// Not Bounty: one can lose its last image, and nsfwLevels.bounty-imageless.pglite.test.ts covers it.
+describe.each([
+  ['Post', updatePostNsfwLevels, 'EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)'],
+  [
+    'BountyEntry',
+    updateBountyEntryNsfwLevels,
+    `EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" = be.id)`,
+  ],
+] as const)('%s recompute', (_entityType, fn, imageGuard) => {
+  it('touches only entities that have images, as the old inner join did', async () => {
+    await fn([1, 2]);
+    expect(sentText()).toContain(imageGuard);
+    // A post with only text items is not rated: an image is still required.
+    expect(sentText()).not.toMatch(/OR\s*\(?\s*EXISTS/);
+  });
+});
+
+describe('updatePostNsfwLevels and story sparks', () => {
+  const change = (id: number, after: number) => ({ id, before: NsfwLevel.PG, after });
+
+  it('forfeits the spark of each post that became Blocked or unrated, in one call', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      change(1, NsfwLevel.Blocked),
+      change(2, 0),
+      change(3, NsfwLevel.R),
+    ]);
+    await updatePostNsfwLevels([1, 2, 3]);
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ postIds: [1, 2] });
+  });
+
+  it('keeps the spark when a post only changes rating', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([change(3, NsfwLevel.R)]);
+    await updatePostNsfwLevels([3]);
+    expect(onStorySparkPostsHidden).not.toHaveBeenCalled();
+    expect(onStorySparkPostsRestored).not.toHaveBeenCalled();
+  });
+
+  it('gives the spark back to each post that is no longer Blocked or unrated, in one call', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 1, before: NsfwLevel.Blocked, after: NsfwLevel.PG },
+      { id: 2, before: 0, after: NsfwLevel.R },
+      { id: 3, before: 0, after: NsfwLevel.Blocked },
+    ]);
+    await updatePostNsfwLevels([1, 2, 3]);
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [1, 2] });
   });
 });
 

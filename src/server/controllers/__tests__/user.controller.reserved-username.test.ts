@@ -9,6 +9,12 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   getBlocklistData: vi.fn(async () => []),
 }));
 vi.mock('~/server/recaptcha/client', () => ({ verifyCaptchaToken: vi.fn(async () => true) }));
+const { mockQueueOwnedContent } = vi.hoisted(() => ({
+  mockQueueOwnedContent: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/search-index/user-content-reindex', () => ({
+  queueOwnedContentUpdate: mockQueueOwnedContent,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -66,5 +72,34 @@ describe('self-service usernames and the reserved moderation username', () => {
     await expect(rename('ada')).rejects.toThrow(`No user with id ${USER_ID}`);
     await onboard('ada').catch(() => undefined);
     expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalled();
+  });
+});
+
+describe('onboarding a username -> owned content documents', () => {
+  it('a changed username re-queues the owned content once', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({
+      email: 'a@example.test',
+      emailVerified: null,
+      username: 'old_name',
+    });
+
+    await onboard('new_name').catch(() => undefined);
+
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
+    expect(mockQueueOwnedContent).toHaveBeenCalledTimes(1);
+    expect(mockQueueOwnedContent).toHaveBeenCalledWith(USER_ID);
+  });
+
+  it('resending the same username does not', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({
+      email: 'a@example.test',
+      emailVerified: null,
+      username: 'same_name',
+    });
+
+    await onboard('same_name').catch(() => undefined);
+
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
+    expect(mockQueueOwnedContent).not.toHaveBeenCalled();
   });
 });

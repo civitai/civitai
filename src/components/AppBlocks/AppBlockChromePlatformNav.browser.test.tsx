@@ -4,7 +4,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Marketplace / App activity / My apps / Review). "Review" is gated on
+// (My apps / Marketplace / App activity / My builds / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -75,7 +75,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     await openPlatformNav();
 
     const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
-    expect(home.getAttribute('href')).toBe('/apps');
+    expect(home.getAttribute('href')).toBe('/apps/store');
 
     const installed = page.getByRole('menuitem', { name: 'App activity' }).element();
     expect(installed.getAttribute('href')).toBe('/apps/activity');
@@ -83,11 +83,14 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     // Was "My submissions" → `/apps/my-submissions`, then `/apps/mine`; that table is now
     // state C of the consolidated `/apps/build`, and this item was REPOINTED rather than
     // removed (removing it would delete a door out of a running app for the app's own
-    // owner; leaving the old href would make every press a 301 hop). The LABEL is
-    // deliberately still "My apps" — it names what an owner arrives at.
-    // and 301s there, so the in-app link points at the surviving route directly.
-    const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
+    // owner; leaving the old href would make every press a 301 hop). It is now labelled
+    // "My builds": "My apps" names the viewer's launcher home at `/apps`.
+    const mine = page.getByRole('menuitem', { name: 'My builds' }).element();
     expect(mine.getAttribute('href')).toBe('/apps/build?view=apps');
+
+    // The home: the launcher of the apps the viewer has — the way out of a running app.
+    const myApps = page.getByRole('menuitem', { name: 'My apps' }).element();
+    expect(myApps.getAttribute('href')).toBe('/apps');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

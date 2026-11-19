@@ -194,6 +194,8 @@ export const useMutateCosmeticShop = () => {
     await queryUtils.cosmetic.getStickerBalances.invalidate();
     // An event hat bought from its event page shows up in "Your hats" there.
     await queryUtils.event.getMyHats.invalidate();
+    // A bought event hat is a sticker to place, and may settle the buyer's team.
+    void queryUtils.hatTurf.getMyStickerHats.invalidate();
     if (currentUser?.id) {
       await queryUtils.user.getCreator.invalidate({
         id: currentUser.id,

@@ -4,14 +4,13 @@ import {
   getPrimaryShade,
   Group,
   Indicator,
-  Popover,
   Progress,
   Stack,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconClearAll, IconCloudUpload, IconX } from '@tabler/icons-react';
 import React from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

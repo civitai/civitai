@@ -19,8 +19,9 @@ import { fakeResponse, USERS } from '~/server/page-data/__tests__/image-detail.f
  *
  *  - the session comes from the viewer's cookies, never from a `?token=` on the endpoint URL, as a
  *    server render's does;
- *  - the bootstrap's data is read for the same host a server render reads it for (the internal
- *    bootstrap host, see `bootstrapHost`), so the ToS and announcement seeds match the page;
+ *  - the bootstrap's data is read for the same hosts a server render reads it for (the internal
+ *    bootstrap host for ToS, see `bootstrapHost`; the viewer's for announcements), so the ToS and
+ *    announcement seeds match the page;
  *  - the session cookie still rolls on the REAL response, for the viewer's own host;
  *  - with the flag off, nothing past the session lookup runs.
  */
@@ -39,13 +40,13 @@ const h = vi.hoisted(() => ({
   // Every seed answers with a value, not `undefined`: the body is JSON on the wire, which drops an
   // undefined member, and the keys test below checks the endpoint sends every seed.
   tosMeta: vi.fn(async (_args: unknown) => ({} as unknown)),
+  announcements: vi.fn(async (_args: unknown) => [] as unknown[]),
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bearer }));
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: h.hubSession,
   maybeRollHubCookie: h.roll,
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -78,11 +79,14 @@ vi.mock('~/server/services/content.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/announcement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AnnouncementService>()),
-  getCurrentAnnouncements: vi.fn(async () => []),
+  getCurrentAnnouncements: h.announcements,
 }));
 vi.mock('~/server/services/nav-banner.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NavBannerService>()),
   getNavBanners: vi.fn(async () => []),
+}));
+vi.mock('~/server/services/event-seeds.service', () => ({
+  getEventSeeds: vi.fn(async () => [{ event: 'fixture', access: 'open' }]),
 }));
 vi.mock('~/server/services/site-alert.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SiteAlertService>()),
@@ -159,17 +163,21 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
       url: '/images/101',
     } as never);
     const renderHosts = [...h.hostsSeen];
-    // Positive control: the render's bootstrap derives its domain from the internal bootstrap host.
-    expect(renderHosts).toEqual([BOOTSTRAP_HOST]);
+    // Positive control: the render's bootstrap derives the ToS domain from the internal bootstrap
+    // host, and the announcements domain from the viewer's.
+    expect(renderHosts).toEqual([BOOTSTRAP_HOST, PUBLIC_HOST]);
     const renderTos = h.tosMeta.mock.calls.map(([args]) => args);
+    const renderAnnouncements = h.announcements.mock.calls.map(([args]) => args);
 
     h.hostsSeen.length = 0;
     h.tosMeta.mockClear();
+    h.announcements.mockClear();
     await fetchPageData();
-    // The endpoint's bootstrap read uses the same host; the page's own tRPC context keeps the
+    // The endpoint's bootstrap read uses the same hosts; the page's own tRPC context keeps the
     // viewer's host, as a server render's does.
     expect(h.hostsSeen).toContain(BOOTSTRAP_HOST);
     expect(h.tosMeta.mock.calls.map(([args]) => args)).toEqual(renderTos);
+    expect(h.announcements.mock.calls.map(([args]) => args)).toEqual(renderAnnouncements);
   });
 
   it('rolls the session cookie on the real response, for the viewer’s host', async () => {
@@ -191,7 +199,8 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
   it('answers with every seed the settings bootstrap gives a server render', async () => {
     const seeds = await resolveSettingsBootstrapSeeds(
       { headers: { host: PUBLIC_HOST }, cookies: cookies(), url: '/images/101' } as never,
-      { user: USERS.owner } as never
+      { user: USERS.owner } as never,
+      {}
     );
     const { res, body } = await fetchPageData();
     expect(res.statusCode).toBe(200);

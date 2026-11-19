@@ -60,7 +60,8 @@ export function mergeTextScanOutputs(
       }
       case 'minor':
       case 'scam':
-      case 'csam': {
+      case 'csam':
+      case 'model-com-face-intent': {
         const { detecting, source } = firstDetecting(outputs.map((o) => o[label]));
         if (!source) break;
         output[label] = { detected: detecting.length > 0, reason: source.reason };

@@ -116,7 +116,11 @@ const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  dbWrite: mockDbWrite,
+  // The minter's own level narrows the dev token; an all-levels author leaves the ceiling as is.
+  dbRead: { user: { findUnique: async () => ({ showNsfw: true, browsingLevel: 31 }) } },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -278,6 +282,15 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     // No manifest on this path, so the budget is the platform default.
     expect(arg.buzzBudget).toBe(1000);
     expect(res._body.buzzBudget).toBe(1000);
+  });
+
+  it('a restricted account mints without the spend scope or a budget', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted: true });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    const arg = mockTokenService.sign.mock.calls[0][0] as any;
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
   });
 
   it('sources the BRAND-NEW scope decision from the SESSION + the flag (never the body): passes both to the resolver', async () => {

@@ -1,4 +1,5 @@
-import { Button, Menu, Popover, ScrollArea, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Button, ScrollArea, Skeleton, Text } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import type { ButtonProps } from '@mantine/core';
 import {
   IconArrowBackUp,

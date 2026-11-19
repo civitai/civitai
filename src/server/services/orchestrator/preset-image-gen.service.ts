@@ -8,6 +8,9 @@ import {
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { env } from '~/env/server';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
+import { assertGenerationAllowedNow } from '~/server/services/generation/generation-status-gate';
 
 /**
  * Preset image generation
@@ -227,23 +230,70 @@ export function buildPresetGraphInput({
   return input;
 }
 
-type PresetGenArgs = {
+/** A registry entry, or an engine named directly (remix apps run the Remix button's engines). */
+export type PresetEngine = Pick<
+  PresetModelConfig,
+  'ecosystem' | 'versionId' | 'maxReferenceImages'
+> &
+  Partial<Pick<PresetModelConfig, 'resolution'>>;
+
+type PresetInputArgs = {
   prompt?: string;
   aspectRatio: string;
   quantity?: number;
   images?: { url: string; width: number; height: number }[] | null;
-  modelConfig: PresetModelConfig;
+  modelConfig: PresetEngine;
   /** Override the resource version (e.g. a model's img2img variant). */
   versionIdOverride?: number;
+};
+
+/** A graph input the caller composed itself, for a workflow other than the preset generation. */
+type ComposedInputArgs = { graphInput: Record<string, unknown> };
+
+type GraphInputArgs = PresetInputArgs | ComposedInputArgs;
+
+type PresetCallerArgs = {
   user: SessionUser;
   token: string;
   /** Buzz account types to spend from. Callers resolve these per their context. */
   currencies: BuzzSpendType[];
   /** Feature flags for gate enforcement; omit for non-request contexts (jobs). */
   flags?: Partial<FeatureAccess>;
-  /** Workflow tags, e.g. `['comics']` / `['iterate']` (+ `'green'`). */
-  tags: string[];
 };
+
+type PresetGenArgs = GraphInputArgs &
+  PresetCallerArgs & {
+    /** Workflow tags, e.g. `['comics']` / `['iterate']` (+ `'green'`). */
+    tags: string[];
+  };
+
+function graphInputOf(args: GraphInputArgs, forWhatIf: boolean) {
+  if ('graphInput' in args) return args.graphInput;
+  const { prompt, aspectRatio, quantity = 1, images, modelConfig, versionIdOverride } = args;
+  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
+  return buildPresetGraphInput({
+    prompt,
+    aspectRatio,
+    quantity,
+    images: forWhatIf && !cappedImages?.length ? null : cappedImages,
+    ecosystem: modelConfig.ecosystem,
+    versionId: versionIdOverride ?? modelConfig.versionId,
+    resolution: modelConfig.resolution,
+  });
+}
+
+/**
+ * The generation kill switch for a preset action that commits work before it submits: comics'
+ * smart create, which queues panels for the job to submit later. Same rule and off-switch as
+ * `submitPresetImageGen`, so a refused caller is turned away before anything is written instead
+ * of leaving panels that fail later. A switch that cannot be read is refused, as it is there.
+ */
+export async function assertPresetGenerationAllowed(
+  user: Pick<SessionUser, 'isModerator' | 'tier'>
+): Promise<void> {
+  if (!env.PRESET_ENFORCE_GENERATION_STATUS) return;
+  await assertGenerationAllowedNow(user);
+}
 
 /**
  * Submit a preset image generation through the generation graph.
@@ -255,40 +305,35 @@ type PresetGenArgs = {
  *
  * Returns the formatted generation response; callers consume `.id`.
  */
-export async function submitPresetImageGen({
-  prompt,
-  aspectRatio,
-  quantity = 1,
-  images,
-  modelConfig,
-  versionIdOverride,
-  user,
-  token,
-  currencies,
-  flags,
-  tags,
-  isGreen,
-  allowMatureContent,
-  track,
-}: PresetGenArgs & {
-  isGreen?: boolean;
-  allowMatureContent?: boolean;
-  track?: any; // Tracker class from createContext
-}) {
-  const versionId = versionIdOverride ?? modelConfig.versionId;
-  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
+export async function submitPresetImageGen(
+  args: PresetGenArgs & {
+    isGreen?: boolean;
+    allowMatureContent?: boolean;
+    track?: any; // Tracker class from createContext
+    remixOfId?: number;
+    /** The orchestrator dedupes on (user, externalId), so a repeated submit returns one workflow. */
+    externalId?: string;
+    sourceProvenance?: string[];
+    remixRun?: Record<string, unknown>;
+  }
+) {
+  const {
+    user,
+    token,
+    currencies,
+    flags,
+    tags,
+    isGreen,
+    allowMatureContent,
+    track,
+    remixOfId,
+    externalId,
+    sourceProvenance,
+    remixRun,
+  } = args;
+  const input = graphInputOf(args, false);
 
-  const input = buildPresetGraphInput({
-    prompt,
-    aspectRatio,
-    quantity,
-    images: cappedImages,
-    ecosystem: modelConfig.ecosystem,
-    versionId,
-    resolution: modelConfig.resolution,
-  });
-
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -298,6 +343,12 @@ export async function submitPresetImageGen({
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // The global generation kill switch, as onsite applies it, for every preset entry point (comics,
+  // iterate, remix apps, article reframe, the queued comic-panels job), which all submit here.
+  // PRESET_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   return generateFromGraph({
     input,
@@ -310,6 +361,10 @@ export async function submitPresetImageGen({
     currencies: currencies as any,
     tags,
     track,
+    remixOfId,
+    externalId,
+    sourceProvenance,
+    remixRun,
     inputGate: 'checked-by-caller',
   });
 }
@@ -319,32 +374,13 @@ export async function submitPresetImageGen({
  * Prompt is intentionally omittable — `whatIfFromGraph` supplies a
  * `cost-estimation` placeholder so validation passes without a real prompt.
  */
-export async function whatIfPresetImageGen({
-  prompt,
-  aspectRatio,
-  quantity = 1,
-  images,
-  modelConfig,
-  versionIdOverride,
-  user,
-  token,
-  currencies,
-  flags,
-}: Omit<PresetGenArgs, 'tags'>): Promise<{ cost: number; ready: boolean }> {
-  const versionId = versionIdOverride ?? modelConfig.versionId;
-  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
+export async function whatIfPresetImageGen(
+  args: GraphInputArgs & PresetCallerArgs
+): Promise<{ cost: number; ready: boolean }> {
+  const { user, token, currencies, flags } = args;
+  const input = graphInputOf(args, true);
 
-  const input = buildPresetGraphInput({
-    prompt,
-    aspectRatio,
-    quantity,
-    images: cappedImages && cappedImages.length > 0 ? cappedImages : null,
-    ecosystem: modelConfig.ecosystem,
-    versionId,
-    resolution: modelConfig.resolution,
-  });
-
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -354,6 +390,10 @@ export async function whatIfPresetImageGen({
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // As onsite refuses `whatIfFromGraph`: no price for a generation the switch would refuse.
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   const result = await whatIfFromGraph({
     input,

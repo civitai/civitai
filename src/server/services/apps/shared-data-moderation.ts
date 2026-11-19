@@ -10,11 +10,13 @@ import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
   includesMinor,
+  includesNsfw,
   includesPoi,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { stripInvisible } from '~/server/utils/confusable-fold';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import {
   collectSharedDataLeaves,
   type SharedDataLeafKind,
@@ -120,9 +122,9 @@ export interface SharedTextHit {
   matched: string;
   /**
    * What matched, in PLATFORM-AUTHORED terms only — never a substring of the leaf: the category
-   * name (`minor`), the list word (`poi`), the blocklist entry (`pattern`), the audit trigger's
-   * category (`audit_regex`, e.g. `profanity`), the cap (`overflow`), or `''` (`link`: the list
-   * does not report which entry matched, only the user's URL). An enforce-mode record stores this in
+   * name (`minor`), the list word (`poi`), a `blocklist:<id>#<position>` reference (`pattern`),
+   * the audit trigger's category (`audit_regex`, e.g. `profanity`), the cap (`overflow`), or `''`
+   * (`link`: the list does not report which entry matched, only the user's URL). An enforce-mode record stores this in
    * place of `matched`.
    */
   label: string;
@@ -155,6 +157,11 @@ export const SHARED_DATA_FULL_AUDIT_BUDGET = 32;
 const AUDIT_BUDGET_EXCEEDED = Symbol('audit-budget-exceeded');
 /** `auditLeaf`'s answer for a leaf longer than the audit will read at all. */
 const LEAF_TOO_LONG = Symbol('leaf-too-long');
+/** `blocklist:<Blocklist.id>#<entry position>`, what a pattern hit records in place of the entry. */
+function patternRef(hit: { listId: number | null; patternId: number }) {
+  return `blocklist:${hit.listId ?? '?'}#${hit.patternId}`;
+}
+
 /** A hit: the matched word as the input carried it, and the trigger's platform category. */
 type AuditLeafMatch = { matched: string; label: string };
 type AuditLeafResult = AuditLeafMatch | null | typeof AUDIT_BUDGET_EXCEEDED | typeof LEAF_TOO_LONG;
@@ -192,7 +199,9 @@ async function auditLeaf(text: string, budget: { remaining: number }): Promise<A
   const mayBeProfane = getProfanityFilter().analyze(normalizeText(input)).isProfane;
   const fullAudit = mayBeProfane && budget.remaining > 0;
   if (fullAudit) budget.remaining -= 1;
-  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit);
+  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit, {
+    nsfw: !!includesNsfw(normalizeText(text)),
+  });
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
   return {
@@ -234,6 +243,8 @@ export async function classifySharedTexts(
     const leaf = inputs[index];
     if (includesMinor(text))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
+    if (containsPrivateMediaUrl(text))
+      hits.push({ category: 'link', matched: 'private_media', label: 'private_media', leaf });
     const poi = includesPoi(text);
     if (poi) {
       // `includesPoi` (no prompt-edit matching) returns the LIST word, never the input's spelling.
@@ -246,8 +257,8 @@ export async function classifySharedTexts(
         hit.kind === 'link'
           ? // `matched` here is the user's URLs as written: user text.
             { category: 'link', matched: hit.matched.join(','), label: '', leaf }
-          : // The blocklist ENTRY that matched (a substring rule) — platform-authored.
-            { category: 'pattern', matched: hit.matched, label: hit.matched, leaf }
+          : // A reference to the entry, never its text: the entry is moderation policy.
+            { category: 'pattern', matched: patternRef(hit), label: patternRef(hit), leaf }
       );
     }
     const audit = audits[index];
@@ -337,6 +348,78 @@ export async function enforcedBlockingHit(scan: SharedTextScan): Promise<SharedT
   return blockingHit(scan, { enforcePatterns });
 }
 
+// ── Naming the refused field ──────────────────────────────────────────────────
+
+/**
+ * Which field a refused write is refused for, so an author can find it without guess-and-retry.
+ *
+ * - `field` is a JSON path rooted at the request's own field names: `data.actions[2].text` for a
+ *   string inside `data`, `data.tags[2]` for an array element, `data` for the blob as a whole (a
+ *   walk cap), or `key` for the document key / counter key.
+ * - `fieldKind` is `key` when the refused text is an OBJECT KEY inside `data`. The path then names
+ *   the object that holds the key, never the key itself — the key IS the refused text.
+ */
+export interface SharedRefusalField {
+  field: string;
+  fieldKind: 'value' | 'key';
+}
+
+/** Stands in for an object key on the path that is itself refused text. */
+export const SHARED_REFUSAL_REDACTED_SEGMENT = '[*]';
+/** A path is made of app-chosen keys; cut it so a refusal stays short. */
+export const SHARED_REFUSAL_FIELD_MAX_CHARS = 256;
+const PLAIN_KEY = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * The field `hit` refuses the write for. `root` says which part of the request was scanned: the
+ * `data` blob (`scanSharedData`) or the document / counter key (`scanCounterKey`).
+ *
+ * 🔴 NEVER THE MATCHED TERM, NEVER THE MATCHED TEXT. The path is built from the app's own keys, and
+ * a key can itself be refused text, so a key segment is replaced by `[*]` when it is any hit's leaf
+ * in this scan, or contains any hit's `matched` term (case-insensitive). The refused leaf's own
+ * text never appears: a value is named by where it sits, and a refused key by its parent.
+ */
+export function sharedRefusalField(
+  scan: SharedTextScan,
+  hit: SharedTextHit,
+  root: 'data' | 'key'
+): SharedRefusalField {
+  if (root === 'key') return { field: 'key', fieldKind: 'value' };
+  const leaf = hit.leaf;
+  if (!leaf) return { field: 'data', fieldKind: 'value' };
+
+  const flaggedLeaves = new Set<string>();
+  const matchedTerms: string[] = [];
+  for (const h of scan.hits) {
+    if (h.leaf) flaggedLeaves.add(h.leaf.raw);
+    if (h.matched) matchedTerms.push(h.matched.toLowerCase());
+  }
+  const isRefusedText = (key: string) => {
+    if (flaggedLeaves.has(key)) return true;
+    const lower = key.toLowerCase();
+    return matchedTerms.some((term) => lower.includes(term));
+  };
+
+  // A refused KEY is named by the object that holds it.
+  const segments = leaf.kind === 'key' ? leaf.segments.slice(0, -1) : leaf.segments;
+  let field = 'data';
+  for (const part of segments) {
+    if (typeof part === 'number') field += `[${part}]`;
+    else if (isRefusedText(part)) field += SHARED_REFUSAL_REDACTED_SEGMENT;
+    else if (PLAIN_KEY.test(part)) field += `.${part}`;
+    else field += `[${JSON.stringify(part)}]`;
+  }
+  if (field.length > SHARED_REFUSAL_FIELD_MAX_CHARS) {
+    field = `${field.slice(0, SHARED_REFUSAL_FIELD_MAX_CHARS - 1)}…`;
+  }
+  return { field, fieldKind: leaf.kind };
+}
+
+/** The field as words, for a refusal that only carries a message (the legacy surface). */
+export function describeSharedRefusalField({ field, fieldKind }: SharedRefusalField): string {
+  return fieldKind === 'key' ? `field: an object key in ${field}` : `field: ${field}`;
+}
+
 /**
  * The alert a blocked shared write raises, by policy: minor/POI → the legal-block channel
  * (`type:error`), a general audit block → the content-block channel (`type:warning`), anything
@@ -365,7 +448,7 @@ export function emitSharedBlockAlert(
       appBlockId: ctx.appBlockId,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────────
@@ -541,7 +624,7 @@ export async function recordSharedDataScan(
   ctx: SharedDataScanContext
 ): Promise<void> {
   const counts = categoryCounts(scan);
-  await logToAxiom(
+  logToAxiom(
     {
       name: 'app-blocks-shared-data-moderation-scan',
       type: 'info',
@@ -557,7 +640,7 @@ export async function recordSharedDataScan(
       ...counts,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 
   const client = clickhouse;
   if (!client) return;
@@ -567,7 +650,7 @@ export async function recordSharedDataScan(
     try {
       await client.insert({ table, values: rows(), format: 'JSONEachRow' });
     } catch (error) {
-      await logToAxiom(
+      logToAxiom(
         {
           name: 'app-blocks-shared-data-moderation-record-failed',
           type: 'error',
@@ -579,7 +662,7 @@ export async function recordSharedDataScan(
           error: error instanceof Error ? error.name : typeof error,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
     }
   };
   await Promise.all([
@@ -618,7 +701,7 @@ export function scheduleSharedDataShadow(
             error: error instanceof Error ? error.name : typeof error,
           },
           'block-audit'
-        ).catch(() => undefined)
+        )
       );
   });
 }

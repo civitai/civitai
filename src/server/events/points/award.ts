@@ -8,7 +8,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   COUNT_BASE_MARK,
@@ -21,6 +21,7 @@ import {
   eventSeasonKeys,
   hatField,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   seasonHatTopicId,
   type EventPointSeason,
   utcDay,
@@ -28,17 +29,34 @@ import {
 import { markEventPointsDirty } from '~/server/events/points/push';
 import { addRosterPoints } from '~/server/events/points/roster';
 import type { SelfHealReason } from '~/server/events/points/self-heal';
-import type {
-  EventHat,
-  EventPointAction,
-  EventPointEntityType,
-  EventPointRemoval,
-  EventPointType,
-  EventPointTypeRule,
+import {
+  shadowPointType,
+  type EventHat,
+  type EventPointAction,
+  type EventPointEntityType,
+  type EventPointLedgerType,
+  type EventPointRemoval,
+  type EventPointType,
+  type EventPointTypeRule,
 } from '~/server/events/points/types';
+import { applyTurfOverride, turfConfigKey, type TurfMode } from '~/server/events/turf/config';
+import {
+  decodeTurfEntry,
+  TURF_CLAIM_KEY,
+  turfKeys,
+  type TurfEntry,
+} from '~/server/events/turf/turf-map';
 
 const DAY_S = 24 * 60 * 60;
 type SeenKey = ReturnType<ReturnType<typeof eventSeasonKeys>['seen']>;
+// A live grant one action made: the event and team it scored for, and the points it added.
+export type EventPointGrant = { event: string; team: string; points: number };
+type AwardFirst = {
+  row: EventPointLedgerRow;
+  seenKey: SeenKey;
+  actor: string;
+  grant?: EventPointGrant;
+};
 // How often an app server reloads the scored events and their weights.
 const STATE_REFRESH_MS = 30 * 1000;
 // How often it applies the hat change log: a hat placed or moved starts earning within this long.
@@ -46,8 +64,6 @@ export const HATS_FOLLOW_MS = 2 * 1000;
 // After a failed refresh, wait this long before trying again, so a persistent failure is not retried
 // by every request on the hot path.
 const REFRESH_RETRY_MS = 10 * 1000;
-// Live buckets outlive the referee's hourly cut by a wide margin.
-const LIVE_TTL_S = 3 * 60 * 60;
 
 export const EVENT_POINTS_LEDGER_TABLE = 'event_point_events';
 
@@ -65,11 +81,16 @@ type ScoredEventDef = {
   endDate: Date;
   teams: readonly string[];
   scoring: EventScoring;
+  // Hat Turf's mode with the live override applied; absent or 'off' loads no turf map.
+  turfMode?: TurfMode;
 };
+
+type TurfState = { entries: Map<string, TurfEntry>; cursor: string };
 
 type LoadedEvent = {
   def: ScoredEventDef;
   hats: Map<string, EventHat>;
+  turf?: TurfState;
   weights: Partial<Record<EventPointType, number>>;
   // Last hatsLog entry applied to `hats`.
   cursor: string;
@@ -87,6 +108,7 @@ export type EventPointsRedis = Pick<
   | 'hGetAll'
   | 'hmGet'
   | 'sAdd'
+  | 'sIsMember'
   | 'sRem'
   | 'expire'
   | 'expireAt'
@@ -105,8 +127,14 @@ export function streamIdBefore(a: string, b: string) {
   return am < bm || (am === bm && as < bs);
 }
 
+/** The Hat Turf map's reads (turf-map.ts): the stream and hash `loadTurf` / `followTurf` follow. */
+export type EventPointsTurfRedis = Pick<typeof redis, 'hGetAll' | 'hmGet' | 'xRange' | 'xRevRange'>;
+
 export type EventPointsDeps = {
   redis: EventPointsRedis;
+  // The Hat Turf map's client: the cache cluster in production (turfKeys are cluster keys). Unset,
+  // `redis` answers, for a test that keeps one store.
+  turfRedis?: EventPointsTurfRedis;
   insertLedger: (rows: EventPointLedgerRow[]) => Promise<void>;
   // Scored events whose points are live now: from preview start to the end of finalization.
   loadScoredEvents: (now: Date) => Promise<ScoredEventDef[]>;
@@ -121,7 +149,7 @@ export type EventPointsDeps = {
 export type EventPointLedgerRow = {
   event: string;
   time: string;
-  type: EventPointType;
+  type: EventPointLedgerType;
   op: 'add' | 'remove';
   actorId: number;
   entityType: EventPointEntityType;
@@ -131,6 +159,8 @@ export type EventPointLedgerRow = {
   claimKey: string;
   team: string;
   sourceId: string;
+  // The players a turf action credits, each as if their sticker were a hat; empty on a hat's row.
+  players: number[];
 };
 
 const ledgerRow = (
@@ -138,11 +168,12 @@ const ledgerRow = (
   action: EventPointAction | EventPointRemoval,
   op: 'add' | 'remove',
   hat: EventHat | undefined,
-  time: Date
+  time: Date,
+  turf?: { type: EventPointLedgerType; players: number[] }
 ): EventPointLedgerRow => ({
   event,
   time: formatClickhouseDateTime64(time),
-  type: action.type,
+  type: turf?.type ?? action.type,
   op,
   actorId: action.actorId,
   entityType: action.entityType,
@@ -152,6 +183,7 @@ const ledgerRow = (
   claimKey: hat?.claimKey ?? '',
   team: hat?.team ?? '',
   sourceId: action.sourceId ?? '',
+  players: turf?.players ?? [],
 });
 
 export function createEventPointsEngine(deps: EventPointsDeps) {
@@ -223,17 +255,53 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return { hats, cursor: entries[entries.length - 1].id, topicIds };
   }
 
+  // The turf map, loaded and followed exactly as the hat map is (see loadHats and followHats).
+  const turfRedis = deps.turfRedis ?? (deps.redis as unknown as EventPointsTurfRedis);
+  async function loadTurf(event: string): Promise<TurfState> {
+    const keys = turfKeys(event);
+    const [last] = (await turfRedis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
+    const raw = await turfRedis.hGetAll(keys.map);
+    const entries = new Map<string, TurfEntry>();
+    for (const [key, value] of Object.entries(raw ?? {})) {
+      const entry = decodeTurfEntry(value);
+      if (entry) entries.set(key, entry);
+    }
+    return { entries, cursor: last?.id ?? '0-0' };
+  }
+
+  async function followTurf(event: string, prev: TurfState): Promise<TurfState> {
+    const keys = turfKeys(event);
+    const entries = (await turfRedis.xRange(keys.log, `(${prev.cursor}`, '+')) ?? [];
+    if (!entries.length) return prev;
+    if (prev.cursor === '0-0') return loadTurf(event);
+    const [first] = (await turfRedis.xRange(keys.log, '-', '+', { COUNT: 1 })) ?? [];
+    if (first && streamIdBefore(prev.cursor, first.id)) return loadTurf(event);
+    const changed = [...new Set(entries.map(({ message }) => message.k))];
+    const values = await turfRedis.hmGet(keys.map, changed);
+    changed.forEach((key, i) => {
+      const entry = values[i] ? decodeTurfEntry(values[i]!) : undefined;
+      if (entry) prev.entries.set(key, entry);
+      else prev.entries.delete(key);
+    });
+    return { entries: prev.entries, cursor: entries[entries.length - 1].id };
+  }
+
+  const turfOn = (def: ScoredEventDef) => !!def.turfMode && def.turfMode !== 'off';
+  const nextTurf = (def: ScoredEventDef, prev?: TurfState) =>
+    !turfOn(def) ? undefined : prev ? followTurf(def.name, prev) : loadTurf(def.name);
+
   async function refresh() {
     const now = deps.now();
     const defs = await deps.loadScoredEvents(now);
     const next: LoadedEvent[] = [];
     for (const def of defs) {
       const prev = loaded.find((l) => l.def.name === def.name);
-      const [weights, hatState] = await Promise.all([
+      const [weights, hatState, turf] = await Promise.all([
         loadWeights(def),
         prev ? followHats(def.name, prev) : loadHats(def.name),
+        nextTurf(def, prev?.turf),
       ]);
-      next.push({ def, weights, ...hatState });
+      next.push({ def, weights, ...hatState, turf });
     }
     loaded = next;
     loadedAt = now.getTime();
@@ -261,7 +329,13 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
 
   async function followAll() {
     await Promise.all(
-      loaded.map(async (event) => Object.assign(event, await followHats(event.def.name, event)))
+      loaded.map(async (event) => {
+        const [hatState, turf] = await Promise.all([
+          followHats(event.def.name, event),
+          nextTurf(event.def, event.turf),
+        ]);
+        Object.assign(event, hatState, { turf });
+      })
     );
   }
 
@@ -300,8 +374,11 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (time >= def.endDate) return undefined;
     const rule = def.scoring.types[action.type];
     if (!rule || !rule.entities.includes(action.entityType)) return undefined;
-    const hat = event.hats.get(entityKey(action.entityType, action.entityId));
-    if (!hat || hat.ownerId === action.actorId) return undefined;
+    const key = entityKey(action.entityType, action.entityId);
+    const hat = event.hats.get(key);
+    // A worn hat protects its image: turf earns only where no hat does.
+    if (!hat) return awardTurf(event, action, rule, key, time);
+    if (hat.ownerId === action.actorId) return undefined;
     if (!isEligibleActor(def, action)) return undefined;
 
     const keys = eventSeasonKeys(def.name, eventPointSeason(def.startDate, time));
@@ -327,13 +404,142 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
     // person is later removed, the referee lets this one count instead. Once marked seen it must reach
     // the ledger, so a Redis error in the live accounting below only costs the live display.
-    const first = { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
+    const first: AwardFirst = {
+      row: ledgerRow(def.name, action, 'add', hat, time),
+      seenKey,
+      actor,
+    };
     try {
-      await liveGrant(event, action, hat, keys, seenKey, actor, rule, time);
+      await expireSeen(def, seenKey, rule, time);
+      first.grant = await liveGrant(event, action, hat, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.liveGrant', error);
     }
     return first;
+  }
+
+  // TTLs are set once, when the key is created. Day-scoped keys only matter for their UTC day.
+  const expireSeen = (
+    def: ScoredEventDef,
+    seenKey: SeenKey,
+    rule: EventPointTypeRule,
+    time: Date
+  ) => deps.redis.expireAt(seenKey, rule.once === 'day' ? dayExpiry(time) : eventExpiry(def));
+
+  // A turf action credits each of the image's credited players as if their sticker were a hat, one
+  // ledger row naming them all. In shadow mode it records the shadow type and moves no live total.
+  async function awardTurf(
+    event: LoadedEvent,
+    action: EventPointAction,
+    rule: EventPointTypeRule,
+    key: string,
+    time: Date
+  ) {
+    const { def } = event;
+    const entry = event.turf?.entries.get(key);
+    if (!entry) return undefined;
+    const players = entry.players.filter((p) => p !== action.actorId);
+    if (!players.length || !isEligibleActor(def, action)) return undefined;
+    const live = def.turfMode === 'live';
+    const type = live ? action.type : shadowPointType(action.type);
+    const keys = eventSeasonKeys(def.name, eventPointSeason(def.startDate, time));
+    const seenKey = keys.seen(
+      type,
+      action.entityType,
+      action.entityId,
+      rule.once === 'day' ? utcDay(time) : undefined
+    );
+    const actor = String(action.actorId);
+    const teamHat = {
+      ownerId: 0,
+      cosmeticId: entry.cosmeticId,
+      claimKey: TURF_CLAIM_KEY,
+      team: entry.team,
+    };
+    const first: AwardFirst = {
+      row: ledgerRow(def.name, action, 'add', teamHat, time, { type, players }),
+      seenKey,
+      actor,
+    };
+    let marked: number;
+    try {
+      marked = await deps.redis.sAdd(seenKey, actor);
+    } catch (error) {
+      deps.logError('redis', 'eventPoints.turfSeen', error);
+      return first;
+    }
+    if (!marked) return undefined;
+    try {
+      await expireSeen(def, seenKey, rule, time);
+      if (live)
+        first.grant = await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
+    } catch (error) {
+      deps.logError('redis', 'eventPoints.turfLiveGrant', error);
+    }
+    return first;
+  }
+
+  // A turf first's live totals, batched: one cap increment per credited player, then their owner and
+  // totals and one team increment for the sum. Issued together so the client pipelines them, two round
+  // trips whatever the player count. No per-hat, count or roster update: turf credits are not listed
+  // as hats, and the roster's points sort (display only) catches up at the hourly roster reconcile.
+  async function liveGrantTurf(
+    event: LoadedEvent,
+    action: EventPointAction,
+    teamHat: EventHat,
+    players: number[],
+    keys: ReturnType<typeof eventSeasonKeys>,
+    actor: string,
+    time: Date
+  ): Promise<EventPointGrant | undefined> {
+    const { def } = event;
+    const weight = event.weights[action.type] ?? 0;
+    if (weight <= 0) return undefined;
+    const day = utcDay(time);
+    // Settled one by one: a failed cap increment costs only that player's live grant.
+    const totals = await Promise.allSettled(
+      players.map((p) => deps.redis.hIncrBy(keys.cap(day, p), actor, weight))
+    );
+    const granted = players
+      .flatMap((ownerId, i) => {
+        const result = totals[i];
+        if (result.status === 'rejected') {
+          deps.logError('redis', 'eventPoints.turfCap', result.reason);
+          return [];
+        }
+        const total = Number(result.value);
+        const grant = cappedGrant(weight, total, def.scoring.capPerActorPerOwnerPerDay);
+        return [{ ownerId, firstToday: total === weight, grant }];
+      })
+      .filter((g) => g.grant > 0 || g.firstToday);
+    const bucket = liveBucket(time);
+    const ownerKey = keys.live(bucket, 'owner');
+    const teamKey = keys.live(bucket, 'team');
+    const sum = granted.reduce((n, g) => n + g.grant, 0);
+    await Promise.all([
+      ...granted
+        .filter((g) => g.firstToday)
+        .map((g) => deps.redis.expireAt(keys.cap(day, g.ownerId), dayExpiry(time))),
+      ...granted
+        .filter((g) => g.grant > 0)
+        .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
+      ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
+    ]);
+    if (sum <= 0) return undefined;
+    for (const g of granted)
+      if (g.grant > 0)
+        try {
+          deps.onGrant(def, { ...teamHat, ownerId: g.ownerId }, time);
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrant', error);
+        }
+    for (const key of [ownerKey, teamKey]) {
+      if (bucketTtlSet.has(key)) continue;
+      if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
+      bucketTtlSet.add(key);
+      await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
+    }
+    return { event: def.name, team: teamHat.team, points: sum };
   }
 
   async function liveGrant(
@@ -341,15 +547,11 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     action: EventPointAction,
     hat: EventHat,
     keys: ReturnType<typeof eventSeasonKeys>,
-    seenKey: SeenKey,
     actor: string,
-    rule: EventPointTypeRule,
     time: Date
-  ) {
+  ): Promise<EventPointGrant | undefined> {
     const { def } = event;
     const day = utcDay(time);
-    // TTLs are set once, when the key is created. Day-scoped keys only matter for their UTC day.
-    await deps.redis.expireAt(seenKey, rule.once === 'day' ? dayExpiry(time) : eventExpiry(def));
 
     const weight = event.weights[action.type] ?? 0;
     if (weight > 0) {
@@ -403,17 +605,27 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
           bucketTtlSet.add(key);
-          await deps.redis.expire(key, LIVE_TTL_S);
+          await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
         }
+        return { event: def.name, team: hat.team, points: grant };
       }
     }
+    return undefined;
   }
 
-  async function awardEventPoints(actions: EventPointAction[]) {
-    if (!actions.length) return;
+  /**
+   * Returns how many firsts it recorded: 0 when every action was a repeat or did not score.
+   * `onGrants` hears the live grants before the ledger insert, so a caller can show them without
+   * waiting on ClickHouse. It is not called when nothing was recorded.
+   */
+  async function awardEventPoints(
+    actions: EventPointAction[],
+    onGrants?: (grants: EventPointGrant[]) => void
+  ): Promise<number> {
+    if (!actions.length) return 0;
     try {
       await ensureFresh();
-      if (!loaded.length) return;
+      if (!loaded.length) return 0;
       // Settled one by one: a Redis error on one action must not drop the others' ledger rows.
       const results = await Promise.allSettled(
         loaded.flatMap((event) =>
@@ -426,9 +638,16 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           deps.logError('redis', 'eventPoints.award', result.reason);
         else if (result.value) firsts.push(result.value);
       }
-      if (!firsts.length) return;
+      if (!firsts.length) return 0;
+      if (onGrants)
+        try {
+          onGrants(firsts.flatMap((f) => (f.grant ? [f.grant] : [])));
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrants', error);
+        }
       try {
         await deps.insertLedger(firsts.map((f) => f.row));
+        return firsts.length;
       } catch (error) {
         // The referee scores from the ledger alone. A first it never received would stay marked
         // seen, so the same action could never earn again: take the marks back so the next one
@@ -440,6 +659,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     } catch (error) {
       deps.logError('redis', 'eventPoints.award', error, { count: actions.length });
     }
+    return 0;
   }
 
   async function removeEventPoints(removals: EventPointRemoval[]) {
@@ -455,7 +675,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             if (!rule || !rule.entities.includes(removal.entityType)) return;
             // Daily types (views) are never taken back.
             if (rule.once !== 'event') return;
-            const hat = event.hats.get(entityKey(removal.entityType, removal.entityId));
+            const key = entityKey(removal.entityType, removal.entityId);
+            const hat = event.hats.get(key);
+            const turf = event.turf?.entries.get(key);
             const time = removal.time ?? deps.now();
             // Only someone who earned on this entity this season, or anyone on a hatted entity (in
             // case Redis lost the mark), has anything to net out, so un-reacts elsewhere on the site
@@ -468,7 +690,21 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             const seenKey = keys.seen(removal.type, removal.entityType, removal.entityId);
             const actor = String(removal.actorId);
             const removed = await deps.redis.sRem(seenKey, actor);
-            if (removed || hat) rows.push(ledgerRow(event.def.name, removal, 'remove', hat, time));
+            if (removed || hat || turf)
+              rows.push(ledgerRow(event.def.name, removal, 'remove', hat, time));
+            // A shadow add is netted out under its own type, and only ever by a shadow removal.
+            if (event.def.turfMode === 'shadow') {
+              const type = shadowPointType(removal.type);
+              const shadowSeen = keys.seen(type, removal.entityType, removal.entityId);
+              const shadowRemoved = await deps.redis.sRem(shadowSeen, actor);
+              if (shadowRemoved || turf)
+                rows.push(
+                  ledgerRow(event.def.name, removal, 'remove', undefined, time, {
+                    type,
+                    players: [],
+                  })
+                );
+            }
           })
         )
       );
@@ -484,10 +720,12 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
 
   // Synchronous, for the view hot path: true when any live event has a hat on this entity. False
   // until the first refresh completes, so the first requests after a deploy skip, not wait.
+  // Despite the name, also true for a turf image: the hooks gate on "can earn here", which a turf
+  // leader makes as true as a hat does.
   function isHattedEntity(entityType: string, entityId: number) {
     void ensureFresh();
     const key = `${entityType}:${entityId}`;
-    return loaded.some((event) => event.hats.has(key));
+    return loaded.some((event) => event.hats.has(key) || !!event.turf?.entries.has(key));
   }
 
   // For removals, which must not skip like the first awards do: an un-react on a server that has not
@@ -495,6 +733,28 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   async function isHattedEntityOnceLoaded(entityType: string, entityId: number) {
     await ensureFresh();
     return isHattedEntity(entityType, entityId);
+  }
+
+  // For a removal on content that may have left the turf map since it earned (turf leads churn, and
+  // the mode can go off): was this person marked as having earned there, live or shadow? It reads the
+  // same mark a hat earning sets, so it also finds a reaction earned under a hat since taken off.
+  async function hasTurfMark(removal: EventPointRemoval) {
+    await ensureFresh();
+    for (const event of loaded) {
+      if (!event.def.turfMode) continue;
+      const rule = event.def.scoring.types[removal.type];
+      if (!rule || rule.once !== 'event' || !rule.entities.includes(removal.entityType)) continue;
+      const time = removal.time ?? deps.now();
+      const keys = eventSeasonKeys(event.def.name, eventPointSeason(event.def.startDate, time));
+      const actor = String(removal.actorId);
+      const marks = await Promise.all(
+        [removal.type, shadowPointType(removal.type)].map((type) =>
+          deps.redis.sIsMember(keys.seen(type, removal.entityType, removal.entityId), actor)
+        )
+      );
+      if (marks.some(Boolean)) return true;
+    }
+    return false;
   }
 
   // Whether a hat topic id names a hat this server knows for the event, in that season's naming. For
@@ -518,6 +778,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     removeEventPoints,
     isHattedEntity,
     isHattedEntityOnceLoaded,
+    hasTurfMark,
     isKnownHatTopic,
     refresh,
   };
@@ -551,15 +812,24 @@ async function loadScoredEvents(now: Date): Promise<ScoredEventDef[]> {
       endDate: e.endDate,
       teams: e.teams,
       scoring: e.scoring,
+      turfMode: e.turf ? await loadTurfMode(e.name, e.turf) : undefined,
     });
   }
   return scored;
+}
+
+// Read on each state refresh, so a mode flip reaches every server within one refresh. On a Redis
+// error the event file's mode stands.
+async function loadTurfMode(event: string, base: Parameters<typeof applyTurfOverride>[0]) {
+  const raw = await sysRedis.get(turfConfigKey(event)).catch(() => null);
+  return applyTurfOverride(base, raw).config.mode;
 }
 
 let engine: ReturnType<typeof createEventPointsEngine> | undefined;
 function getEngine() {
   engine ??= createEventPointsEngine({
     redis: sysRedis,
+    turfRedis: redis,
     insertLedger: async (rows) => {
       if (!clickhouse) return;
       await clickhouse.insert({
@@ -572,9 +842,7 @@ function getEngine() {
     now: () => new Date(),
     logError: (kind, fn, error, extra) => {
       if (kind === 'redis') return logSysRedisFailOpen('write-degraded', fn, error, { ...extra });
-      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
     },
     onGrant: markEventPointsDirty,
     selfHeal: healDetached,
@@ -589,9 +857,7 @@ function healDetached(event: string, reason: SelfHealReason) {
   void import('~/server/events/points/self-heal')
     .then(({ healEventPoints }) => healEventPoints(event, reason))
     .catch((error) =>
-      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error }).catch(
-        () => undefined
-      )
+      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error })
     );
 }
 
@@ -603,9 +869,12 @@ onEventPointsSwitchOn(async () => {
 // Records actions that may earn event points. Never throws and never needs awaiting for
 // correctness; await it only to keep a test deterministic. With the kill switch off, all four are
 // no-ops that touch neither Redis nor ClickHouse.
-export const awardEventPoints = async (actions: EventPointAction[]) => {
-  if (!(await isEventPointsEnabled().catch(() => false))) return;
-  return getEngine().awardEventPoints(actions);
+export const awardEventPoints = async (
+  actions: EventPointAction[],
+  onGrants?: (grants: EventPointGrant[]) => void
+) => {
+  if (!(await isEventPointsEnabled().catch(() => false))) return 0;
+  return getEngine().awardEventPoints(actions, onGrants);
 };
 export const removeEventPoints = async (removals: EventPointRemoval[]) => {
   if (!(await isEventPointsEnabled().catch(() => false))) return;
@@ -616,5 +885,7 @@ export const isHattedEntity = (entityType: string, entityId: number) =>
 export const isHattedEntityOnceLoaded = async (entityType: string, entityId: number) =>
   (await isEventPointsEnabled().catch(() => false)) &&
   getEngine().isHattedEntityOnceLoaded(entityType, entityId);
+export const hasTurfMark = async (removal: EventPointRemoval) =>
+  (await isEventPointsEnabled().catch(() => false)) && getEngine().hasTurfMark(removal);
 export const isKnownHatTopic = (event: string, topicId: string, season: EventPointSeason) =>
   getEngine().isKnownHatTopic(event, topicId, season);

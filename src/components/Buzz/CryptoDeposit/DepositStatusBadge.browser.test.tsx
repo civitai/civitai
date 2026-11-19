@@ -13,4 +13,9 @@ describe('DepositStatusBadge', () => {
       await expect.element(page.getByText('Confirming', { exact: true })).toBeVisible();
     }
   );
+
+  it('shows a deposit Support paid by hand as credited, not as its raw status', async () => {
+    renderWithProviders(<DepositStatusBadge status="hand_paid" />);
+    await expect.element(page.getByText('Credited by support', { exact: true })).toBeVisible();
+  });
 });

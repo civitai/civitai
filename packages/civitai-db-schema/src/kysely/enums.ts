@@ -452,6 +452,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
@@ -771,8 +772,10 @@ export const JobQueueType = {
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
+  ImageDelete: 'ImageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
+  CsamArchive: 'CsamArchive',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -842,6 +845,7 @@ export const NewOrderRankType = {
   Acolyte: 'Acolyte',
   Knight: 'Knight',
   Templar: 'Templar',
+  Paladin: 'Paladin',
 } as const;
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 export const ChallengeSource = {
@@ -1038,6 +1042,7 @@ export const OutboxEntity = {
   Model: 'Model',
   Post: 'Post',
   ModelVersion: 'ModelVersion',
+  Comic: 'Comic',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
 export const StorylineStatus = {
@@ -1051,6 +1056,12 @@ export const StorylineWhoCanContinue = {
 } as const;
 export type StorylineWhoCanContinue =
   (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+export const StorylineFollowScope = {
+  Canon: 'Canon',
+  Endorsed: 'Endorsed',
+  Everything: 'Everything',
+} as const;
+export type StorylineFollowScope = (typeof StorylineFollowScope)[keyof typeof StorylineFollowScope];
 export const ServiceOfferingStatus = {
   Draft: 'Draft',
   Active: 'Active',
@@ -1059,6 +1070,14 @@ export const ServiceOfferingStatus = {
 } as const;
 export type ServiceOfferingStatus =
   (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+export const ServiceOfferingIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type ServiceOfferingIngestionStatus =
+  (typeof ServiceOfferingIngestionStatus)[keyof typeof ServiceOfferingIngestionStatus];
 export const ServicePreviewKind = {
   Image: 'Image',
   Video: 'Video',
@@ -1108,6 +1127,7 @@ export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof Se
 export const ServiceDealFileKind = {
   Preview: 'Preview',
   Final: 'Final',
+  Attachment: 'Attachment',
 } as const;
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
 export const ServiceDealFileStatus = {

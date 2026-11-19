@@ -57,6 +57,7 @@ export function MasonryColumns<TData>({
         >
           {staticItem?.({ columnWidth, height: 450 })}
           {items.map(({ height, data }, index) => {
+            if (!data) return null;
             switch (data.type) {
               case 'data':
                 return (

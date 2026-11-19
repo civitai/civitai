@@ -4,6 +4,7 @@ import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 
 import { BaseGenerationForm } from './BaseGenerationForm';
 
@@ -14,6 +15,8 @@ import { BaseGenerationForm } from './BaseGenerationForm';
 export function FormGraphGenerator() {
   const isClient = useIsClient();
   const loading = useGenerationGraphStore((s) => s.loading);
+  // In the mobile generator the form is a sheet, and a downward drag on it must not reload the page.
+  const mobileGenerator = useMobileGenerator();
 
   if (!isClient) return null;
 
@@ -25,6 +28,7 @@ export function FormGraphGenerator() {
           scrollRestore={{ key: 'form-graph-generator' }}
           pt={0}
           className="flex flex-col gap-2"
+          withPullToRefresh={!mobileGenerator}
         >
           <Announcements type="generator" />
           <BaseGenerationForm />

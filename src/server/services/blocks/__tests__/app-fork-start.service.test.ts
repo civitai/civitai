@@ -26,6 +26,7 @@ const m = vi.hoisted(() => ({
   forkable: vi.fn(),
   reconstruct: vi.fn(),
   setProvenance: vi.fn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
+  createSource: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
@@ -62,12 +63,17 @@ vi.mock('~/server/services/blocks/app-fork.service', async (importOriginal) => (
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   reconstructBundleFromForgejo: m.reconstruct,
 }));
+// The fork's source repo: its own service, pinned in `app-source-repo.service.test.ts`. Here only
+// what the start hands it (and that the start never depends on it).
+vi.mock('~/server/services/blocks/app-source-repo.service', () => ({
+  createForkSourceRepo: m.createSource,
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { FORKABLE_OFFSITE_MESSAGE } from '~/server/services/blocks/app-fork.service';
 import {
   FORK_BUSY_MESSAGE,
@@ -84,6 +90,7 @@ import type { SessionUser } from '~/types/session';
 const {
   FORK_SESSION_TTL_SECONDS,
   applyForkSessionToFirstPublishRequest,
+  buildForkSeedZip,
   forkSeedExclusionReason,
   forkSlugFor,
   getForkSessionForUser,
@@ -197,7 +204,8 @@ function installRedis() {
     }
   );
   redisMock.sysRedis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
-  redisMock.sysRedis.multi.mockImplementation(() => {
+  // The fork-start windows are on the cache cluster; the fork sessions above stay in system Redis.
+  redisMock.redis.multi.mockImplementation(() => {
     let key = '';
     const chain = {
       set: (k: string) => {
@@ -280,6 +288,7 @@ beforeEach(async () => {
   m.summary.mockResolvedValue({ id: PARENT_LISTING, slug: PARENT_SLUG, name: PARENT_NAME });
   m.forkable.mockResolvedValue({ available: true, forkable: true });
   m.reconstruct.mockImplementation(async () => parentBundle());
+  m.createSource.mockResolvedValue({ kind: 'created' });
   setEnv({
     APP_FORK_SEED_S3_ENDPOINT: `https://${SEED_HOST}`,
     APP_FORK_SEED_S3_BUCKET: 'fork-seed-bucket-test',
@@ -309,6 +318,7 @@ const start = (over: Partial<Parameters<typeof startAppFork>[0]> = {}) =>
     listingId: PARENT_LISTING,
     scope: 'full',
     redCapable: false,
+    viewerBrowsingLevel: undefined,
     ...over,
   });
 
@@ -355,14 +365,17 @@ describe('startAppFork — refusals (exact errors)', () => {
   it('🔴 a parent that is not PUBLICLY visible (hidden, removed, restricted) reads as missing', async () => {
     // Everything else about this parent would pass: the visibility check is the only refusal.
     m.summary.mockResolvedValue(null);
-    await expect(start({ scope: 'full', redCapable: true })).rejects.toMatchObject({
+    await expect(
+      start({ scope: 'full', redCapable: true, viewerBrowsingLevel: 13 })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: FORK_PARENT_UNAVAILABLE_MESSAGE,
     });
-    // Asked at the PUBLIC floor whoever the viewer is, under the viewer's own scope.
+    // Asked at the PUBLIC floor whoever the viewer is, under the viewer's own scope and (🔴) the
+    // viewer's own browsing level — an R/X parent needs that rating in it (13 = PG|R|X).
     expect(m.summary).toHaveBeenCalledWith(
       { id: PARENT_LISTING },
-      { redCapable: true, scope: 'full', floor: 'public' }
+      { redCapable: true, scope: 'full', floor: 'public', viewerBrowsingLevel: 13 }
     );
     expect(m.reconstruct).not.toHaveBeenCalled();
     expect(store.size).toBe(0);
@@ -414,10 +427,16 @@ describe('startAppFork — refusals (exact errors)', () => {
       message: FORK_RATE_LIMITED_MESSAGE,
     });
     expect(m.reconstruct).toHaveBeenCalledTimes(5);
+    // The windows are counted on the cache cluster, not in system Redis.
+    expect([...counters.keys()].sort()).toEqual([
+      `system:blocks:fork-rate-limit:${FORKER_ID}:3600`,
+      `system:blocks:fork-rate-limit:${FORKER_ID}:86400`,
+    ]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('rate limit: 20 a day — refused past it even with the hour window fresh', async () => {
-    counters.set(`${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
+    counters.set(`${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
     await expect(start()).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,
@@ -516,6 +535,76 @@ describe('startAppFork — a successful start', () => {
     expect(forkSlug).not.toBe(seen[1]);
     expect(forkSlug).toMatch(/^pixel-garden-fork-[0-9a-f]{4}$/);
     expect(isValidForkSlug(forkSlug)).toBe(true);
+  });
+
+  it('creates the fork’s source repo with exactly the seed’s files, and the SESSION’s parent', async () => {
+    const result = await start();
+    expect(m.createSource).toHaveBeenCalledTimes(1);
+    const arg = m.createSource.mock.calls[0][0] as {
+      forkSlug: string;
+      userId: number;
+      files: Array<{ path: string; content: Buffer }>;
+      lineage: unknown;
+    };
+    expect(arg.forkSlug).toBe(result.forkSlug);
+    expect(arg.userId).toBe(FORKER_ID);
+    expect(arg.lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+    // The same files the sandbox seed holds, byte for byte.
+    const zip = await JSZip.loadAsync(putBodies[0]);
+    const zipped = Object.keys(zip.files)
+      .filter((n) => !zip.files[n].dir)
+      .sort();
+    expect(arg.files.map((f) => f.path).sort()).toEqual(zipped);
+    for (const f of arg.files)
+      expect(f.content.equals(await zip.file(f.path)!.async('nodebuffer'))).toBe(true);
+  });
+
+  it('🔴 FORGERY: a parent manifest naming another parent changes nothing about the lineage', async () => {
+    m.reconstruct.mockImplementation(async () =>
+      parentBundle({
+        ...PARENT_FILES,
+        'block.manifest.json': JSON.stringify({
+          blockId: 'someone-elses-app',
+          name: PARENT_NAME,
+          version: '1.4.0',
+          forkOf: 'someone-elses-app',
+          'Forked-From-App': 'someone-elses-app',
+          'Forked-From-Commit': HEAD_SHA,
+        }),
+      })
+    );
+    await start();
+    expect((m.createSource.mock.calls[0][0] as { lineage: unknown }).lineage).toEqual({
+      parentSlug: PARENT_SLUG,
+      parentCommitSha: APPROVED_SHA,
+      parentAppBlockId: PARENT_BLOCK,
+    });
+  });
+
+  it('a source repo that never finishes holds the start only for the bounded wait', async () => {
+    const { __setForkSourceRepoWaitMsForTests } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    m.createSource.mockReturnValue(new Promise(() => undefined));
+    __setForkSourceRepoWaitMsForTests(25);
+    try {
+      // Would never settle if the start awaited the creation itself.
+      await expect(start()).resolves.toMatchObject({ parentName: PARENT_NAME });
+      expect(m.createSource).toHaveBeenCalledTimes(1);
+    } finally {
+      __setForkSourceRepoWaitMsForTests();
+    }
+  });
+
+  it('a source repo that could not be made never fails the start, nor releases its slug', async () => {
+    m.createSource.mockRejectedValue(new Error('git host down'));
+    const result = await start();
+    expect(result).toMatchObject({ parentName: PARENT_NAME });
+    expect(store.has(sessionKey(result.forkSlug))).toBe(true);
   });
 
   it('🔴 writes nothing to the database: no approvals, scopes, goods or entitlements are copied', async () => {
@@ -674,5 +763,172 @@ describe('applyForkSessionToFirstPublishRequest — provenance only from the ses
       })
     ).resolves.toBe(false);
     expect(m.setProvenance).not.toHaveBeenCalled();
+  });
+});
+
+describe('the fork seed pre-fills storage imports of the parent', () => {
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-ab12'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('imports every exportable parent collection readwrite, with the scope and a justification', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage'],
+      storage: {
+        collections: {
+          notes: { visibility: 'private' },
+          board: { visibility: 'shared', write: 'own' },
+          secret: { visibility: 'private', exportable: false },
+        },
+      },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-ab12');
+    expect(manifest.storage.imports).toEqual([
+      { from: 'notes-app', collections: ['notes', 'board'], access: 'readwrite' },
+    ]);
+    // The fork keeps its own copy of the declarations: its own data starts empty.
+    expect(Object.keys(manifest.storage.collections)).toEqual(['notes', 'board', 'secret']);
+    expect(manifest.scopes).toEqual(['apps:storage', 'apps:storage:import']);
+    // A justification naming the parent; the wording is the author's to edit.
+    expect(manifest.scopeJustifications['apps:storage:import']).toContain('Notes App');
+  });
+
+  it('keeps an author justification and replaces an existing import from the parent', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage', 'apps:storage:import'],
+      scopeJustifications: { 'apps:storage:import': 'Reads the shared dictionary.' },
+      storage: {
+        collections: { notes: { visibility: 'private' } },
+        imports: [
+          { from: 'dictionary-app', collections: ['words'], access: 'read' },
+          { from: 'notes-app', collections: ['stale'], access: 'read' },
+        ],
+      },
+    });
+    expect(manifest.storage.imports).toEqual([
+      { from: 'dictionary-app', collections: ['words'], access: 'read' },
+      { from: 'notes-app', collections: ['notes'], access: 'readwrite' },
+    ]);
+    expect(manifest.scopes).toEqual(['apps:storage', 'apps:storage:import']);
+    expect(manifest.scopeJustifications).toEqual({
+      'apps:storage:import': 'Reads the shared dictionary.',
+    });
+  });
+
+  it('INVARIANT GUARD: a parent with no exportable collection, or no storage, gets no import', async () => {
+    const none = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: ['apps:storage'],
+      storage: { collections: { secret: { visibility: 'private', exportable: false } } },
+    });
+    expect(none.storage.imports).toBeUndefined();
+    expect(none.scopes).toEqual(['apps:storage']);
+    const bare = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
+    expect(bare).toEqual({ blockId: 'notes-app-fork-ab12', name: 'Notes App', scopes: [] });
+  });
+});
+
+describe('the fork seed drops the parent’s server-owned iframe.src', () => {
+  // The PARENT's platform-stamped URL. Distinct from any constant the code names: the seed must
+  // not advertise it as the fork's, and `civitai app validate` refuses any authored iframe.src.
+  const PARENT_IFRAME_SRC = 'https://parent-stamp-7731.apps-host.test/';
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-cd34'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('removes iframe.src and keeps every other iframe key with its literal value', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      iframe: {
+        src: PARENT_IFRAME_SRC,
+        minHeight: 333,
+        maxHeight: 1777,
+        resizable: true,
+        sandbox: 'allow-scripts allow-forms',
+      },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-cd34');
+    expect(manifest.iframe).toEqual({
+      minHeight: 333,
+      maxHeight: 1777,
+      resizable: true,
+      sandbox: 'allow-scripts allow-forms',
+    });
+    expect(JSON.stringify(manifest)).not.toContain(PARENT_IFRAME_SRC);
+  });
+
+  it('an iframe holding only src is left as an empty object', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      iframe: { src: PARENT_IFRAME_SRC },
+    });
+    expect(manifest.blockId).toBe('notes-app-fork-cd34');
+    expect(manifest.iframe).toEqual({});
+  });
+
+  it('a parent manifest with no iframe at all still builds, and gains none', async () => {
+    const manifest = await seedManifest({ blockId: 'notes-app', name: 'Notes App', scopes: [] });
+    expect(manifest).toEqual({ blockId: 'notes-app-fork-cd34', name: 'Notes App', scopes: [] });
+  });
+});
+
+describe('the fork seed drops the parent’s issue-tracker link (`bugs`)', () => {
+  // The PARENT author's tracker. Left in, the fork's store page would send the fork's users to
+  // report problems to someone else's project.
+  const PARENT_TRACKER = 'https://parent-tracker-5521.example.test/issues';
+  const seedManifest = async (parent: Record<string, unknown>) => {
+    const zip = await buildForkSeedZip(
+      [{ path: 'block.manifest.json', content: Buffer.from(JSON.stringify(parent)) }],
+      'notes-app-fork-ef56'
+    );
+    const loaded = await JSZip.loadAsync(zip.buffer);
+    return JSON.parse(await loaded.file('block.manifest.json')!.async('string'));
+  };
+
+  it('removes a string `bugs` and keeps every other key', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+      bugs: PARENT_TRACKER,
+    });
+    expect(manifest).toEqual({
+      blockId: 'notes-app-fork-ef56',
+      name: 'Notes App',
+      scopes: [],
+      tagline: 'kept',
+    });
+    expect(JSON.stringify(manifest)).not.toContain(PARENT_TRACKER);
+  });
+
+  it('removes an object `bugs` (url + email) entirely', async () => {
+    const manifest = await seedManifest({
+      blockId: 'notes-app',
+      name: 'Notes App',
+      scopes: [],
+      bugs: { url: PARENT_TRACKER, email: 'parent-author-5521@example.test' },
+    });
+    expect('bugs' in manifest).toBe(false);
+    expect(JSON.stringify(manifest)).not.toContain('parent-author-5521');
   });
 });

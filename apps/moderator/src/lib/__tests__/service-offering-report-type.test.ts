@@ -20,11 +20,16 @@ describe('service offering report type', () => {
     expect(OWNED_REPORT_ENTITIES.map((e) => e.type)).toContain('serviceOffering');
   });
 
-  // An offering has no page of its own, so its link is the seller's shop, resolved in SQL
-  // (pinned in reports.sql.test.ts) and used as given.
-  it("links to the seller's shop", () => {
+  // An offering has no page of its own, so its link is its card in the seller's shop, resolved in
+  // SQL (pinned in reports.sql.test.ts) and used as given.
+  it("links to the offering's card in the seller's shop", () => {
     expect(
-      getReportItemUrl('https://civitai.com', 'serviceOffering', 5, '/user/badgesmith/shop')
-    ).toBe('https://civitai.com/user/badgesmith/shop');
+      getReportItemUrl(
+        'https://civitai.com',
+        'serviceOffering',
+        5,
+        '/user/badgesmith/shop#service-5'
+      )
+    ).toBe('https://civitai.com/user/badgesmith/shop#service-5');
   });
 });

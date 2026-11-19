@@ -4,6 +4,12 @@ import type { PayoutReviewFlag, RunOutcome } from './run';
 
 type Db = Pick<PrismaClient, 'creatorProgramPayoutReview' | 'creatorProgramPayoutReviewRun'>;
 
+/** A re-run replaces the detector's evidence but keeps the ground and reason of a manual hold. */
+const keepManual = (evidence: Prisma.InputJsonValue, previous: Prisma.JsonValue) => {
+  const manual = (previous as { manual?: Prisma.InputJsonValue } | null)?.manual;
+  return manual ? ({ ...(evidence as object), manual } as Prisma.InputJsonValue) : evidence;
+};
+
 export function createPayoutReviewStore(db: Db) {
   const saveFlag = async (
     { period, userId, signals, payoutCents, evidence }: PayoutReviewFlag,
@@ -13,7 +19,7 @@ export function createPayoutReviewStore(db: Db) {
     const json = evidence as Prisma.InputJsonValue;
     const existing = await db.creatorProgramPayoutReview.findUnique({
       where: { period_userId: { period, userId } },
-      select: { status: true, signals: true, version: true, decisions: true },
+      select: { status: true, signals: true, version: true, decisions: true, evidence: true },
     });
     if (!existing) {
       try {
@@ -49,7 +55,7 @@ export function createPayoutReviewStore(db: Db) {
       data: {
         signals: [...new Set([...existing.signals, ...signals])],
         payoutCents,
-        evidence: json,
+        evidence: keepManual(json, existing.evidence),
         lastEvaluatedAt: new Date(),
         evaluations: { increment: 1 },
         version: { increment: 1 },

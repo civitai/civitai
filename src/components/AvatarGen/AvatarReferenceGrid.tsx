@@ -1,4 +1,5 @@
-import { ActionIcon, Input, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Input, Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useField } from 'form-graph/react';

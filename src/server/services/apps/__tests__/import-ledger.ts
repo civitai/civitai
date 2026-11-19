@@ -89,3 +89,59 @@ export function importersOf(module: string, name?: string): string[] {
     .map((u) => u.file);
   return [...new Set(files)].sort();
 }
+
+/**
+ * The files that RE-EXPORT from `module` (`export { … } from` or `export * from`), with the names
+ * each passes on (`'all'` for `export *`), sorted by file. A re-export hands the module's bindings
+ * to every importer of the re-exporting file, so a ledger of importers alone can be walked around.
+ */
+export function reExportsOf(module: string): { file: string; names: string[] | 'all' }[] {
+  const out: { file: string; names: string[] | 'all' }[] = [];
+  for (const file of walk(SRC, [])) {
+    for (const stmt of parsed(file).statements) {
+      if (!ts.isExportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+      if (!ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+      if (resolveSpec(file, stmt.moduleSpecifier.text) !== module) continue;
+      const clause = stmt.exportClause;
+      out.push({
+        file: path.relative(SRC, file).split(path.sep).join('/'),
+        names:
+          clause && ts.isNamedExports(clause)
+            ? clause.elements.map((e) => e.propertyName?.text ?? e.name.text)
+            : 'all',
+      });
+    }
+  }
+  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+const parsedFiles = new Map<string, ts.SourceFile>();
+function parsed(file: string): ts.SourceFile {
+  let src = parsedFiles.get(file);
+  if (!src) {
+    src = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    parsedFiles.set(file, src);
+  }
+  return src;
+}
+
+/**
+ * The files whose code names the identifier `name` anywhere — a declaration, an import, or a
+ * use in the file that declares it — sorted. AST identifiers, so comments and strings do not
+ * count. The import ledger alone cannot see a same-file use: a constant read only beside its own
+ * declaration has no importer.
+ */
+export function identifierUsers(name: string): string[] {
+  const files: string[] = [];
+  for (const file of walk(SRC, [])) {
+    let found = false;
+    const visit = (node: ts.Node) => {
+      if (found) return;
+      if (ts.isIdentifier(node) && node.text === name) found = true;
+      else ts.forEachChild(node, visit);
+    };
+    visit(parsed(file));
+    if (found) files.push(path.relative(SRC, file).split(path.sep).join('/'));
+  }
+  return files.sort();
+}

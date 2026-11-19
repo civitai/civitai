@@ -1,5 +1,6 @@
 import type { BadgeProps, ButtonProps } from '@mantine/core';
-import { Button, rgba, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Button, rgba, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';
 

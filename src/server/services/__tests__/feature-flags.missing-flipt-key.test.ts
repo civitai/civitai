@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import snapshot from './fixtures/flipt-store-scope.snapshot.json';
 import { startFliptFixtureServer, type FliptFixtureServer } from './fixtures/flipt-fixture-server';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The evaluator is the REAL `createFliptClient` + wasm engine against a fixture snapshot that
@@ -31,7 +32,7 @@ afterAll(async () => {
   await server.close();
 });
 
-describe('a flag whose Flipt key does not exist falls back to static availability', () => {
+describe('a flag whose Flipt key does not exist, and that does not require it, falls back to static availability', () => {
   it('INSTRUMENT CONTROL: the engine is live and the two keys under test really are absent', async () => {
     const { ensureFliptInitialized, isFliptSync } = await import('~/server/flipt/client');
     const { buildFliptContext } = await import('~/server/services/feature-flags.service');
@@ -42,7 +43,7 @@ describe('a flag whose Flipt key does not exist falls back to static availabilit
     // `isEnabledSync` returns null for BOTH "flag not found" and "client not initialized", so a
     // present key answering with a boolean is what makes the two nulls below attributable.
     expect(isFliptSync('app-blocks-enabled', 'anonymous', anon)).toBe(false);
-    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(null);
+    expect(isFliptSync('trpc-unified-batch-window', 'anonymous', anon)).toBe(null);
     expect(isFliptSync('hi-dpi-previews', 'anonymous', anon)).toBe(null);
   });
 
@@ -50,7 +51,7 @@ describe('a flag whose Flipt key does not exist falls back to static availabilit
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    expect(features.imageSearch).toBeFalsy();
+    expect(features.trpcUnifiedBatchWindow).toBeFalsy();
   });
 
   it('`availability: ["public"]` stays ON on the server path', async () => {
@@ -58,5 +59,30 @@ describe('a flag whose Flipt key does not exist falls back to static availabilit
     const features = await getFeatureFlagsAsync({});
 
     expect(features.hiDpiPreviews).toBe(true);
+  });
+});
+
+describe('a flag that requires its Flipt key is off while the key is missing', () => {
+  const moderator = { id: 101, isModerator: true, tier: 'free' } as SessionUser;
+
+  it('INSTRUMENT CONTROL: the key is absent from a live engine', async () => {
+    const { ensureFliptInitialized, getFliptClientSync, isFliptSync } = await import(
+      '~/server/flipt/client'
+    );
+    await ensureFliptInitialized();
+    expect(getFliptClientSync()).not.toBeNull();
+    expect(isFliptSync('storyline-text', String(moderator.id), {})).toBe(null);
+  });
+
+  it('is off for a moderator its static availability would admit, and counts as decided', async () => {
+    const { getFeatureFlagsAsync, isFliptDecisive } = await import(
+      '~/server/services/feature-flags.service'
+    );
+    const features = await getFeatureFlagsAsync({ user: moderator });
+
+    expect(features.storylineText).toBeFalsy();
+    // Same principal, a flag without the marker: the static fallback still admits the moderator.
+    expect(features.storylines).toBe(true);
+    expect(await isFliptDecisive(['storylineText'], moderator)).toBe(true);
   });
 });

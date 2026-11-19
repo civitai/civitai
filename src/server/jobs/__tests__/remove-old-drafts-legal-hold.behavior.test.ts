@@ -70,7 +70,10 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT now(), "publishedAt" timestamp(3),
       "modelVersionId" int, "collectionId" int, metadata jsonb
     );
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Draft', mode text,
+      "deletedBy" int, meta jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "Thread" (
       id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
       "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
@@ -96,6 +99,7 @@ beforeAll(async () => {
       "modelVersionId" int NOT NULL REFERENCES "ModelVersion"(id) ON DELETE CASCADE,
       "createdAt" timestamp(3) NOT NULL
     );
+    CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
@@ -161,13 +165,13 @@ describe('remove-old-drafts under a legal hold', () => {
   });
 });
 
+// Comments are not kept for a held author: they go with the model.
 describe("remove-old-drafts and a held author's comments on a free owner's model", () => {
   const LEGACY_MODEL = 160; // a held author left a legacy comment: it cascades and has no thread
   const THREAD_MODEL = 170; // a held author commented in its thread
-  const CONTROL_MODEL = 180; // only its free owner commented
 
   beforeEach(async () => {
-    const extra = [LEGACY_MODEL, THREAD_MODEL, CONTROL_MODEL];
+    const extra = [LEGACY_MODEL, THREAD_MODEL];
     await db.exec(`
       DELETE FROM "Thread"; DELETE FROM "Comment";
       INSERT INTO "Model" (id, "userId") VALUES ${extra
@@ -177,34 +181,21 @@ describe("remove-old-drafts and a held author's comments on a free owner's model
         .map((id) => `(${id}0, ${id}, now() - interval '200 days', now() - interval '200 days')`)
         .join(', ')};
       INSERT INTO "Comment" ("userId", "modelId") VALUES (${MARKED_OWNER}, ${LEGACY_MODEL});
-      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL}), (800, ${CONTROL_MODEL});
+      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL});
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES
-        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700), (8001, ${FREE_OWNER}, 800);
+        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700);
     `);
     dbMock.dbRead.$queryRaw.mockResolvedValue(extra.map((id) => ({ id, userId: FREE_OWNER })));
   });
 
-  it('keeps a model a held author left a legacy comment on, and the comment', async () => {
-    await (removeOldDrafts as unknown as () => Promise<void>)();
-
-    expect(await remainingModels()).toContain(LEGACY_MODEL);
-    const legacy = await db.query(`SELECT 1 FROM "Comment" WHERE "modelId" = ${LEGACY_MODEL}`);
-    expect(legacy.rows).toHaveLength(1);
-  });
-
-  it("detaches the held author's thread before the delete, so the model goes and its comments stay", async () => {
+  it('deletes the models and the comments with them', async () => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
 
     const remaining = await remainingModels();
+    expect(remaining).not.toContain(LEGACY_MODEL);
     expect(remaining).not.toContain(THREAD_MODEL);
-    // The control proves the foreign keys cascade: without the detach, thread 700 would go too.
-    expect(remaining).not.toContain(CONTROL_MODEL);
-    const comments = await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`);
-    expect(comments.rows.map((r) => r.id)).toEqual([7001, 7002]);
-    const thread = await db.query<{ modelId: number | null; detachedFrom: unknown }>(
-      `SELECT "modelId", metadata -> 'detachedFrom' AS "detachedFrom" FROM "Thread" WHERE id = 700`
-    );
-    expect(thread.rows).toEqual([{ modelId: null, detachedFrom: { modelId: THREAD_MODEL } }]);
+    expect((await db.query(`SELECT 1 FROM "Comment"`)).rows).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM "CommentV2"`)).rows).toEqual([]);
   });
 });
 
@@ -243,5 +234,185 @@ describe("remove-old-drafts and a held author's review of a free owner's model",
         holdReasons: ['hold-marker'],
       },
     ]);
+  });
+});
+
+// The DELETE re-checks what a moderator did, as it re-checks holds: the replica read can be stale.
+describe('remove-old-drafts and models a moderator acted on', () => {
+  const MOD = 99;
+  const CASES = [
+    { id: 210, status: 'Draft', mode: 'TakenDown', deletedBy: null, kept: true },
+    { id: 220, status: 'Deleted', mode: null, deletedBy: MOD, kept: true },
+    { id: 230, status: 'Deleted', mode: 'TakenDown', deletedBy: null, kept: true },
+    { id: 240, status: 'Deleted', mode: null, deletedBy: FREE_OWNER, kept: false },
+    { id: 250, status: 'Deleted', mode: null, deletedBy: null, kept: false },
+    { id: 260, status: 'Draft', mode: null, deletedBy: null, kept: false },
+    // Unpublished by a moderator for a violation, then deleted by its owner.
+    {
+      id: 270,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: {
+        statusAtDelete: 'UnpublishedViolation',
+        unpublishedReason: 'other',
+        unpublishedBy: MOD,
+      },
+    },
+    // Unpublished by a moderator, then deleted by its owner.
+    {
+      id: 271,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { statusAtDelete: 'Unpublished', unpublishedBy: MOD },
+    },
+    // The same, deleted before deletes recorded statusAtDelete: the takedown marks decide.
+    {
+      id: 272,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { unpublishedReason: 'other', unpublishedBy: MOD },
+    },
+    // A takedown reason alone, with no actor recorded, counts as a moderator's.
+    {
+      id: 275,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { unpublishedReason: 'other' },
+    },
+    // Controls: the owner unpublished it, or deleted it live.
+    {
+      id: 273,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: false,
+      meta: { statusAtDelete: 'Unpublished', unpublishedBy: FREE_OWNER },
+    },
+    {
+      id: 274,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: false,
+      meta: { statusAtDelete: 'Published' },
+    },
+  ] as {
+    id: number;
+    status: string;
+    mode: string | null;
+    deletedBy: number | null;
+    kept: boolean;
+    meta?: Record<string, unknown>;
+  }[];
+  const sql = (v: string | number | null) =>
+    v === null ? 'NULL' : typeof v === 'number' ? v : `'${v}'`;
+
+  beforeEach(async () => {
+    await db.exec(`
+      DELETE FROM "Model";
+      INSERT INTO "Model" (id, "userId", status, mode, "deletedBy", meta) VALUES ${CASES.map(
+        (c) =>
+          `(${c.id}, ${FREE_OWNER}, ${sql(c.status)}, ${sql(c.mode)}, ${sql(
+            c.deletedBy
+          )}, ${`'${JSON.stringify(c.meta ?? {})}'`})`
+      ).join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${CASES.map(
+        (c) => `(${c.id * 10}, ${c.id}, now() - interval '200 days', now() - interval '200 days')`
+      ).join(', ')};
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(CASES.map(({ id }) => ({ id, userId: FREE_OWNER })));
+  });
+
+  it('keeps a taken-down model and one deleted by a moderator, and reaps owner and account deletes', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    const kept = CASES.filter((c) => c.kept).map((c) => c.id);
+    expect(await remainingModels()).toEqual(kept);
+    expect(axiomEvents('Kept old draft models a moderator acted on')).toEqual([
+      expect.objectContaining({ modelIds: kept }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
+  });
+});
+
+// Any CsamReport tied to a model keeps it, whatever the report's status and whoever it names.
+describe('remove-old-drafts and models tied to a CsamReport', () => {
+  const OLD = `now() - interval '2 years'`; // sent and archived this long ago: no longer a legal hold
+  const OLD_REPORT_OWNER = 80; // the subject of an old report
+  const SECONDARY_OWNER = 84; // the secondary user of an old report
+  const PAST_OWNER = 85; // the subject of an old report; gave model 186 away
+  const OTHER_SUBJECT = 81; // whom the version and image reports name; owns no model
+  const POSTER = 82; // posted or made the listed images
+  const cases = {
+    oldReportOwner: { id: 180, userId: OLD_REPORT_OWNER },
+    listedVersion: { id: 181, userId: FREE_OWNER },
+    postedImage: { id: 182, userId: FREE_OWNER },
+    secondaryOwner: { id: 184, userId: SECONDARY_OWNER },
+    resourceVersion: { id: 185, userId: FREE_OWNER }, // a generated image report names it as a resource
+    pastOwner: { id: 186, userId: GIVEN_BY_FREE_OWNER },
+    madeWith: { id: 187, userId: FREE_OWNER }, // a listed image was made with it
+  };
+  const UNLISTED_MODEL = 183; // control: reports list other images, versions and resources
+  const tied = [...Object.values(cases), { id: UNLISTED_MODEL, userId: FREE_OWNER }];
+  const keptIds = Object.values(cases).map((c) => c.id);
+
+  beforeAll(async () => {
+    const { listedVersion, postedImage, resourceVersion, pastOwner, madeWith } = cases;
+    await db.exec(`
+      INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+        (${pastOwner.id}, ${PAST_OWNER}, 'create'), (${pastOwner.id}, ${GIVEN_BY_FREE_OWNER}, 'transfer');
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES
+        (8201, ${POSTER}, ${postedImage.id}0), (8301, ${POSTER}, ${UNLISTED_MODEL}0);
+      INSERT INTO "Image" (id, "userId", "postId") VALUES
+        (8202, ${POSTER}, 8201), (8302, ${POSTER}, 8301), (8999, ${POSTER}, NULL),
+        (8702, ${POSTER}, NULL), (8303, ${POSTER}, NULL);
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId") VALUES
+        (8702, ${madeWith.id}0), (8303, ${UNLISTED_MODEL}0);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images, details) VALUES
+        (${OLD_REPORT_OWNER}, ${OLD}, ${OLD}, '[]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[]', '{"secondaryUserId": ${SECONDARY_OWNER}}'),
+        (${PAST_OWNER}, ${OLD}, ${OLD}, '[]', '{}'),
+        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [${listedVersion.id}0]}'),
+        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [990100026]}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8202}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8999}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8702}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[]', '{"generatedImages": [{"resources": [
+          "urn:air:sdxl:lora:civitai:1@${resourceVersion.id}0", "urn:air:sdxl:lora:civitai:1@${UNLISTED_MODEL}00"
+        ]}]}');
+    `);
+  });
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" (id, "userId") VALUES ${tied
+        .map((m) => `(${m.id}, ${m.userId})`)
+        .join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${tied
+        .map((m) => `(${m.id}0, ${m.id}, now() - interval '200 days', now() - interval '200 days')`)
+        .join(', ')};
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(tied);
+  });
+
+  it.each(Object.entries(cases))('keeps the model: %s', async (_name, { id }) => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    expect(await remainingModels()).toContain(id);
+  });
+
+  it('deletes the control, and reports the kept ones apart from legal holds', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    expect(await remainingModels()).not.toContain(UNLISTED_MODEL);
+    expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([
+      expect.objectContaining({ modelIds: [...keptIds].sort((a, b) => a - b) }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
   });
 });

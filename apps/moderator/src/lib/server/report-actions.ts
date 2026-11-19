@@ -5,7 +5,11 @@ import { z } from 'zod';
 import { canAccess, denied } from './access';
 import { parseForm, parseIdList, userIdSchema, checkboxField } from './query';
 import { issueStrike, restoreImages, setImageFlag } from './user-actions.service';
-import { countBlockedImages, removeImagesWithFollowUps } from './bulk-image.service';
+import {
+  capturesSkippedNote,
+  countBlockedImages,
+  removeImagesWithFollowUps,
+} from './bulk-image.service';
 import { sendModNotification } from './moderation-memory.service';
 import { setReportStatus } from './reports.service';
 import { saveNotesAction } from './report-queue-actions';
@@ -135,9 +139,12 @@ export function reportModerationActions(pagePath: string) {
         ? ` The ${result.flag.flag} flag was NOT applied: ${result.flag.error}`
         : '';
       const strikeNote = result.struck
-        ? result.struck.error
-          ? ` Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
-          : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`
+        ? (result.struck.error
+            ? ` Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
+            : ` Struck ${result.struck.struck} owner${result.struck.struck === 1 ? '' : 's'}.`) +
+          (result.struck.capturesSkipped
+            ? ` ${capturesSkippedNote(result.struck.capturesSkipped)}`
+            : '')
         : '';
 
       return {

@@ -9,8 +9,8 @@ import {
   Skeleton,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';

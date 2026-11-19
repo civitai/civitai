@@ -1,3 +1,4 @@
+import { childBrowsingTagIds, peopleBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
@@ -111,6 +112,27 @@ export function resolveBrowsingSettingsAddons(
   }, emptyResolvedAddons());
 }
 
+/**
+ * The poi/minor exclusions for a response that is not resolved at one viewer's own level: on for
+ * each one if it is on at ANY level a viewer within `levels` could browse at, so the answer is never
+ * looser than what the client would resolve for that viewer, whatever shape the rules take.
+ */
+export function resolveStrictestPoiMinor(
+  data: BrowsingSettingsAddon[],
+  levels: number,
+  opts?: { isModerator?: boolean }
+) {
+  const bits = Flags.instanceToArray(levels);
+  const result = { disablePoi: false, disableMinor: false };
+  for (let mask = 1; mask < 1 << bits.length; mask++) {
+    const level = bits.reduce((acc, bit, i) => (mask & (1 << i) ? acc | bit : acc), 0);
+    const resolved = resolveBrowsingSettingsAddons(data, level, opts);
+    result.disablePoi ||= resolved.disablePoi;
+    result.disableMinor ||= resolved.disableMinor;
+  }
+  return result;
+}
+
 // Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
 // content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
 // when present; ops manage the live list there without a deploy.
@@ -150,28 +172,12 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
     type: 'some',
     nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disablePoi: true,
-    excludedTagIds: [
-      5161, //actor
-      5162, //actress
-      5188, //celebrity
-      5249, //real person
-      130818, //porn actress
-      130820, //adult actress
-      133182, //porn star
-      130401, //deepfake
-      110980, //public figure
-    ],
+    excludedTagIds: peopleBrowsingTagIds,
   },
   {
     type: 'some',
     nsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableMinor: true,
-    excludedTagIds: [
-      5351, //child
-      306619, //child present
-      154326, //toddler
-      161829, //male child
-      163032, //female child
-    ],
+    excludedTagIds: childBrowsingTagIds,
   },
 ] as const;

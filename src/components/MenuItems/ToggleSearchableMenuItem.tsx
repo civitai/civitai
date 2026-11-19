@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconSearch, IconSearchOff } from '@tabler/icons-react';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import type { SupportedAvailabilityResources } from '../../server/schema/base.schema';

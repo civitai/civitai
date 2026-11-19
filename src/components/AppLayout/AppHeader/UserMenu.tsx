@@ -3,15 +3,14 @@ import {
   Badge,
   Button,
   Divider,
-  Popover,
   Text,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
   useMantineTheme,
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -23,7 +22,6 @@ import {
   IconLogout,
   IconLogout2,
   IconMoonStars,
-  IconScreenShare,
   IconSettings,
   IconSun,
   IconX,
@@ -32,6 +30,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
+import { markAddAccountFlow } from '~/components/Onboarding/new-account-notice';
 import React, {
   createContext,
   forwardRef,
@@ -57,7 +56,6 @@ import {
   type CivitaiAccount,
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
-import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
@@ -185,7 +183,7 @@ function PopoverContent() {
   function handleToggleAccountSwitching() {
     setAccountSwitching((o) => !o);
   }
-  useHotkeys([['Escape', handleClose]]);
+  useHotkeys([['esc', handleClose]]);
 
   return (
     <div
@@ -322,20 +320,11 @@ function PhoneHeaderShortcuts() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const support = useSupportOption();
-  const { handleClose } = useUserMenuContext();
 
   if (!currentUser || !features.buzzSpendPop) return null;
 
   const items: UserMenuItem[] = [
     { href: support.href, icon: support.icon, label: support.text, visible: features.canWrite },
-    {
-      icon: IconScreenShare,
-      label: 'Civitai Link',
-      onClick: () => {
-        handleClose();
-        openCivitaiLinkDialog();
-      },
-    },
   ];
 
   return <UserMenuItems items={items} />;
@@ -461,6 +450,7 @@ function ActionButtons({ close }: { close: () => void }) {
 
   const handleAdd = () => {
     setWaiting(true);
+    markAddAccountFlow();
     router
       .push(
         getLoginLink({

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
@@ -13,6 +13,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
@@ -190,33 +191,8 @@ export function SubNav({
   visible,
   ...props
 }: { children: React.ReactNode; visible?: boolean } & React.HTMLProps<HTMLDivElement>) {
-  const lastScrollRef = useRef(0);
-  const lastDirectionChangeRef = useRef(0);
-  const lastScrollDirectionRef = useRef('up');
-  const [showNav, setShowNav] = useState(true);
-  useScrollAreaRef({
-    onScroll: (node) => {
-      const diff = node.scrollTop - lastScrollRef.current;
-      const scrollDirection = diff > 0 ? 'down' : 'up';
-      const lastScrollDirection = lastScrollDirectionRef.current;
-      if (scrollDirection !== lastScrollDirection) {
-        lastScrollDirectionRef.current = scrollDirection;
-        lastDirectionChangeRef.current = node.scrollTop;
-      }
-
-      const lastDirectionChangeDiff = node.scrollTop - lastDirectionChangeRef.current;
-
-      if (node.scrollTop < 100) setShowNav(true);
-      else if (lastDirectionChangeDiff > 100) setShowNav(false);
-      else if (lastDirectionChangeDiff < -100) setShowNav(true);
-
-      lastScrollRef.current = node.scrollTop;
-    },
-  });
-
-  useEffect(() => {
-    if (visible) setShowNav(true);
-  }, [visible]);
+  // `visible` brings it back; a later scroll down can hide it again.
+  const hidden = useHideOnScroll(useScrollAreaRef(), { resetKey: visible });
 
   return (
     <div
@@ -229,7 +205,7 @@ export function SubNav({
         'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
         className
       )}
-      style={!showNav ? { transform: 'translateY(-200%)' } : undefined}
+      style={hidden ? { transform: 'translateY(-200%)' } : undefined}
     >
       {children}
     </div>

@@ -42,17 +42,14 @@ export const imageTagIds = createCache<ImageTagIds>({
     );
 
     // Fetch tag metadata for filtering
-    const tagIds = [...new Set(imageTags.map(t => t.tagId))];
+    const tagIds = [...new Set(imageTags.map((t) => t.tagId))];
     const tags = await ctx.pg.query<{
       id: number;
       name: string;
       type: string;
-    }>(
-      `SELECT id, name, type FROM "Tag" WHERE id = ANY($1)`,
-      [tagIds]
-    );
+    }>(`SELECT id, name, type FROM "Tag" WHERE id = ANY($1)`, [tagIds]);
 
-    const tagMap = new Map(tags.map(t => [t.id, t]));
+    const tagMap = new Map(tags.map((t) => [t.id, t]));
 
     // Check which images have WD14 tags
     const hasWD14: Record<number, boolean> = {};
@@ -238,11 +235,11 @@ export type ProfilePictureData = {
 };
 
 /**
- * Cache for user profile pictures
- * Fetches profile picture information for users
+ * Cache for user profile pictures. A picture that may not be served is looked up as no picture.
  */
 export const profilePictures = createCache<ProfilePictureData>({
-  redisKey: 'user:profilePicture',
+  // v3: entries cached before minor-held pictures were withheld are dropped.
+  redisKey: 'user:profilePicture:v3',
   idKey: 'userId',
   fieldTypes: {
     userId: 'number',
@@ -269,7 +266,20 @@ export const profilePictures = createCache<ProfilePictureData>({
         i.metadata
        FROM "User" u
        JOIN "Image" i ON i.id = u."profilePictureId"
-       WHERE u.id = ANY($1)`,
+       WHERE u.id = ANY($1)
+         AND i.ingestion <> 'Blocked'
+         AND i."nsfwLevel" != 0
+         -- The main app's notHeldForReviewSql.
+         AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
+         -- The main app's imageReviewedSql: scanned, or a moderator's rating it may stand on.
+         AND (i.ingestion = 'Scanned'
+           OR (i."nsfwLevelLocked" = TRUE
+             AND i.ingestion NOT IN ('Blocked', 'NotFound')
+             AND NOT (i.ingestion = 'Error'
+               AND (COALESCE(i.metadata->>'nsfwLevelReason', '') = 'Knights Vote'
+                 OR COALESCE(i."scanJobs"->'error'->>'failureClass', '') = 'permanent'
+                 OR COALESCE(i."scanJobs"->'lastFailure'->>'failureClass', '') = 'permanent'
+                 OR COALESCE(i."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)))))`,
       [ids]
     );
   },

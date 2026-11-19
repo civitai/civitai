@@ -1,5 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Group, Input, LoadingOverlay, Paper, Text, Tooltip } from '@mantine/core';
+import { Group, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
@@ -43,6 +44,11 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   previewWidth?: number;
   maxSize?: number;
   aspectRatio?: number;
+  /**
+   * Preview the image as a card shows it: a CSS aspect-ratio (e.g. `'7/9'`), filled and cropped from
+   * the top. Takes precedence over `aspectRatio`.
+   */
+  cardCrop?: string;
   children?: React.ReactNode;
   dropzoneProps?: Omit<DropzoneProps, 'children' | 'onDrop'>;
   previewDisabled?: boolean;
@@ -57,6 +63,7 @@ export function SimpleImageUpload({
   maxSize = constants.mediaUpload.maxImageFileSize,
   previewWidth = 450,
   aspectRatio,
+  cardCrop,
   children,
   previewDisabled,
   dropzoneProps,
@@ -181,12 +188,15 @@ export function SimpleImageUpload({
           <LoadingOverlay visible />
         </Paper>
       ) : !previewDisabled && image ? (
-        <div style={{ position: 'relative', width: '100%', marginTop: 5 }}>
+        <div
+          style={{ position: 'relative', width: '100%', marginTop: 5 }}
+          className={cardCrop ? classes.cardCropWrapper : undefined}
+        >
           {!disabled && (
             <Tooltip label="Remove image">
               <LegacyActionIcon
                 size="sm"
-                variant={aspectRatio ? 'filled' : 'light'}
+                variant={aspectRatio || cardCrop ? 'filled' : 'light'}
                 color="red"
                 onClick={handleRemove}
                 className="absolute right-1 top-1 z-[1]"
@@ -198,13 +208,21 @@ export function SimpleImageUpload({
 
           <div
             style={
-              aspectRatio
+              cardCrop
+                ? { aspectRatio: cardCrop }
+                : aspectRatio
                 ? ({
                     '--aspect-ratio': `${(aspectRatio * 100).toFixed(3)}%`,
                   } as React.CSSProperties)
                 : undefined
             }
-            className={aspectRatio ? classes.imageContainerAspectRatio : classes.imageContainer}
+            className={
+              cardCrop
+                ? classes.imageContainerCardCrop
+                : aspectRatio
+                ? classes.imageContainerAspectRatio
+                : classes.imageContainer
+            }
           >
             {withNsfwLevel && !!value && typeof value !== 'string' && (
               <BrowsingLevelBadge

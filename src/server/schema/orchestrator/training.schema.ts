@@ -1,3 +1,4 @@
+import { aiToolkitOptionSchema } from '@civitai/shared/training-options';
 import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
@@ -9,6 +10,7 @@ import {
   trainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { aiToolkitLrSchedulerTypes, aiToolkitOptimizerTypes } from '~/utils/training';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
@@ -22,6 +24,7 @@ const aiToolkitMaxEpochs = 50;
 const prodigyOptimizers = ['prodigy', 'prodigy8bit'];
 const maxLrForNonProdigy = 0.1;
 const aiToolkitBaseParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   engine: z.literal(OrchEngineTypes.AiToolkit),
   // Steps-based pricing: `steps` is the primary length knob; `epochs` is the saved
   // checkpoint count. Both optional — `epochs`-only keeps legacy flat pricing.
@@ -35,19 +38,8 @@ const aiToolkitBaseParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),
@@ -158,6 +150,11 @@ export const aiToolkitTrainingParamsSchema = z
       batchSize: z.literal(1).optional(),
     }),
     aiToolkitBaseParams.extend({
+      ecosystem: z.literal('minimaxh3image'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
       ecosystem: z.literal('yue2'),
       modelVariant: z.undefined().optional(),
       batchSize: z.literal(1).optional(),
@@ -216,6 +213,7 @@ const whatIfKohyaParams = z.object({
 });
 
 const whatIfAiToolkitParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   model: z.string(),
   priority: z.enum(OrchPriorityTypes),
   engine: z.literal(OrchEngineTypes.AiToolkit),
@@ -232,20 +230,8 @@ const whatIfAiToolkitParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adam',
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),

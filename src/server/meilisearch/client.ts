@@ -1,19 +1,11 @@
 import { createHash } from 'crypto';
-import type {
-  EnqueuedTask,
-  DocumentsQuery,
-  Index,
-  ResourceResults,
-  SearchParams,
-  SearchResponse,
-} from 'meilisearch';
+import type { EnqueuedTask, Index, SearchParams, SearchResponse } from 'meilisearch';
 import { MeiliSearch } from 'meilisearch';
 import pLimit from 'p-limit';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
 import type { JobContext } from '~/server/jobs/job';
-import { withSpan, safeUrl } from '~/server/utils/otel-helpers';
 import {
   registerCounterWithLabels,
   registerHistogram,
@@ -30,17 +22,6 @@ export const searchClient = shouldConnectToSearch
     })
   : null;
 
-const shouldConnectToMetricsSearch =
-  !env.IS_BUILD && !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
-export const metricsSearchClient = shouldConnectToMetricsSearch
-  ? new MeiliSearch({
-      host: env.METRICS_SEARCH_HOST as string,
-      apiKey: env.METRICS_SEARCH_API_KEY,
-    })
-  : null;
-
-export const SEARCH_ACTOR_HEADER = 'X-Search-Actor';
-
 export function buildSearchActor({
   userId,
   ip,
@@ -56,102 +37,6 @@ export function buildSearchActor({
     .digest('hex')
     .slice(0, 16);
   return `anon:${fp}`;
-}
-
-// Returns a fresh MeiliSearch instance with the X-Search-Actor header pinned
-// for the lifetime of the call. The SDK applies requestConfig.headers to every
-// request, so we create one per logical caller rather than mutating a shared
-// instance. Construction is cheap — config-only, no socket pool.
-export function getMetricsSearchClient(actor: string) {
-  if (!shouldConnectToMetricsSearch) return null;
-  return new MeiliSearch({
-    host: env.METRICS_SEARCH_HOST as string,
-    apiKey: env.METRICS_SEARCH_API_KEY,
-    requestConfig: { headers: { [SEARCH_ACTOR_HEADER]: actor } },
-  });
-}
-
-/**
- * Default per-call timeout for fetchDocumentsAbortable when the caller does
- * not pass a deadline-bound AbortSignal. Tuned to be generous enough that any
- * healthy backend response lands well below it, but short enough that a
- * brownout cannot pin event-loop slots long enough to flip /api/health past
- * the kubelet TCP-probe ceiling (the 2026-05-29 / 2026-05-31 cascade chain).
- *
- * Sourced from MEILI_FETCH_TIMEOUT_MS (default 5_000) so ops can tune the
- * deadline at runtime via the civitai-cfg ConfigMap without a code redeploy.
- *
- * The structural fix for backend slowness lives elsewhere (feeds-proxy index
- * sharding, an index migration); this constant is the *defensive* cap that
- * keeps civitai-dp-prod-api pods from holding the event loop for 30 s when
- * upstream goes sideways.
- */
-export const FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = env.MEILI_FETCH_TIMEOUT_MS;
-
-/**
- * Sentinel error message thrown when the local fetchDocumentsAbortable
- * timer fires (i.e. neither the caller's signal nor the upstream produced a
- * response within `timeoutMs`). Exported so the call-site catch in
- * image.service.ts can recognise the timeout without string-matching from
- * an inline literal.
- */
-export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
-
-/**
- * Reason label values for `meiliFetchFailfastTotal`. Each value describes a
- * distinct backend-side failure mode that callers downstream of
- * fetchDocumentsAbortable choose to fast-fail / break out of an iteration
- * loop on. Kept as a const-as union so call-sites get type-checked.
- *
- *  - `local-timeout`     — the local 5s deadline fired before the upstream
- *                          responded (PR #2370 — the original behaviour;
- *                          preserved for backward-compat dashboards)
- *  - `upstream-overload` — upstream returned HTTP 503 (the feeds proxy
- *                          shed because MEILI_MAX_CONCURRENT was hit)
- *  - `upstream-timeout`  — upstream returned HTTP 408 (Meilisearch backend
- *                          page-cache thrashing past its own timeout)
- *  - `upstream-error`    — any other 5xx (bad gateway, gateway timeout from
- *                          Traefik to feeds-proxy, etc.)
- *  - `upstream-circuit-open` — the per-backend wrapper said no before the
- *                          request hit the network: either the circuit
- *                          breaker is OPEN / HALF_OPEN-busy, or the wrapper's
- *                          per-call timeout (MEILI_CALL_TIMEOUT_MS) fired on
- *                          an SDK call that arrived at runWithLimiter (PR
- *                          follow-up to #2371). Both surface as
- *                          `MeiliCallTimeoutError`; we use a single bucket
- *                          because operationally they signal the same thing
- *                          — "upstream is unhealthy, stop iterating".
- */
-export type MeiliFetchFailfastReason =
-  | 'local-timeout'
-  | 'upstream-overload'
-  | 'upstream-timeout'
-  | 'upstream-error'
-  | 'upstream-circuit-open';
-
-/**
- * Reason constant for `MeiliCallTimeoutError`-driven fail-fast events. Lives
- * here (alongside the existing reason helpers) so the post-filter catch site
- * doesn't have to inline a string literal, mirroring the pattern PR #2371
- * established for the HTTP-status branches (which use
- * `failfastReasonForStatus`).
- *
- * Single bucket by design — see `MeiliFetchFailfastReason` JSDoc above.
- */
-export const MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN: MeiliFetchFailfastReason =
-  'upstream-circuit-open';
-
-/**
- * Map an HTTP status returned by the upstream Meili backend (or its proxy)
- * onto the fail-fast reason label. Callers should ONLY pass a status they
- * already decided is "fast-fail eligible" (408 or 5xx); 4xx-other (400 bad
- * filter, 401/403 auth) should re-throw at the call site and never reach
- * this helper.
- */
-export function failfastReasonForStatus(status: number): MeiliFetchFailfastReason {
-  if (status === 408) return 'upstream-timeout';
-  if (status === 503) return 'upstream-overload';
-  return 'upstream-error';
 }
 
 /**
@@ -247,7 +132,6 @@ export const TRANSIENT_STATUSTEXT_TO_STATUS: Readonly<Record<string, number>> = 
  *     500 above IS transient; the distinction is Api(JSON) vs Communication.)
  *   - SDK `MeiliSearchTimeOutError` (name-matched; class isn't re-exported on
  *     the path we instanceof against) — the SDK's own wait/timeout
- *   - the raw-fetch local-deadline error (message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE)
  *
  * Deliberately NARROW: a 4xx-other (400 malformed filter, 401/403 auth) or any
  * other Error returns false and continues to surface as its real status (500
@@ -266,9 +150,6 @@ export function isTransientMeiliError(error: unknown): boolean {
     code?: string; // MeiliSearchCommunicationError (network errors) / MeiliSearchApiError
     errno?: string; // MeiliSearchCommunicationError (network errors)
   };
-
-  // The raw-fetch path's local-deadline abort (see fetchDocumentsAbortable).
-  if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return true;
 
   if (e.name === 'MeiliSearchTimeOutError') return true;
 
@@ -349,97 +230,14 @@ function messageMatchesTransientStatusText(message: unknown): boolean {
 }
 
 /**
- * Map a transient Meili error (one that `isTransientMeiliError` returned true
- * for) onto a `MeiliFetchFailfastReason` label, so the `meiliFetchFailfastTotal`
- * counter stays attributable when a service catch reclassifies it to a 503.
- * Reuses `failfastReasonForStatus` for the status-bearing SDK errors (so the
- * label vocabulary matches the post-filter loop exactly) and adds the
- * timeout / network buckets the status helper doesn't cover:
- *   - civitai `MeiliCallTimeoutError` (wrapper timer / circuit-open) →
- *     `upstream-circuit-open`
- *   - `MeiliSearchTimeOutError` + the raw-fetch local-deadline message →
- *     `local-timeout`
- *   - network-level CommunicationError (errno/code, no HTTP status) →
- *     `upstream-error`
- * Caller contract: only pass errors `isTransientMeiliError(error)` accepts.
- */
-export function failfastReasonForTransientError(error: unknown): MeiliFetchFailfastReason {
-  if (error instanceof MeiliCallTimeoutError) return MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN;
-  if (error instanceof MeilisearchFetchError) return failfastReasonForStatus(error.status);
-
-  if (typeof error === 'object' && error !== null) {
-    const e = error as {
-      name?: string;
-      message?: string;
-      statusCode?: number;
-      httpStatus?: number;
-    };
-    if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return 'local-timeout';
-    if (e.name === 'MeiliSearchTimeOutError') return 'local-timeout';
-    if (e.name === 'MeiliSearchApiError' && typeof e.httpStatus === 'number') {
-      return failfastReasonForStatus(e.httpStatus);
-    }
-    if (e.name === 'MeiliSearchCommunicationError' && typeof e.statusCode === 'number') {
-      return failfastReasonForStatus(e.statusCode);
-    }
-    // statusText-message fallback — derive the SAME reason label the status code
-    // would have produced, so `meiliFetchFailfastTotal` stays meaningful and the
-    // message-matched events bucket identically to their typed twins. This is
-    // reached for BOTH the stripped nameless-Error AND — critically — the REAL
-    // prod shape: a `MeiliSearchCommunicationError` whose `statusCode` was dropped
-    // by the SDK's httpErrorHandler double-wrap (name preserved, statusCode
-    // undefined). Without this, that message-matched CommunicationError would fall
-    // through to the generic `upstream-error` label instead of e.g.
-    // `upstream-overload` for a "Service Unavailable" (503).
-    if (typeof e.message === 'string') {
-      const statusFromText = TRANSIENT_STATUSTEXT_TO_STATUS[e.message];
-      if (typeof statusFromText === 'number') return failfastReasonForStatus(statusFromText);
-    }
-  }
-  // Network-level CommunicationError (no HTTP status) / anything else transient
-  // that didn't match a more specific bucket → the generic upstream-error label.
-  return 'upstream-error';
-}
-
-/**
- * Counter incremented every time fetchDocumentsAbortable() fast-fails — i.e.
- * the local timer fired OR the upstream returned a status code that callers
- * treat as "backend unavailable, break gracefully". The `route` label
- * identifies the caller (so we can separate the pre-filter cascade from the
- * post-filter iteration cascade); `iteration` is meaningful for the
- * post-filter loop and defaults to `"0"` everywhere else; `reason` carries
- * the failure-mode label (see `MeiliFetchFailfastReason`).
- *
- * Renamed from `meili_fetch_timeout_total` (PR #2370) → `meili_fetch_failfast_total`
- * because the counter is no longer timeout-specific: it now captures every
- * fail-fast disposition fetchDocumentsAbortable surfaces. Dashboards keyed
- * on the old name will go empty for a few minutes during the transition;
- * the panel update lands in a follow-up commit in the datapacket-talos
- * repo.
- *
- * Naming follows the prom-client wrapper's PROM_PREFIX convention — exposed
- * to Prometheus as `civitai_app_meili_fetch_failfast_total`.
- */
-export const meiliFetchFailfastTotal = registerCounterWithLabels({
-  name: 'meili_fetch_failfast_total',
-  help:
-    'fetchDocumentsAbortable() fast-fail events (local timer fired OR ' +
-    'upstream returned 408/5xx) — the defensive cap that prevents ' +
-    'event-loop stalls from cascading into kubelet SIGKILL on ' +
-    'civitai-dp-prod-api. `reason` distinguishes the failure mode.',
-  labelNames: ['route', 'iteration', 'reason'] as const,
-});
-
-/**
- * Typed error thrown by fetchDocumentsAbortable() when the upstream Meili
- * backend (or the feeds proxy in front of it) returns a non-ok HTTP
- * status code. Carries the status + response body verbatim so callers can
+ * Typed error thrown when the upstream Meili backend returns a non-ok HTTP
+ * status code (`searchWithSignal` throws it for a missing response body).
+ * Carries the status + response body verbatim so callers can
  * pattern-match on `instanceof MeilisearchFetchError` + `.status` instead of
  * string-matching the message.
  *
  * The 408 (upstream timeout) + 5xx (overload / bad gateway / unavailable)
- * statuses are the ones that callers downstream of fetchDocumentsAbortable
- * fast-fail on; 4xx other than 408 (400 malformed filter, 401/403 auth)
+ * statuses are the ones that callers fast-fail on; 4xx other than 408 (400 malformed filter, 401/403 auth)
  * indicate real client-side bugs and continue to propagate.
  *
  * Message format is intentionally preserved byte-for-byte from the prior
@@ -451,120 +249,6 @@ export class MeilisearchFetchError extends Error {
   readonly name = 'MeilisearchFetchError';
   constructor(public readonly status: number, public readonly responseText: string) {
     super(`Meilisearch fetch failed (${status}): ${responseText}`);
-  }
-}
-
-/**
- * Fetch documents via a raw HTTP call that honors an AbortSignal. The
- * meilisearch-js client we're on (<=0.34) doesn't expose signal on
- * getDocuments, so we hit the /documents/fetch endpoint directly when a
- * cancellable request is needed (e.g. the image feed's slow-fetch path).
- *
- * Wrapped under runWithLimiter('metricsSearch', useTimeout=false) so a
- * backend brownout shares the same per-backend semaphore + circuit breaker
- * gate as the SDK path. The caller's AbortSignal remains the deadline (we
- * pass useTimeout=false to avoid a double race against the 2.5s timer).
- *
- * Hard local deadline:
- * In addition to the optional caller signal, we always race against a local
- * `timeoutMs` deadline (default FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = 5_000).
- * The two signals are combined with `AbortSignal.any()`; on abort, the
- * underlying `fetch` rejects. When the local timer fires first, the abort
- * reason is `Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE)` so callers can
- * distinguish it from a true client disconnect and apply graceful fallback
- * (partial-page result, empty page, etc.).
- *
- * Before this cap, callers without a signal had NO server-side deadline —
- * fetch would wait the full Node default and stall the event loop, exactly
- * the failure mode that bled api-primary pods to kubelet SIGKILL on
- * 2026-05-29 / 2026-05-31.
- */
-export async function fetchDocumentsAbortable<T>(
-  indexName: string,
-  params: DocumentsQuery<T>,
-  options: {
-    host: string;
-    apiKey?: string;
-    signal?: AbortSignal;
-    actor?: string;
-    timeoutMs?: number;
-  }
-): Promise<ResourceResults<T[]>> {
-  const {
-    host,
-    apiKey,
-    signal: callerSignal,
-    actor,
-    timeoutMs = FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS,
-  } = options;
-  const url = `${host}/indexes/${indexName}/documents/fetch`;
-  const urlAttr = safeUrl(url);
-
-  // Local deadline. `AbortSignal.any()` is the Node 20.3+ idiom for racing
-  // multiple cancellation sources without leaking listeners; both the caller
-  // disconnect and the local timer feed into the same composite signal that
-  // fetch ultimately listens to.
-  const localCtrl = new AbortController();
-  const localTimer = setTimeout(
-    () => localCtrl.abort(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE)),
-    timeoutMs
-  );
-  // Don't keep the event loop alive solely for this timer.
-  localTimer.unref?.();
-  const signal: AbortSignal = callerSignal
-    ? AbortSignal.any([callerSignal, localCtrl.signal])
-    : localCtrl.signal;
-
-  try {
-    return await runWithLimiter(
-      'metricsSearch',
-      'metricsSearch',
-      async () => {
-        const res = await withSpan(
-          'image:meili:http',
-          {
-            'http.method': 'POST',
-            'http.url': urlAttr,
-            'image.meili.index': indexName,
-          },
-          () =>
-            fetch(url, {
-              method: 'POST',
-              headers: {
-                'content-type': 'application/json',
-                ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-                ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
-              },
-              body: JSON.stringify(params),
-              signal,
-            })
-        );
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          // Typed error so callers can `instanceof MeilisearchFetchError` and
-          // branch on `.status` (408/5xx → graceful break, 4xx-other → bubble)
-          // without string-matching the message. Message format unchanged so
-          // Loki/dashboard queries on `Meilisearch fetch failed (NNN):`
-          // continue to match.
-          throw new MeilisearchFetchError(res.status, text);
-        }
-        return withSpan(
-          'image:meili:parse',
-          {
-            'http.url': urlAttr,
-            'http.status_code': res.status,
-            'image.meili.index': indexName,
-          },
-          async () => (await res.json()) as ResourceResults<T[]>
-        );
-      },
-      // Caller's AbortSignal (composite, includes local deadline) is the
-      // deadline; skip the wrapper's 2.5s timer to avoid a double-timeout
-      // race. The circuit breaker still applies.
-      { useTimeout: false }
-    );
-  } finally {
-    clearTimeout(localTimer);
   }
 }
 
@@ -594,17 +278,13 @@ export class MeiliCallTimeoutError extends Error {
 }
 
 /**
- * Backends are limited independently because they fail independently:
- *   - 'search'        → SEARCH_HOST    (feeds proxy / searchClient / feed inline client)
- *   - 'metricsSearch' → METRICS_SEARCH_HOST (search-meilisearch / metricsSearchClient)
- *
- * A single shared limiter would let one bad backend exhaust the budget for
- * both. The 2026-05-29 cascade originated in the metrics backend; the feeds
- * backend was healthy. Splitting them isolates the blast radius.
+ * The one shared user-traffic backend: 'search' → SEARCH_HOST (searchClient).
+ * The resource picker runs on its own limiter ('resourceSelect', below) so a
+ * brownout here cannot blank it.
  *
  * p-limit is already in use elsewhere (see src/utils/generator-import.ts).
  */
-export type MeiliBackend = 'search' | 'metricsSearch';
+export type MeiliBackend = 'search';
 type LimiterKey = MeiliBackend | 'resourceSelect';
 
 // 🔴 SHARED_STATE: the limiters and circuits live on globalThis, not in module scope.
@@ -624,8 +304,7 @@ type LimiterKey = MeiliBackend | 'resourceSelect';
 // One shared object means every copy's withMeili() admits against the same circuit and the same
 // per-backend concurrency cap, and every copy's collect() reads that state, whichever one won.
 // `??=`, not `=`: with `=`, a later copy would REPLACE the state, orphan the first copy's
-// in-flight slots and reopen the bug. Enrolled in scripts/server-graph-watchlist.mjs so the
-// build fails if an emitted copy loses this pin. Vitest loads each module once and cannot see
+// in-flight slots and reopen the bug. Vitest loads each module once and cannot see
 // any of this unless it is made to (src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts).
 declare global {
   // eslint-disable-next-line no-var
@@ -640,12 +319,10 @@ declare global {
 const meiliWrapperState = (globalThis.__civitaiMeiliWrapperState ??= {
   limiters: {
     search: pLimit(env.MEILI_CALL_CONCURRENCY),
-    metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
     resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
   },
   circuits: {
     search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
-    metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
   },
 });
 
@@ -656,7 +333,7 @@ const limiters = meiliWrapperState.limiters;
 // touch a hot path on every call.
 const meiliCallTimeoutsCounter = registerCounterWithLabels({
   name: 'meili_call_timeouts_total',
-  help: 'Meilisearch wrapped-call timeouts by backend (search|metricsSearch|resourceSelect)',
+  help: 'Meilisearch wrapped-call timeouts by backend (search|resourceSelect)',
   labelNames: ['backend'] as const,
 });
 const meiliCallActiveGauge = registerGaugeWithLabels({
@@ -702,9 +379,8 @@ const meiliCallDurationHistogram = registerHistogram({
 // SIGKILL.
 //
 // The circuit breaker short-circuits at 0ms once a backend is demonstrably
-// failing, eliminating that accumulated wait. Each backend is tracked
-// independently so a brownout on metricsSearch doesn't shed load from
-// search.
+// failing, eliminating that accumulated wait. The circuit is tracked per
+// backend; only 'search' has one ('resourceSelect' is exempt, see below).
 //
 // State machine (per backend):
 //   CLOSED → (failures >= TRIP_THRESHOLD in WINDOW_SECONDS) → OPEN
@@ -896,9 +572,9 @@ async function runWithLimiter<T>(
   const useTimeout = opts.useTimeout ?? true;
   const timeoutMs = opts.timeoutMs ?? env.MEILI_CALL_TIMEOUT_MS;
 
-  // Circuit breaker gate — only for the two shared user-traffic backends.
+  // Circuit breaker gate — only for the shared user-traffic backend.
   let isTrial = false;
-  if (key === 'search' || key === 'metricsSearch') {
+  if (key === 'search') {
     const decision = admitCall(key);
     if (!decision.admitted) {
       meiliCircuitRejectionsCounter.inc({ backend: backendLabel });
@@ -971,7 +647,7 @@ async function runWithLimiter<T>(
       } catch {
         // intentionally swallowed
       }
-      if (key === 'search' || key === 'metricsSearch') {
+      if (key === 'search') {
         recordCallOutcome(key, isTrial, failedForCircuit);
       }
     }
@@ -986,7 +662,7 @@ export function withMeili<T>(backend: MeiliBackend, fn: () => Promise<T>): Promi
  * Resource-select (generation picker) variant of withMeili().
  *
  * Runs on a dedicated limiter and — because the circuit gate in runWithLimiter
- * only admits the two shared user-traffic backends — bypasses the `search`
+ * only admits the shared user-traffic backend — bypasses the `search`
  * circuit breaker entirely.
  *
  * WHY the picker is exempt: shedding it is far more costly than shedding its
@@ -1025,65 +701,6 @@ export async function searchWithSignal<D extends Record<string, any>>(
   signal.throwIfAborted();
   if (!res) throw new MeilisearchFetchError(502, 'response body did not arrive');
   return res;
-}
-
-// Methods on a Meilisearch index that issue a network call to the backend and
-// therefore should run under withMeili(). Limited to read-side methods —
-// write operations (updateDocuments, etc.) are intentionally NOT wrapped
-// because they're driven by background indexing jobs which have their own
-// retry loops and aren't part of the user-facing hot path.
-const WRAPPED_INDEX_METHODS = new Set(['search', 'searchGet', 'getDocument', 'getDocuments']);
-
-/**
- * Wrap a MeiliSearch client so that read-side calls on returned indexes
- * (`search`, `getDocuments`, etc.) run under withMeili('search', ...).
- *
- * Why this exists: event-engine-common's feeds package takes an IMeilisearch
- * instance and calls `.search()` on it deep inside queryDocuments — alongside
- * Postgres / Redis / ClickHouse work in populateDocuments. We can't wrap
- * inside event-engine-common (that package is intentionally framework-free).
- * Wrapping at the client boundary scopes the limiter+timeout to JUST the
- * Meili SDK call, leaving DB/Redis/CH work outside the limiter.
- *
- * Implementation: Proxy `getIndex()` to return a Proxy over the index whose
- * read methods are wrapped with runWithLimiter.
- */
-export function wrapMeilisearchClientWithLimiter(client: MeiliSearch): MeiliSearch {
-  return new Proxy(client, {
-    get(target, prop, receiver) {
-      if (prop === 'getIndex') {
-        return async function wrappedGetIndex(indexName: string) {
-          const index = await (target as any).getIndex(indexName);
-          return wrapIndexWithLimiter(index);
-        };
-      }
-      if (prop === 'index') {
-        return function wrappedIndex(indexName: string) {
-          const index = (target as any).index(indexName);
-          return wrapIndexWithLimiter(index);
-        };
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-}
-
-function wrapIndexWithLimiter<T extends object>(index: T): T {
-  return new Proxy(index, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (
-        typeof value === 'function' &&
-        typeof prop === 'string' &&
-        WRAPPED_INDEX_METHODS.has(prop)
-      ) {
-        return function wrappedMethod(this: unknown, ...args: unknown[]) {
-          return runWithLimiter('search', 'search', () => value.apply(target, args));
-        };
-      }
-      return value;
-    },
-  });
 }
 
 const RETRY_LIMIT = 5;

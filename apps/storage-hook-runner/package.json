@@ -1,0 +1,27 @@
+{
+  "name": "@civitai/storage-hook-runner-app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "dev": "node src/server.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@jitl/quickjs-ng-wasmfile-release-sync": "0.32.0",
+    "fastify": "^5.12.6",
+    "prom-client": "^14.2.0",
+    "quickjs-emscripten-core": "0.32.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  }
+}

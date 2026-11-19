@@ -90,7 +90,7 @@ export type MysteryBoxOddsPage = NonNullable<Awaited<ReturnType<typeof getMyster
 const oddsPageErrorLog = createFallbackDedup({ windowMs: 60_000, maxSize: 1000 });
 function logOddsPageError(message: string, fields: { boxDefinitionId: number; version: number }) {
   if (!oddsPageErrorLog.shouldLog(`${fields.boxDefinitionId}:${fields.version}:${message}`)) return;
-  logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields }).catch();
+  logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields });
 }
 
 /**
@@ -103,11 +103,13 @@ export async function getMysteryBoxOddsPage({
   boxDefinitionId,
   viewer,
   mysteryBoxEnabled,
+  creatorPacksEnabled,
   countryCode,
 }: {
   boxDefinitionId: number;
   viewer: EventViewer;
   mysteryBoxEnabled: boolean | undefined;
+  creatorPacksEnabled: boolean;
   countryCode: string | null | undefined;
 }) {
   if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return null;
@@ -122,6 +124,7 @@ export async function getMysteryBoxOddsPage({
       version: true,
       status: true,
       params: true,
+      seller: { select: { id: true, username: true, bannedAt: true, deletedAt: true } },
     },
   });
   if (
@@ -131,6 +134,9 @@ export async function getMysteryBoxOddsPage({
       box.status !== ITEM_DEFINITION_STATUS.archived)
   )
     return null;
+  if (box.seller && !creatorPacksEnabled) return null;
+  if (box.seller && (box.seller.bannedAt || box.seller.deletedAt) && !viewer?.isModerator)
+    return null;
 
   const params = box.params ?? {};
   const event = isEventShopItemData(params)
@@ -139,7 +145,11 @@ export async function getMysteryBoxOddsPage({
   if (event === null) return null;
 
   const now = new Date();
-  const { listings, onSale: listingOnSale } = await readBoxListings([box.id]);
+  const {
+    listings,
+    onSale: listingOnSale,
+    packOnSale: packListingOnSale,
+  } = await readBoxListings([box.id]);
   const started = listings.some((l) => !l.availableFrom || l.availableFrom <= now);
   // A grant skips the sale, so holding proves none: a holder sees an unsold box's page only for a
   // box of their own.
@@ -166,6 +176,8 @@ export async function getMysteryBoxOddsPage({
   ]);
   const onSale =
     box.status === ITEM_DEFINITION_STATUS.published ? listingOnSale(box.id) : undefined;
+  const packOnSale =
+    box.status === ITEM_DEFINITION_STATUS.published ? packListingOnSale(box.id) : undefined;
 
   const noun = rewardNoun(contents);
   const history: BoxOddsHistoryEntry[] = [];
@@ -215,6 +227,15 @@ export async function getMysteryBoxOddsPage({
     event: event ? { title: event.title } : null,
     teams,
     price: onSale?.unitAmount ?? null,
+    seller: box.seller && { id: box.seller.id, username: box.seller.username },
+    /** The pack on sale now: its first box draws only from `guaranteedTierIds` while any is left. */
+    pack: packOnSale
+      ? {
+          price: packOnSale.unitAmount,
+          size: packOnSale.pack.size,
+          guaranteedTierIds: packOnSale.pack.guaranteedTierIds,
+        }
+      : null,
     tiers,
     contents: contents.map(({ contentId, tierId, cosmeticId, name, url, fit, team }) => ({
       contentId,

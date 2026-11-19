@@ -1,5 +1,6 @@
 import type { GroupProps } from '@mantine/core';
-import { ActionIcon, Button, Group, Popover } from '@mantine/core';
+import { ActionIcon, Button, Group } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
@@ -11,9 +12,12 @@ import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { SearchSortLock } from '~/components/Search/SearchSortLock';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { set, ...queryFilters } = useModelQueryParams();
   const { filters, setFilters } = useModelBrowseFilters();
   const { favorites, query } = queryFilters;
@@ -38,11 +42,15 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
-      <SortFilter
-        type="models"
-        value={filters.sort}
-        onChange={(sort) => setFilters({ sort: sort as ModelSort })}
-      />
+      {query && features.modelFeedSearch ? (
+        <SearchSortLock />
+      ) : (
+        <SortFilter
+          type="models"
+          value={filters.sort}
+          onChange={(sort) => setFilters({ sort: sort as ModelSort })}
+        />
+      )}
       <DumbModelFiltersDropdown
         w="100%"
         size="compact-sm"

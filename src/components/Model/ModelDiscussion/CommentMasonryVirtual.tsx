@@ -7,7 +7,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
-import type { CommentGetAllItem } from '~/types/router';
+import type { CommentV3Comment } from '~/components/CommentsV3/types';
 
 const MIN_COLUMN_WIDTH = 300;
 const GAP = 16;
@@ -18,7 +18,7 @@ export function CommentMasonryVirtual({
   modelUserId,
   overscan = 4,
 }: {
-  comments: CommentGetAllItem[];
+  comments: CommentV3Comment[];
   modelUserId?: number;
   overscan?: number;
 }) {
@@ -78,7 +78,7 @@ function VirtualColumn({
   overscan,
   onMeasure,
 }: {
-  items: CommentGetAllItem[];
+  items: CommentV3Comment[];
   modelUserId?: number;
   columnWidth: number;
   scrollMargin: number;

@@ -5,6 +5,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import {
     BLOCK_REASONS,
+    CSAM_HOLD_REASON,
     REASON_COMMENT_MAX,
     REASON_NEEDING_COMMENT,
     type BlockReason,
@@ -18,9 +19,14 @@
 
   // Mounted per item (the parent keys it), so none of this carries over to the next image.
   let picking = $state(false);
-  let commenting = $state(false);
+  // The reasons that take a second step before submitting. One CSAM vote removes the image from every
+  // moderator's queue, so it needs a confirming click.
+  let step = $state<'comment' | 'csam' | null>(null);
   let comment = $state('');
   let form = $state<HTMLFormElement | null>(null);
+
+  const stepFor = (id: BlockReason) =>
+    id === REASON_NEEDING_COMMENT ? 'comment' : id === CSAM_HOLD_REASON ? 'csam' : null;
 
   const submitWith = (selector: string) => {
     if (!form || submitting) return;
@@ -28,15 +34,19 @@
   };
 
   const choose = (id: BlockReason) => {
-    if (id === REASON_NEEDING_COMMENT) commenting = true;
-    else submitWith(`button[name="reason"][value="${id}"]`);
+    step = stepFor(id);
+    if (!step) submitWith(`button[name="reason"][value="${id}"]`);
+  };
+
+  const cancel = () => {
+    picking = false;
+    step = null;
   };
 
   const onKeydown = (e: KeyboardEvent) => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape' && picking) {
-      picking = false;
-      commenting = false;
+      cancel();
       return;
     }
     const target = e.target as HTMLElement | null;
@@ -84,37 +94,30 @@
     <input type="hidden" name="block" value="1" />
     <div class="flex items-center justify-between">
       <p class="text-sm text-dark-0">Why block it?</p>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onclick={() => {
-          picking = false;
-          commenting = false;
-        }}
-      >
+      <Button type="button" variant="ghost" size="sm" onclick={cancel}>
         Cancel <span class="ml-2 text-xs opacity-70">Esc</span>
       </Button>
     </div>
     <div class="grid gap-2 sm:grid-cols-2">
       {#each BLOCK_REASONS as reason, i (reason.id)}
+        {@const secondStep = stepFor(reason.id) !== null}
         <Button
-          type={reason.id === REASON_NEEDING_COMMENT ? 'button' : 'submit'}
-          name={reason.id === REASON_NEEDING_COMMENT ? undefined : 'reason'}
-          value={reason.id === REASON_NEEDING_COMMENT ? undefined : reason.id}
+          type={secondStep ? 'button' : 'submit'}
+          name={secondStep ? undefined : 'reason'}
+          value={secondStep ? undefined : reason.id}
           variant="outline"
           disabled={submitting}
           class="h-auto flex-col items-start gap-1 whitespace-normal py-2 text-left"
-          onclick={reason.id === REASON_NEEDING_COMMENT ? () => (commenting = true) : undefined}
+          onclick={secondStep ? () => choose(reason.id) : undefined}
         >
           <span class="text-sm text-dark-0">
-            <span class="mr-2 text-xs text-dark-2">{i + 1}</span>{reason.label}
+            {#if i < 9}<span class="mr-2 text-xs text-dark-2">{i + 1}</span>{/if}{reason.label}
           </span>
           <span class="text-xs font-normal text-dark-2">{reason.help}</span>
         </Button>
       {/each}
     </div>
-    {#if commenting}
+    {#if step === 'comment'}
       <div class="flex flex-col gap-2">
         <Textarea
           name="reasonComment"
@@ -131,6 +134,23 @@
           disabled={submitting || !comment.trim()}
         >
           Block as other ToS violation
+        </Button>
+      </div>
+    {/if}
+    {#if step === 'csam'}
+      <div class="flex flex-col gap-2">
+        <p class="text-sm text-dark-0">
+          Hold this image for CSAM review? Your vote alone removes it from the queue.
+        </p>
+        <Button
+          type="submit"
+          name="reason"
+          value={CSAM_HOLD_REASON}
+          variant="destructive"
+          disabled={submitting}
+          autofocus
+        >
+          Hold for CSAM review
         </Button>
       </div>
     {/if}

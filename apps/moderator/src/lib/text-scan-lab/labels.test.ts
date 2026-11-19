@@ -20,6 +20,7 @@ describe('friendly names', () => {
       'Minor definition',
       'Scam / phishing definition',
       'CSAM definition',
+      'civitai.com face definition',
     ]);
   });
 

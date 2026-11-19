@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import {
   HOLD_UNKNOWN_REFUSAL,
@@ -10,6 +14,15 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
+import type { PayoutReviewAction } from '$lib/payout-review';
+import type {
+  MembershipCancelPreview,
+  MembershipCancelResult,
+  MembershipExtensionPreview,
+  MembershipExtensionResult,
+  MembershipResyncPreview,
+  MembershipResyncResult,
+} from '$lib/membership-extend';
 import { civitaiAppUrl } from './civitai-url';
 import { getRequestEvent } from '$app/server';
 import type { Transaction } from 'kysely';
@@ -18,11 +31,15 @@ import type { DB } from '@civitai/db-schema/kysely';
 import {
   BOX_OPENING_REWARD_STATUS,
   boxOpenClaimKey,
+  boxPackTermsOf,
   MOD_GRANT_SOURCE_PREFIX,
+  packBoxSourcePrefix,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
+import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { writeMayHaveLanded } from '@civitai/buzz';
 import { getBuzz } from './buzz';
-import { bustUserCosmeticCaches } from './cache';
+import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
@@ -239,15 +256,20 @@ export type ModEndpoint =
   | 'bounty-entry-file/clear-check'
   | 'bounty-entry-file/reblock-check'
   | 'bounty-poi/resolve-appeal'
+  | 'bounty-unpaid-award/resolve'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'feedback/ticket-bug'
+  | 'cosmetic/refund-box-purchase'
   | 'messages/claim'
   | 'messages/release'
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
+  | 'image/report-csam'
   | 'image/tag-vote'
+  | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
@@ -257,6 +279,7 @@ export type ModEndpoint =
   | 'minor-flag/set-minor'
   | 'model/bring-back'
   | 'model/republish'
+  | 'model/resolve-lock-review'
   | 'model/set-sfw-only'
   | 'model/set-poi'
   | 'model/take-down'
@@ -265,14 +288,19 @@ export type ModEndpoint =
   | 'poi-flag/dismiss'
   | 'poi-flag/flag-match'
   | 'poi-flag/revert'
+  | 'post-text/moderate'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'search-query-rule-dry-run'
   | 'storyline/lift-title-takedown'
   | 'storyline/resolve-title-appeal'
   | 'strike/create'
   | 'strike/void'
   | 'text-scan'
+  | 'text-scan/csam-hold/refer'
+  | 'text-scan/csam-hold/mark-reported'
+  | 'text-scan/csam-hold/set-report-choice'
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
@@ -281,7 +309,11 @@ export type ModEndpoint =
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/membership-cancel'
+  | 'user/membership-extend'
+  | 'user/membership-resync'
   | 'user/message-as-civitai'
+  | 'user/personal-data-export-release'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
@@ -310,7 +342,11 @@ export type ModReadEndpoint =
   | 'messages/inbox'
   | 'messages/thread'
   | 'user/legal-hold'
-  | 'user/reactions';
+  | 'user/membership-cancel-preview'
+  | 'user/membership-extend-preview'
+  | 'user/membership-resync-preview'
+  | 'user/reactions'
+  | 'whoami';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (
@@ -326,6 +362,25 @@ export const readModEndpoint = (
     label,
     auth: 'session',
     timeoutMs,
+  });
+
+/** The pre-payout review's decision route. It is a session `ModEndpoint` under `/api/admin/`, which
+ *  `callModEndpoint` cannot reach; it checks the row's `version` and records the session user. */
+export const decidePayoutReview = (body: {
+  id: number;
+  userId: number;
+  period: string;
+  action: PayoutReviewAction;
+  version: number;
+  note: string;
+  askRef?: string;
+}): Promise<JsonResult> =>
+  postJson({
+    path: '/api/admin/creator-program-payout-review',
+    body,
+    label: 'Payout review decision',
+    auth: 'session',
+    timeoutMs: 30_000,
   });
 
 /** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */
@@ -426,17 +481,17 @@ export async function voteOnImageTags(
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 
-// BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
-// endpoint's contract and Retool's Model Comments / Other Comments split.
+// The main app's bulk comment and review endpoints reject more than 500 ids in one call.
+const MOD_ENDPOINT_ID_BATCH = 500;
+
+// BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments), by CommentV3 id.
 export async function bulkCommentAction(input: {
   action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
   commentIds: number[];
-  commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number; retainedHidden?: number }> {
-  if (!input.commentIds.length && !input.commentV2Ids.length)
-    return { ok: false, error: 'Select at least one comment.' };
+}): Promise<ActionResult & { affected?: number }> {
+  if (!input.commentIds.length) return { ok: false, error: 'Select at least one comment.' };
 
   const ENDPOINTS = {
     bulkDelete: ['comment/bulk-delete', 'Comment delete'],
@@ -445,41 +500,43 @@ export async function bulkCommentAction(input: {
   } as const;
   const [path, label] = ENDPOINTS[input.action];
 
-  const result = await callModEndpoint(
-    path,
-    { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
-    label
-  );
-  if (!result.ok) return result;
+  // The panel posts ticks from pages no longer on screen, and the ModActivity row below names `userId`
+  // as their author, so another author's comment refuses. A missing id is a comment deleted since; the
+  // endpoint's short count reports it.
+  const foreign = await dbRead
+    .selectFrom('CommentV3')
+    .select('id')
+    .where('id', 'in', input.commentIds)
+    .where('userId', '!=', input.userId)
+    .limit(1)
+    .execute();
+  if (foreign.length)
+    return { ok: false, error: 'The selection includes another account’s comment. Reload.' };
 
-  // `removeAsTos` nests its counts per table; `bulkDelete` returns them flat.
-  const nested = (key: string, field = 'count') => {
-    const section = result.body[key];
-    return section && typeof section === 'object'
-      ? countOf(section as Record<string, unknown>, [field])
-      : 0;
-  };
-  // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
-  const affected =
-    input.action === 'bulkDelete'
-      ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
-      : nested('comment') + nested('commentV2');
-
-  // A delete or a restore keeps some comments hidden; the endpoint never says why, and neither does this.
-  const retainedHidden =
-    input.action === 'bulkDelete'
-      ? countOf(result.body, ['retainedHidden'])
-      : input.action === 'restoreFromTos'
-      ? nested('comment', 'retainedHidden') + nested('commentV2', 'retainedHidden')
-      : 0;
-
-  const failed =
-    input.action === 'restoreFromTos'
-      ? nested('comment', 'failed') + nested('commentV2', 'failed')
-      : 0;
+  let affected = 0;
+  let failed = 0;
+  for (let i = 0; i < input.commentIds.length; i += MOD_ENDPOINT_ID_BATCH) {
+    const commentIds = input.commentIds.slice(i, i + MOD_ENDPOINT_ID_BATCH);
+    const result = await callModEndpoint(path, { commentIds }, label);
+    if (!result.ok) {
+      if (!affected) return result;
+      await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+      const hidden = failed ? ` ${failed} more could not be restored and stay hidden.` : '';
+      return {
+        ok: false,
+        error: `${affected} of ${input.commentIds.length} went through,${hidden} then: ${result.error} Reload.`,
+      };
+    }
+    // `bulkDelete` answers `{ deleted }`; the ToS pair answer `{ comments: { count, failed? } }`.
+    const section = result.body.comments;
+    const tos = section && typeof section === 'object' ? (section as Record<string, unknown>) : {};
+    affected +=
+      input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
+    failed += input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
+  }
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && retainedHidden === 0 && failed === 0)
+  if (affected === 0 && failed === 0)
     return {
       ok: false,
       error:
@@ -490,24 +547,16 @@ export async function bulkCommentAction(input: {
 
   if (affected)
     await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
-  if (retainedHidden)
-    await logAction(
-      `comments:${input.action}:retainedHidden:${retainedHidden}`,
-      input.userId,
-      input.moderatorId
-    );
   if (failed)
     return {
       ok: false,
-      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}.`,
     };
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected, retainedHidden };
+  return { ok: true, affected };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
-// The main app's review endpoints reject more than 500 ids in one call.
-const REVIEW_BATCH = 500;
 
 export async function bulkReviewAction(input: {
   action: 'delete' | 'setExclude';
@@ -519,9 +568,9 @@ export async function bulkReviewAction(input: {
   if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
 
   let affected = 0;
-  for (let i = 0; i < input.reviewIds.length; i += REVIEW_BATCH) {
+  for (let i = 0; i < input.reviewIds.length; i += MOD_ENDPOINT_ID_BATCH) {
     const body: Record<string, unknown> = {
-      reviewIds: input.reviewIds.slice(i, i + REVIEW_BATCH),
+      reviewIds: input.reviewIds.slice(i, i + MOD_ENDPOINT_ID_BATCH),
     };
     if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
 
@@ -613,6 +662,8 @@ export async function setMuted(input: {
       moderatorId: input.moderatorId,
       activity: 'unmute',
     });
+  if (isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
 
   const now = new Date();
   // `mutedAt` is what marks this as a moderator's decision rather than an automatic one, and strike
@@ -632,8 +683,75 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // Without this the mute does not take effect until the user's session refreshes.
-  await invalidateUserSessions(input.userId);
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
+  // last because the orchestrator re-validates against the session's standing.
+  // The cookie is read now because the repeat below runs after this request has ended.
+  let cookie: string | undefined;
+  try {
+    cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+  } catch {
+    cookie = undefined;
+  }
+  const bustStanding = () =>
+    bustKeyBestEffort(
+      `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
+      {
+        logName: 'account-standing.cache-bust-failed',
+        message: 'Could not drop the cached account standing after a mute',
+        details: { userId: input.userId },
+      }
+    );
+  await bustStanding();
+  // After the bust, from which the main app refuses new submits. Best-effort and bounded just past
+  // the endpoint's own 5 s wait: the mute stands whatever this returns.
+  const cancelPending = async () => {
+    const cancelled = await postJson({
+      path: '/api/mod/user/cancel-pending-workflows',
+      body: { userId: input.userId },
+      label: 'Cancel pending generations',
+      auth: 'session',
+      timeoutMs: 6_000,
+      cookie,
+    });
+    if (!cancelled.ok)
+      void logAxiomError(new Error(cancelled.error), {
+        name: 'mute.cancel-pending-workflows-failed',
+        userId: input.userId,
+      });
+  };
+  await cancelPending();
+  try {
+    await invalidateUserSessions(input.userId);
+  } finally {
+    // Imported here: the orchestrator client does not load under the unit suites that import this
+    // file for its other actions.
+    const { revokeOrchestratorUserTokens } = await import('./orchestrator');
+    // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
+    const expireGenerationCredentials = async () => {
+      const result = await postJson({
+        path: '/api/mod/user/expire-generation-credentials',
+        body: { userId: input.userId },
+        label: 'Expire generation credentials',
+        auth: 'session',
+        timeoutMs: 5_000,
+        cookie,
+      });
+      if (!result.ok)
+        void logAxiomError(new Error(result.error), {
+          name: 'mute.expire-generation-credentials-failed',
+          userId: input.userId,
+        });
+    };
+    await expireGenerationCredentials();
+    await revokeOrchestratorUserTokens(input.userId);
+    setTimeout(() => {
+      void bustStanding()
+        .then(expireGenerationCredentials)
+        .finally(() => revokeOrchestratorUserTokens(input.userId))
+        .finally(cancelPending)
+        .catch(() => undefined);
+    }, ACCOUNT_STANDING_REBUST_MS).unref?.();
+  }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
   await recordUserActivity('Muted', input.userId, input.moderatorId);
   return { ok: true };
@@ -777,6 +895,9 @@ export async function setBanned(input: {
   removeComments?: boolean;
   moderatorId: number;
 }): Promise<ActionResult> {
+  // The ban endpoint answers before it bans, so its own refusal would not reach the moderator.
+  if (input.ban && isFeedbackCaptureOwner(input.userId))
+    return { ok: false, error: FEEDBACK_CAPTURE_OWNER_REFUSAL };
   const current = await dbWrite
     .selectFrom('User')
     .select('bannedAt')
@@ -858,6 +979,12 @@ export type BuzzColor = (typeof BUZZ_TYPES)[number];
 /** Account 0 is Civitai's own — the counterparty for every moderator grant or deduction. */
 const CIVITAI_ACCOUNT_ID = 0;
 
+/** The shape `newBuzzSubmissionId` mints: hex only, so the ledger key needs no URL encoding. */
+const BUZZ_SUBMISSION_ID = /^[0-9a-f]{16,64}$/;
+export const moderatorBuzzExternalId = (submissionId: string) => `moderator-buzz-${submissionId}`;
+/** Bounded and retried once: a moderator is waiting on this, and it decides whether to write. */
+const BUZZ_LOOKUP_OPTIONS = { timeoutMs: 3_000, retries: 1 };
+
 export async function sendBuzz(input: {
   userId: number;
   amount: number;
@@ -869,13 +996,42 @@ export async function sendBuzz(input: {
   entityType?: string;
   entityId?: number;
   moderatorId: number;
+  /** One per form, minted by the panel (`newBuzzSubmissionId`); a resubmit of the form reuses it. */
+  submissionId: string;
 }): Promise<ActionResult> {
   if (!Number.isInteger(input.amount) || input.amount <= 0)
     return { ok: false, error: 'Amount must be a positive whole number.' };
+  if (!BUZZ_SUBMISSION_ID.test(input.submissionId))
+    return { ok: false, error: 'This form is stale. Reload the page and try again.' };
+
+  // The ledger key for THIS form submission, so the transaction can be found again after a lost
+  // response, and a resubmit of the same form is recognised instead of filed a second time. Whether
+  // the buzz service itself rejects a repeated id is not something this code relies on: the lookup
+  // below is what stops the second write.
+  const externalTransactionId = moderatorBuzzExternalId(input.submissionId);
+  const buzz = getBuzz();
+
+  let existing: Awaited<ReturnType<typeof buzz.getTransactionByExternalId>>;
+  try {
+    existing = await buzz.getTransactionByExternalId(externalTransactionId, BUZZ_LOOKUP_OPTIONS);
+  } catch (e) {
+    console.error('[user-actions] buzz lookup failed', e);
+    // Fail closed: without the lookup there is no telling a fresh form from a resubmitted one.
+    return {
+      ok: false,
+      error: 'The Buzz service is not answering, so nothing was filed. Try again in a minute.',
+    };
+  }
+  if (existing)
+    return {
+      ok: false,
+      error: `This form was already filed (${existing.amount.toLocaleString()} Buzz). Reload the panel to file another.`,
+    };
 
   const toUser = input.action === 'send';
   try {
-    await getBuzz().createTransaction({
+    await buzz.createTransaction({
+      externalTransactionId,
       fromAccountId: toUser ? CIVITAI_ACCOUNT_ID : input.userId,
       toAccountId: toUser ? input.userId : CIVITAI_ACCOUNT_ID,
       fromAccountType: toUser ? 'yellow' : input.buzzType,
@@ -896,7 +1052,30 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
-    return { ok: false, error: 'Buzz transaction failed.' };
+    // A write that may have reached the service may still commit after we look: a lookup that
+    // finds nothing then means "not yet", not "never". That is every failure but a connection
+    // that never opened and a refusal the service answered, including the runtime's own transport
+    // timeout (a TypeError), which is how a hung write ends when the client sets no deadline.
+    const mayHaveLanded = writeMayHaveLanded(e);
+    // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
+    // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
+    // second grant (or deduction).
+    let landed: boolean | undefined;
+    try {
+      landed = !!(await buzz.getTransactionByExternalId(
+        externalTransactionId,
+        BUZZ_LOOKUP_OPTIONS
+      ));
+    } catch (lookupError) {
+      console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
+    }
+    if (landed === undefined || (!landed && mayHaveLanded))
+      return {
+        ok: false,
+        error:
+          "Buzz did not confirm the transaction, and it may still have gone through. Check the user's transaction history before submitting again; this form will not file it twice.",
+      };
+    if (!landed) return { ok: false, error: 'Buzz transaction failed. Nothing was filed.' };
   }
 
   await logAction(
@@ -1042,39 +1221,62 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.refunded', 'csi.itemDefinitionId'])
+    .leftJoin('ItemDefinition as d', 'd.id', 'csi.itemDefinitionId')
+    .select(['p.refunded', 'p.meta', 'csi.itemDefinitionId', 'd.sellerId'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
 
   if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
   if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
+  // A creator's box paid its creator, so its refund returns the Buzz and reverses that payout, which
+  // only the main app can do.
+  if (purchase.sellerId != null) {
+    const result = await callModEndpoint(
+      'cosmetic/refund-box-purchase',
+      { userId: input.userId, buzzTransactionId: input.buzzTransactionId },
+      'Mystery box refund'
+    );
+    if (!result.ok) return result;
+    await logAction('shopRefund', input.userId, input.moderatorId);
+    return result.body.payoutFailures
+      ? {
+          ok: true,
+          warning:
+            "The buyer's Buzz is back, but the creator's payout was not reversed. Reverse it in the Buzz panel.",
+        }
+      : { ok: true };
+  }
+  const pack = purchase.itemDefinitionId != null ? boxPackTermsOf(purchase.meta) : undefined;
 
   let removed: RemovedHolding[];
+  let takedownWarning: string | undefined;
   try {
     removed = await dbWrite.transaction().execute(async (trx) => {
       // A box open reads the held box and writes its opening under this lock; without it the refund
       // could find neither while the open commits.
       await lockItemHolder(trx, input.userId);
 
+      // The purchase's meta is read under the lock a takedown's claim also takes, or a box claimed
+      // in between is missed.
       const flagged = await trx
         .updateTable('UserCosmeticShopPurchases')
         .set({ refunded: true })
         .where('buzzTransactionId', '=', input.buzzTransactionId)
         .where('userId', '=', input.userId)
         .where('refunded', '=', false)
+        .returning(['meta', 'unitAmount'])
         .executeTakeFirst();
-      if (Number(flagged.numUpdatedRows) === 0)
-        throw new RefundRefused('That purchase is already refunded.');
+      if (!flagged) throw new RefundRefused('That purchase is already refunded.');
+      if (pack) takedownWarning = packTakedownWarning(flagged.meta, flagged.unitAmount, pack.size);
 
       // Routed by the listing, not by a NULL `cosmeticId`: a box purchase has none either.
-      return purchase.itemDefinitionId != null
-        ? takeBackBox(trx, {
-            userId: input.userId,
-            sourceKey: input.buzzTransactionId,
-            boxDefinitionId: purchase.itemDefinitionId,
-          })
-        : takeBackCosmetics(trx, input);
+      const boxDefinitionId = purchase.itemDefinitionId;
+      if (boxDefinitionId == null) return takeBackCosmetics(trx, input);
+      const target = { userId: input.userId, boxDefinitionId };
+      return pack
+        ? takeBackPack(trx, { ...target, buzzTransactionId: input.buzzTransactionId })
+        : takeBackBox(trx, { ...target, sourceKey: input.buzzTransactionId });
     });
   } catch (error) {
     if (error instanceof RefundRefused) return { ok: false, error: error.message };
@@ -1086,10 +1288,77 @@ export async function refundShopPurchase(input: {
   // without this the refunded badge or frame keeps rendering on their profile, comments and images for
   // up to 24 hours after the panel says it is gone.
   await bustUserCosmeticCaches(input.userId);
-  const warning = await refreshRemovedHoldings(removed, 'Refunded');
+  const refreshWarning = await refreshRemovedHoldings(removed, 'Refunded');
+  const warning = [takedownWarning, refreshWarning].filter(Boolean).join(' ') || undefined;
 
   await logAction('shopRefund', input.userId, input.moderatorId);
   return { ok: true, warning };
+}
+
+/**
+ * A takedown pays a pack box its share as it pulls the box's hat, and leaves the purchase unrefunded
+ * for the rest of the pack. It pays every box it claimed, paid yet or not, even after this refund;
+ * the moderator returns the Buzz by hand, so they are told what is the takedown's to pay.
+ */
+function packTakedownWarning(meta: unknown, unitAmount: number, size: number) {
+  // A takedown's and the unopenable-box refund's, each keyed by box: a box is paid back by one of them.
+  const byBox = meta as {
+    packTakedownRefunds?: Record<string, unknown>;
+    packOverPoolRefunds?: Record<string, unknown>;
+  } | null;
+  const claimed = Object.keys({
+    ...byBox?.packTakedownRefunds,
+    ...byBox?.packOverPoolRefunds,
+  }).length;
+  if (!claimed) return undefined;
+  const share = Math.floor(unitAmount / size);
+  return `${claimed} of this pack's boxes (${
+    claimed * share
+  } Buzz) are paid back on their own; return only the rest.`;
+}
+
+/**
+ * Every box of a pack, held or opened, by its purchase's key prefix: one charge paid for all of them,
+ * so they come back together. A box whose opening a takedown already refunded is passed over.
+ */
+async function takeBackPack(
+  trx: Transaction<DB>,
+  {
+    userId,
+    buzzTransactionId,
+    boxDefinitionId,
+  }: { userId: number; buzzTransactionId: string; boxDefinitionId: number }
+) {
+  const prefix = packBoxSourcePrefix(buzzTransactionId);
+  const held = await trx
+    .deleteFrom('Item')
+    .where(sql<boolean>`starts_with("sourceKey", ${prefix})`)
+    .where('itemDefinitionId', '=', boxDefinitionId)
+    .where('holderType', '=', 'user')
+    .where('holderId', '=', userId)
+    .executeTakeFirst();
+  const openings = await trx
+    .updateTable('BoxOpening')
+    .set({ rewardStatus: BOX_OPENING_REWARD_STATUS.refunded })
+    .where('userId', '=', userId)
+    .where('boxDefinitionId', '=', boxDefinitionId)
+    .where(sql<boolean>`starts_with("boxSourceKey", ${prefix})`)
+    .where('rewardStatus', '=', BOX_OPENING_REWARD_STATUS.granted)
+    .returning('boxItemId')
+    .execute();
+  if (Number(held.numDeletedRows) === 0 && openings.length === 0)
+    throw new RefundRefused('Neither the boxes nor what they gave are on this account.');
+  if (!openings.length) return [];
+  return trx
+    .deleteFrom('UserCosmetic')
+    .where('userId', '=', userId)
+    .where(
+      'claimKey',
+      'in',
+      openings.map((opening) => boxOpenClaimKey(opening.boxItemId))
+    )
+    .returning(REMOVED_HOLDING)
+    .execute();
 }
 
 /** A refusal found inside the refund transaction; thrown to roll it back. */
@@ -1661,6 +1930,119 @@ export async function revokeMembershipCode(input: {
   );
   if (result.ok) return { ok: true };
   return { ok: false, error: writeFailureError(result, REVOKE_MAY_HAVE_COMPLETED) };
+}
+
+// MEMBERSHIP EXTENSION (free days on a Stripe membership). The endpoint writes its own ModActivity
+// row and Axiom record, and its cooldown counts those rows, so no `logAction` here.
+
+// The endpoint makes several Stripe calls; a short client timeout reports a failure while the
+// extension lands. Past this, or past the proxy's own limit, the answer is EXTEND_OUTCOME_UNKNOWN.
+const EXTEND_TIMEOUT_MS = 120_000;
+
+export const EXTEND_OUTCOME_UNKNOWN =
+  'Outcome unknown: the extension may have gone through. Re-open this account and preview again before retrying; a repeat is refused if it did.';
+
+export async function previewMembershipExtension(input: {
+  userId: number;
+  days: number;
+}): Promise<{ ok: true; preview: MembershipExtensionPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-extend-preview',
+    { userId: input.userId, days: input.days },
+    'Preview extension',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipExtensionPreview };
+}
+
+export async function extendMembership(input: {
+  userId: number;
+  days: number;
+  reason: string;
+  expectedCurrentPeriodEnd: number;
+}): Promise<{ ok: true; result: MembershipExtensionResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-extend',
+    input,
+    'Extend membership',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, EXTEND_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipExtensionResult;
+  if (typeof body.ok !== 'boolean' || !Array.isArray(body.problems))
+    return { ok: false, error: EXTEND_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
+}
+
+// The cancel and re-sync endpoints write their own ModActivity row; do not add one here.
+
+export const CANCEL_OUTCOME_UNKNOWN =
+  'Outcome unknown: the cancel setting may have changed. Preview again before retrying; a repeat to the same setting writes nothing.';
+export const RESYNC_OUTCOME_UNKNOWN =
+  'Outcome unknown: the row may have been re-synced. Preview again; a repeat is harmless.';
+
+export async function previewMembershipCancel(input: {
+  userId: number;
+  cancelAtPeriodEnd: boolean;
+}): Promise<{ ok: true; preview: MembershipCancelPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-cancel-preview',
+    { userId: input.userId, cancelAtPeriodEnd: String(input.cancelAtPeriodEnd) },
+    'Preview cancel change',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipCancelPreview };
+}
+
+export async function setMembershipCancel(input: {
+  userId: number;
+  cancelAtPeriodEnd: boolean;
+  reason: string;
+}): Promise<{ ok: true; result: MembershipCancelResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-cancel',
+    input,
+    'Change membership cancel',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, CANCEL_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipCancelResult;
+  if (typeof body.ok !== 'boolean' || !Array.isArray(body.problems))
+    return { ok: false, error: CANCEL_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
+}
+
+export async function previewMembershipResync(input: {
+  userId: number;
+}): Promise<{ ok: true; preview: MembershipResyncPreview } | { ok: false; error: string }> {
+  const result = await readModEndpoint(
+    'user/membership-resync-preview',
+    { userId: input.userId },
+    'Preview re-sync',
+    60_000
+  );
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, preview: result.body as unknown as MembershipResyncPreview };
+}
+
+export async function resyncMembership(input: {
+  userId: number;
+  reason: string;
+  confirmEndBuzzMembership?: string;
+}): Promise<{ ok: true; result: MembershipResyncResult } | { ok: false; error: string }> {
+  const result = await callModEndpoint(
+    'user/membership-resync',
+    input,
+    'Re-sync membership',
+    EXTEND_TIMEOUT_MS
+  );
+  if (!result.ok) return { ok: false, error: writeFailureError(result, RESYNC_OUTCOME_UNKNOWN) };
+  const body = result.body as unknown as MembershipResyncResult;
+  if (body.ok !== true || !Array.isArray(body.changes))
+    return { ok: false, error: RESYNC_OUTCOME_UNKNOWN };
+  return { ok: true, result: body };
 }
 
 const GRANT_MAY_HAVE_COMPLETED =

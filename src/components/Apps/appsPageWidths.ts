@@ -424,7 +424,10 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  * one decision and reverting either alone re-opens the dead-gap defect.
  */
 export const APPS_FULL_MEASURE_PAGES = [
+  /** The viewer's "My apps" home: a launcher grid that spends width on columns. */
   '/apps',
+  /** The store (it was `/apps`): its column ladder is sized against the full container. */
+  '/apps/store',
   '/apps/activity',
   /** Also the App Assistant: chat beside a live preview wants every pixel the container has. */
   '/apps/build',
@@ -503,4 +506,9 @@ export const APPS_REDIRECT_ONLY_PAGES = [
    * the app.
    */
   '/apps/[appBlockId]',
+  /**
+   * The off-site VISIT redirect. Its `getServerSideProps` 302s to the listing's stored external
+   * URL or 404s; the component renders nothing but a one-line 429 notice when rate-limited.
+   */
+  '/apps/go/[listingId]',
 ] as const;

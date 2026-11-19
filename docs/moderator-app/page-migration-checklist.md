@@ -215,8 +215,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     version page reads their dataset from the training workflow and renders it with
     `$lib/components/WorkflowDataset.svelte`, shared with `/audit/training-data/workflow/[workflowId]`,
     and `trainingData.resolve` refuses that row.
-  - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
-    publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
+  - Filters: username is an EXACT match (as in the main app), plus model id (deep link from the main-app model menu; an unusable id matches nothing), workflow id,
+    created-date range and publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
   - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
     `model.toggleCannotPublish`, `training.setAnnouncement` and their services/schemas
     (`getTrainingModelsForModerators`, `toggleCannotPublish`, `getTrainingModerationFeedSchema`).
@@ -254,7 +254,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     `resolveUserRestriction` (the mod endpoint).
 - [x] **`/moderator/review/training-data`** (index + `[versionId]`) — **Migrated** to the spoke at
   **`/audit/training-data`** and **`/audit/training-data/[versionId]`**.
-  - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
+  - Spoke: `training-moderation.service.ts` (`getTrainingReviewQueue`, `getTrainingVersionDetail`,
     `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
     TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
   - Approve/deny releases the orchestrator's moderation gate for the workflow
@@ -283,7 +283,10 @@ Deliberately deferred; none blocks the three pages above.
   category colouring, which normalises — decoding HTML entities and stripping combining marks — and so
   folded away the evasion being reviewed. Reverted: the trigger card now renders the stored string
   unchanged and highlights the recorded `matchedWord` by literal search (`HighlightedText.svelte`). The
-  stored `matchedRegex` is still never executed; it is attacker-influenced text.
+  stored `matchedRegex` is still never executed; it is attacker-influenced text. This is about the
+  audit trigger card. The minor and remix-source image queues and Image Lookup do highlight through `getPromptHighlightSegments`
+  (categories from `reviewHighlightCategories` in `apps/moderator/src/lib/image-review.ts`), and Image
+  Lookup shows the stored prompt beside the highlighted copy.
 - **"Allowed to publish" widened.** The main app's Prisma `not: { path, equals: true }` compiled to SQL
   that excluded rows whose `meta` (or whose `cannotPublish` key) was null; the spoke's
   `IS DISTINCT FROM 'true'` includes them. The spoke's reading is almost certainly the intended one,

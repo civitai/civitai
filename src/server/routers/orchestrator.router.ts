@@ -1,4 +1,7 @@
 import { TRPCError } from '@trpc/server';
+import { withholdTrainingOutputs } from '~/server/services/orchestrator/training/studio-withheld-outputs';
+import { acceptGenerationLicense } from '~/server/services/generation-license.service';
+import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
 import { assertGenerationInputsUsable } from '~/server/services/generation-input-urls';
 import * as z from 'zod';
@@ -25,7 +28,9 @@ import {
 } from '~/server/logging/client';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
+import { assertGenerationAllowedNow } from '~/server/services/generation/generation-status-gate';
+import { env } from '~/env/server';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -33,10 +38,12 @@ import {
 import {
   patchSchema,
   workflowIdSchema,
+  generatedImagesQuerySchema,
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -54,6 +61,7 @@ import {
   patchWorkflowTags,
   queryWorkflows,
 } from '~/server/services/orchestrator/workflows';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
@@ -65,13 +73,16 @@ import {
   protectedProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
+import { rewriteProxyUrlToOrchestrator } from '~/server/orchestrator/region-proxy';
+import { isCivitaiMediaUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
@@ -80,7 +91,7 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -119,22 +130,24 @@ function resolveGenerationCurrencies(
   return allowed;
 }
 
-const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
-  const user = ctx.user;
-  if (!user) throw throwAuthorizationError();
-  const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
-  return next({
-    ctx: {
-      ...ctx,
-      user,
-      token,
-      allowMatureContent,
-      hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
-    },
+const orchestratorMiddlewareFor = (options?: { allowRestricted: boolean }) =>
+  middleware(async ({ ctx, next }) => {
+    const user = ctx.user;
+    if (!user) throw throwAuthorizationError();
+    const token = await getOrchestratorToken(user.id, ctx, options);
+    const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+    return next({
+      ctx: {
+        ...ctx,
+        user,
+        token,
+        allowMatureContent,
+        hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+      },
+    });
+    // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
   });
-  // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
-});
+const orchestratorMiddleware = orchestratorMiddlewareFor();
 
 const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -152,7 +165,7 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
 const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   const result = await next();
   const version = ctx.req?.headers['x-client-version'] as string;
-  if (!version || version === 'unknown') return result;
+  if (!semver.valid(version)) return result;
 
   // Fail open: this middleware runs on every generation tRPC call. A
   // sysRedis outage would otherwise 500 every gen request — defeating
@@ -161,14 +174,14 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park every gen
     // tRPC call ~11min (a fast DOWN already rejects into the catch below).
-    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
+    genClient = await withSysReadBreaker(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
   }
 
   const genVersion = decodeRedisString(genClient.version);
-  if (genVersion && semver.lt(version, genVersion)) {
+  if (semver.valid(genVersion) && semver.lt(version, genVersion as string)) {
     ctx.res?.setHeader('x-generation-update-required', genVersion);
     if (genClient.notes)
       ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
@@ -181,12 +194,37 @@ const orchestratorProcedure = protectedProcedure
   .use(orchestratorMiddleware)
   .use(enforceGenerationVersion)
   .use(regionProxyMiddleware);
+// Restricted accounts keep reading, deleting and cancelling their own workflows; the token stays on the server.
+const orchestratorOwnWorkProcedure = protectedProcedure
+  .use(orchestratorMiddlewareFor({ allowRestricted: true }))
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
   .use(experimentalMiddleware)
   .use(enforceGenerationVersion)
   .use(regionProxyMiddleware);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
+
+/**
+ * The generation kill switch for onsite prompt enhancement, the paid LLM step a caller runs before
+ * generating. The same rule an onsite submit applies (moderators pass "disabled", "members only"
+ * refuses the free tier, a switch that cannot be read refuses everyone). It runs before the
+ * orchestrator token is fetched, so a refused caller costs nothing past the switch read.
+ * ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+ */
+const enhancePromptGenerationStatusMiddleware = middleware(async ({ ctx, next }) => {
+  const user = ctx.user;
+  if (!user) throw throwAuthorizationError();
+  if (env.ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS) await assertGenerationAllowedNow(user);
+  return next();
+});
+const orchestratorEnhanceProcedure = guardedProcedure
+  .use(enhancePromptGenerationStatusMiddleware)
+  .use(orchestratorMiddleware)
+  .use(experimentalMiddleware)
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
 // in `preset-image-gen.service.ts` (shared with comics + the enqueued-panels job).
@@ -196,10 +234,19 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(z.object({ videoUrl: z.string() }))
-    .query(({ ctx, input }) => getVideoMetadata(input)),
+    .query(({ input }) => {
+      // The step runs on the system token, so like the other system-run steps it only takes
+      // media on Civitai's orchestrator. A region-proxy url is read from the orchestrator host.
+      const videoUrl = rewriteProxyUrlToOrchestrator(input.videoUrl);
+      if (!isCivitaiMediaUrl(videoUrl))
+        throw throwBadRequestError(
+          'Video metadata is only available for videos uploaded to Civitai. Upload the file, then try again.'
+        );
+      return getVideoMetadata({ videoUrl });
+    }),
 
   // #region [prompt enhancement]
-  enhancePrompt: orchestratorGuardedProcedure
+  enhancePrompt: orchestratorEnhanceProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(promptEnhancementSchema)
     .mutation(async ({ ctx, input }) => {
@@ -219,26 +266,38 @@ export const orchestratorRouter = router({
       });
     }),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
-  queryWorkflowsByTags: orchestratorProcedure
+  queryWorkflowsByTags: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(async ({ ctx, input }) => {
-      return queryWorkflows({
+      const result = await queryWorkflows({
         ...input,
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
+      const items = await withholdTrainingOutputs(ctx.user, result.items);
+      return {
+        ...result,
+        items: items.map((workflow) =>
+          withoutTrainingWeightHandles(workflow, { isModerator: ctx.user.isModerator })
+        ),
+      };
     }),
-  getWorkflow: orchestratorProcedure
+  getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
-    .query(({ ctx, input }) =>
-      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
-    ),
+    .query(async ({ ctx, input }) => {
+      const workflow = await getWorkflow({
+        token: ctx.token,
+        path: { workflowId: input.workflowId },
+      });
+      const [gated] = await withholdTrainingOutputs(ctx.user, [workflow]);
+      return withoutTrainingWeightHandles(gated, { isModerator: ctx.user.isModerator });
+    }),
   // #endregion
 
   // #region [requests]
-  deleteWorkflow: orchestratorProcedure
+  deleteWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -250,7 +309,7 @@ export const orchestratorRouter = router({
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
       return result;
     }),
-  cancelWorkflow: orchestratorProcedure
+  cancelWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
     .mutation(async ({ ctx, input }) => {
@@ -327,7 +386,12 @@ export const orchestratorRouter = router({
         await patchWorkflowSteps({
           input: steps.map((step) => ({
             ...step,
-            patches: step.patches.map((patch) => ({ ...patch, path: `/metadata${patch.path}` })),
+            // `from` is rooted too: a step patch reads and writes the step's metadata only.
+            patches: step.patches.map((patch) => ({
+              ...patch,
+              path: `/metadata${patch.path}`,
+              ...(patch.from !== undefined ? { from: `/metadata${patch.from}` } : {}),
+            })),
           })),
           token: ctx.token,
         });
@@ -366,12 +430,13 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [generated images]
-  queryGeneratedImages: orchestratorProcedure
+  queryGeneratedImages: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(workflowQuerySchema)
-    .query(({ ctx, input }) =>
+    .input(generatedImagesQuerySchema)
+    .query(({ ctx, input: { excludeAppWorkflows, ...input } }) =>
       queryGeneratedImageWorkflows2({
         ...input,
+        excludeTags: excludeAppWorkflows ? [WORKFLOW_TAGS.APP_BLOCK] : undefined,
         token: ctx.token,
         user: ctx.user,
         tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
@@ -381,6 +446,12 @@ export const orchestratorRouter = router({
       })
     ),
   // #region [Generation Graph V2 endpoints]
+  acceptGenerationLicense: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ ecosystem: z.string() }))
+    .mutation(({ ctx, input }) =>
+      acceptGenerationLicense({ userId: ctx.user.id, ecosystem: input.ecosystem })
+    ),
   /**
    * Generate from graph - unified endpoint for all generation types
    */
@@ -401,6 +472,7 @@ export const orchestratorRouter = router({
         acknowledgedSoftBlock,
         sourceProvenance,
         downloadPriority,
+        acceptBoostRequired,
       } = input;
       // Before anything serializes them into the steps (`.input(z.any())` leaves them unchecked).
       assertSourceMetadataWithinCap(sourceMetadata, sourceMetadataMap);
@@ -451,18 +523,7 @@ export const orchestratorRouter = router({
       }
 
       // Check generation status early
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       const result = await generateFromGraph({
         input: formInput,
@@ -511,6 +572,7 @@ export const orchestratorRouter = router({
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
         downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+        acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -566,21 +628,13 @@ export const orchestratorRouter = router({
         });
       }
 
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       // Rides alongside the graph input rather than inside it — it is not a graph node.
-      const { downloadPriority, ...graphInput } = (input ?? {}) as Record<string, unknown>;
+      const { downloadPriority, acceptBoostRequired, ...graphInput } = (input ?? {}) as Record<
+        string,
+        unknown
+      >;
 
       try {
         return await whatIfFromGraph({
@@ -592,6 +646,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
           downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
+          acceptBoostRequired: generatorAcceptsBoostRequired(acceptBoostRequired, ctx),
           inputGate: { entry: 'whatIfFromGraph', isApiCaller: ctx.apiKeyId != null },
         });
       } catch (e) {
@@ -771,7 +826,10 @@ export const orchestratorRouter = router({
       // TARGET user's token off a MODERATOR session would leave 60s of
       // recoverable per-target-user state on every pod a moderator touched.
       // See orchestrator-token-cache.ts docstring (Round-5 audit H2).
-      const targetToken = await getOrchestratorToken(userId, ctx, { bypassCache: true });
+      const targetToken = await getOrchestratorToken(userId, ctx, {
+        bypassCache: true,
+        allowRestricted: true,
+      });
       return queryGeneratedImageWorkflows2({
         ...query,
         token: targetToken,
@@ -802,7 +860,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
-      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+      getWorkflowStatusUpdate({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   // ── Generic iterative image editor endpoints ──
@@ -834,6 +896,8 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the paid prompt enhancement below, so a refused caller is charged nothing.
+      await assertPresetGenerationAllowed(ctx.user as SessionUser);
       await assertGenerationInputsUsable({
         urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
         userId: ctx.user.id,

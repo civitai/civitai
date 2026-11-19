@@ -14,6 +14,7 @@ import { getPostDetailVisibility } from '~/server/services/post-detail-visibilit
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -22,6 +23,9 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { getShowcaseHeldLevels } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
@@ -31,6 +35,7 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
+import { servableArticleImage } from '~/shared/utils/article-card-image';
 
 // --- Schema & Types ---
 
@@ -176,7 +181,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       coverImageId: true,
       sfwCoverImageId: true,
       meta: true,
+      mode: true,
       userId: true,
+      minor: true,
+      sfwOnly: true,
       user: { select: { username: true, settings: true } },
       modelVersions: {
         where: { status: 'Published' },
@@ -211,12 +219,19 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   // Run metric + image queries in parallel
   // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
   const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // A taken-down model's card is drawn without any of its images.
+  const withheld = isModelWithheld(model);
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
   const previewableImage = {
     tosViolation: false,
     needsReview: null,
     ingestion: 'Scanned' as const,
   };
+  const heldLevel = (
+    await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
+  ).get(id);
+  const withinHeldLevel =
+    heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {};
   const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
@@ -231,22 +246,25 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       .catch(() => null),
     // Same pick as the model page's showcase (getImagesForModelVersion): the owner's own
     // posts only, earliest post first, unless the model belongs to the system account.
-    dbRead.image.findFirst({
-      where: {
-        post: {
-          publishedAt: { not: null },
-          modelVersionId: publishedVersion.id,
-          availability: Availability.Public,
-          ...(model.userId !== -1 ? { userId: model.userId } : {}),
-        },
-        tosViolation: false,
-        needsReview: null,
-        ingestion: 'Scanned',
-      },
-      select: ogImageSelect,
-      orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
-    }),
-    coverId
+    withheld
+      ? null
+      : dbRead.image.findFirst({
+          where: {
+            post: {
+              publishedAt: { not: null },
+              modelVersionId: publishedVersion.id,
+              availability: Availability.Public,
+              ...(model.userId !== -1 ? { userId: model.userId } : {}),
+            },
+            tosViolation: false,
+            needsReview: null,
+            ingestion: 'Scanned',
+            ...withinHeldLevel,
+          },
+          select: ogImageSelect,
+          orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
+        }),
+    coverId && !withheld
       ? dbRead.image.findFirst({
           where: {
             id: coverId,
@@ -257,6 +275,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               ...ownPosts,
             },
             ...previewableImage,
+            ...withinHeldLevel,
           },
           select: ogImageSelect,
         })
@@ -304,7 +323,12 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         title: true,
         content: true,
         user: { select: { username: true } },
-        coverImage: { select: ogImageSelect },
+        coverImage: {
+          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+        },
+        bannerImage: {
+          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+        },
       },
     }),
     dbRead.articleMetric
@@ -335,9 +359,13 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
 
   return {
     title: article.title,
-    description: cleanDescription(article.content ?? ''),
+    description: cleanDescription(removeSpoilers(article.content ?? '')),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage)),
+    ...buildEntityImage(
+      getSafeImage(
+        servableArticleImage(article.coverImage) ?? servableArticleImage(article.bannerImage)
+      )
+    ),
     stats,
   };
 }

@@ -1,7 +1,7 @@
 import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
+import { MAX_CHAT_MEMBERS, MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
 import { chatLayoutSlugs } from '~/shared/constants/chat-layout';
 import { chatThemeSlugs } from '~/shared/constants/chat-theme';
 
@@ -9,7 +9,7 @@ export const MAX_CHAT_NAME_LENGTH = 60;
 
 export type CreateChatInput = z.infer<typeof createChatInput>;
 export const createChatInput = z.object({
-  userIds: z.array(z.number()),
+  userIds: z.array(z.number()).max(MAX_CHAT_MEMBERS),
   // Omitted means "infer from the member count". Passing it lets a caller start
   // a group with two people, which is the only way to have two threads with the
   // same person.
@@ -27,7 +27,7 @@ export const updateChatInput = z.object({
 export type AddUsersInput = z.infer<typeof addUsersInput>;
 export const addUsersInput = z.object({
   chatId: z.number(),
-  userIds: z.array(z.number()).min(1),
+  userIds: z.array(z.number()).min(1).max(MAX_CHAT_MEMBERS),
 });
 
 export type ModifyUserInput = z.infer<typeof modifyUserInput>;

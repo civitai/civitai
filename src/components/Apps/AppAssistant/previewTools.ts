@@ -1,9 +1,11 @@
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import {
   PREVIEW_NOT_ENABLED,
+  SANDBOX_SERVER_ID,
   START_PREVIEW,
   STOP_PREVIEW,
   previewRefusal,
+  previewVerdictOf,
   runnerPreviewOf,
   type ShownPreview,
 } from '@civitai/app-assistant';
@@ -64,6 +66,23 @@ export function runnerPreviewAction(result: {
     return show ? { show } : null;
   }
   return result.name === STOP_PREVIEW ? { hide: true } : null;
+}
+
+const DEV_SERVER_STARTS = new Set(
+  ['dev_server_start', 'dev_server_restart'].map((tool) => `${SANDBOX_SERVER_ID}__${tool}`)
+);
+const PREVIEW_CHECK = `${SANDBOX_SERVER_ID}__preview_check`;
+
+/**
+ * Whether a finished call the server runner reports says the open app's dev server is up: its
+ * start or restart worked, or `sandbox__preview_check` saw the app render. The runner opens the
+ * preview by itself only after the first start of a reply, so a frame that failed meanwhile hears
+ * of a later one only through this.
+ */
+export function devServerUpOf(result: { name: string; output: unknown; isError: boolean }) {
+  if (result.isError) return false;
+  if (DEV_SERVER_STARTS.has(result.name)) return true;
+  return result.name === PREVIEW_CHECK && previewVerdictOf(result.output) === 'ok';
 }
 
 /** What the assistant is told when `startDevTunnel` refuses, by tRPC error code. */

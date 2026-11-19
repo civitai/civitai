@@ -135,7 +135,7 @@ describe('block-scope.constants', () => {
     // deriveOauthBitmaskFromBlockScopes and validateBlockScopesAgainstOauthClient
     // both index the map right after the predicate; a prototype key must never
     // reach that indexing.
-    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0);
+    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0n);
     const check = validateBlockScopesAgainstOauthClient(PROTOTYPE_KEYS, TokenScope.Full);
     expect(check.valid).toBe(false);
     expect(check.rejectedScopes.sort()).toEqual([...PROTOTYPE_KEYS].sort());
@@ -165,9 +165,12 @@ describe('block-scope.constants', () => {
       // `auth: "oauth"` alongside them is the fail-closed answer until they do.
       'apps:storage',
       'apps:storage:publish',
+      // Cross-app imports run through the same document-store route, which reads the
+      // middleware-resolved claims; refused alongside `auth: "oauth"` like its siblings.
+      'apps:storage:import',
     ];
 
-    it('is EXACTLY the six app-storage scopes — no more, no fewer', () => {
+    it('is EXACTLY the seven app-storage scopes — no more, no fewer', () => {
       expect([...APP_STORAGE_SCOPES].sort()).toEqual([...EXPECTED_APP_STORAGE].sort());
     });
 
@@ -253,6 +256,8 @@ describe('block-scope.constants', () => {
       'apps:storage:shared:write',
       // Documents in a shared collection, authored as the viewer, read by every viewer.
       'apps:storage:publish',
+      // The viewer's documents in ANOTHER app, read and written as the viewer.
+      'apps:storage:import',
       'posts:write:self',
       'goods:purchase:self',
       // Publishes store cards every visitor sees, under the viewer's name.
@@ -431,7 +436,7 @@ describe('block-scope.constants', () => {
     });
 
     it('accepts no-bit scopes regardless of bitmask', () => {
-      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0);
+      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0n);
       expect(result.valid).toBe(true);
     });
 
@@ -478,14 +483,14 @@ describe('block-scope.constants', () => {
     });
 
     it('returns 0 for an empty / scope-less manifest (NOT Full)', () => {
-      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0);
+      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0n);
       expect(deriveOauthBitmaskFromBlockScopes([])).not.toBe(TokenScope.Full);
     });
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
       // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
       expect(deriveOauthBitmaskFromBlockScopes(['apps:storage:read', 'apps:storage:write'])).toBe(
-        0
+        0n
       );
     });
 

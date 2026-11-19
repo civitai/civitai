@@ -98,7 +98,7 @@ export async function setTextScanConfig(
   // No fallback here: merging a patch over defaults would silently erase the stored overrides.
   const next = withDefaults({ ...withDefaults(await readStoredConfig()), ...patch });
   await sysRedis.set(REDIS_SYS_KEYS.TEXT_SCAN.CONFIG, JSON.stringify(next));
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'config updated',
@@ -128,7 +128,7 @@ export async function setTextScanRollout(
     await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.MODES, entityType);
   }
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'rollout updated',
@@ -157,7 +157,7 @@ export async function setTextScanWebSearchRollout(
     await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType);
   }
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'web-search rollout updated',
@@ -180,13 +180,13 @@ export async function setTextScanLabelMode(
   if (mode === 'review') await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label, 'review');
   else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label);
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'label mode updated',
     moderatorId,
-    label,
     mode,
+    payload: { label },
   });
   return readTextScanLabelModes();
 }
@@ -205,20 +205,21 @@ export async function setTextScanCsamMode(
     await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD, 'review');
   else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD);
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'label mode updated',
     moderatorId,
-    label: TEXT_SCAN_CSAM_MODE_FIELD,
     mode,
+    payload: { label: TEXT_SCAN_CSAM_MODE_FIELD },
   });
   return readTextScanCsamMode();
 }
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|csam))$/;
+export const TEXT_SCAN_PROMPT_KEY =
+  /^(base|label:(nsfw|poi|minor|scam|csam|model-com-face-intent))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(
@@ -277,6 +278,51 @@ export async function insertTextScanPrompt({
         });
   await bustFetchThroughCache(REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS);
   return row;
+}
+
+/** A note's `revokes:<id>` as saved: stamped `holder-revokes:<id>` when its writer holds the key's
+ *  publish permission, and never stamped otherwise (a stamp the writer typed is undone). The stamp is
+ *  what counts, so a revocation outlives its writer's grant. */
+export function stampPromptRevocations(note: string | undefined, writerIsHolder: boolean) {
+  if (!note) return note;
+  // Until none is left: one pass turns a typed `holder-holder-revokes:` into a stamp.
+  let unstamped = note;
+  while (/holder-revokes:/i.test(unstamped))
+    unstamped = unstamped.replace(/holder-revokes:/gi, 'revokes:');
+  return writerIsHolder ? unstamped.replace(/\brevokes:(\d+)\b/g, 'holder-revokes:$1') : unstamped;
+}
+
+/** True when `content` is exactly an earlier version of `key`, written by one of `authorIds`, and not
+ *  revoked. A stamped `holder-revokes:<id>` (see `stampPromptRevocations`) retires that version's text
+ *  in every version before the note, so an identical copy cannot restore it; a holder saving the text
+ *  again after the note lifts it. */
+export async function isRestorableTextScanPrompt({
+  key,
+  content,
+  authorIds,
+}: {
+  key: string;
+  content: string;
+  authorIds: number[];
+}) {
+  // primary: guards a publish; a revoking note saved a moment ago must already count
+  const rows = await dbWrite.textScanPrompt.findMany({
+    where: { key },
+    select: { id: true, content: true, note: true, createdById: true },
+  });
+  const contentById = new Map(rows.map((row) => [row.id, row.content]));
+  // The newest note revoking this text: every copy saved before it is retired.
+  let revokedBefore = 0;
+  for (const row of rows)
+    for (const [, id] of row.note?.matchAll(/\bholder-revokes:(\d+)\b/g) ?? [])
+      if (contentById.get(Number(id)) === content) revokedBefore = Math.max(revokedBefore, row.id);
+  return rows.some(
+    (row) =>
+      row.content === content &&
+      row.id > revokedBefore &&
+      row.createdById !== null &&
+      authorIds.includes(row.createdById)
+  );
 }
 
 export class MissingTextScanPromptError extends Error {

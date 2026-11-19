@@ -1,4 +1,5 @@
-import { Badge, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Badge, Skeleton, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconGavel, IconHourglass, IconSwords, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useMemo } from 'react';

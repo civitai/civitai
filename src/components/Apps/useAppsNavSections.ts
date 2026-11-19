@@ -154,6 +154,9 @@ export function useAppsNavSections(): AppsSection[] {
       : NO_APPS_NAV_CAPABILITIES.isAuthor,
     canBuild: buildMode !== null,
     canSeeStore: hasAppsStoreAccess(features),
+    // SSR-seeded (the session is resolved server-side), so applying it on the first paint is
+    // hydration-safe, exactly like `isAuthor` above.
+    isSignedIn: !!currentUser,
   };
 
   return visibleAppsSections(summary, context);

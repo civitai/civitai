@@ -13,6 +13,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -60,6 +61,12 @@ type AnnouncementCardProps = {
    */
   onActionClick?: (action: AnnouncementCardAction, index: number) => void;
   /**
+   * Called when a button that navigates inside the site is pressed, so a host that floats over the
+   * page (the notifications drawer) can get out of the way. Off-site buttons open the
+   * leaving-Civitai warning in place and do not call it.
+   */
+  onNavigate?: () => void;
+  /**
    * Entities this card should record an impression for once it has been half visible for a
    * continuous second. Omitted by the sitewide surface, which is not instrumented — the hook
    * disables itself on an empty list, so "creator only" is a property of who passes this.
@@ -94,6 +101,7 @@ export function AnnouncementCard({
   cover,
   actions = [],
   onActionClick,
+  onNavigate,
   impressions,
   topBar,
   controls,
@@ -106,6 +114,7 @@ export function AnnouncementCard({
   const impressionRef = useTrackImpression<HTMLElement>(impressions);
   const theme = useMantineTheme();
   const internalHosts = useInternalHosts();
+  const toCurrentDomain = useCurrentDomainHref();
   const borderColor = theme.colors[color]?.[4] ?? theme.colors.blue[4];
 
   const body = (
@@ -192,8 +201,11 @@ export function AnnouncementCard({
                   <Button
                     key={index}
                     component={Link}
-                    href={action.link}
-                    onClick={() => onActionClick?.(action, index)}
+                    href={toCurrentDomain(action.link)}
+                    onClick={() => {
+                      onActionClick?.(action, index);
+                      onNavigate?.();
+                    }}
                     {...shared}
                   />
                 );

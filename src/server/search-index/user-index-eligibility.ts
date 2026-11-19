@@ -23,6 +23,8 @@ import { Prisma } from '@prisma/client';
  */
 export const USER_SEARCH_INDEX_ELIGIBILITY: Prisma.Sql[] = [
   Prisma.sql`u.id != -1`,
+  // The feedback capture account (`FEEDBACK_CAPTURE_OWNER_ID`), a system account nobody uses.
+  Prisma.sql`u.id != -2`,
   Prisma.sql`u."deletedAt" IS NULL`,
   Prisma.sql`u."bannedAt" IS NULL`,
 ];

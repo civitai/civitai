@@ -231,16 +231,11 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
     // Each leaves every fragment intact, so only the whole normalised statement can see them.
     // Same instrument the sibling file uses for the three #4160 processors.
     expect(normalizeSql(sql())).toMatchInlineSnapshot(`
-      "WITH new_app_listing_comment AS (
+      "WITH owner_comment AS (
       SELECT DISTINCT
       CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END "ownerId",
-      JSONB_BUILD_OBJECT(
-      'version', 3,
-      'commentId', c.id,
-      'appListingSlug', al.slug,
-      'listingName', al.name,
-      'username', u.username
-      ) "details"
+      JSONB_BUILD_OBJECT('version', 3, 'commentId', c.id, 'appListingSlug', al.slug, 'listingName', al.name,
+      'username', u.username) "details"
       FROM "CommentV3" c
       JOIN "User" u ON c."userId" = u.id
       JOIN "app_listings" al ON al."serial_id" = c."entityId"
@@ -250,11 +245,8 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       AND c."parentId" IS NULL
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
-      AND al."status" = 'approved'
-      AND al."revision_of_id" IS NULL
-      AND c."createdAt" > '2026-08-19'
-      AND c."createdAt" > NOW() - INTERVAL '7 days'
       AND c."userId" != CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
+      AND al."status" = 'approved' AND al."revision_of_id" IS NULL AND c."createdAt" > '2026-08-19' AND c."createdAt" > NOW() - INTERVAL '7 days'
       AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
       WHERE (blk."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
@@ -275,12 +267,12 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       SELECT
       concat('new-comment-app-listing:owner:v3:', details->>'commentId') "key",
       concat('comment:v2:', details->>'commentId') "dedupeKey",
-      "ownerId"    "userId",
+      "ownerId" "userId",
       'new-app-listing-comment' "type",
       details
-      FROM new_app_listing_comment
+      FROM owner_comment
       WHERE
-      NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment');"
+      NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-app-listing-comment')"
     `);
   });
 

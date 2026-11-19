@@ -8,12 +8,12 @@ import {
   Group,
   Loader,
   Paper,
-  Popover,
   SegmentedControl,
   Stack,
   Textarea,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { TooltipProps } from '@mantine/core';
 import {
   IconExternalLink,
@@ -30,6 +30,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useMergedRef } from '@mantine/hooks';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -193,6 +194,10 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 size="lg"
                 className="absolute left-[5px] top-[5px] z-10"
               />
+              <MatureRestrictedBadge
+                restricted={image.modelRestricted}
+                className="absolute right-[5px] top-[5px] z-10"
+              />
               <EdgeMedia
                 src={image.url}
                 name={image.id.toString()}
@@ -237,6 +242,7 @@ type ImageGridItemProps = {
     width: number;
     height: number;
     nsfwLevel: NsfwLevel;
+    modelRestricted: boolean;
   };
   index: number;
   width: number;

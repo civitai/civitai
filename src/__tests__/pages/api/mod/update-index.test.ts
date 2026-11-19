@@ -10,7 +10,6 @@ const { indexMocks } = vi.hoisted(() => {
   const exportNames = [
     'modelsSearchIndex',
     'usersSearchIndex',
-    'imagesSearchIndex',
     'articlesSearchIndex',
     'imagesMetricsSearchIndex',
     'collectionsSearchIndex',
@@ -51,7 +50,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
@@ -67,7 +65,6 @@ import handler from '~/pages/api/mod/update-index';
 const expectedRouting: Array<{ index: string; exportName: IndexExportName }> = [
   { index: MODELS_SEARCH_INDEX, exportName: 'modelsSearchIndex' },
   { index: USERS_SEARCH_INDEX, exportName: 'usersSearchIndex' },
-  { index: IMAGES_SEARCH_INDEX, exportName: 'imagesSearchIndex' },
   { index: ARTICLES_SEARCH_INDEX, exportName: 'articlesSearchIndex' },
   { index: METRICS_IMAGES_SEARCH_INDEX, exportName: 'imagesMetricsSearchIndex' },
   { index: COLLECTIONS_SEARCH_INDEX, exportName: 'collectionsSearchIndex' },

@@ -2,6 +2,7 @@ import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as CosmeticPackService from '~/server/services/cosmetic-pack.service';
 import type * as EventShopItem from '~/server/events/event-shop-item';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     createMultiTx: vi.fn(),
+    createTx: vi.fn(),
+    blockedPairIds: vi.fn(),
     refundMultiTx: vi.fn(),
     listMultiTx: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
@@ -29,11 +32,15 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   refreshOwnedStickerCache: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
-  createBuzzTransaction: vi.fn(),
+  createBuzzTransaction: mocks.createTx,
   createMultiAccountBuzzTransaction: mocks.createMultiTx,
   refundMultiAccountTransaction: mocks.refundMultiTx,
   getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
   refundTransaction: vi.fn(),
+}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferences>()),
+  getBlockedPairIds: mocks.blockedPairIds,
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
@@ -69,6 +76,7 @@ import {
 } from '~/test-utils/shopPurchaseClaimFake';
 
 const BUYER_ID = 1;
+const SELLER_ID = 10;
 const SHOP_ITEM_ID = 42;
 // Another listing selling the same box (a re-priced or event-page copy).
 const SECOND_LISTING_ID = 43;
@@ -96,7 +104,14 @@ const listing = {
   cosmetic: null,
   _count: { purchases: 0 },
 };
-const boxRow = { id: BOX_ID, type: 'box', status: 'published', version: VERSION, params: {} };
+const boxRow = {
+  id: BOX_ID,
+  type: 'box',
+  status: 'published',
+  version: VERSION,
+  params: {},
+  sellerId: null as number | null,
+};
 
 type Content = {
   id: number;
@@ -131,6 +146,8 @@ let world: {
   drawn: { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[];
   items: ItemRow[];
   purchases: Record<string, unknown>[];
+  /** `meta` of the box's listings, by id; absent is `{}`. */
+  listingMeta: Record<number, unknown>;
   log: string[];
 };
 let claims: ReturnType<typeof shopPurchaseClaimFake>;
@@ -233,6 +250,17 @@ const makeTx = (onLock: () => Promise<void>) => ({
       );
       return { _sum: { quantity: rows.length ? rows.reduce((s, i) => s + i.quantity, 0) : null } };
     },
+    count: async ({
+      where,
+    }: {
+      where: { holderId: number; itemDefinitionId: number; sourceKey: { endsWith: string } };
+    }) =>
+      world.items.filter(
+        (i) =>
+          i.holderId === where.holderId &&
+          i.itemDefinitionId === where.itemDefinitionId &&
+          i.sourceKey.endsWith(where.sourceKey.endsWith)
+      ).length,
     create: async ({ data }: { data: Omit<ItemRow, 'id' | 'quantity'> }) => {
       if (world.items.some((i) => i.sourceKey === data.sourceKey)) throw p2002();
       const row = { ...data, id: BigInt(world.items.length + 1), quantity: 1 };
@@ -243,7 +271,9 @@ const makeTx = (onLock: () => Promise<void>) => ({
   },
   cosmeticShopItem: {
     findMany: async ({ where }: { where: { itemDefinitionId?: number } }) =>
-      where.itemDefinitionId === BOX_ID ? [{ id: SHOP_ITEM_ID }, { id: SECOND_LISTING_ID }] : [],
+      where.itemDefinitionId === BOX_ID
+        ? [SHOP_ITEM_ID, SECOND_LISTING_ID].map((id) => ({ id, meta: world.listingMeta[id] ?? {} }))
+        : [],
   },
   cosmeticShopPurchaseClaim: {
     ...claims.txDelegate,
@@ -307,6 +337,7 @@ const buy = ({
   expectedUnitAmount = PRICE,
   payWith,
   mysteryBoxEnabled = true,
+  creatorMysteryPacksEnabled = true,
   countryCode = 'US',
   isModerator,
 }: {
@@ -318,6 +349,7 @@ const buy = ({
   isModerator?: boolean;
   payWith?: 'default' | 'blue-first';
   mysteryBoxEnabled?: boolean;
+  creatorMysteryPacksEnabled?: boolean;
   countryCode?: string | null;
 } = {}) =>
   purchaseCosmeticShopItem({
@@ -331,6 +363,7 @@ const buy = ({
     buzzType: 'yellow',
     packsEnabled: true,
     mysteryBoxEnabled,
+    creatorMysteryPacksEnabled,
     countryCode,
   });
 
@@ -342,7 +375,15 @@ const nothingClaimedOrCharged = () => {
 
 beforeEach(() => {
   Object.values(mocks).forEach((m) => m.mockReset());
-  world = { contents: [hat(1), hat(2)], owned: [], drawn: [], items: [], purchases: [], log: [] };
+  world = {
+    contents: [hat(1), hat(2)],
+    owned: [],
+    drawn: [],
+    items: [],
+    purchases: [],
+    listingMeta: {},
+    log: [],
+  };
   lockTail = Promise.resolve();
   claims = installShopPurchaseClaimFake();
 
@@ -357,6 +398,14 @@ beforeEach(() => {
     async ({ where }: { where: { sourceKey: string; holderId: number } }) =>
       world.items.find((i) => i.sourceKey === where.sourceKey && i.holderId === where.holderId) ??
       null
+  );
+  dbMock.dbWrite.item.findMany.mockReset();
+  dbMock.dbWrite.item.findMany.mockImplementation(
+    async ({ where }: { where: { sourceKey: { startsWith: string }; holderId: number } }) =>
+      world.items
+        .filter((i) => i.sourceKey.startsWith(where.sourceKey.startsWith))
+        .filter((i) => i.holderId === where.holderId)
+        .sort((a, b) => a.sourceKey.localeCompare(b.sourceKey))
   );
   dbMock.dbWrite.$transaction.mockReset();
   // No claim rollback here: the fake's journal is one per fake, and the concurrent tests run two
@@ -377,15 +426,179 @@ beforeEach(() => {
   mocks.createMultiTx.mockResolvedValue(legs());
   mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
   mocks.listMultiTx.mockResolvedValue([]);
+  mocks.createTx.mockResolvedValue({ transactionId: 'payout-tx' });
+  mocks.blockedPairIds.mockResolvedValue([]);
+  dbMock.dbWrite.$executeRaw.mockReset();
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  dbMock.dbWrite.$queryRaw.mockReset();
+  // creatorIsRestricted's read: an active seller.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ muted: false, bannedAt: null, deletedAt: null }]);
   mocks.assertEventPurchasable.mockResolvedValue(undefined);
   mocks.getEventBuyerTeam.mockResolvedValue(undefined);
+});
+
+describe('buying a pack of boxes', () => {
+  const PACK_PRICE = 1350;
+  const GUARANTEED_TIER = 2;
+  const PACK_META = { pack: { size: 3, guaranteedTierIds: [GUARANTEED_TIER] } };
+  const packTxId = (key: string) => `item-purchase-v1-${BUYER_ID}-${SECOND_LISTING_ID}-${key}`;
+  const packListing = {
+    ...listing,
+    id: SECOND_LISTING_ID,
+    unitAmount: PACK_PRICE,
+    title: 'Birthday 3-pack',
+    meta: PACK_META,
+  };
+  const buyPack = ({ idempotencyKey = KEY_A }: { idempotencyKey?: string } = {}) =>
+    purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SECOND_LISTING_ID,
+      idempotencyKey,
+      expectedUnitAmount: PACK_PRICE,
+      expectedVersion: VERSION,
+      buzzType: 'yellow',
+      packsEnabled: true,
+      mysteryBoxEnabled: true,
+      countryCode: 'US',
+    });
+  const rare = (id: number) => hat(id, {}, { tierId: GUARANTEED_TIER });
+
+  beforeEach(() => {
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(packListing);
+    world.listingMeta[SECOND_LISTING_ID] = PACK_META;
+    world.contents = [hat(1), hat(2), hat(3), rare(4)];
+    mocks.createMultiTx.mockResolvedValue({
+      ...legs(),
+      transactionIds: [{ transactionId: 'tx-0', accountType: 'yellow', amount: PACK_PRICE }],
+      totalAmount: PACK_PRICE,
+    });
+  });
+
+  it('grants every box of the pack under one charge and one purchase row, the guaranteed box first', async () => {
+    const result = await buyPack();
+
+    expect(world.items.map((i) => i.sourceKey)).toEqual([
+      `${packTxId(KEY_A)}#pack-01`,
+      `${packTxId(KEY_A)}#pack-02`,
+      `${packTxId(KEY_A)}#pack-03`,
+    ]);
+    expect(result).toEqual({
+      kind: 'box',
+      boxItemId: '1',
+      boxItemIds: ['1', '2', '3'],
+      boxDefinitionId: BOX_ID,
+    });
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+    expect(mocks.createMultiTx.mock.calls[0][0]).toMatchObject({
+      amount: PACK_PRICE,
+      externalTransactionIdPrefix: packTxId(KEY_A),
+    });
+    expect(world.purchases).toEqual([
+      expect.objectContaining({
+        buzzTransactionId: packTxId(KEY_A),
+        unitAmount: PACK_PRICE,
+        meta: PACK_META,
+      }),
+    ]);
+  });
+
+  it('answers a replay with the boxes still held, charging once', async () => {
+    const first = await buyPack();
+    world.items.shift();
+    const second = await buyPack();
+    expect(second).toEqual({ ...first, boxItemId: '2', boxItemIds: ['2', '3'] });
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('sells a pack that exactly fits what is left beyond the boxes already held', async () => {
+    world.contents = [hat(1), hat(2), hat(3), rare(4)];
+    world.items.push({
+      id: BigInt(90),
+      itemDefinitionId: BOX_ID,
+      holderId: BUYER_ID,
+      sourceKey: 'earlier',
+      quantity: 1,
+    });
+    await buyPack();
+    expect(world.items).toHaveLength(4);
+  });
+
+  it('a pending pack holds the last guaranteed hat against another pack', async () => {
+    world.contents = [hat(1), hat(2), hat(3), hat(5), hat(6), hat(7), rare(4)];
+    claims.rows.set(packTxId(KEY_B), {
+      transactionId: packTxId(KEY_B),
+      userId: BUYER_ID,
+      shopItemId: SECOND_LISTING_ID,
+      amount: PACK_PRICE,
+      attempts: 1,
+      status: 'pending',
+    });
+    await expect(buyPack()).rejects.toThrow('guaranteed pull');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('refuses when fewer than a pack are left beyond the boxes already held', async () => {
+    world.contents = [hat(1), hat(2), rare(4)];
+    world.items.push({
+      id: BigInt(90),
+      itemDefinitionId: BOX_ID,
+      holderId: BUYER_ID,
+      sourceKey: 'earlier',
+      quantity: 1,
+    });
+    await expect(buyPack()).rejects.toThrow('fewer than 3 things left');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    expect(world.items).toHaveLength(1);
+  });
+
+  it('refuses when nothing is left in the guaranteed tiers', async () => {
+    world.contents = [hat(1), hat(2), hat(3), hat(5)];
+    await expect(buyPack()).rejects.toThrow('guaranteed pull');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it("an unopened pack's guaranteed box holds the last guaranteed hat against a second pack", async () => {
+    world.contents = [hat(1), hat(2), hat(3), hat(5), hat(6), hat(7), rare(4)];
+    await buyPack();
+    await expect(buyPack({ idempotencyKey: KEY_B })).rejects.toThrow('guaranteed pull');
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pending pack purchase reserves its whole size against a single box', async () => {
+    world.contents = [hat(1), hat(2), hat(3)];
+    claims.rows.set(packTxId(KEY_B), {
+      transactionId: packTxId(KEY_B),
+      userId: BUYER_ID,
+      shopItemId: SECOND_LISTING_ID,
+      amount: PACK_PRICE,
+      attempts: 1,
+      status: 'pending',
+    });
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue(listing);
+    await expect(buy()).rejects.toThrow('unopened boxes already cover');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('refuses a listing whose pack terms do not parse, before any claim or charge', async () => {
+    dbMock.dbRead.cosmeticShopItem.findUnique.mockResolvedValue({
+      ...packListing,
+      meta: { pack: { size: 3 } },
+    });
+    await expect(buyPack()).rejects.toThrow('not available');
+    nothingClaimedOrCharged();
+  });
 });
 
 describe('buying a mystery box', () => {
   it('grants one held box keyed on the claim, with a purchase row naming no cosmetic', async () => {
     const result = await buy();
 
-    expect(result).toEqual({ kind: 'box', boxItemId: '1', boxDefinitionId: BOX_ID });
+    expect(result).toEqual({
+      kind: 'box',
+      boxItemId: '1',
+      boxItemIds: ['1'],
+      boxDefinitionId: BOX_ID,
+    });
     expect(world.items).toEqual([
       expect.objectContaining({
         itemDefinitionId: BOX_ID,
@@ -487,9 +700,25 @@ describe('buying a mystery box', () => {
       await refused(buy(), 'not available');
     });
 
-    // A creator's pack isn't sold until its sale pays the creator; approval alone doesn't open it.
-    it("a creator's mystery pack, even approved", async () => {
-      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: 10 });
+    it("a creator's mystery pack while its flag is off", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+        ...boxRow,
+        sellerId: SELLER_ID,
+      });
+      await refused(buy({ creatorMysteryPacksEnabled: false }), 'not available');
+    });
+
+    it("the creator's own mystery pack, saying so", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: BUYER_ID });
+      await refused(buy(), "You can't buy your own mystery pack");
+    });
+
+    it("a creator's mystery pack whose creator blocked the buyer", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+        ...boxRow,
+        sellerId: SELLER_ID,
+      });
+      mocks.blockedPairIds.mockResolvedValue([SELLER_ID]);
       await refused(buy(), 'not available');
     });
 
@@ -1221,5 +1450,74 @@ describe('the mystery box region block', () => {
   it('refuses everywhere on a malformed list rather than nowhere', async () => {
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: 'BE' });
     await expect(getMysteryBoxBlockedRegions()).rejects.toThrow('not available right now');
+  });
+});
+
+describe("buying a creator's mystery pack", () => {
+  const recordedMeta = () => {
+    const call = dbMock.dbWrite.$executeRaw.mock.calls.find((c) =>
+      (c[0] as TemplateStringsArray).join('?').includes('UserCosmeticShopPurchases')
+    );
+    const json = call?.slice(1).find((v) => typeof v === 'string' && v.startsWith('{'));
+    return json ? JSON.parse(json as string) : undefined;
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: SELLER_ID });
+  });
+
+  it('pays the creator exactly their pool once the box is granted, and records it', async () => {
+    await buy();
+
+    expect(world.items).toHaveLength(1);
+    expect(mocks.createTx).toHaveBeenCalledTimes(1);
+    expect(mocks.createTx.mock.calls[0][0]).toMatchObject({
+      fromAccountId: 0,
+      toAccountId: SELLER_ID,
+      toAccountType: 'yellow',
+      // floor(500 * 0.7)
+      amount: 350,
+      externalTransactionId: `${txId(KEY_A)}:sell:${SELLER_ID}:yellow`,
+    });
+    expect(recordedMeta()).toEqual({
+      payouts: [{ userId: SELLER_ID, amount: 350, color: 'yellow', transactionId: 'payout-tx' }],
+      platformCut: 150,
+    });
+  });
+
+  // A resumed claim can be charged under another domain's colour than this request's.
+  it('pays in the colour the charge came from, not the request’s', async () => {
+    mocks.createMultiTx.mockResolvedValue({
+      ...legs(),
+      transactionIds: [{ transactionId: 'tx-0', accountType: 'green', amount: PRICE }],
+    });
+
+    await buy();
+
+    expect(mocks.createTx.mock.calls[0][0]).toMatchObject({
+      toAccountType: 'green',
+      externalTransactionId: `${txId(KEY_A)}:sell:${SELLER_ID}:green`,
+    });
+  });
+
+  it('keeps the sale when the payout fails: the buyer is not refunded and keeps the box', async () => {
+    mocks.createTx.mockRejectedValue(new Error('buzz down'));
+
+    const result = await buy();
+
+    expect(mocks.createTx).toHaveBeenCalled();
+    expect(result).toMatchObject({ kind: 'box', boxItemIds: [expect.any(String)] });
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    expect(recordedMeta()).toBeUndefined();
+  }, 15_000);
+});
+
+describe('buying a platform mystery box', () => {
+  it('pays nobody: no payout and no payout record', async () => {
+    await buy();
+
+    expect(world.items).toHaveLength(1);
+    expect(mocks.createTx).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

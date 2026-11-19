@@ -326,3 +326,45 @@ describe('dwell timer surface', () => {
     expect(sentEvents()[0].data.surface).toBe('hubs');
   });
 });
+
+describe('dwell timer — onSeen (useDwellImpression, the app store path)', () => {
+  type State = Parameters<typeof dwellHooks.armDwell>[2];
+  const registryFor = (element: Element, state: State) => ({
+    observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
+    elements: new Map([[element, state]]),
+    intersecting: new Set([element]),
+  });
+
+  it('calls onSeen once after the SAME dwell, and records no feed impression instead', () => {
+    const onSeen = vi.fn();
+    const element = {} as Element;
+    const state: State = { targets: [], onSeen, timer: null };
+    const registry = registryFor(element, state);
+
+    dwellHooks.armDwell(registry, element, state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS - 1);
+    expect(onSeen).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onSeen).toHaveBeenCalledTimes(1);
+    flushImpressions();
+    expect(sentEvents()).toEqual([]);
+    // Recorded → unwatched, like the feed path: it cannot fire again.
+    expect(registry.elements.has(element)).toBe(false);
+  });
+
+  it('a hidden-tab disarm cancels onSeen until re-armed (the feed re-arm applies)', () => {
+    const onSeen = vi.fn();
+    const element = {} as Element;
+    const state: State = { targets: [], onSeen, timer: null };
+    const registry = registryFor(element, state);
+
+    dwellHooks.armDwell(registry, element, state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS / 2);
+    dwellHooks.disarmDwell(state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS * 2);
+    expect(onSeen).not.toHaveBeenCalled();
+    dwellHooks.armDwell(registry, element, state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS);
+    expect(onSeen).toHaveBeenCalledTimes(1);
+  });
+});

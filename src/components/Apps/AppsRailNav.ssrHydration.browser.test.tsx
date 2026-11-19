@@ -215,7 +215,9 @@ function barMarkers(html: string) {
   return {
     landmark: html.includes('aria-label="App sections"'),
     build: html.includes('/apps/build'),
-    marketplace: html.includes('/apps"'),
+    // The quote matters: `/apps"` is ONLY the My apps anchor, never a prefix of another href.
+    myApps: html.includes('/apps"'),
+    marketplace: html.includes('/apps/store"'),
   };
 }
 
@@ -256,7 +258,8 @@ describe('the /apps rail — real SSR → hydrate', () => {
     mocks.navSummary = undefined;
     const html = renderToString(subNav());
     expect(html).toContain('/apps/build');
-    expect(html).toContain('/apps"'); // the Marketplace anchor
+    expect(html).toContain('/apps/store"'); // the Marketplace anchor
+    expect(html).toContain('/apps"'); // the My apps anchor (SSR-frozen: store access only)
     // …while the SUMMARY-driven tabs are absent even though the client cache below is
     // full…
     expect(html).not.toContain('/apps/activity');
@@ -337,7 +340,7 @@ describe('the /apps rail — real SSR → hydrate', () => {
     // viewer — matching `resolveBuildPageAccess`, which would serve them state A.
     // Folding `canBuild` into the container's `currentUser ?` branch fails HERE.
     expect(html).toContain('/apps/build');
-    expect(html).toContain('/apps"'); // Marketplace — the bar cleared the `< 2` floor
+    expect(html).toContain('/apps/store"'); // Marketplace
     for (const route of RETIRED_ROUTES) {
       expect(html, `server HTML still links ${route}`).not.toContain(route);
     }
@@ -350,16 +353,21 @@ describe('the /apps rail — real SSR → hydrate', () => {
 
   test('🔴 DISCRIMINATING CONTROL: the same logged-out viewer WITHOUT get-started server-renders nothing', async () => {
     // Only `appBlocksGetStarted` moves between this and the test above. Without it an
-    // anon non-author has `canBuild: false`, qualifies for Marketplace ALONE, and the
-    // `< 2` collapse removes the bar — so the previous test's `toContain('/apps/build')`
-    // is attributable to the flag rather than to "the component renders a Build tab for
-    // everybody".
+    // anon non-author has `canBuild: false`, and "My apps" is signed-in only, so Marketplace
+    // ALONE qualifies and the `< 2` collapse removes the bar — so the previous test's
+    // `toContain('/apps/build')` is attributable to the flag rather than to "the component
+    // renders a Build tab for everybody".
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: false };
     mocks.user = null;
     mocks.navSummary = undefined;
 
     const html = renderToString(subNav());
-    expect(barMarkers(html)).toEqual({ landmark: false, build: false, marketplace: false });
+    expect(barMarkers(html)).toEqual({
+      landmark: false,
+      build: false,
+      myApps: false,
+      marketplace: false,
+    });
 
     await hydrateInto(html, subNav());
     expect(recoverable).toEqual([]);
@@ -383,13 +391,23 @@ describe('the /apps rail — real SSR → hydrate', () => {
 
     mocks.flags = { appBlocks: false, appListings: false, appBlocksGetStarted: true };
     const noStoreHtml = renderToString(subNav());
-    expect(barMarkers(noStoreHtml)).toEqual({ landmark: false, build: false, marketplace: false });
+    expect(barMarkers(noStoreHtml)).toEqual({
+      landmark: false,
+      build: false,
+      myApps: false,
+      marketplace: false,
+    });
 
     // The control: the SAME viewer with a store flag lit does get the bar, so the absence
     // above is the gate firing and not the component being inert.
     mocks.flags = { appBlocks: false, appListings: true, appBlocksGetStarted: true };
     const withStoreHtml = renderToString(subNav());
-    expect(barMarkers(withStoreHtml)).toEqual({ landmark: true, build: true, marketplace: true });
+    expect(barMarkers(withStoreHtml)).toEqual({
+      landmark: true,
+      build: true,
+      myApps: true,
+      marketplace: true,
+    });
 
     // Hydrating the EMPTY server output against the no-store flags must still be clean —
     // the gate has to agree with itself across the two frames, or the change trades a

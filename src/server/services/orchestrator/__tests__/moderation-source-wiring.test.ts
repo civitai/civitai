@@ -160,16 +160,6 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   // reaches `generateFromGraph`; the generation they precede is labelled `generate` at the derived
   // site above, via surface `block`. Labelling them `generate` too would double-count the block
   // population against one submission.
-  'src/server/routers/blocks.router.ts::submitWorkflow': {
-    sites: 1,
-    siteNote: "the block host's pre-check on the submitted workflow prompt",
-    arg: { kind: 'absent' },
-  },
-  'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow': {
-    sites: 1,
-    siteNote: "the block host's pre-check on the custom-comfy prompt",
-    arg: { kind: 'absent' },
-  },
   // Shared app content safety, block moderation steps and prompt enhancement: none of these is a
   // generation submission, so none belongs in a population that gets divided against
   // `generateFromGraph`'s wall time.
@@ -178,9 +168,12 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
     siteNote: 'the shared-text safety audit',
     arg: { kind: 'absent' },
   },
-  'src/server/services/blocks/steps/moderation.ts::submit': {
+  // Every App Block audit (textToImage, custom comfy, registry steps, pass-through, workflow and
+  // training sample prompts) goes through this one wrapper; its callers are pinned by
+  // `no-unaudited-app-block-generation-kind.test.ts`.
+  'src/server/services/blocks/pass-through-prompt-audit.ts::auditAppBlockPrompt': {
     sites: 1,
-    siteNote: "the 'promptAudit' step's submit-phase audit",
+    siteNote: "the block host's pre-check on every App Block generation prompt",
     arg: { kind: 'absent' },
   },
   // The Training Studio's check on an edit prompt before the Studio submits the edit to the

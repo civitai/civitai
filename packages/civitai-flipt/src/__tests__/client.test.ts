@@ -116,9 +116,137 @@ describe('createFliptClient', () => {
     expect(init).not.toHaveBeenCalled();
   });
 
+  describe('readBoolean — tells "unreadable" (null) apart from "off" (false)', () => {
+    it('null when init fails and there is no snapshot; isEnabled says false for the same state', async () => {
+      init.mockImplementation(async () => {
+        throw new Error('boom');
+      });
+      const flipt = createFliptClient({ ...baseConfig, onInitError: () => {} });
+      expect(await flipt.readBoolean('any-flag', 'app-1')).toBeNull();
+      expect(await flipt.isEnabled('any-flag', 'app-1')).toBe(false);
+    });
+
+    it('null when the connection config is missing', async () => {
+      const flipt = createFliptClient({
+        ...baseConfig,
+        url: undefined,
+        clientToken: undefined,
+        onInitError: () => {},
+      });
+      expect(await flipt.readBoolean('any-flag')).toBeNull();
+    });
+
+    it('null when the evaluation throws (an unknown flag key), and the error is reported', async () => {
+      evaluateBoolean.mockImplementation(() => {
+        throw new Error('unknown flag');
+      });
+      const onEvalError = vi.fn();
+      const flipt = createFliptClient({ ...baseConfig, onEvalError });
+      expect(await flipt.readBoolean('missing')).toBeNull();
+      expect(onEvalError).toHaveBeenCalledWith(expect.any(Error), 'missing');
+    });
+
+    it('the evaluated value when the flag is read: false stays false, true stays true', async () => {
+      evaluateBoolean.mockImplementation(() => ({ enabled: false }));
+      const off = createFliptClient(baseConfig);
+      expect(await off.readBoolean('off-flag', 'app-1')).toBe(false);
+      evaluateBoolean.mockImplementation(() => ({ enabled: true }));
+      const on = createFliptClient(baseConfig);
+      expect(await on.readBoolean('on-flag', 'app-1')).toBe(true);
+      expect(evaluateBoolean).toHaveBeenLastCalledWith({
+        flagKey: 'on-flag',
+        entityId: 'app-1',
+        context: {},
+      });
+    });
+
+    it('honors a local override without evaluating', async () => {
+      const flipt = createFliptClient({
+        ...baseConfig,
+        localOverrides: { 'off-flag': 'off', 'on-flag': 'on' },
+      });
+      expect(await flipt.readBoolean('off-flag')).toBe(false);
+      expect(await flipt.readBoolean('on-flag')).toBe(true);
+      expect(init).not.toHaveBeenCalled();
+    });
+  });
+
   it('reports no variant match as null', async () => {
     evaluateVariant.mockImplementation(() => ({ match: false, variantKey: 'primary' }));
     const flipt = createFliptClient(baseConfig);
     expect(await flipt.getVariant('some-flag')).toBeNull();
+  });
+
+  describe('getVariantDetailSync', () => {
+    it('returns null until the client is initialized', async () => {
+      const flipt = createFliptClient(baseConfig);
+      expect(flipt.getVariantDetailSync('exp')).toBeNull();
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('exp')).not.toBeNull();
+    });
+
+    it('reports the variant with the segments that matched', async () => {
+      evaluateVariant.mockImplementation(() => ({
+        match: true,
+        variantKey: 'b',
+        segmentKeys: ['exp-pin-b'],
+      }));
+      const flipt = createFliptClient(baseConfig);
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('exp', '7', { userId: '7' })).toEqual({
+        match: true,
+        variantKey: 'b',
+        segmentKeys: ['exp-pin-b'],
+      });
+    });
+
+    it('reports a disabled or unmatched flag as no match with no variant', async () => {
+      evaluateVariant.mockImplementation(() => ({ match: false, variantKey: '', segmentKeys: [] }));
+      const flipt = createFliptClient(baseConfig);
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('exp', '7')).toEqual({
+        match: false,
+        variantKey: null,
+        segmentKeys: [],
+      });
+    });
+
+    it('returns null for a flag the engine cannot evaluate', async () => {
+      evaluateVariant.mockImplementation(() => {
+        throw new Error('flag not found');
+      });
+      const flipt = createFliptClient(baseConfig);
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('missing', '7')).toBeNull();
+    });
+
+    it('shares the variant cache with getVariant, keyed per entity', async () => {
+      const flipt = createFliptClient(baseConfig);
+      await flipt.ensureInitialized();
+      flipt.getVariantDetailSync('exp', '1');
+      expect(await flipt.getVariant('exp', '1')).toBe('primary');
+      expect(evaluateVariant).toHaveBeenCalledTimes(1);
+      flipt.getVariantDetailSync('exp', '2');
+      expect(evaluateVariant).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-evaluates a bypassed flag on every call', async () => {
+      const flipt = createFliptClient({ ...baseConfig, cacheBypass: ['exp'] });
+      await flipt.ensureInitialized();
+      expect(flipt.getVariantDetailSync('exp', '1')?.variantKey).toBe('primary');
+      evaluateVariant.mockImplementation(() => ({ match: true, variantKey: 'b' }));
+      expect(flipt.getVariantDetailSync('exp', '1')?.variantKey).toBe('b');
+      expect(evaluateVariant).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers a local override without evaluating, marked as such', async () => {
+      const flipt = createFliptClient({ ...baseConfig, localOverrides: { exp: 'b' } });
+      expect(flipt.getVariantDetailSync('exp', '7')).toEqual({
+        match: true,
+        variantKey: 'b',
+        segmentKeys: ['local-override'],
+      });
+      expect(init).not.toHaveBeenCalled();
+    });
   });
 });

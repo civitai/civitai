@@ -1,3 +1,4 @@
+import type { AppCoverWorkflow } from '@civitai/app-assistant';
 import { authedFetch, type FreeTierStatus } from '@civitai/components-chat/core';
 
 import type { TokenSource } from './minter';
@@ -77,6 +78,14 @@ export class OrchestrationClient {
 
   submitWorkflow(tokens: TokenSource, template: WorkflowTemplate): Promise<Workflow> {
     return this.#json(tokens, 'POST', WORKFLOWS, template);
+  }
+
+  /** What `template` would cost (orchestration's what-if); submits nothing. */
+  estimateWorkflow(
+    tokens: TokenSource,
+    template: AppCoverWorkflow
+  ): Promise<{ cost?: { total?: number | null } | null }> {
+    return this.#json(tokens, 'POST', `${WORKFLOWS}?whatif=true`, template);
   }
 
   async updateWorkflow(

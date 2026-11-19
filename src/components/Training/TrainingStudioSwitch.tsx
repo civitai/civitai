@@ -1,5 +1,6 @@
 import { Anchor, Button, Group, Text } from '@mantine/core';
 import { IconBarbell, IconSparkles } from '@tabler/icons-react';
+import { NextLink } from '~/components/NextLink/NextLink';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -7,6 +8,11 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { isStudioToggleAvailable } from '~/components/Training/Form/studioAudioNotice';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import {
+  CLASSIC_TRAINER_RETIRES_AT,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -45,6 +51,14 @@ export function useCanSwitchToTrainingStudio() {
   return isStudioToggleAvailable(userFeatures) && !features.trainingStudioUi;
 }
 
+const classicTrainerRetirementDate = `${formatDate(
+  CLASSIC_TRAINER_RETIRES_AT,
+  'MMMM D, YYYY',
+  true
+)} (00:00 UTC)`;
+
+// Shown on every classic trainer page, including to users who can't switch: the retirement
+// applies to them too.
 export function SwitchToTrainingStudioAlert({
   destination,
   children,
@@ -54,10 +68,15 @@ export function SwitchToTrainingStudioAlert({
 }) {
   const canSwitch = useCanSwitchToTrainingStudio();
   const { switchTo, switching } = useTrainingStudioSwitch();
-  if (!canSwitch) return null;
+  const retired = isClassicTrainerRetired();
 
   return (
-    <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm">
+    <AlertWithIcon
+      icon={<IconBarbell size={16} />}
+      iconColor={retired ? 'red' : 'yellow'}
+      color={retired ? 'red' : 'yellow'}
+      size="sm"
+    >
       <Group gap="sm">
         <Text size="sm">
           {children ?? (
@@ -66,12 +85,24 @@ export function SwitchToTrainingStudioAlert({
               and video, plus audio training.
             </>
           )}{' '}
-          This classic trainer will be phased out gradually as Training Studio matures. For now you
-          can switch back at any time.
+          {retired ? (
+            <>
+              This classic trainer was retired on {classicTrainerRetirementDate} and no longer
+              starts new runs. Your past runs stay here.
+            </>
+          ) : (
+            <>
+              This classic trainer will stop starting new runs on{' '}
+              <b>{classicTrainerRetirementDate}</b>. Runs already submitted will finish, and your
+              past runs stay here.
+            </>
+          )}
         </Text>
-        <Button size="compact-sm" loading={switching} onClick={() => switchTo(true, destination)}>
-          Switch to Training Studio
-        </Button>
+        {canSwitch && (
+          <Button size="compact-sm" loading={switching} onClick={() => switchTo(true, destination)}>
+            Switch to Training Studio
+          </Button>
+        )}
       </Group>
     </AlertWithIcon>
   );
@@ -104,7 +135,7 @@ export function StudioOnlyModelsNotice() {
       title={`${names} ${models.length > 1 ? 'are' : 'is'} here — in Training Studio`}
     >
       <Text size="sm">
-        {names} LoRAs train only in our new <b>Training Studio</b> (Beta).{' '}
+        {names} LoRAs train only in our new <b>Training Studio</b>.{' '}
         <Anchor
           component="button"
           type="button"
@@ -120,16 +151,51 @@ export function StudioOnlyModelsNotice() {
   );
 }
 
-export function SwitchToClassicTrainerAlert({ destination }: { destination: string }) {
+export function SwitchToClassicTrainerAlert({
+  destination,
+  pastRunsUrl,
+}: {
+  destination: string;
+  /** The user's classic-trainer runs, where their drafts can still be published. */
+  pastRunsUrl?: string;
+}) {
   const { switchTo, switching } = useTrainingStudioSwitch();
+  const { classicTrainerOff } = useFeatureFlags();
+  if (classicTrainerOff)
+    return pastRunsUrl ? (
+      <AlertWithIcon
+        icon={<IconBarbell size={16} />}
+        iconColor="blue"
+        color="blue"
+        size="sm"
+        mb="md"
+      >
+        <Text size="sm">
+          The classic trainer was retired. Models you trained there are still in{' '}
+          <Anchor component={NextLink} href={pastRunsUrl} size="sm">
+            your classic trainings
+          </Anchor>
+          , where you can review and publish them.
+        </Text>
+      </AlertWithIcon>
+    ) : null;
 
   return (
     <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm" mb="md">
       <Group gap="sm">
         <Text size="sm">
-          You&rsquo;re using the new <b>Training Studio</b>. The classic trainer is still here for
-          your drafts, or if you prefer it, but it will be phased out gradually as Training Studio
-          matures.
+          You&rsquo;re using the new <b>Training Studio</b>.{' '}
+          {isClassicTrainerRetired() ? (
+            <>
+              The classic trainer was retired on {classicTrainerRetirementDate}; it still shows your
+              past runs but can&rsquo;t start new ones.
+            </>
+          ) : (
+            <>
+              The classic trainer is still here for your drafts, but it will stop starting new runs
+              on <b>{classicTrainerRetirementDate}</b>.
+            </>
+          )}
         </Text>
         <Button
           size="compact-sm"

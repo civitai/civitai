@@ -28,6 +28,8 @@ const m = vi.hoisted(() => ({
   fetchFrame: vi.fn(),
   /** What the frame's host reports of its terminal fallback, as the page host would. */
   host: null as null | { onFallbackChange?: (reason: string | null) => void },
+  /** The host's entry token failed: it shows the pane's `tokenErrorFallback` instead of the frame. */
+  tokenError: false,
 }));
 
 vi.mock('~/components/Apps/AppAssistant/previewFrame', async (importOriginal) => ({
@@ -38,8 +40,10 @@ vi.mock('~/components/AppBlocks/DevTunnelBlockHost', () => ({
   DevTunnelBlockHost: (props: {
     iframeSrc: string;
     onFallbackChange?: (reason: string | null) => void;
+    tokenErrorFallback?: React.ReactNode;
   }) => {
     m.host = props;
+    if (m.tokenError) return <>{props.tokenErrorFallback}</>;
     return <div data-testid="frame" data-src={props.iframeSrc} />;
   },
 }));
@@ -60,6 +64,7 @@ const offer = (error: string | null = null, pending = false) => ({
 
 beforeEach(() => {
   m.host = null;
+  m.tokenError = false;
   m.fetchFrame.mockReset();
 });
 
@@ -268,5 +273,86 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
     await settle();
     expect(page.getByTestId('frame').elements()).toHaveLength(1);
     expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+});
+
+describe('AppAssistantPreview — a failed frame when the dev server comes back up', () => {
+  // The page learns of a restart only through `devServerUp` (counted by the workspace).
+  const RELOADED: PreviewFrame = { ...FRAME, iframeSrc: `https://${HOST}/?dev=entry-token-second` };
+  const frameSrc = () => page.getByTestId('frame').element().getAttribute('data-src');
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+  const shown = (devServerUp: number) => (
+    <AppAssistantPreview
+      canPreview
+      session={RUNNER_SESSION}
+      restart={offer()}
+      devServerUp={devServerUp}
+    />
+  );
+  const renderShown = async (devServerUp = 3) => {
+    m.fetchFrame.mockResolvedValueOnce(FRAME).mockResolvedValue(RELOADED);
+    const screen = await renderWithProviders(shown(devServerUp));
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+    return screen;
+  };
+
+  test('🔴 a frame in its fallback reloads, as Reload would: a fresh entry URL, a fresh host', async () => {
+    const screen = await renderShown();
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
+    // The fresh host has not failed: the offer goes.
+    await expect.element(page.getByText('The preview isn’t loading.')).not.toBeInTheDocument();
+  });
+
+  test('🔴 a frame whose entry token failed reloads too', async () => {
+    const screen = await renderShown();
+    m.tokenError = true;
+    await screen.rerender(shown(3));
+    await expect
+      .element(page.getByText('The preview couldn’t sign in to your app.', { exact: false }))
+      .toBeInTheDocument();
+
+    // The host still shows its failure when the dev server comes back up.
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(m.fetchFrame).toHaveBeenCalledTimes(2));
+    m.tokenError = false;
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+  });
+
+  test('NEGATIVE CONTROL: a frame that loads is left alone (a reload resets its saved data)', async () => {
+    const screen = await renderShown();
+    await screen.rerender(shown(4));
+    await settle();
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+
+    // Control: the same frame, once failed, reloads on the next one.
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+    await screen.rerender(shown(5));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+  });
+
+  test('NEGATIVE CONTROL: a failed frame re-rendered with no new dev server start stays as it is', async () => {
+    const screen = await renderShown();
+    m.host!.onFallbackChange!('timeout');
+    await expect.element(page.getByText('The preview isn’t loading.')).toBeInTheDocument();
+    await screen.rerender(shown(3));
+    // A lower count is no new start either.
+    await screen.rerender(shown(2));
+    await settle();
+    expect(m.fetchFrame).toHaveBeenCalledTimes(1);
+    expect(frameSrc()).toBe(FRAME.iframeSrc);
+
+    // Control: a higher count, in the same frame, does reload it.
+    await screen.rerender(shown(4));
+    await vi.waitFor(() => expect(frameSrc()).toBe(RELOADED.iframeSrc));
+    expect(m.fetchFrame).toHaveBeenCalledTimes(2);
   });
 });

@@ -18,7 +18,7 @@
   import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import { denied } from '$lib/permissions';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
-  import { userLookupUrl } from '$lib/entity-url';
+  import { csamGeneratorEvidenceUrl, userLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_BUTTON, dateTime, shortAge } from '$lib/format';
   import { unwiredRulingReason } from '$lib/restriction-types';
@@ -40,6 +40,7 @@
     civitaiUrl,
     canBan,
     canViewGenerations,
+    canReportCsam,
     sources,
     sourcesFailed,
     sourcesNotLoaded,
@@ -53,6 +54,7 @@
     civitaiUrl: string;
     canBan: boolean;
     canViewGenerations: boolean;
+    canReportCsam: boolean;
     sources: Record<number, RemixSource>;
     sourcesFailed: boolean;
     sourcesNotLoaded: readonly number[];
@@ -226,6 +228,18 @@
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
+        {#if canReportCsam}
+          <Button
+            variant="outline"
+            size="sm"
+            class={LINK_BUTTON}
+            href={csamGeneratorEvidenceUrl(civitaiUrl, row.userId, row.id)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <IconExternalLink aria-hidden="true" /> Report to NCMEC
+          </Button>
+        {/if}
         {#if row.username}
           <Button
             variant="outline"

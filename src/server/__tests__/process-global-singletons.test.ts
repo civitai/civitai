@@ -27,7 +27,11 @@ vi.mock('~/env/other', async (importOriginal) => ({
 // Each factory returns a FRESH object per call, so a second call is visible as a different
 // instance, not only as a call count.
 const factories = vi.hoisted(() => ({
-  createPrismaClients: vi.fn(() => ({ dbRead: { db: 'read' }, dbWrite: { db: 'write' } })),
+  createPrismaClients: vi.fn(() => {
+    // `$extends` returns a new object naming the client it extended, as Prisma's does.
+    const client = (db: string) => ({ db, $extends: () => ({ db, extended: true }) });
+    return { dbRead: client('read'), dbWrite: client('write') };
+  }),
   createRedisClients: vi.fn(() => ({ redis: { r: 'cache' }, sysRedis: { r: 'sys' } })),
   createClickhouseClient: vi.fn(() => ({ ch: true })),
   getClient: vi.fn((options?: { instance?: string }) => ({ pool: options?.instance ?? 'primary' })),
@@ -59,6 +63,7 @@ const GLOBALS = [
   '__civitaiPrismaClients',
   '__civitaiRedisClients',
   'globalClickhouse',
+  'globalClickhouseLongQueries',
   'globalPgWrite',
   'globalPgRead',
   'globalPgReadLong',
@@ -113,6 +118,9 @@ describe('process-global server singletons (production)', () => {
     expect(factories.createPrismaClients).toHaveBeenCalledTimes(1);
     expect(b.dbWrite).toBe(a.dbWrite);
     expect(b.dbRead).toBe(a.dbRead);
+    // Both clients carry the servable-profile-picture extension.
+    expect(a.dbWrite).toMatchObject({ db: 'write', extended: true });
+    expect(a.dbRead).toMatchObject({ db: 'read', extended: true });
   });
 
   it('Redis clients: one set per process', async () => {
@@ -122,11 +130,13 @@ describe('process-global server singletons (production)', () => {
     expect(b.sysRedis).toBe(a.sysRedis);
   });
 
-  it('ClickHouse client: one per process', async () => {
+  it('ClickHouse clients: one shared and one long-query client per process', async () => {
     const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/client'));
-    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(2);
     expect(a.clickhouse).toBeDefined();
     expect(b.clickhouse).toBe(a.clickhouse);
+    expect(a.clickhouseLongQueries).toBeDefined();
+    expect(b.clickhouseLongQueries).toBe(a.clickhouseLongQueries);
   });
 
   it('primary pg pools: one write/read/read-long set per process', async () => {

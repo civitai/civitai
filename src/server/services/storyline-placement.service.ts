@@ -16,6 +16,9 @@ import {
 } from '~/server/services/placement-space.service';
 import {
   assertCanContinueStoryline,
+  StorylineHiddenRefusal,
+  storylineParticipantSql,
+  storylineRootWaitingSql,
   continuationPostSelect,
   continuationReadiness,
   writeChapterEdgeForPlacement,
@@ -25,6 +28,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementSpaceMode, PlacementSpaceSetting } from '~/shared/utils/placement';
 import {
@@ -254,6 +258,15 @@ async function storylineContinuationTerms({
   placerId: number;
   parentPostId: number;
 }) {
+  // Asked first, but its other refusals are said after the space's: a storyline its chapter 1
+  // hides from the placer must be "not a chapter" before "not open" could show that it is one.
+  const assertion = await assertCanContinueStoryline({ parentPostId, placerId }).then(
+    (result) => ({ result }),
+    (error: unknown) => ({ error })
+  );
+  if ('error' in assertion && assertion.error instanceof StorylineHiddenRefusal)
+    throw assertion.error;
+
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -266,7 +279,8 @@ async function storylineContinuationTerms({
 
   if (space.ownerId === placerId) throw throwBadRequestError(STORYLINE_REFUSALS.ownStoryline);
 
-  const { isCollaborator, parent } = await assertCanContinueStoryline({ parentPostId, placerId });
+  if ('error' in assertion) throw assertion.error;
+  const { isCollaborator, parent } = assertion.result;
   const access = storylineContinuationAccess({
     mode: space.mode,
     isCollaborator,
@@ -330,7 +344,7 @@ async function autoApproveContinuation(placementId: number) {
       message: 'auto-approval refused; left pending for the owner',
       placementId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined)
+    })
   );
 }
 
@@ -355,7 +369,7 @@ async function holdOrUnwind({
         message: 'compensating settle failed; escrow may be held for a rejected continuation',
         placementId,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }
@@ -491,7 +505,17 @@ export async function settleStorylineContinuation({
       if (!parentPostId || !parent || !isAnswerableParentChapter(parent))
         throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
 
-      if (action === 'decline') return;
+      if (action === 'decline') {
+        // Approving is refused while chapter 1 hides the storyline from the placer, so declining
+        // is too, for the same reason; it waits for chapter 1 or its deadline's refund. The other
+        // refusals approving checks do not stop a decline.
+        await assertCanContinueStoryline({ parentPostId, placerId: pending.placerId }, tx).catch(
+          (error: unknown) => {
+            if (error instanceof StorylineHiddenRefusal) throw error;
+          }
+        );
+        return;
+      }
       if (!postId)
         throw new Error(`storyline: placement ${placementId} does not name a chapter and a post`);
 
@@ -589,7 +613,10 @@ const receiptedHolds = Prisma.sql`(
  *
  * Selected in SQL so a batch holds only rows this pass can act on: a batch of
  * drafts read every tick would starve the rows behind it. A post under review
- * is left out of the selection for the same reason, and refunds at its deadline.
+ * is left out of the selection for the same reason, and refunds at its deadline;
+ * so is a row whose storyline an unpublished or unrated chapter 1 hides from the
+ * placer, which may yet open again. One a removed chapter 1 hides is selected
+ * and refunded at once: that never lifts by waiting.
  */
 export async function startReadyStorylineContinuations({ limit = 200 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -618,6 +645,24 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
           AND NOT EXISTS (
             SELECT 1 FROM "Image" i WHERE i."postId" = p.id
               AND (i.ingestion <> 'Scanned' OR i."needsReview" IS NOT NULL)
+          )
+          -- Ready, but its storyline hidden from the placer by a chapter 1 that may yet be
+          -- published or rated: it waits for its deadline. A doomed post, a taken-down
+          -- storyline or a removed parent is still selected, to be refunded at once.
+          AND NOT EXISTS (
+            SELECT 1 FROM "StorylineChapter" pc
+            JOIN "Storyline" st ON st.id = pc."storylineId"
+            JOIN "StorylineChapter" rc ON rc."storylineId" = pc."storylineId" AND rc.depth = 0
+            LEFT JOIN "Post" rp ON rp.id = rc."postId"
+            LEFT JOIN "User" ru ON ru.id = rp."userId"
+            WHERE pc."postId" = pl."targetId"
+              AND pc."removedAt" IS NULL AND st."tosViolation" = false
+              AND st."userId" <> pl."placerId"
+              AND ${storylineRootWaitingSql}
+              AND NOT ${storylineParticipantSql(
+                Prisma.sql`pl."placerId"`,
+                Prisma.sql`pc."storylineId"`
+              )}
           )
         )
       )
@@ -655,7 +700,7 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
         message: 'readiness refund failed',
         placementId,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
       return null;
     });
     if (result?.settled) refunded++;
@@ -710,10 +755,11 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
         whoCanContinue: parent.storyline.whoCanContinue,
       });
     } catch (error) {
-      // A refusal (taken down, a block, collaborators only) does not pass by
-      // waiting. Anything else might, so the row keeps its deadline and the
-      // next tick retries.
-      if (isRefusal(error)) await refund(row.id);
+      // A refusal (taken down, a block, collaborators only, a removed chapter 1) does
+      // not pass by waiting. Anything else might, as may a chapter 1 that is yet to be
+      // published or rated, so the row keeps its deadline and the next tick retries.
+      const mayLift = error instanceof StorylineHiddenRefusal && error.reason !== 'removed';
+      if (isRefusal(error) && !mayLift) await refund(row.id);
       continue;
     }
 
@@ -895,6 +941,7 @@ const summaryPostSelect = {
       minor: false,
       poi: false,
       needsReview: null,
+      ...imageNotRestrictedWhere(),
     },
     // `type` so a video cover is not requested as an image; `hash` and size for its blur.
     select: {
@@ -997,6 +1044,7 @@ export async function getPendingStorylineContinuations({
     dbRead.storylineChapter.findMany({
       where: { postId: { in: parentIds } },
       select: {
+        id: true,
         postId: true,
         storyline: {
           select: {
@@ -1023,6 +1071,17 @@ export async function getPendingStorylineContinuations({
       },
     ])
   );
+  // Parents that already have a main-path chapter: approving under one starts a branch.
+  const canonEdges = chapters.length
+    ? await dbRead.storylineChapterEdge.findMany({
+        where: { parentChapterId: { in: chapters.map((chapter) => chapter.id) }, canon: true },
+        select: { parentChapterId: true },
+      })
+    : [];
+  const withCanon = new Set(canonEdges.map((edge) => edge.parentChapterId));
+  const branchParents = new Set(
+    chapters.filter((chapter) => withCanon.has(chapter.id)).map((chapter) => chapter.postId)
+  );
 
   const items: StorylineContinuationQueueItem[] = [];
   for (const row of rows) {
@@ -1040,6 +1099,8 @@ export async function getPendingStorylineContinuations({
       post: toPostSummary(post, domainLevels),
       parentPost: toPostSummary(parentPost, domainLevels),
       storyline,
+      // As of this read; approval decides.
+      startsBranch: branchParents.has(row.targetId),
     });
   }
   return { items, nextCursor };
@@ -1183,13 +1244,13 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
       const result = await settlePlacement({ placementId: row.id, action: 'expire' });
       if (result.settled) settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'storyline-placement',
         type: 'error',
         message: 'unfunded continuation settle failed',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 
@@ -1252,13 +1313,13 @@ export async function settleOrphanedContinuations({
       const result = await settlePlacement({ placementId: row.id, action: 'expire' });
       if (result.settled) settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'storyline-placement',
         type: 'error',
         message: 'orphaned continuation: settle failed',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 

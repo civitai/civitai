@@ -18,4 +18,14 @@ describe('SCOPE_PLAIN_TITLES', () => {
       expect(SCOPE_DESCRIPTIONS[scope], `${scope} has a title but no description`).toBeTruthy();
     }
   });
+
+  test('no two scopes share a title, so a viewer can tell every row and control apart', () => {
+    const byTitle = new Map<string, string[]>();
+    for (const [scope, title] of Object.entries(SCOPE_PLAIN_TITLES)) {
+      byTitle.set(title, [...(byTitle.get(title) ?? []), scope]);
+    }
+    const shared = [...byTitle].filter(([, scopes]) => scopes.length > 1);
+    expect(shared).toEqual([]);
+    expect(byTitle.size).toBeGreaterThan(5);
+  });
 });

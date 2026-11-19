@@ -78,19 +78,36 @@ export function slotPlan(count: number, slots: number) {
   return { shown, more: count - shown };
 }
 
-type CardHat = { cosmeticId: number; name: string; url: string | null; worn: boolean };
+type CardHat = {
+  cosmeticId: number;
+  name: string;
+  url: string | null;
+  worn: boolean;
+  picked?: boolean;
+};
+
+/**
+ * The hat the member's avatar shows during the showcase window: their pick, else the first in shelf
+ * order (worn, then dearest, then newest), which is the server's default too (showcase-hat.ts).
+ */
+export function showcaseHat<T extends CardHat>(hats: T[]) {
+  const withArt = hats.filter((h) => !!h.url);
+  return withArt.find((h) => h.picked) ?? withArt[0];
+}
 
 /**
  * The podium hero and the hats left for its mini row. The hero is the worn hat, else the dearest
- * (the hat list is in shelf order: worn, then dearest, then newest), else nothing.
+ * (the hat list is in shelf order: worn, then dearest, then newest), else nothing. While the showcase
+ * is live, a picked hat goes in front of that.
  */
-export function podiumHero<T extends CardHat>(hats: T[]) {
+export function podiumHero<T extends CardHat>(hats: T[], showcaseLive = false) {
   const withArt = hats.filter((h) => !!h.url);
-  const hero = withArt[0];
+  const picked = showcaseLive ? withArt.find((h) => h.picked) : undefined;
+  const hero = picked ?? withArt[0];
   if (!hero) return { hero: undefined, label: 'none' as const, rest: [] as T[] };
   return {
     hero,
-    label: hero.worn ? ('wearing' as const) : ('top' as const),
-    rest: withArt.slice(1),
+    label: picked ? ('showcase' as const) : hero.worn ? ('wearing' as const) : ('top' as const),
+    rest: withArt.filter((h) => h !== hero),
   };
 }

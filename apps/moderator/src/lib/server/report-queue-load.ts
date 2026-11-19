@@ -4,6 +4,7 @@ import { parseQueryKeys } from './query';
 import { MAX_INT4, usersByIds } from './users.service';
 import type { AdditionalReporter } from '$lib/components/report-queue/report-list';
 import { parseReportQueueFilters, reportQueueFilterSchema } from './report-queue-filters';
+import { agentReportFilterOf, agentReportWhere, isAgentReporter } from './agent-reporters';
 import { isModelUnpublishReason } from '$lib/model-unpublish-reasons';
 import {
   DEFAULT_REPORT_REASONS,
@@ -81,6 +82,8 @@ export async function loadReportQueue(
   const unpublishedParam = unpublished ? url.searchParams.get('unpublished') ?? '' : '';
   const unpublishedReason =
     !reportId && isModelUnpublishReason(unpublishedParam) ? unpublishedParam : undefined;
+  // `null` when no agent accounts are configured: no control, and the param is ignored.
+  const agentFilter = agentReportFilterOf(url);
 
   const queueFilters = {
     type,
@@ -91,6 +94,7 @@ export async function loadReportQueue(
     to: reportId || !dates ? undefined : filters.to,
     unpublishedReason,
     reportId,
+    agents: reportId ? undefined : agentReportWhere(agentFilter),
   };
   const [data, statusCounts] = await Promise.all([
     getReports({
@@ -122,6 +126,8 @@ export async function loadReportQueue(
     reportedTo: filters.echo.reportedTo,
     singleReport: reportId ?? null,
     unpublishedReason: unpublishedReason ?? null,
+    // `null` hides the control: a `?report=` view runs unfiltered.
+    agentFilter: reportId ? null : agentFilter,
     ...data,
     items: await withAdditionalReporters(data.items),
   };
@@ -152,13 +158,16 @@ const words = (d: Record<string, unknown> | undefined) => {
  * folds the rest into `details.additionalReports` — each with its own comment, which a moderator could
  * only read by opening the raw details, and with a user id where they need a name.
  */
-export async function withAdditionalReporters<R extends { details: unknown }>(items: R[]) {
+export async function withAdditionalReporters<
+  R extends { details: unknown; reportedById?: number | null }
+>(items: R[]) {
   const ids = items.flatMap((r) =>
     additionalReports(r.details).flatMap((a) => (typeof a.userId === 'number' ? [a.userId] : []))
   );
   const users = ids.length ? await usersByIds(ids) : new Map();
   return items.map((r) => ({
     ...r,
+    agentFiled: isAgentReporter(r.reportedById),
     additionalReporters: additionalReports(r.details).flatMap((a): AdditionalReporter[] =>
       typeof a.userId === 'number'
         ? [

@@ -1,4 +1,7 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
@@ -23,6 +26,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const capturedQueryRaw: string[] = [];
 const capturedExecRaw: string[] = [];
+// $queryRaw and $executeRaw together, in call order.
+const capturedRawInOrder: string[] = [];
 const capturedExecUnsafe: string[] = [];
 const capturedClickhouse: string[] = [];
 
@@ -54,7 +59,7 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
 //   dbWrite.$executeRawUnsafe   image.service.ts:878   (updateNsfwLevel, the recompute)
 //   dbWrite.appeal.updateManyAndReturn  report.service.ts  (resolveEntityAppeal claims the appeals)
 //   dbRead.user.findMany        report.service.ts:743
-//   dbWrite.image.update        report.service.ts:753
+//   dbWrite.$queryRaw           report.service.ts      (settleResolvedAppeals' image write)
 const dbWrite = dbMock.dbWrite;
 const dbRead = dbMock.dbRead;
 const mockFindMany = dbRead.image.findMany;
@@ -63,7 +68,13 @@ const mockFindMany = dbRead.image.findMany;
 // they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
 // beforeEach blocks clears call history without dropping an implementation.
 dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
-  capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
+  capturedQueryRaw.push(sql);
+  capturedRawInOrder.push(sql);
+  // The appeal ruling's image write (`settleResolvedAppeals`) reads postId+pHash back; seed a pHash
+  // so the approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
+  if (/RETURNING "postId", "pHash"/.test(sql))
+    return Promise.resolve([{ postId: null, pHash: 999n }]);
   return Promise.resolve([]);
 });
 dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
@@ -71,14 +82,11 @@ dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
   return Promise.resolve(0);
 });
 dbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
-  capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
+  capturedExecRaw.push(sql);
+  capturedRawInOrder.push(sql);
   return Promise.resolve(0);
 });
-// resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
-// approved-path phash unblock (bulkRemoveBlockedImages) has something to remove. Restated
-// rather than inherited: the canonical mock has no default for `update`, so it would return
-// undefined and the destructure would throw.
-dbWrite.image.update.mockResolvedValue({ postId: null, pHash: 999n });
 // Canonical `findUnique` already answers null and `findMany` already answers []; pinned anyway so
 // what this file hands the service is readable here rather than in the shared defaults table.
 dbRead.image.findUnique.mockResolvedValue(null);
@@ -156,11 +164,18 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
+}));
+
 const { handleUnblockImages } = await import('../image.service');
+const { queueModelsForImageChildTagChanges } = await import(
+  '~/server/services/image-models-reindex.service'
+);
 const { resolveEntityAppeal } = await import('../report.service');
 const { createNotification } = await import('../notification.service');
 const { refundMultiAccountTransaction } = await import('../buzz.service');
@@ -250,6 +265,85 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
     // sit at Unrated instead of its true level.
     expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
   });
+
+  // An accept out of the minor queue rewrites "minor", which no trigger watches.
+  it('queues the models and articles of the unblocked images', async () => {
+    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
+  });
+
+  it("checks for an earlier review before writing this unblock's own review row", async () => {
+    capturedRawInOrder.length = 0;
+    await handleUnblockImages({ ids: [128489949], moderatorId: 9, removeMinorFlag: false } as any);
+
+    const rescan = capturedRawInOrder.findIndex((sql) => sql.includes('FROM "ModActivity" m'));
+    const ownReview = capturedRawInOrder.findIndex((sql) =>
+      sql.includes('INSERT INTO "ModActivity"')
+    );
+    expect(rescan).toBeGreaterThanOrEqual(0);
+    expect(ownReview).toBeGreaterThan(rescan);
+  });
+});
+
+describe('handleUnblockImages and a CSAM block', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'CSAM',
+        needsReview: null,
+      },
+      {
+        id: 2,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: null,
+      },
+    ] as never);
+  });
+
+  it('leaves the CSAM-blocked image alone and unblocks the other', async () => {
+    const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+
+    const unblock = dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('"blockedFor" = NULL')
+    );
+    // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
+    const bound = unblock.map(
+      ([strings, ...values]) => Prisma.sql(strings as never, ...(values as never[])).values
+    );
+    expect(bound).toEqual([[2, 'CSAM']]);
+    expect(result.map((image) => image.id)).toEqual([2]);
+  });
+
+  it('leaves alone an image the replica still shows unblocked but the primary has CSAM-blocked', async () => {
+    const passthrough = dbWrite.$queryRaw.getMockImplementation()!;
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      (strings as unknown as string[]).join('?').includes('SELECT id FROM "Image"')
+        ? Promise.resolve([{ id: 2 }])
+        : passthrough(strings, ...values)) as never);
+    try {
+      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+
+      expect(result).toEqual([]);
+      const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray)
+          .join('?')
+          .includes('DELETE FROM "ImageDeferredBlockEffect"')
+      );
+      expect(drops).toEqual([]);
+    } finally {
+      dbWrite.$queryRaw.mockImplementation(passthrough as never);
+    }
+  });
 });
 
 // Second door onto the same bug: a moderator approving an image appeal DIRECTLY via
@@ -258,6 +352,33 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
 // resetBlockedNsfwLevel helper (the single source of truth for the level restore) — so a
 // rating-locked image is no longer left stuck at Blocked. No recursion (it does not call
 // handleUnblockImages).
+describe('handleUnblockImages and a block that put its effects off', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedExecRaw.length = 0;
+    mockFindMany.mockResolvedValue([
+      {
+        id: 128489949,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: 'csam',
+      },
+    ] as never);
+  });
+
+  it('drops them unfired', async () => {
+    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+
+    const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('DELETE FROM "ImageDeferredBlockEffect"')
+    );
+    expect(drops.map((d) => d.slice(1))).toEqual([[[128489949]]]);
+  });
+});
+
 describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kfwdzq, 2nd door)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -462,5 +583,65 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
       })
     );
+  });
+});
+
+// PERMIT site of the minor content rule: a moderator's plain Accept in the minor review queue
+// clears the minor flag on mature images and keeps it on safe ones. It is not a gate that hides,
+// so it stays off the shared rule; swapping the rule in here keeps mature images flagged.
+describe('handleUnblockImages — minor queue Accept truth table', () => {
+  it('clears the minor flag on mature images and keeps it on safe ones', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
+      minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);`);
+    const levels: [number, boolean][] = [
+      [0, true],
+      [1, true],
+      [2, true],
+      [4, false],
+      [8, false],
+      [16, false],
+    ];
+    for (const [i, [nsfwLevel]] of levels.entries())
+      await pg.query(
+        `INSERT INTO "Image" VALUES ($1, $2, true, 'minor', NULL, '{}'::jsonb, NULL, 'Pending')`,
+        [i + 1, nsfwLevel]
+      );
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('').includes('UPDATE "Image"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    mockFindMany.mockResolvedValue(
+      levels.map(([nsfwLevel], i) => ({
+        id: i + 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel,
+        blockedFor: null,
+        needsReview: 'minor',
+      })) as never
+    );
+
+    try {
+      await handleUnblockImages({
+        ids: levels.map((_, i) => i + 1),
+        moderatorId: undefined,
+        removeMinorFlag: false,
+      } as any);
+      const { rows } = await pg.query<{ nsfwLevel: number; minor: boolean }>(
+        `SELECT "nsfwLevel", minor FROM "Image" ORDER BY id`
+      );
+      expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(levels);
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
   });
 });

@@ -22,6 +22,7 @@ vi.mock('~/server/services/creator-shop-labels.service', async (importOriginal) 
 }));
 
 const { isListingDisplayable } = await import('~/server/services/creator-shop.data');
+const { withheldCosmeticIds } = await import('@civitai/shared/knights-shop');
 const { getWithheldCosmeticIds } = await import('~/server/services/creator-shop-withheld');
 const { equipCosmetic } = await import('~/server/services/user.service');
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
@@ -189,6 +190,56 @@ describe('which cosmetics are withheld', () => {
     rejectionReason: listing.rejectionReason ?? null,
     meta: metaOf(listing),
     cosmetic: { createdById: CREATOR },
+  });
+
+  // The Knights shop decides what it may sell with `withheldCosmeticIds`; both must answer alike on the same rows.
+  it.each<[string, Listing]>([
+    ['live', LIVE],
+    ['relisted', RELISTED],
+    ['sent back', SENT_BACK],
+    ['never reviewed', { status: 'PendingReview', history: [submitted()] }],
+    [
+      'taken down',
+      { status: 'Archived', history: [submitted(), reviewed('approve', 2)], takedown: true },
+    ],
+    [
+      'edited after approval',
+      {
+        status: 'PendingReview',
+        history: [submitted(), reviewed('approve', 2), edited('artwork', 3)],
+      },
+    ],
+  ])('agrees with the Knights shop rule: %s', async (_, listing) => {
+    const listings = [row(CREATOR, listing), row(RESELLER, SENT_BACK)];
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce(listings);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    const shop = withheldCosmeticIds(
+      [{ id: COSMETIC, createdById: CREATOR, flags: 0 }],
+      listings.map(({ cosmetic: _c, ...rest }) => rest)
+    );
+    expect(shop).toEqual(main);
+  });
+
+  it("withholds a pending creator listing even when a reseller's listing is live", async () => {
+    const pending: Listing = { status: 'PendingReview', history: [submitted()] };
+    const listings = [row(CREATOR, pending), row(RESELLER, LIVE)];
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce(listings);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    const shop = withheldCosmeticIds(
+      [{ id: COSMETIC, createdById: CREATOR, flags: 0 }],
+      listings.map(({ cosmetic: _c, ...rest }) => rest)
+    );
+    expect(main).toEqual(new Set([COSMETIC]));
+    expect(shop).toEqual(main);
+  });
+
+  it('agrees with the Knights shop rule on a pending listing deleted while withheld', async () => {
+    const flags = CosmeticFlag.Withheld;
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValueOnce([]);
+    dbMock.dbRead.cosmetic.findMany.mockResolvedValueOnce([{ id: COSMETIC, flags }]);
+    const main = await getWithheldCosmeticIds([COSMETIC]);
+    expect(withheldCosmeticIds([{ id: COSMETIC, createdById: CREATOR, flags }], [])).toEqual(main);
+    expect(main).toEqual(new Set([COSMETIC]));
   });
 
   it("reads only the creator's own listing, never a reseller's", async () => {
@@ -441,13 +492,15 @@ describe('a verdict outlives the capped history', () => {
       'relisting it',
       () => setCreatorShopItemListed({ id: 42, userId: CREATOR, listed: true }),
       legacySentBack,
+      { status: 'RequestedChanges', rejectionReason: 'Off-brand' },
     ],
     [
       'a moderator restoring it',
       () => unarchiveCreatorShopItem({ id: 42, userId: MOD, isModerator: true }),
       { ...legacySentBack, status: 'Archived' },
+      { status: 'PendingReview', rejectionReason: null },
     ],
-  ])('%s clears the reason but keeps a sent-back item withheld', async (_, act, listing) => {
+  ])('%s keeps a sent-back item withheld', async (_, act, listing, expected) => {
     storedListing = listingRow(listing);
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
       { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
@@ -455,7 +508,7 @@ describe('a verdict outlives the capped history', () => {
 
     await act();
 
-    expect(storedListing).toMatchObject({ status: 'PendingReview', rejectionReason: null });
+    expect(storedListing).toMatchObject(expected);
     await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
       IN_REVIEW
     );

@@ -3,6 +3,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as ReportService from '~/server/services/report.service';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -121,21 +130,26 @@ describe('a moderator takedown and the title scan', () => {
   it('a clean scan lifts a takedown only the scan holds', async () => {
     await flaggingScan();
     expect(state()).toEqual({ down: true, byScan: true, byModerator: false });
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(ID);
     await cleanScan();
     expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
   it('a restore lifts a takedown only a moderator holds', async () => {
     await takeDown();
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(ID);
     await expect(restore()).resolves.toMatchObject({ tosViolation: false, changed: true });
     expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledWith(ID);
   });
 
   it("a clean rescan does not lift a moderator's takedown", async () => {
     await takeDown();
     await cleanScan();
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
+    expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
   });
 
   // A moderator acting on the report of a scan-flagged storyline, then a restore: the scan's
@@ -170,6 +184,14 @@ describe('a moderator takedown and the title scan', () => {
     await moderateStorylineTitle({ id: ID, liftScanTakedown: { reviewedTitle: TITLE } });
     expect(state()).toEqual({ down: true, byScan: false, byModerator: true });
     expect(row.scanFlagLiftedTextHash).toEqual(expect.any(String));
+    expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+  });
+
+  it("a moderator lifting the scan's takedown alone gives the story spark back", async () => {
+    await flaggingScan();
+    await moderateStorylineTitle({ id: ID, liftScanTakedown: { reviewedTitle: TITLE } });
+    expect(state()).toEqual(UP);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(ID);
   });
 
   it('says when there was nothing to change', async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   admitSaveBytes,
   CIVITAI_IMAGE_HOSTS,
-  classifySaveBytes,
+  classifySaveBytesContent,
   enforceImageExtension,
   forceSaveBytesExtension,
   isAllowedSaveImageUrl,
@@ -16,8 +16,19 @@ import {
   SAVE_BYTES_MAX_PER_WINDOW,
   SAVE_BYTES_WINDOW_MS,
   saveBytesWindowHasRoom,
+  type SaveBytesClassification,
   type SaveBytesWindowEntry,
 } from './saveImageDownload';
+
+/** The classified type, or `null` for a refusal — what these cases assert on. */
+const classifiedType = (bytes: ArrayBuffer, filename?: string) => {
+  const c = classifySaveBytesContent(bytes, filename);
+  return c.ok ? c.type : null;
+};
+
+/** A classifier double that accepts everything as `type` (counting its calls). */
+const acceptAs = (type: 'text/plain' | 'application/json') =>
+  vi.fn((): SaveBytesClassification => ({ ok: true, type }));
 
 const CDN = 'https://image.civitai.com';
 
@@ -332,7 +343,7 @@ describe('resolveSaveImageRequest — bytes variant', () => {
     }
   });
 
-  it('refuses an empty buffer (the only empty-input guard: classifySaveBytes has none)', () => {
+  it('refuses an empty buffer (the only empty-input guard: classifySaveBytesContent has none)', () => {
     expect(resolveSaveImageRequest({ requestId: 'r', bytes: new ArrayBuffer(0) })).toEqual({
       requestId: 'r',
       kind: 'invalid',
@@ -340,59 +351,59 @@ describe('resolveSaveImageRequest — bytes variant', () => {
   });
 });
 
-describe('classifySaveBytes', () => {
+describe('classifySaveBytesContent', () => {
   it('classifies PNG, WebP and JPEG by magic bytes, whatever the filename says', () => {
-    expect(classifySaveBytes(PNG, 'x.html')).toBe('image/png');
-    expect(classifySaveBytes(WEBP)).toBe('image/webp');
-    expect(classifySaveBytes(JPEG, 'meta.json')).toBe('image/jpeg');
+    expect(classifiedType(PNG, 'x.html')).toBe('image/png');
+    expect(classifiedType(WEBP)).toBe('image/webp');
+    expect(classifiedType(JPEG, 'meta.json')).toBe('image/jpeg');
   });
 
   it('JSON only when the text parses AND the filename ends .json (case-insensitive)', () => {
     const json = textAb('{"prompt":"a cat","steps":30}');
-    expect(classifySaveBytes(json, 'meta.json')).toBe('application/json');
-    expect(classifySaveBytes(json, 'meta.JSON')).toBe('application/json');
-    expect(classifySaveBytes(json)).toBe('text/plain');
-    expect(classifySaveBytes(json, 'meta.txt')).toBe('text/plain');
-    expect(classifySaveBytes(json, 'meta.json.txt')).toBe('text/plain');
+    expect(classifiedType(json, 'meta.json')).toBe('application/json');
+    expect(classifiedType(json, 'meta.JSON')).toBe('application/json');
+    expect(classifiedType(json)).toBe('text/plain');
+    expect(classifiedType(json, 'meta.txt')).toBe('text/plain');
+    expect(classifiedType(json, 'meta.json.txt')).toBe('text/plain');
   });
 
   it('a .json filename on text that does not parse yields plain text', () => {
-    expect(classifySaveBytes(textAb('{not json'), 'meta.json')).toBe('text/plain');
+    expect(classifiedType(textAb('{not json'), 'meta.json')).toBe('text/plain');
   });
 
   it('valid UTF-8 text is plain text, whatever the filename claims', () => {
-    expect(classifySaveBytes(textAb('steps: 30\nsampler: Euler a\n'))).toBe('text/plain');
-    expect(classifySaveBytes(textAb('<svg onload="alert(1)"/>'), 'x.svg')).toBe('text/plain');
-    expect(classifySaveBytes(textAb('<html><script>x()</script>'), 'x.html')).toBe('text/plain');
-    expect(classifySaveBytes(textAb('naïve ✓ 日本'))).toBe('text/plain');
+    expect(classifiedType(textAb('steps: 30\nsampler: Euler a\n'))).toBe('text/plain');
+    expect(classifiedType(textAb('<svg onload="alert(1)"/>'), 'x.svg')).toBe('text/plain');
+    expect(classifiedType(textAb('<html><script>x()</script>'), 'x.html')).toBe('text/plain');
+    expect(classifiedType(textAb('naïve ✓ 日本'))).toBe('text/plain');
   });
 
   it('refuses text containing a NUL byte', () => {
-    expect(classifySaveBytes(ab(0x68, 0x69, 0x00, 0x21))).toBeNull();
+    expect(classifiedType(ab(0x68, 0x69, 0x00, 0x21))).toBeNull();
   });
 
   it('refuses invalid UTF-8', () => {
-    expect(classifySaveBytes(ab(0x68, 0x69, 0xc3, 0x28))).toBeNull();
-    expect(classifySaveBytes(ab(0xff, 0xfe, 0x41))).toBeNull();
+    expect(classifiedType(ab(0x68, 0x69, 0xc3, 0x28))).toBeNull();
+    expect(classifiedType(ab(0xff, 0xfe, 0x41))).toBeNull();
   });
 
   it('refuses GIF, archives and executables', () => {
-    expect(classifySaveBytes(GIF, 'a.gif')).toBeNull();
-    expect(classifySaveBytes(ab(0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00))).toBeNull(); // zip
-    expect(classifySaveBytes(ab(0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00))).toBeNull(); // PE
-    expect(classifySaveBytes(ab(0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00))).toBeNull(); // ELF
+    expect(classifiedType(GIF, 'a.gif')).toBeNull();
+    expect(classifiedType(ab(0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00))).toBeNull(); // zip
+    expect(classifiedType(ab(0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00))).toBeNull(); // PE
+    expect(classifiedType(ab(0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00))).toBeNull(); // ELF
   });
 
   it('a truncated PNG signature is not an image', () => {
-    expect(classifySaveBytes(ab(0x89, 0x50, 0x4e, 0x47))).toBeNull();
+    expect(classifiedType(ab(0x89, 0x50, 0x4e, 0x47))).toBeNull();
   });
 
   it('a RIFF container that is not WebP, and a near-miss JPEG prefix, are not images', () => {
     // RIFF....WAVE: the RIFF check alone would call this WebP.
     expect(
-      classifySaveBytes(ab(0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45))
+      classifiedType(ab(0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45))
     ).toBeNull();
-    expect(classifySaveBytes(ab(0xff, 0xd8, 0x00, 0xe0, 0x00, 0x10))).toBeNull();
+    expect(classifiedType(ab(0xff, 0xd8, 0x00, 0xe0, 0x00, 0x10))).toBeNull();
   });
 });
 
@@ -629,7 +640,7 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
     [1, 2, 3, 4, 5].map((i) => ({ at: T0 + i, size: 100 + i }));
 
   it('🔴 once the window is full, a save is busy and is NEVER classified (no decode/parse)', () => {
-    const classify = vi.fn(() => 'application/json' as const);
+    const classify = acceptAs('application/json');
     const byCount = processSaveBytes(
       { bytes: textAb('{"big":true}'), filename: 'x.json' },
       fullByCount(),
@@ -653,7 +664,7 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
   });
 
   it('classifies once and records an accepted save', () => {
-    const classify = vi.fn(() => 'text/plain' as const);
+    const classify = acceptAs('text/plain');
     const bytes = textAb('seventeen bytes!!');
     const r = processSaveBytes({ bytes, filename: 'n#1.md' }, [], T0 + 21, classify);
     expect(r.result).toEqual({ ok: true, type: 'text/plain', filename: 'n_1.txt' });
@@ -667,7 +678,7 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
     const refusedType = processSaveBytes({ bytes: GIF, filename: 'a.gif' }, start, T0 + 8);
     expect(refusedType.result).toEqual({ ok: false, error: 'file type is not allowed' });
     expect(refusedType.recent).toEqual(start);
-    const classify = vi.fn(() => 'text/plain' as const);
+    const classify = acceptAs('text/plain');
     const overCap = new Uint8Array(SAVE_BYTES_MAX_BYTES + 1).fill(0x63).buffer;
     const refusedSize = processSaveBytes({ bytes: overCap }, [], T0 + 9, classify);
     expect(refusedSize.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
@@ -678,7 +689,7 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
   it('🔴 an over-cap file is ALWAYS too-large, never busy — even when the window could not take it', () => {
     // A file over the 100 MB window budget can never fit the window; answering `busy` would
     // invite a retry that cannot succeed. The cap is checked before the window, on byteLength.
-    const classify = vi.fn(() => 'text/plain' as const);
+    const classify = acceptAs('text/plain');
     const overWindow = new Uint8Array(SAVE_BYTES_MAX_BYTES_PER_WINDOW + MB).fill(0x63).buffer;
     const empty = processSaveBytes({ bytes: overWindow }, [], T0 + 1, classify);
     expect(empty.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
@@ -697,7 +708,7 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
   it('the 50 MB boundary on the path the handler calls: AT the cap is accepted, one byte over is not', () => {
     // processSaveBytes is the only call PageBlockHost makes, so the boundary is pinned HERE —
     // prepareSaveBytes' own cap check is unreachable from the handler.
-    const classify = vi.fn(() => 'text/plain' as const);
+    const classify = acceptAs('text/plain');
     const atCap = new Uint8Array(SAVE_BYTES_MAX_BYTES).fill(0x61).buffer;
     const accepted = processSaveBytes({ bytes: atCap, filename: 'a.txt' }, [], T0 + 30, classify);
     expect(accepted.result).toEqual({ ok: true, type: 'text/plain', filename: 'a.txt' });

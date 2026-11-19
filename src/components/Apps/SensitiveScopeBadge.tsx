@@ -1,4 +1,5 @@
-import { Badge, type BadgeProps, Tooltip } from '@mantine/core';
+import { Badge, type BadgeProps } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle } from '@tabler/icons-react';
 
 /**

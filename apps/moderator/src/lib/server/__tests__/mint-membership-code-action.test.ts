@@ -33,7 +33,7 @@ type Call = { url: string; init: RequestInit };
 let calls: Call[];
 let respond: () => Response;
 
-const INPUT = { userId: 8675309, tier: 'silver' as const, months: 2, reason: 'Ticket 123' };
+const INPUT = { userId: 990100034, tier: 'silver' as const, months: 2, reason: 'Ticket 123' };
 
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -135,7 +135,7 @@ describe('mintMembershipCode', () => {
 });
 
 describe('revokeMembershipCode', () => {
-  const REVOKE = { userId: 8675309, code: 'MB-ABCD-EF12' };
+  const REVOKE = { userId: 990100034, code: 'MB-ABCD-EF12' };
 
   it('posts the account and code to the revoke endpoint as the moderator', async () => {
     respond = () =>

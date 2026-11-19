@@ -66,13 +66,14 @@ const SKIPPED: [string, Img][] = [
 const pick = (row: Img, select: Record<string, boolean>) =>
   Object.fromEntries(Object.keys(select).map((key) => [key, row[key as keyof Img]]));
 
-const storeArticle = (coverId: number | null) => {
+const storeArticle = (coverId: number | null, bannerId: number | null = null) => {
   const article = {
     id: ARTICLE_ID,
     userId: AUTHOR,
     content: '',
     title: 'A title',
     coverId,
+    bannerId,
     status: 'Draft',
     scheduledAt: null,
   };
@@ -104,6 +105,10 @@ const storeImages = ({ connected = [], byId = [] }: { connected?: Img[]; byId?: 
       const img = byId.find((x) => x.id === where.id);
       return img ? pick(view(img), select) : null;
     }) as never);
+    db.image.findMany.mockImplementation((async ({ where, select }: any) =>
+      byId
+        .filter((x) => where.id.in.includes(x.id))
+        .map((img) => pick(view(img), select))) as never);
   }
 };
 
@@ -144,6 +149,17 @@ describe('rescanArticle', () => {
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
     expect(requeued().sort()).toEqual([CLEAN.id, cover.id]);
+  });
+
+  it('re-queues a clean banner beside the cover', async () => {
+    const cover = image(17);
+    const banner = image(18);
+    storeArticle(cover.id, banner.id);
+    storeImages({ connected: [CLEAN], byId: [cover, banner] });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(requeued().sort()).toEqual([CLEAN.id, cover.id, banner.id]);
   });
 
   it('leaves a blocked cover alone', async () => {

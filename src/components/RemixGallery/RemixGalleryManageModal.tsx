@@ -13,12 +13,11 @@ import {
   Group,
   Loader,
   Modal,
-  Popover,
   SegmentedControl,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,

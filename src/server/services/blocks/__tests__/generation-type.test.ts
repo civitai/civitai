@@ -530,10 +530,8 @@ describe('resolveBlockGenerationType — the pass-through arm records step:<$typ
   });
 
   it('DEGRADES to the bare "step" for a $type the SHAPE bound refuses — never a raw value', () => {
-    // 🔴 EVERY ONE OF THESE IS WIRE-LEGAL. `$type` is `z.string().min(1).max(64)`
-    // with no character class, so a colon, a space, a newline and a 64-char
-    // string all parse — which is what makes this degrade path REACHABLE rather
-    // than defensive (pinned against the real schema in the SEAM test below).
+    // The wire refuses all of these (ASCII letters and digits only, pinned in the SEAM
+    // test below); the resolver still degrades them, as defence in depth.
     // A shallower TRUE value beats a wrong one: the row still records that a
     // pass-through submit happened, and the fee still finds its coarse key.
     for (const hostile of [
@@ -903,32 +901,17 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(BLOCK_PASS_THROUGH_COARSE_TYPE).toBe('step');
   });
 
-  it('SEAM: the degrade path is REACHABLE FROM THE WIRE, not merely defensive', () => {
-    // 🔴 MEASURED AGAINST THE REAL SCHEMA, because the whole "caller-influenced"
-    // claim rests on it: `$type` is `z.string().min(1).max(64)` with NO character
-    // class, so a body naming `a:b` — or a `$type` that would forge a value under
-    // another fee group — PARSES, reaches the submit, and is bounded only here.
-    // If this ever stops parsing, the shape bound becomes unreachable defence and
-    // the tests above become invariant guards; that is worth knowing either way.
-    // 🔴 THE RESOLVER IS RUN ON `parsed.data`, NOT ON A HAND-BUILT TWIN. The claim
-    // is about what a PARSED body resolves to, and zod REBUILDS the object — a
-    // hand-built literal would assert that claim about a different value that
-    // merely looks the same.
+  it('SEAM: the wire refuses every $type the shape bound would degrade', () => {
+    // The wire allows ASCII letters and digits only, so the degrade path is defence in
+    // depth. The resolver is run on `parsed.data`, since zod rebuilds the object.
     const parse = ($type: string) =>
       blockPassThroughStepBodySchema.safeParse({ kind: 'step', $type, input: {}, maxBuzz: 1 });
 
-    // Wire-legal AND shape-refused: these are the ones the degrade path exists for.
-    // `textToImage:txt2img` is the sharp one — it would forge a value under
-    // another fee group if the subtype were taken raw.
     for (const hostile of ['a:b', 'textToImage:txt2img', 'foo bar', `imageGen${SP}`]) {
-      const parsed = parse(hostile);
-      expect(parsed.success).toBe(true);
-      if (parsed.success) expect(resolveBlockGenerationType(parsed.data)).toBe('step');
+      expect(parse(hostile).success).toBe(false);
     }
 
-    // Wire-legal AND shape-accepted at the boundary: the same parse path keeps its
-    // subtype, so the assertions above are about the SHAPE bound and not about the
-    // parse merely failing.
+    // At the length cap a legal $type keeps its subtype on the same parse path.
     const atCap = 'a'.repeat(64);
     const parsedAtCap = parse(atCap);
     expect(parsedAtCap.success).toBe(true);

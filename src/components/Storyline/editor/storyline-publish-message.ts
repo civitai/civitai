@@ -16,9 +16,12 @@ export type StorylinePublishMessage = {
 /** What publishing did with the post's storyline draft, in the words the author is shown. */
 export function storylinePublishMessage(
   outcome: StorylinePublishOutcome,
-  { chapterNumber = 1 }: { chapterNumber?: number } = {}
+  {
+    chapterNumber = 1,
+    startsBranch = false,
+  }: { chapterNumber?: number; startsBranch?: boolean } = {}
 ): StorylinePublishMessage {
-  const chapter = `Chapter ${chapterNumber}`;
+  const chapter = startsBranch ? 'Your branch' : `Chapter ${chapterNumber}`;
   switch (outcome.status) {
     case 'chapterWritten': {
       const raisedTo = outcome.ceilingRaisedTo;

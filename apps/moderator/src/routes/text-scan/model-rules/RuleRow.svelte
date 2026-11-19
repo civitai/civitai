@@ -9,7 +9,7 @@
   import { TableCell, TableRow } from '@civitai/ui/components/ui/table/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime, plural } from '$lib/format';
   import {

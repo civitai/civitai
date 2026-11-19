@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   getModelVersionFlagLabels,
+  getPartnerDisclosure,
   ModelVersionFlag,
   modelVersionFlagLabels,
+  toPublicApiVersionFlags,
 } from '~/shared/constants/model-version-flags.constants';
 
 describe('ModelVersionFlag', () => {
@@ -13,6 +15,9 @@ describe('ModelVersionFlag', () => {
     expect(ModelVersionFlag.GenerationDisabled).toBe(2);
     expect(ModelVersionFlag.NotDerivative).toBe(4);
     expect(ModelVersionFlag.NotEvictable).toBe(8);
+    // Persisted in ModelVersion.flags rows; renumbering silently repoints them.
+    expect(ModelVersionFlag.PartnerService).toBe(32);
+    expect(ModelVersionFlag.PartnerTrains).toBe(64);
   });
 
   it('gives every flag its own single bit, never the retired bit 1', () => {
@@ -26,5 +31,29 @@ describe('ModelVersionFlag', () => {
     const flags = Object.values(ModelVersionFlag).filter((v) => v !== ModelVersionFlag.None);
     for (const flag of flags) expect(modelVersionFlagLabels[flag], `flag ${flag}`).toBeTruthy();
     expect(getModelVersionFlagLabels(ModelVersionFlag.NotEvictable)).toEqual(['Not evictable']);
+  });
+
+  describe('getPartnerDisclosure', () => {
+    const { PartnerService, PartnerTrains, NotEvictable, GenerationDisabled } = ModelVersionFlag;
+
+    it.each([
+      ['no flags', 0, false, false],
+      ['other bits only', NotEvictable | GenerationDisabled, false, false],
+      ['partner', PartnerService, true, false],
+      ['partner among other bits', PartnerService | NotEvictable, true, false],
+      ['partner that trains', PartnerService | PartnerTrains, true, true],
+      ['trains without partner', PartnerTrains, false, false],
+    ])('%s', (_, flags, partnerService, partnerTrains) => {
+      expect(getPartnerDisclosure(flags)).toEqual({ partnerService, partnerTrains });
+    });
+  });
+
+  it('serves the public API the same flags value it served before the partner bits', () => {
+    const { PartnerService, PartnerTrains, NotEvictable, GenerationDisabled } = ModelVersionFlag;
+    expect(toPublicApiVersionFlags(PartnerService | PartnerTrains)).toBe(0);
+    expect(toPublicApiVersionFlags(PartnerService | NotEvictable | GenerationDisabled)).toBe(
+      NotEvictable | GenerationDisabled
+    );
+    expect(toPublicApiVersionFlags(NotEvictable)).toBe(NotEvictable);
   });
 });

@@ -1,8 +1,17 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
+import {
+  continueTraining,
+  continueTrainingWhatIf,
+  MatureRepriceError,
+  type ContinueOpts,
+} from '$lib/server/train';
+import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
+import { datasetRatingFor } from '$lib/server/dataset-rating';
+import { isKohyaAllowed } from '$lib/server/flipt';
+import { askerOf, assertNotWithheld, RunWithheldError } from '$lib/server/withheld';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -10,7 +19,7 @@ function parse(v: string | null): number | null {
 }
 
 /** Quote a "keep training" continuation without charging — for the price + confirm before submit. */
-export const GET: RequestHandler = async ({ locals, url }) => {
+export const GET: RequestHandler = async ({ locals, request, url }) => {
   const workflowId = url.searchParams.get('id');
   const fromEpoch = parse(url.searchParams.get('fromEpoch'));
   const addEpochs = parse(url.searchParams.get('addEpochs'));
@@ -23,8 +32,18 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
-    return json(await continueTrainingWhatIf(token, locals.user.id, opts));
+    await assertNotWithheld(askerOf({ locals, request }), workflowId);
+    return json(
+      await continueTrainingWhatIf(
+        token,
+        opts,
+        await datasetRatingFor(locals.user),
+        await isKohyaAllowed(locals)
+      )
+    );
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
+    if (err instanceof RunWithheldError) error(403, err.message);
     console.warn('[training-studio] continue whatif failed', err);
     error(502, err instanceof Error ? err.message : 'Could not price the continuation.');
   }
@@ -37,6 +56,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     fromEpoch?: number;
     addEpochs?: number;
     currencies?: string[];
+    matureCount?: number;
   } | null;
   if (!body?.workflowId || typeof body.fromEpoch !== 'number' || typeof body.addEpochs !== 'number')
     error(400, 'Bad request.');
@@ -46,19 +66,27 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     addEpochs: body.addEpochs,
     // Filtered + defaulted by resolveCurrencies core-side — never trusted from the wire.
     currencies: Array.isArray(body.currencies) ? body.currencies : undefined,
+    quotedMatureCount: typeof body.matureCount === 'number' ? body.matureCount : undefined,
   };
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
   try {
+    await assertNotWithheld(askerOf({ locals, request }), body.workflowId);
     return json({
       workflowId: await continueTraining(
         token,
         locals.user.id,
         opts,
-        textCheckCookie(locals, request)
+        textCheckCookie(locals, request),
+        await datasetRatingFor(locals.user),
+        await isKohyaAllowed(locals)
       ),
     });
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
+    if (err instanceof RunWithheldError) error(403, err.message);
+    if (err instanceof MatureRepriceError)
+      error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');

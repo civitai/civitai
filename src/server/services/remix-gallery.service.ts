@@ -5,11 +5,14 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
-  readViewerPendingPlacementsViaKysely,
-  readViewerPendingPlacementsViaPrisma,
-} from '~/server/services/hot-reads-3.reads';
+  bustRemixGalleryHosts,
+  getRemixGalleryHostsWithEntries,
+  REMIX_GALLERY_SURFACE,
+  REMIX_GALLERY_TARGET_TYPE,
+} from '~/server/services/remix-gallery-hosts.cache';
+import { readViewerPendingPlacementsViaKysely } from '~/server/services/hot-reads-3.reads';
 import { logToAxiom } from '~/server/logging/client';
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';
 import { getAllImages } from '~/server/services/image.service';
@@ -18,13 +21,31 @@ import {
   getFreePlacementAllowance,
   hasUsedFreePlacementOn,
 } from '~/server/services/free-placement.service';
+import { countPlacements } from '@civitai/db-queries/placement';
+import {
+  freePlacementsTodayWhere,
+  TEAM_WAIVER,
+  teamWaivedWhere,
+} from '~/server/services/placement-count-predicates';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { onPlacementsTakenDown } from '~/server/events/points/hooks';
+import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import type { Viewer } from '~/server/services/storyline.service';
+import {
+  getViewerExcludedIds,
+  storyLevelSql,
+  storylineCeilingSql,
+  storylineRootVisibleSql,
+} from '~/server/services/storyline.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  imageRestrictedSql,
+  imageReviewedSql,
+} from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
 import {
@@ -33,13 +54,11 @@ import {
   throwBadRequestError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import {
-  nsfwBrowsingLevelsFlag,
-  onlySelectableLevels,
-} from '~/shared/constants/browsingLevel.constants';
+import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
   encodePlacementQueueCursor,
+  freePlacementDayStart,
   parsePlacementQueueCursor,
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
@@ -62,14 +81,16 @@ import {
   remixGalleryRemovableAt,
   remixGalleryShuffleSeed,
 } from '~/shared/utils/remix-gallery';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
-const SURFACE = 'remixGallery' as const;
-const TARGET_TYPE = 'image' as const;
+const SURFACE = REMIX_GALLERY_SURFACE;
+const TARGET_TYPE = REMIX_GALLERY_TARGET_TYPE;
 
 type SubmissionImage = {
   id: number;
   userId: number;
   nsfwLevel: number;
+  modelRestricted: boolean;
   minor: boolean;
   poi: boolean;
   tosViolation: boolean;
@@ -154,7 +175,7 @@ const remixOfIdSql = (alias = 'i') => {
  */
 async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
   const [row] = await dbWrite.$queryRaw<SubmissionImage[]>`
-    SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
+    SELECT i.id, i."userId", i."nsfwLevel", i."modelRestricted", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
            ${remixOfIdSql()} AS "remixOfId",
@@ -206,6 +227,12 @@ export type CreateRemixGallerySubmission = {
    */
   free?: boolean;
   /**
+   * Ask for an event's team waiver instead of paying. Allowed only for a remix
+   * this server resolved as derived from the host image, and only when
+   * `findTeamRemixWaiver` finds one for this placer, owner and host.
+   */
+  teamWaiver?: boolean;
+  /**
    * The domain's currency, decided at the router from the request's own feature
    * flags rather than anything the client sends — a client-supplied currency
    * would let a request on one domain spend the other's Buzz.
@@ -228,6 +255,12 @@ export type CreateRemixGallerySubmission = {
 const FREE_NEEDS_VERIFIED_REFUSAL =
   'remix gallery: free submissions are for remixes made from this image on-site, which is something we can check. Submit this one with Buzz instead.';
 
+const TEAM_WAIVER_NEEDS_VERIFIED_REFUSAL =
+  'remix gallery: free team remixes are for remixes made from this image on-site, which is something we can check. Submit this one with Buzz instead.';
+
+const TEAM_WAIVER_REFUSAL =
+  "remix gallery: this remix isn't free for your team. You both need to have joined the same team, and the image needs to be wearing a team hat.";
+
 /**
  * Submits an image into someone's remix gallery, charging the owner's price.
  *
@@ -248,6 +281,7 @@ export async function createRemixGallerySubmission({
   imageId,
   expectedPrice,
   free = false,
+  teamWaiver = false,
   spendType,
 }: CreateRemixGallerySubmission) {
   if (hostImageId === imageId)
@@ -300,7 +334,12 @@ export async function createRemixGallerySubmission({
   const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
 
   // Not creator preferences, so they are refused under either content rule.
-  if (submission.tosViolation || submission.minor || submission.poi)
+  if (
+    submission.tosViolation ||
+    submission.minor ||
+    submission.poi ||
+    isRestrictedImage(submission)
+  )
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
   // `needsReview` is a verdict on a SCANNED image, so it refuses. On an unscanned
   // one it is simply not set yet, and `startReadyRemixSubmissionClocks` applies
@@ -348,6 +387,17 @@ export async function createRemixGallerySubmission({
   // decides whether someone gets into a creator's review queue without paying.
   if (free && !derivedFromHost) throw throwBadRequestError(FREE_NEEDS_VERIFIED_REFUSAL);
 
+  // The same verified-remix gate as free, for the same reason: without a price,
+  // nothing else stops arbitrary media from entering the owner's review queue.
+  if (teamWaiver && free)
+    throw throwBadRequestError('remix gallery: a submission is either free or team-waived');
+  if (teamWaiver && !derivedFromHost)
+    throw throwBadRequestError(TEAM_WAIVER_NEEDS_VERIFIED_REFUSAL);
+  const waiver = teamWaiver
+    ? await findTeamRemixWaiver({ placerId, ownerId: space.ownerId, hostImageId })
+    : null;
+  if (teamWaiver && !waiver) throw throwBadRequestError(TEAM_WAIVER_REFUSAL);
+
   const data = {
     imageId,
     remixOfId: submission.remixOfId,
@@ -376,14 +426,19 @@ export async function createRemixGallerySubmission({
   // where a submission is made (above), and by `createFreePlacement` itself
   // against `allowedModes`. So a free submission here is always pending and
   // always the owner's to answer.
-  if (free)
-    return createFreePlacement({
+  if (free || waiver) {
+    const created = await createFreePlacement({
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetId: hostImageId,
       placerId,
       data,
+      teamWaiver: waiver ? { perDay: waiver.perDay } : undefined,
     }).catch(asDuplicateRefusal);
+    // The host now has a placement: drop its cached "no entries" (remix-gallery-hosts.cache).
+    await bustRemixGalleryHosts([hostImageId]);
+    return created;
+  }
 
   // Every rule from here down is the paid path's, which is why none of them is
   // reached above. The floor in particular exists because the price is this
@@ -438,6 +493,9 @@ export async function createRemixGallerySubmission({
       select: { id: true },
     })
     .catch(asDuplicateRefusal);
+  // The host now has a placement: drop its cached "no entries" (remix-gallery-hosts.cache). Before
+  // the escrow, whose failure expires the row rather than deleting it, so the host keeps it.
+  await bustRemixGalleryHosts([hostImageId]);
 
   try {
     await holdPlacementEscrow({
@@ -455,7 +513,7 @@ export async function createRemixGallerySubmission({
         message: 'compensating settle failed; escrow may be held for a rejected submission',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }
@@ -677,6 +735,10 @@ export async function actOnRemixGallerySubmission({
   if (!result.settled)
     throw throwBadRequestError('remix gallery: that submission was already resolved elsewhere');
 
+  // Approval is when the entry first renders. Membership did not change, but a fill that raced the
+  // insert's bust may have cached "no entries" for this host (remix-gallery-hosts.cache).
+  if (action === 'approve') await bustRemixGalleryHosts([placement.targetId]);
+
   // Fired only from behind that `settled` check, which is the whole double-pay
   // guard: it is true for exactly one call in a placement's life. Re-presenting a
   // placement this already paid for would spend a slot of the owner's daily cap
@@ -685,7 +747,14 @@ export async function actOnRemixGallerySubmission({
   // Swallowed rather than rethrown, unlike the reward's own inline fail-soft: the
   // settle above already committed and paid out, so a throw here would report a
   // failure for an approval that happened and cannot be retried.
-  if (action === 'approve')
+  //
+  // Not for a team-waived row: the waiver covers the owner's price and nothing
+  // else, and it holds no free slot, so paying for its accept would open a Buzz
+  // path bounded only by the placer's daily waiver limit.
+  if (
+    action === 'approve' &&
+    !(isRemixGalleryPlacementData(placement.data) && placement.data.waiver === TEAM_WAIVER)
+  )
     await remixAcceptReward
       .apply({
         placementId: placement.id,
@@ -699,7 +768,7 @@ export async function actOnRemixGallerySubmission({
           message: 'accept reward failed; the submission is approved and the owner unpaid',
           placementId: placement.id,
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined)
+        })
       );
 
   return result;
@@ -790,13 +859,13 @@ export async function declineOutOfBandRemixGallerySubmissions({
       await actOnRemixGallerySubmission({ placementId: row.id, action: 'decline', userId });
       settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'remix-gallery',
         type: 'error',
         message: 'decline-out-of-band: one row failed to settle',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 
@@ -827,7 +896,13 @@ async function assertStillAcceptable({
   if (!placement) throw throwBadRequestError('remix gallery: that submission no longer exists');
 
   const submission = await loadSubmissionImage(imageId);
-  if (submission.tosViolation || submission.minor || submission.poi || submission.needsReview)
+  if (
+    submission.tosViolation ||
+    submission.minor ||
+    submission.poi ||
+    submission.needsReview ||
+    isRestrictedImage(submission)
+  )
     throw throwBadRequestError('remix gallery: that image can no longer be shown');
 
   const space = await resolvePlacementSpaceFor({
@@ -1031,10 +1106,14 @@ async function hydrateGalleryImages({
   imageIds,
   browsingLevel,
   user,
+  asModerator,
+  asOwner,
 }: {
   imageIds: number[];
   browsingLevel: number;
   user?: SessionUser;
+  asModerator: boolean;
+  asOwner: boolean;
 }) {
   if (!imageIds.length) return new Map<number, RemixGalleryEntry['image']>();
 
@@ -1045,6 +1124,8 @@ async function hydrateGalleryImages({
     limit: imageIds.length,
     browsingLevel,
     user,
+    asModerator,
+    asOwner,
     period: MetricTimeframe.AllTime,
     periodMode: 'published',
     sort: ImageSort.Newest,
@@ -1062,7 +1143,7 @@ async function hydrateGalleryImages({
       requested: imageIds.length,
       hydrated: byId.size,
       missing: imageIds.filter((id) => !byId.has(id)),
-    }).catch(() => undefined);
+    });
 
   return byId;
 }
@@ -1087,6 +1168,8 @@ export async function getRemixGallery({
   cursor,
   limit = REMIX_GALLERY_PAGE_SIZE,
   user,
+  asModerator = false,
+  asOwner = false,
 }: {
   hostImageId: number;
   browsingLevel: number;
@@ -1094,6 +1177,9 @@ export async function getRemixGallery({
   limit?: number;
   /** The viewer, so the hydration applies their blocks and hidden preferences. */
   user?: SessionUser;
+  /** The request's views (`credentialViews`): without them the hydration reads as a plain viewer. */
+  asModerator?: boolean;
+  asOwner?: boolean;
 }) {
   const parsed = parseGalleryCursor(cursor);
   const seed = parsed?.seed ?? remixGalleryShuffleSeed();
@@ -1150,6 +1236,8 @@ export async function getRemixGallery({
     imageIds: page.map((row) => row.imageId),
     browsingLevel,
     user,
+    asModerator,
+    asOwner,
   });
 
   return {
@@ -1233,6 +1321,7 @@ const hostIsShowable = (alias = 'i') => {
     AND ${imageReviewedSql(alias)}
     AND NOT ${t}."tosViolation"
     AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
+    AND ${imageNotRestrictedSql({ alias })}
   ) IS TRUE)`;
 };
 
@@ -1247,10 +1336,17 @@ const hostIsShowable = (alias = 'i') => {
  * declined.
  */
 async function readHostImage(hostImageId: number) {
-  const [row] = await dbRead.$queryRaw<{ nsfwLevel: number; minor: boolean; showable: boolean }[]>`
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql): an int4 and two booleans.
+  // An id past int4 is no image: null, as Prisma answered, rather than a range error.
+  if (!isPgInt4(hostImageId)) return null;
+  const { kyselyRead } = await loadKyselyDb();
+  const [row] = await queryPrismaSql<{ nsfwLevel: number; minor: boolean; showable: boolean }>(
+    kyselyRead,
+    Prisma.sql`
     SELECT i."nsfwLevel", ${hostIsMinor()} AS minor, ${hostIsShowable()} AS showable
     FROM "Image" i WHERE i.id = ${hostImageId}
-  `;
+  `
+  );
   return row ?? null;
 }
 
@@ -1319,6 +1415,27 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
         )`;
 
 /**
+ * True unless the host's gallery resolves to off: image setting, then post, then account, then
+ * the surface default, as `resolvePlacementSpace` does. Off is the creator's remix opt-out, so
+ * storylines started from the host are not listed on it.
+ */
+const hostGalleryOpen = (host: Prisma.Sql) => Prisma.sql`
+        COALESCE(
+          (SELECT s.mode FROM "PlacementSpace" s
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'image'
+              AND s."entityId" = ${host}),
+          (SELECT s.mode FROM "PlacementSpace" s
+            JOIN "Image" hp ON hp.id = ${host}
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'post'
+              AND s."entityId" = hp."postId"),
+          (SELECT s.mode FROM "PlacementSpace" s
+            JOIN "Image" hu ON hu.id = ${host}
+            WHERE s.surface = ${SURFACE} AND s."entityType" = 'user'
+              AND s."entityId" = hu."userId"),
+          ${PLACEMENT_SURFACES[SURFACE].defaultMode}
+        ) <> 'off'`;
+
+/**
  * Which approved entries a viewer may see, as one fragment.
  *
  * 🔴 There is no second copy of this. It was written out by hand in the ordering
@@ -1336,7 +1453,10 @@ const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
  * `p` the entry's post.
  */
 const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
-        AND pl.status = 'approved'
+        AND pl.status = 'approved'${postedImageIsVisible(levels, host)}`;
+
+/** `entryIsVisible` without the placement: also the gate on a spark storyline's preview images. */
+const postedImageIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND p."publishedAt" IS NOT NULL
         AND p."publishedAt" < now()
         -- 🔴 Published is not the same as public. A post inherits its
@@ -1369,17 +1489,7 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
         AND i."nsfwLevel" != 0
-        -- Licensing, not moderation: an image built on a restricted base model
-        -- may not be shown at R or above. Copied from getAllImages verbatim
-        -- rather than simplified to NOT i."modelRestricted" - the column is not
-        -- in the Prisma schema and the backfill that writes it uses
-        -- IS DISTINCT FROM true, so a bare NOT would drop every SFW row the
-        -- moment a NULL appears, emptying galleries rather than over-showing.
-        -- The first arm settles SFW rows before nullability can matter.
-        AND (
-          (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-          OR NOT i."modelRestricted"
-        )${minorHostCeiling(host)}${hostContentBand(host)}`;
+        AND ${imageNotRestrictedSql()}${minorHostCeiling(host)}${hostContentBand(host)}`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
@@ -1423,7 +1533,15 @@ async function galleryHasEntries({
 }) {
   const levels = onlySelectableLevels(browsingLevel);
 
-  const [row] = await dbRead.$queryRaw<{ exists: boolean }[]>`
+  // A host with no placement at all has nothing to show, and that is most hosts: answered from
+  // the negative cache without the query (remix-gallery-hosts.cache).
+  if (!(await getRemixGalleryHostsWithEntries([hostImageId])).has(hostImageId)) return false;
+
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql): one boolean.
+  const { kyselyRead } = await loadKyselyDb();
+  const [row] = await queryPrismaSql<{ exists: boolean }>(
+    kyselyRead,
+    Prisma.sql`
     SELECT EXISTS (
       SELECT 1
       FROM "Placement" pl
@@ -1433,7 +1551,8 @@ async function galleryHasEntries({
         AND pl."targetType" = ${TARGET_TYPE}
         AND pl."targetId" = ${hostImageId}${entryIsVisible(levels, Prisma.sql`${hostImageId}`)}
     ) AS "exists"
-  `;
+  `
+  );
 
   return row?.exists ?? false;
 }
@@ -1449,7 +1568,23 @@ export type RemixGalleryCardEntry = {
   nsfwLevel: number;
 };
 
-export type RemixGalleryCardSummary = { count: number; entries: RemixGalleryCardEntry[] };
+export type SparkStorylineCardEntry = {
+  storylineId: number;
+  title: string;
+  username: string | null;
+  /** First images of its chapters this viewer may see on this host, chapter 1 first. */
+  previews: { url: string; type: MediaType; nsfwLevel: number }[];
+};
+
+export type RemixGalleryCardSummary = {
+  count: number;
+  entries: RemixGalleryCardEntry[];
+  /** Storylines started from the host. Absent where they were not asked for. */
+  storylines?: { count: number; entries: SparkStorylineCardEntry[] };
+};
+
+/** Chapter images a spark storyline's tile pages through. */
+export const SPARK_STORYLINE_PREVIEWS = 5;
 
 /**
  * Counts and preview thumbnails for a surface's worth of host images.
@@ -1476,25 +1611,158 @@ export type RemixGalleryCardSummary = { count: number; entries: RemixGalleryCard
 export async function getRemixGalleryCardSummaries({
   imageIds,
   browsingLevel,
+  storylinesFor,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+  /** Set to list the storylines started from each host, for this viewer. */
+  storylinesFor?: { viewer: Viewer };
+}): Promise<Record<number, RemixGalleryCardSummary>> {
+  if (!imageIds.length) return {};
+  const [summaries, storylines] = await Promise.all([
+    getRemixEntrySummaries({ imageIds, browsingLevel }),
+    storylinesFor
+      ? getSparkStorylineSummaries({ imageIds, browsingLevel, viewer: storylinesFor.viewer })
+      : undefined,
+  ]);
+  for (const [hostId, summary] of Object.entries(storylines ?? {}))
+    (summaries[Number(hostId)] ??= { count: 0, entries: [] }).storylines = summary;
+  return summaries;
+}
+
+/**
+ * Storylines started from each host, for its card: listed only while the host's
+ * gallery is open, the storyline is one this viewer would find in the feed, and
+ * neither side of the spark blocks the other. One statement, previews included.
+ */
+async function getSparkStorylineSummaries({
+  imageIds,
+  browsingLevel,
+  viewer,
+}: {
+  imageIds: number[];
+  browsingLevel: number;
+  viewer: Viewer;
+}) {
+  const levels = onlySelectableLevels(browsingLevel);
+  // Caller ids, bound as `int[]`: one past int4 would fail the whole statement (see isPgInt4).
+  const ids = [...new Set(imageIds)].filter(isPgInt4);
+  if (!ids.length) return {};
+  const excluded = [...(await getViewerExcludedIds(viewer))];
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). `total` is `count(*) OVER`, an
+  // int8: Prisma returned it as a bigint, the Kysely pools as a number, and `Number()` below takes
+  // either. `previews` is jsonb, parsed alike.
+  const { kyselyRead } = await loadKyselyDb();
+  const rows = await queryPrismaSql<
+    Omit<SparkStorylineCardEntry, 'previews'> & {
+      hostId: number;
+      total: number | bigint;
+      previews: SparkStorylineCardEntry['previews'];
+    }
+  >(
+    kyselyRead,
+    Prisma.sql`
+    WITH listed AS (
+      SELECT st.id AS "storylineId", st.title, st."sparkImageId" AS "hostId", u.username,
+        row_number() OVER (PARTITION BY st."sparkImageId" ORDER BY st.id DESC) AS rn,
+        count(*) OVER (PARTITION BY st."sparkImageId") AS total
+      FROM "Storyline" st
+      JOIN "Image" h ON h.id = st."sparkImageId"
+      JOIN "User" u ON u.id = st."userId"
+      JOIN "StorylineChapter" rc ON rc."storylineId" = st.id AND rc.depth = 0
+      LEFT JOIN "Post" rp ON rp.id = rc."postId"
+      LEFT JOIN "User" ru ON ru.id = rp."userId"
+      WHERE st."sparkImageId" = ANY(${ids}::int[])
+        AND st."tosViolation" = false
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+        AND ${storylineRootVisibleSql}
+        AND (${storyLevelSql} & ${levels}::int) <> 0
+        AND st."userId" <> ALL(${excluded}::int[])
+        AND NOT EXISTS (
+          SELECT 1 FROM "UserEngagement" blk
+          WHERE blk.type = 'Block'
+            AND ((blk."userId" = h."userId" AND blk."targetUserId" = st."userId")
+              OR (blk."userId" = st."userId" AND blk."targetUserId" = h."userId"))
+        )
+        AND ${hostGalleryOpen(Prisma.raw('st."sparkImageId"'))}
+    )
+    SELECT l."storylineId", l.title, l."hostId", l.username, l.total, pv.previews
+    FROM listed l
+    JOIN "Storyline" st ON st.id = l."storylineId"
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(jsonb_agg(
+        jsonb_build_object('url', f.url, 'type', f.type, 'nsfwLevel', f."nsfwLevel")
+        ORDER BY f.depth, f."chapterId"), '[]'::jsonb) AS previews
+      FROM (
+        SELECT * FROM (
+          SELECT DISTINCT ON (c.id) c.id AS "chapterId", c.depth, i.url, i.type, i."nsfwLevel"
+          FROM "StorylineChapter" c
+          JOIN "Post" p ON p.id = c."postId"
+          JOIN "User" cu ON cu.id = p."userId"
+          JOIN "Image" i ON i."postId" = p.id
+          WHERE c."storylineId" = st.id
+            AND c."removedAt" IS NULL
+            AND p."tosViolation" = false
+            AND cu."bannedAt" IS NULL AND cu."deletedAt" IS NULL
+            AND p."userId" <> ALL(${excluded}::int[])
+            AND (p."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
+            AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0${postedImageIsVisible(
+      levels,
+      Prisma.raw('l."hostId"')
+    )}
+          ORDER BY c.id, i.index NULLS LAST, i.id
+        ) firsts
+        ORDER BY depth, "chapterId"
+        LIMIT ${SPARK_STORYLINE_PREVIEWS}
+      ) f
+    ) pv
+    WHERE l.rn <= ${REMIX_GALLERY_CARD_THUMBS}
+    ORDER BY l."hostId", l.rn
+  `
+  );
+
+  const summaries: Record<number, NonNullable<RemixGalleryCardSummary['storylines']>> = {};
+  for (const row of rows) {
+    const summary = (summaries[row.hostId] ??= { count: Number(row.total), entries: [] });
+    summary.entries.push({
+      storylineId: row.storylineId,
+      title: row.title,
+      username: row.username,
+      previews: row.previews,
+    });
+  }
+  return summaries;
+}
+
+async function getRemixEntrySummaries({
+  imageIds,
+  browsingLevel,
 }: {
   imageIds: number[];
   browsingLevel: number;
 }): Promise<Record<number, RemixGalleryCardSummary>> {
-  if (!imageIds.length) return {};
   const levels = onlySelectableLevels(browsingLevel);
-  const ids = [...new Set(imageIds)];
+  // Only hosts with any placement can have an entry to count, and almost none do: the rest are
+  // answered from the negative cache (remix-gallery-hosts.cache), and with none left there is no
+  // query at all.
+  const withEntries = await getRemixGalleryHostsWithEntries(imageIds);
+  const ids = [...new Set(imageIds)].filter((id) => withEntries.has(id));
+  if (!ids.length) return {};
 
-  const rows = await dbRead.$queryRaw<
-    {
-      hostId: number;
-      imageId: number;
-      url: string;
-      type: MediaType;
-      nsfwLevel: number;
-      username: string | null;
-      total: bigint;
-    }[]
-  >`
+  // Through Kysely, not Prisma's `$queryRaw` (see queryPrismaSql). `total` is `count(*) OVER`, an
+  // int8: Prisma returned it as a bigint, the Kysely pools as a number; `Number()` takes either.
+  const { kyselyRead } = await loadKyselyDb();
+  const rows = await queryPrismaSql<{
+    hostId: number;
+    imageId: number;
+    url: string;
+    type: MediaType;
+    nsfwLevel: number;
+    username: string | null;
+    total: number | bigint;
+  }>(
+    kyselyRead,
+    Prisma.sql`
     WITH visible AS (
       SELECT
         pl."targetId" AS "hostId",
@@ -1518,19 +1786,21 @@ export async function getRemixGalleryCardSummaries({
       WHERE pl.surface = ${SURFACE}
         AND pl."targetType" = ${TARGET_TYPE}
         AND pl."targetId" IN (${Prisma.join(ids)})${entryIsVisible(
-    levels,
-    Prisma.raw('pl."targetId"')
-  )}
+      levels,
+      Prisma.raw('pl."targetId"')
+    )}
     )
     SELECT "hostId", "imageId", url, type, "nsfwLevel", username, total
     FROM visible
     WHERE rn <= ${REMIX_GALLERY_CARD_THUMBS}
     ORDER BY "hostId", rn
-  `;
+  `
+  );
 
   const summaries: Record<number, RemixGalleryCardSummary> = {};
   for (const row of rows) {
-    // `count(*) OVER` comes back as bigint, which does not survive JSON.
+    // `count(*) OVER` is an int8: a bigint, which does not survive JSON, from Prisma; a number
+    // from the Kysely pools.
     const summary = (summaries[row.hostId] ??= { count: Number(row.total), entries: [] });
     summary.entries.push({
       imageId: row.imageId,
@@ -1565,7 +1835,6 @@ async function getViewerPendingSubmissions({
   /** The viewer own band. Marked on each row, never filtered on. */
   viewerLevels: number;
 }) {
-  // `kysely-hot-reads-3` on: the same read through Kysely, on the replica as before.
   const pendingInput = {
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -1573,9 +1842,12 @@ async function getViewerPendingSubmissions({
     placerId: viewerId,
     limit: REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   };
-  const rows = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
-    ? await readViewerPendingPlacementsViaKysely((await loadKyselyDb()).kyselyRead, pendingInput)
-    : await readViewerPendingPlacementsViaPrisma(dbRead, pendingInput);
+  const rows = await readViewerPendingPlacementsViaKysely(
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
+    pendingInput
+  );
 
   const entries = rows.filter((row) => isRemixGalleryPlacementData(row.data));
   const imageIds = entries.map((row) => (row.data as RemixGalleryPlacementData).imageId);
@@ -1638,6 +1910,18 @@ const queueImageIsListable = (imageId: Prisma.Sql) => Prisma.sql`
   )`;
 
 /**
+ * Not in `queueImageIsListable`: the readiness pass refunds a restricted submission still awaiting
+ * readiness. One flagged after its clock started is hidden from the owner here and left to expire.
+ */
+const submissionShownToOwner = (ownerId: number) => Prisma.sql`
+  EXISTS (
+    SELECT 1
+    FROM "Image" si
+    WHERE si.id = (pl.data ->> 'imageId')::int
+      AND ${imageNotRestrictedSql({ alias: 'si', viewerId: ownerId })}
+  )`;
+
+/**
  * Both images are tested: a submission the owner can see, on a host that still
  * renders. A host taken down after submissions arrived leaves rows nobody can
  * judge — the gallery they would appear in is gone — and those refund in full on
@@ -1660,6 +1944,7 @@ async function countListablePendingSubmissions({
       AND pl.status = 'pending'
       AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
       AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+      AND ${submissionShownToOwner(ownerId)}
   `;
 
   return row?.count ?? 0;
@@ -2018,7 +2303,7 @@ export async function getRemixGalleryFreeEligibility({
   /** The candidates on screen. Bounded by the schema. */
   imageIds: number[];
 }) {
-  const [allowance, usedHere, verified] = await Promise.all([
+  const [allowance, usedHere, verified, teamWaiver] = await Promise.all([
     getFreePlacementAllowance({ placerId }),
     hasUsedFreePlacementOn({
       placerId,
@@ -2040,6 +2325,7 @@ export async function getRemixGalleryFreeEligibility({
             AND ${hostImageId} = ANY(${sourceImageIdsSql()})
         `
       : [],
+    getTeamWaiverStanding({ hostImageId, placerId }),
   ]);
 
   return {
@@ -2047,6 +2333,61 @@ export async function getRemixGalleryFreeEligibility({
     /** Free is once per gallery per placer, ever — not once per day. */
     usedHere,
     verifiedImageIds: verified.map((row) => row.id),
+    /**
+     * Null when no event waives this gallery's price for this placer. Applies
+     * only to a verified remix, as free does: `verifiedImageIds` says which.
+     */
+    teamWaiver,
+  };
+}
+
+/**
+ * A listing like the rest of the eligibility: the mutation re-decides under its lock. A failure
+ * reads as no waiver, so the event layer cannot take the free option down with it.
+ */
+export const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
+  readTeamWaiverStanding(input).catch((error) => {
+    logToAxiom({
+      name: 'remix-gallery',
+      type: 'error',
+      message: 'team waiver standing failed; shown as no waiver',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+
+async function readTeamWaiverStanding({
+  hostImageId,
+  placerId,
+}: {
+  hostImageId: number;
+  placerId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: hostImageId,
+  });
+  if (space.mode !== 'review' || space.ownerId === placerId) return null;
+  const waiver = await findTeamRemixWaiver({
+    placerId,
+    ownerId: space.ownerId,
+    hostImageId,
+    db: dbRead,
+  });
+  if (!waiver) return null;
+  // Display only, off the claim's lock, like the free allowance beside it.
+  const used = await countPlacements(
+    (
+      await loadKyselyDb()
+    ).kyselyRead,
+    teamWaivedWhere(freePlacementsTodayWhere(placerId))
+  );
+  return {
+    team: waiver.team,
+    remaining: Math.max(waiver.perDay - used, 0),
+    /** Midnight UTC ending the current day. */
+    resetsAt: new Date(freePlacementDayStart().getTime() + 24 * 3_600_000),
   };
 }
 
@@ -2088,13 +2429,13 @@ async function refundUnreadySubmission(placementId: number, data: RemixGalleryPl
     const result = await settlePlacement({ placementId, action: 'expire' });
     return result.settled;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       name: 'remix-gallery',
       type: 'error',
       message: 'readiness refund failed',
       placementId,
       error: (error as Error).message,
-    }).catch(() => null);
+    });
     return false;
   }
 }
@@ -2170,7 +2511,8 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
            img.id AS "imageId",
            img."nsfwLevel",
            img."needsReview",
-           (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked') AS doomed,
+           (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked'
+             OR ${imageRestrictedSql({ alias: 'img' })}) AS doomed,
            -- 🔴 The alias MUST NOT be "i". queueImageIsListable declares its own
            -- FROM "Image" i internally, so passing i.id from an outer alias named
            -- i is captured by the inner one: the correlation degenerates to
@@ -2192,6 +2534,7 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
       AND (
         img.id IS NULL
         OR (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked')
+        OR ${imageRestrictedSql({ alias: 'img' })}
         OR ${queueImageIsListable(Prisma.sql`img.id`)}
       )
       -- A row waiting on a moderator is selected ONCE, to be marked, and then
@@ -2268,7 +2611,7 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
               message: 'marking a review-blocked submission undeliverable failed',
               placementId: row.id,
               error: (error as Error).message,
-            }).catch(() => null)
+            })
           );
       continue;
     }
@@ -2403,6 +2746,7 @@ export async function getPendingRemixGallerySubmissions({
       }
       AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
       AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+      AND ${submissionShownToOwner(ownerId)}
     ORDER BY pl."createdAt" ASC, pl.id ASC
     LIMIT ${limit + 1}
   `;

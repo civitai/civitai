@@ -1,3 +1,4 @@
+import { DELETED_ROW_COLUMNS_SQL } from './deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
@@ -49,6 +50,11 @@ const {
   mockDeleteBidsForModel: vi.fn(async () => ({ refundFailed: [] as string[] })),
 }));
 
+const { onStorySparkPostsHidden } = vi.hoisted(() => ({ onStorySparkPostsHidden: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsHidden,
+}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -70,7 +76,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/search-index/collections.search-index', () => ({
@@ -107,11 +112,21 @@ vi.mock('~/server/services/creator-program.service', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   getUnavailableResources: vi.fn(),
 }));
-vi.mock('~/server/services/image.service', () => ({
-  getImagesForModelVersion: vi.fn(),
-  getImagesForModelVersionCache: {},
-  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
-}));
+// The image service's whole import graph cannot load beside these mocks, so its delete runs the
+// shared DELETE on `dbWrite` and nothing more: what follows a delete has its own tests.
+vi.mock('~/server/services/image.service', async () => {
+  const { deleteImageRows } = await import('@civitai/db-queries/content-deletion');
+  const { kyselyOver } = await import('~/server/db/prisma-kysely');
+  const { dbWrite } = await import('~/server/db/client');
+  return {
+    getImagesForModelVersion: vi.fn(),
+    getImagesForModelVersionCache: {},
+    queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
+    deleteImages: vi.fn(async (ids: number[], { actor }: { actor: never }) =>
+      deleteImageRows(kyselyOver(dbWrite), { ids, actor })
+    ),
+  };
+});
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -135,14 +150,13 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import {
   deleteModelById,
-  MODEL_KEPT_FOR_HELD_COMMENT,
   MODEL_KEPT_FOR_HOLD,
   permaDeleteModelById,
 } from '~/server/services/model.service';
-import { HOLD_UNCONFIRMED } from '~/server/services/legal-hold.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deleteImages } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -163,6 +177,7 @@ function primeCollectionLookup(collectionIds: number[]) {
     const sql = Array.from(strings).join('?');
     if (sql.includes('"CollectionItem"'))
       return collectionIds.map((collectionId) => ({ collectionId }));
+    if (isHoldCheck(sql)) return [{ held: false }];
     if (isModelDelete(sql)) return [DELETED_MODEL];
     return [];
   });
@@ -170,6 +185,9 @@ function primeCollectionLookup(collectionIds: number[]) {
 
 /** The permanent delete's own statement; it returns the row it deleted. */
 const isModelDelete = (sql: string) => sql.includes('DELETE FROM "Model"');
+/** The hold check that runs before anything is deleted. */
+const isHoldCheck = (sql: string) => sql.includes('AS held');
+const isImageOrPostDelete = (sql: string) => /DELETE FROM "(Image|Post)"/.test(sql);
 const DELETED_MODEL = { id: MODEL_ID, userId: OWNER_ID, nsfwLevel: 1 };
 
 const expectedUpdatePayload = (ids: number[]) =>
@@ -199,7 +217,7 @@ describe('deleteModelById — soft delete', () => {
   // `Model.deletedAt` — and a soft delete leaves the Model, Post and Image rows intact,
   // so the rebuild re-emits the same image. The cost was up to 10,000 Meilisearch
   // enqueues per soft delete for no change in output. When the image is genuinely
-  // removed, deleteImageById/deleteImages enqueue it themselves.
+  // removed, the image delete's post-commit finish enqueues it itself.
   //
   // If the product answer is "hide a soft-deleted model's images from collection
   // cards", the CTE predicate and this enqueue are needed TOGETHER — neither alone
@@ -209,6 +227,13 @@ describe('deleteModelById — soft delete', () => {
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it("forfeits the story sparks of its versions' posts", async () => {
+    await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({
+      modelVersionIds: [VERSION_ID],
+    });
   });
 
   /** Runs deleteModelById on a transaction of its own; `recorded` is what the status record reports. */
@@ -379,7 +404,6 @@ describe('permaDeleteModelById — permanent delete', () => {
       modelVersions: [{ id: VERSION_ID }],
     });
     mockDbWrite.post.findMany.mockResolvedValue([{ id: 7012 }]);
-    mockDbWrite.image.findMany.mockResolvedValue([{ id: 6631 }]);
   });
 
   it('queues an Update for every collection that contained the model or its images', async () => {
@@ -398,6 +422,7 @@ describe('permaDeleteModelById — permanent delete', () => {
         order.push('resolve');
         return [{ collectionId: COLLECTION_A }];
       }
+      if (isHoldCheck(sql)) return [{ held: false }];
       if (isModelDelete(sql)) {
         order.push('delete');
         return [DELETED_MODEL];
@@ -425,7 +450,10 @@ describe('permaDeleteModelById — permanent delete', () => {
 
   it('still deletes the model when the collections lookup fails', async () => {
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
-      if (isModelDelete(Array.from(strings).join('?'))) return [DELETED_MODEL];
+      const text = Array.from(strings).join('?');
+      if (isHoldCheck(text)) return [{ held: false }];
+      if (isModelDelete(text)) return [DELETED_MODEL];
+      if (isImageOrPostDelete(text) || text.includes('SELECT id FROM "Image"')) return [];
       throw new Error('connection reset');
     });
 
@@ -460,7 +488,6 @@ describe('permaDeleteModelById — legal hold', () => {
   );
   let db: PGlite;
   let refusal: string | undefined;
-  let executed: string[] = [];
 
   beforeAll(async () => {
     db = new PGlite();
@@ -496,10 +523,18 @@ describe('permaDeleteModelById — legal hold', () => {
         id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
         images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
       );
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+        UNIQUE ("entityType", "entityId", type)
+      );
     `);
     await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
     await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
     await db.exec(heldCopiesSchemaSql());
+    await db.exec(DELETED_ROW_COLUMNS_SQL);
     await db.exec(`
       INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
       INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
@@ -514,28 +549,33 @@ describe('permaDeleteModelById — legal hold', () => {
     {
       exists = true,
       deleteFails = false,
-      detachFails = false as boolean | 'post',
       heldCommenter = null as number | null,
       threadCommenter = null as number | null,
       reviewers = [] as number[],
     } = {}
   ) {
-    // The post and image deletes run for real, each with its thread detach in the same statement.
+    // The post and image deletes run for real.
     mockDbWrite.$executeRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...(values as never[]));
-      executed.push(sql.text);
-      const post = sql.text.includes('p."modelVersionId"');
-      if (detachFails === true || (detachFails === 'post' && post))
-        throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
     }) as never);
-    executed = [];
     await db.exec(
       `DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment"; DELETE FROM "HeldResourceReview";`
     );
+    // The model's post and its image, owned by the model's owner. The hold triggers would keep the
+    // last case's held rows, so the cleanup runs without them.
+    await db.exec(`
+      SET session_replication_role = replica;
+      DELETE FROM "Post" WHERE id = ${POST_ID}; DELETE FROM "Image" WHERE id = ${IMAGE_ID};
+      DELETE FROM "EvidenceHoldImage" WHERE "imageId" = ${IMAGE_ID};
+      DELETE FROM "EvidenceHoldPost" WHERE "postId" = ${POST_ID};
+      SET session_replication_role = DEFAULT;
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (${POST_ID}, ${userId}, ${VERSION_ID});
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${IMAGE_ID}, ${userId}, ${POST_ID});
+    `);
     if (heldCommenter)
       await db.exec(
         `INSERT INTO "Comment" ("userId", "modelId") VALUES (${heldCommenter}, ${MODEL_ID})`
@@ -552,35 +592,25 @@ describe('permaDeleteModelById — legal hold', () => {
       );
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ url: 'models/held.safetensors' }]);
     mockDbWrite.post.findMany.mockResolvedValue([{ id: POST_ID }]);
-    mockDbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID }]);
-    // The model as the transaction first reads it; the existence re-check after the DELETE reads the
-    // stand-in.
+    // The model as the stand-in holds it.
     mockDbWrite.model.findUnique.mockImplementation((async (args: { select?: object }) => {
-      if (args.select && 'modelVersions' in args.select)
-        return { id: MODEL_ID, userId, nsfwLevel: 1, modelVersions: [{ id: VERSION_ID }] };
       const { rows } = await db.query(`SELECT id FROM "Model" WHERE id = ${MODEL_ID}`);
-      return rows[0] ?? null;
+      if (!rows[0]) return null;
+      return args.select && 'modelVersions' in args.select
+        ? { id: MODEL_ID, userId, nsfwLevel: 1, modelVersions: [{ id: VERSION_ID }] }
+        : rows[0];
     }) as never);
+    // The hold check, the image-id read and every delete run on the stand-in.
     mockDbWrite.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const flat = Prisma.sql(strings, ...(values as never[]));
-      if (flat.text.includes('"ownerHeld"'))
-        return (await db.query(flat.text, flat.values as unknown[])).rows;
-      if (!isModelDelete(flat.text)) return [];
-      if (deleteFails) throw new Error('relation "EvidenceHeldUser" does not exist');
+      const holdSql = isHoldCheck(flat.text) || isModelDelete(flat.text);
+      if (!holdSql && !isImageOrPostDelete(flat.text) && !/SELECT id FROM "Image"/.test(flat.text))
+        return [];
+      if (holdSql && deleteFails) throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(flat.text, flat.values as unknown[])).rows;
-    }) as never);
-    // A throw out of the callback is what rolls the transaction back.
-    let rolledBack = false;
-    mockDbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => unknown) => {
-      try {
-        return await fn(mockDbWrite);
-      } catch (e) {
-        rolledBack = true;
-        throw e;
-      }
     }) as never);
     const result = await permaDeleteModelById({ id: MODEL_ID, userId: 1 } as any).then(
       (model) => (model ? 'deleted' : 'not found'),
@@ -589,8 +619,12 @@ describe('permaDeleteModelById — legal hold', () => {
         return e.code;
       }
     );
-    const left = (await db.query(`SELECT id FROM "Model"`)).rows.length;
-    return { result, left, rolledBack };
+    const count = async (table: 'Model' | 'Post' | 'Image', id: number) =>
+      (await db.query(`SELECT 1 FROM "${table}" WHERE id = ${id}`)).rows.length;
+    const left = await count('Model', MODEL_ID);
+    // Its post and image, still there or gone.
+    const contentLeft = (await count('Post', POST_ID)) + (await count('Image', IMAGE_ID));
+    return { result, left, contentLeft };
   }
 
   it.each([
@@ -599,32 +633,46 @@ describe('permaDeleteModelById — legal hold', () => {
     ['an image awaiting CSAM review', REVIEW_OWNER],
     ['the placeholder owner', PLACEHOLDER_OWNER],
   ])(
-    'refuses a model whose owner is held by %s, rolls back its post and image deletes, and deletes no files',
+    'refuses a model whose owner is held by %s before deleting its post, image or files',
     async (_how, owner) => {
       expect(await permaDeleteOwnedBy(owner)).toEqual({
         result: 'FORBIDDEN',
         left: 1,
-        rolledBack: true,
+        contentLeft: 2,
       });
+      expect(vi.mocked(deleteImages)).not.toHaveBeenCalled();
       expect(vi.mocked(deleteModelFileObjects)).not.toHaveBeenCalled();
       // Kept on purpose, so a moderator does not read it as a failure; never which hold.
       expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
     }
   );
 
-  // Only another account's legacy comment keeps it: its owner is not held, and is told so.
-  it('refuses a model a held author left a legacy comment on, with its own message', async () => {
-    expect(await permaDeleteOwnedBy(OWNER_ID, { heldCommenter: REPORTED_OWNER })).toEqual({
-      result: 'FORBIDDEN',
-      left: 1,
-      rolledBack: true,
-    });
-    expect(refusal).toBe(MODEL_KEPT_FOR_HELD_COMMENT);
+  // The model's DELETE checks the hold again, so one placed after the first check still keeps it.
+  it('refuses a model whose owner is held after the first check', async () => {
+    mockDbWrite.post.findMany.mockImplementationOnce((async () => {
+      await db.exec(
+        `INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${OWNER_ID}, 'manual', 'late')`
+      );
+      return [{ id: POST_ID }];
+    }) as never);
+    try {
+      expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'FORBIDDEN', left: 1 });
+    } finally {
+      await db.exec(`
+        ALTER TABLE "EvidenceHold" DISABLE TRIGGER USER;
+        DELETE FROM "EvidenceHold" WHERE "userId" = ${OWNER_ID};
+        ALTER TABLE "EvidenceHold" ENABLE TRIGGER USER;
+      `);
+    }
   });
 
-  it("keeps the owner's message when the owner is held too", async () => {
-    await permaDeleteOwnedBy(MARKED_OWNER, { heldCommenter: REPORTED_OWNER });
-    expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
+  // Another account's comments are not kept for a hold: they go with the model.
+  it('deletes a model a held author left a legacy comment on', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { heldCommenter: REPORTED_OWNER })).toEqual({
+      result: 'deleted',
+      left: 0,
+      contentLeft: 0,
+    });
   });
 
   describe('with an earlier owner on record', () => {
@@ -645,7 +693,7 @@ describe('permaDeleteModelById — legal hold', () => {
       expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({
         result: 'FORBIDDEN',
         left: 1,
-        rolledBack: true,
+        contentLeft: 2,
       });
     });
 
@@ -689,17 +737,12 @@ describe('permaDeleteModelById — legal hold', () => {
     expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({
       result: 'deleted',
       left: 0,
-      rolledBack: false,
+      contentLeft: 0,
     });
     expect(vi.mocked(deleteModelFileObjects)).toHaveBeenCalledWith(['models/held.safetensors']);
   });
 
-  it("deletes the model's post and image, and keeps a held author's threads off them", async () => {
-    await db.exec(`
-      DELETE FROM "Post"; DELETE FROM "Image" WHERE id = ${IMAGE_ID};
-      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (${POST_ID}, ${OWNER_ID}, ${VERSION_ID});
-      INSERT INTO "Image" (id, "userId", "postId") VALUES (${IMAGE_ID}, ${OWNER_ID}, ${POST_ID});
-    `);
+  it("deletes the model's post and image, and the threads on them, a held author's included", async () => {
     // Seeded after the harness clears the threads: a held author's and an unheld one's on each.
     const seedThreads = () =>
       db.exec(`
@@ -720,70 +763,33 @@ describe('permaDeleteModelById — legal hold', () => {
     const threads = await db.query<{ id: number; postId: number | null; imageId: number | null }>(
       `SELECT id, "postId", "imageId" FROM "Thread" WHERE id >= 800 ORDER BY id`
     );
-    // The unheld ones cascade with their parents; the held ones were detached first.
-    expect(threads.rows).toEqual([
-      { id: 800, postId: null, imageId: null },
-      { id: 801, postId: null, imageId: null },
-    ]);
-    // In the statement that deletes them: a hold placed between two statements would be missed.
-    for (const table of ['Image', 'Post'])
-      expect(
-        executed.find((text) => text.includes(`DELETE FROM "${table}"`)),
-        table
-      ).toMatch(/detachedFrom[\s\S]*DELETE FROM/);
+    expect(threads.rows).toEqual([]);
   });
 
-  it("deletes the model, and keeps a held author's comment thread off it", async () => {
+  it("deletes the model, and its thread, a held author's comment included", async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: REPORTED_OWNER })).toEqual({
       result: 'deleted',
       left: 0,
-      rolledBack: false,
+      contentLeft: 0,
     });
-    const { rows } = await db.query(
-      `SELECT t."modelId", t.metadata -> 'detachedFrom' AS "detachedFrom", c.id AS "commentId"
-       FROM "Thread" t JOIN "CommentV2" c ON c."threadId" = t.id`
-    );
-    expect(rows).toEqual([{ modelId: null, detachedFrom: { modelId: MODEL_ID }, commentId: 7001 }]);
-  });
-
-  it('deletes the model and its thread when no held author commented (control)', async () => {
-    await permaDeleteOwnedBy(OWNER_ID, { threadCommenter: OWNER_ID });
     expect((await db.query(`SELECT id FROM "CommentV2"`)).rows).toEqual([]);
   });
 
-  // Its post and image deletes passed no hold check, so they must not commit either.
-  it('reports a model another delete removed first as not found, and rolls back', async () => {
+  it('reports a model another delete removed first as not found, and deletes nothing', async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID, { exists: false })).toEqual({
       result: 'NOT_FOUND',
       left: 0,
-      rolledBack: true,
+      contentLeft: 2,
     });
   });
 
-  it('refuses, and rolls back, when the post and image detaches cannot check their holds', async () => {
-    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: true })).toEqual({
-      result: 'FORBIDDEN',
-      left: 1,
-      rolledBack: true,
-    });
-    expect(refusal).toBe(HOLD_UNCONFIRMED);
-  });
-
-  it('refuses, and rolls back, when only the post detach cannot check its holds', async () => {
-    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: 'post' })).toEqual({
-      result: 'FORBIDDEN',
-      left: 1,
-      rolledBack: true,
-    });
-    expect(refusal).toBe(HOLD_UNCONFIRMED);
-  });
-
-  it('refuses, and rolls back, when the hold cannot be checked', async () => {
+  it('refuses before deleting anything when the hold cannot be checked', async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID, { deleteFails: true })).toEqual({
       result: 'FORBIDDEN',
       left: 1,
-      rolledBack: true,
+      contentLeft: 2,
     });
+    expect(vi.mocked(deleteImages)).not.toHaveBeenCalled();
   });
 
   it("deletes its reviews, keeping a copy of the held authors' only", async () => {

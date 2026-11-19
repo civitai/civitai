@@ -1,4 +1,5 @@
-import { Badge, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Group, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt } from '@tabler/icons-react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -44,17 +45,15 @@ export function PaidAccessPriceBadge({
   price,
   acceptsBlueBuzz,
   listedOnly,
-  decimals,
 }: {
   price: number;
   acceptsBlueBuzz?: boolean;
   /** The viewer already has access; the chip is informational (owner/mod seeing the buyer price). */
   listedOnly?: boolean;
-  decimals?: number;
 }) {
   const theme = useMantineTheme();
   const { isGreen } = useFeatureFlags();
-  const amount = abbreviateNumber(price, decimals != null ? { decimals } : undefined);
+  const amount = abbreviateNumber(price);
 
   const currencyLabel = paidAccessBuzzLabel({ isGreen, acceptsBlueBuzz });
   const tooltip = listedOnly

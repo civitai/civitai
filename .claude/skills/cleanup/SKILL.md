@@ -1,25 +1,32 @@
 ---
 name: cleanup
-description: "Runs the two no-gate review lanes over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims) and docs-drift-review (docs the session made wrong). Session-scoped, not segment-scoped. Use partway through a long session, and before opening a PR."
+description: "Runs the three review lanes that no build or test covers over everything this session touched, consolidates them, and APPLIES the fixes: comment-review (comment necessity + false claims), docs-drift-review (docs the session made wrong) and claim-review (behaviour the session's prose asserts, traced to the code). Session-scoped, not segment-scoped. Use partway through a long session, before opening a PR, and whenever a pushback has turned up an overstatement."
 ---
 
-# Cleanup — the two lanes nothing else checks
+# Cleanup — the three lanes no build or test covers
 
-Runs **`comment-review`** and **`docs-drift-review`** over the whole session's work, consolidates them
-into one list, and **applies the fixes** — the lanes produce exact replacement text, so a run that stops
-at a list has done the expensive half and skipped the useful one.
+Runs **`comment-review`**, **`docs-drift-review`** and **`claim-review`** over the whole session's work,
+consolidates them into one list, and **applies the fixes** — the lanes produce exact replacement text, so
+a run that stops at a list has done the expensive half and skipped the useful one.
 
 | Agent | Reviews |
 | --- | --- |
 | `comment-review` | Comments: still true? earns its place? said in the fewest words? |
 | `docs-drift-review` | Docs the session made wrong — stale paths, done checklist items, contradictions — plus padding |
+| `claim-review` | Claims about behaviour — consequences, absences, "already does" — traced to the line that decides them, in docs, comments, commit messages and PR bodies |
 
-Both lanes are read-only and neither has an automated gate — comments aren't type-checked and docs are
-never executed, so typecheck, lint, prettier and every test suite pass over both. That is the whole
-reason this exists.
+All three lanes are read-only, and no build or test checks what they check — comments aren't
+type-checked, docs are never executed, and a PR body is never read by a tool, so typecheck, lint,
+prettier and every test suite pass over all of them. That is the whole reason this exists.
+`comment-review` alone also runs as the hosted PR review's `comments` lane, and `civitai-review` runs
+it locally when recording; that covers a PR's diff, not the session's whole work.
 
-**These two lanes are pre-authorised.** Running them needs no separate permission, and neither does
-re-running one that goes idle. That covers these two only; everything else about spawning is unchanged.
+The first two check text against **names**; only `claim-review` follows a described behaviour to where it
+is decided. A sentence whose every symbol resolves can still claim a consequence the caller never
+produces — that passes the first two lanes, and is the third's whole job.
+
+**These three lanes are pre-authorised.** Running them needs no separate permission, and neither does
+re-running one that goes idle. That covers these three only; everything else about spawning is unchanged.
 
 ## 1. Scope to the SESSION, not to a segment
 
@@ -50,12 +57,16 @@ Give each agent the file list and the commit range. They need different things b
   symbols removed, scripts and env vars added or retired, commands whose flags changed, checklist items
   the session completed. That list is its highest-value input and it cannot recover all of it from a
   diffstat.
+- **`claim-review`** — the commit range, the numbers of any PRs the session opened (their bodies are
+  text it must read), and the docs the session touched. **Do not pass your reasoning or your own
+  verdicts on the claims** — a lane handed the conclusion tends to return it confirmed. If a pushback
+  already turned up an overstatement, name the claim that failed so it looks for its siblings.
 
 Serial is the safe default. Two at once is fine when the session is small.
 
 ## 3. Consolidate
 
-One ranked list, not two reports.
+One ranked list, not three reports.
 
 - **Drop what you can disprove.** Read the code or the file before relaying anything; a fix applied to a
   non-finding is a new defect.
@@ -64,10 +75,13 @@ One ranked list, not two reports.
 - Separate **fix now** from **note and move on**, and put the second group somewhere durable.
 - `docs-drift-review` returns exact replacement text. Relay it verbatim rather than paraphrasing —
   paraphrasing it is how the next drift starts.
+- A `claim-review` finding that **decided something** — what a PR changed or left alone, what was
+  tested — ranks with a false comment. A merged PR body cannot be edited into history; the fix is a
+  correcting comment on the PR.
 
 ## 4. Apply — the run is not finished until the fixes are in the tree
 
-**Apply them.** Both lanes return exact replacement text, and a consolidated list handed back unapplied
+**Apply them.** All three lanes return exact replacement text, and a consolidated list handed back unapplied
 is a to-do the next session inherits without the context that produced it. Fix everything you did not
 disprove in step 3, then say what you applied and what you deliberately left.
 
@@ -78,7 +92,7 @@ should be ticked). Reopen a box rather than assert something you could not check
 **Then verify each edit landed.** Do not trust the write — re-read or grep for the new text. Three ways
 these fail silently:
 
-- **The anchor is stale.** Both lanes quote the file as it was when they read it, and a long review runs
+- **The anchor is stale.** The lanes quote the file as it was when they read it, and a long review runs
   minutes behind the tree. An anchor that no longer matches is normal, not a sign the finding is wrong —
   re-read that region and re-derive the edit.
 - **A batch that throws part-way applies NOTHING** if it writes the file after the last replacement.

@@ -1,0 +1,179 @@
+// Command beacon-go answers the browser beacons POST /api/internal/ping and POST /api/internal/pulse
+// exactly as the Node app does, and either shadow-compares them against Node (BEACON_GO_MODE=shadow,
+// the default: nothing is written) or serves them and writes their tracker rows (serve). See
+// apps/beacon-go/DESIGN.md.
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/beacon-go/internal/auth"
+	"github.com/civitai/civitai/apps/beacon-go/internal/beacon"
+	"github.com/civitai/civitai/apps/beacon-go/internal/config"
+	"github.com/civitai/civitai/apps/beacon-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/beacon-go/internal/server"
+	"github.com/civitai/civitai/apps/beacon-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/beacon-go/internal/tracker"
+)
+
+func main() {
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := run(log); err != nil {
+		log.Error("exit", "err", err)
+		os.Exit(1)
+	}
+}
+
+func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
+	if cluster {
+		opts, err := redis.ParseClusterURL(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		return redis.NewClusterClient(opts), nil
+	}
+	opts, err := redis.ParseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return redis.NewClient(opts), nil
+}
+
+func run(log *slog.Logger) error {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cache, err := redisClient(cfg.RedisURL, cfg.RedisCluster)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cache.Close() }()
+	sys, err := sysredis.New(sysredis.Settings{
+		URL:              cfg.RedisSysURL,
+		Sentinels:        cfg.RedisSysSentinels,
+		SentinelName:     cfg.RedisSysSentinelName,
+		SentinelPassword: cfg.RedisSysSentinelPassword,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sys.Close() }()
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	metrics := server.NewMetrics(reg)
+
+	readErrors := &server.ReadErrorReporter{Log: log, Counter: metrics.RevocationReadErrors}
+	verifier := &auth.Verifier{
+		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
+		RefreshInterval: cfg.JWKSRefresh,
+		MaxStaleness:    cfg.JWKSMaxStaleness,
+		OnStale: func(age time.Duration) {
+			metrics.JWKSStale.Inc()
+			log.Error("jwks key set dropped: no successful fetch within the maximum staleness; sessions verify as signed out",
+				"age", age.String(), "max", cfg.JWKSMaxStaleness.String())
+		},
+		OnRefresh: func(err error) {
+			if err != nil {
+				metrics.JWKSRefresh.WithLabelValues("error").Inc()
+				log.Warn("jwks refresh failed; keeping the last good key set", "err", err)
+				return
+			}
+			metrics.JWKSRefresh.WithLabelValues("ok").Inc()
+		},
+	}
+	go verifier.Run(ctx)
+	resolver := &auth.Resolver{
+		Verifier:            verifier,
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnReadError: readErrors.Report},
+		Sessions:            &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix},
+		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
+		ModerationAccountID: cfg.ModerationAccountID,
+	}
+	engine := &beacon.Engine{
+		Sessions: resolver,
+		// In shadow mode the sampler only runs where the Node Tracker is configured, so the computed
+		// rows are always produced (and compared); nothing is sent.
+		TrackerEnabled: cfg.OutwardTraffic && (cfg.Mode == server.ModeShadow || cfg.TrackerURL != ""),
+		HubOrigin:      cfg.AuthIssuer,
+		UpdateAgeMs:    cfg.UpdateAgeMs,
+		ModeFor:        cfg.ModeFor,
+	}
+	srv := &server.Server{
+		Engine:        engine,
+		Mode:          cfg.Mode,
+		Metrics:       metrics,
+		Log:           log,
+		ShadowQueue:   make(chan struct{}, cfg.ShadowWorkers),
+		ComputeBudget: cfg.ComputeBudget,
+	}
+	var writer *tracker.Client
+	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))}
+	if cfg.Mode == server.ModeServe {
+		target, err := url.Parse(cfg.FallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.Proxy = fallbackProxy(target)
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.MaxIdleConnsPerHost = cfg.TrackerWorkers
+		writer = &tracker.Client{
+			BaseURL: cfg.TrackerURL,
+			HTTP:    &http.Client{Transport: tr},
+			Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
+		}
+		writer.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
+		srv.Writer = writer
+		servers = append(servers, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
+	}
+	log.Info("starting", "mode", cfg.Mode)
+
+	errs := make(chan error, len(servers))
+	for _, s := range servers {
+		go func(s *http.Server) {
+			log.Info("listening", "addr", s.Addr)
+			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+			}
+		}(s)
+	}
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+	}
+	// One grace period: drain the listeners (no new beacon can queue a row after this), end the
+	// running shadow samples, then send the rows still queued; the redis clients close last.
+	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for _, s := range servers {
+		_ = s.Shutdown(shutdown)
+	}
+	if err := srv.Close(shutdown); err != nil {
+		log.Warn("shadow samples still running at the end of the grace period", "err", err)
+	}
+	if writer != nil {
+		if err := writer.Close(shutdown); err != nil {
+			log.Warn("tracker rows still queued at the end of the grace period", "err", err)
+		}
+	}
+	return nil
+}

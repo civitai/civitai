@@ -1,4 +1,5 @@
-import { Badge, Group, Tooltip } from '@mantine/core';
+import { Badge, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { MultiSelectProps } from '@mantine/core';
 import { IconCheck, IconShield } from '@tabler/icons-react';
 import { useMaybeAppContext } from '~/providers/AppProvider';

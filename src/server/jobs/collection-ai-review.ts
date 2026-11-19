@@ -15,6 +15,7 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import {
   AI_REVIEW_SYSTEM_USER_ID as SYSTEM_USER_ID,
   COLLECTION_AI_REVIEW_KEY_PREFIX,
+  judgeRatedSql,
   updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
 import {
@@ -25,10 +26,13 @@ import {
   needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
+import { describeProviderError } from '~/server/services/ai/provider-error';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -54,7 +58,16 @@ type PendingItem = {
   nsfwLevel: number;
   ingestion: string;
   prompt: string | null;
+  minor: boolean;
+  acceptableMinor: boolean;
 };
+
+export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
+export const ACCEPTABLE_MINOR_ESCALATION = 'marked acceptable minor';
+
+// An entry marked acceptableMinor goes to a human too, like a flagged one.
+const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
+  !!item.minor || !!item.acceptableMinor;
 
 export const collectionAiReview = createJob(
   'collection-ai-review',
@@ -89,12 +102,23 @@ export async function reviewCollection(collectionId: number, config: CollectionA
   // later run.
   const pending = await dbWrite.$queryRaw<PendingItem[]>`
     SELECT ci.id "collectionItemId", i.id "imageId", i.url, i.type::text, i."nsfwLevel",
-           i.ingestion::text, i.meta->>'prompt' prompt
+           i.ingestion::text, i.meta->>'prompt' prompt, i.minor, i."acceptableMinor"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'REVIEW'
       AND ci."reviewedById" IS NULL
+      -- Where judges apply the rating, an item waits for a judge's rating (and for any moderator
+      -- hold to clear) before it is reviewed, so it is not reclassified, and re-billed, every run.
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM "Collection" c
+          WHERE c.id = ci."collectionId"
+            AND c.type = 'Image'
+            AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+        )
+        OR ${judgeRatedSql('i', collectionId)}
+      )
     ORDER BY ci.id
     LIMIT ${BATCH_SIZE}
   `;
@@ -124,6 +148,9 @@ type Outcome = {
   action: 'accept' | 'reject' | 'stamp';
   message?: string;
   minorReview?: boolean;
+  // The level this outcome was decided on; see the claim in applyOutcomes.
+  nsfwLevel: number;
+  levelReject?: boolean;
 };
 
 async function classifyItem({
@@ -140,7 +167,9 @@ async function classifyItem({
   let decision: AiReviewDecision;
   let reason = '';
   let rejectionMessage: string | undefined;
+  let levelReject = false;
   let usage = { promptTokens: 0, completionTokens: 0 };
+  let observed = toObservationColumns(undefined);
 
   if (isUnavailableImage(item)) {
     decision = { decision: 'reject', violations: [], escalations: [] };
@@ -149,6 +178,7 @@ async function classifyItem({
   } else if (!isNsfwLevelAllowed(item.nsfwLevel, config.allowedNsfwLevels)) {
     decision = { decision: 'reject', violations: ['sexual/adult content'], escalations: [] };
     reason = `Rated outside the levels this collection allows (nsfwLevel ${item.nsfwLevel}).`;
+    levelReject = true;
   } else {
     const imageUrl = getEdgeUrl(item.url, {
       width: 512,
@@ -164,7 +194,7 @@ async function classifyItem({
         name: 'collection-ai-review',
         collectionId,
         error: `Non-absolute image url (${imageUrl}); check NEXT_PUBLIC_IMAGE_LOCATION`,
-      }).catch(() => undefined);
+      });
       return undefined;
     }
 
@@ -179,6 +209,7 @@ async function classifyItem({
 
       ({ usage } = result);
       decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
+      observed = toObservationColumns(result.observations);
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       const attempts = await recordFailedAttempt(item.collectionItemId);
@@ -188,15 +219,32 @@ async function classifyItem({
         collectionId,
         imageId: item.imageId,
         attempts,
-        error: (error as Error).message,
-      }).catch(() => undefined);
+        error: describeProviderError(error, { sent: [item.prompt, config.prompt] }),
+      });
       // Most failures clear on a later run, so the item is left for the next one. Stamped once the
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
       if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
-      return { collectionItemId: item.collectionItemId, imageId: item.imageId, action: 'stamp' };
+      return {
+        collectionItemId: item.collectionItemId,
+        imageId: item.imageId,
+        action: 'stamp',
+        nsfwLevel: item.nsfwLevel,
+      };
     }
   }
+
+  const heldMinor = decision.decision === 'approve' && isHeldMinor(item);
+  if (heldMinor)
+    decision = {
+      decision: 'escalate',
+      violations: decision.violations,
+      escalations: [
+        ...decision.escalations,
+        item.minor ? HELD_MINOR_ESCALATION : ACCEPTABLE_MINOR_ESCALATION,
+      ],
+      neverReject: true,
+    };
 
   const applied = !config.dryRun;
   let action: Outcome['action'] = 'stamp';
@@ -228,6 +276,8 @@ async function classifyItem({
     applied,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
+    nsfwLevel: item.nsfwLevel,
+    ...observed,
   });
 
   return {
@@ -235,7 +285,9 @@ async function classifyItem({
     imageId: item.imageId,
     action,
     message,
-    minorReview: applied && needsMinorReview(decision),
+    minorReview: applied && (heldMinor || needsMinorReview(decision)),
+    nsfwLevel: item.nsfwLevel,
+    levelReject,
   };
 }
 
@@ -275,7 +327,7 @@ function logFlagError(collectionId: number, error: string, imageIds?: number[]) 
     collectionId,
     imageIds,
     error,
-  }).catch(() => undefined);
+  });
 }
 
 // Only fills an empty slot. Even the queues minor review outranks are left alone: accepting in the
@@ -330,6 +382,8 @@ export async function flagForMinorReview({
     bustCachesForPosts(postIds).catch((error) =>
       logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
     ),
+    // A held image that is someone's profile picture stops being served as one now, not at the TTL.
+    refreshProfilePicturesForImagesLazy([...flaggedIds]),
   ]);
   return true;
 }
@@ -373,14 +427,65 @@ async function applyOutcomes({
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only
   // while it is still untouched means a moderator who decided it in the meantime keeps their
   // decision and their attribution — and the status write below skips whatever we did not claim.
+  // A decision that rests on the image's rating is also left for the next run if the image was
+  // re-rated in that window, so nothing is accepted or rejected on a level it no longer has.
+  const levelBound = outcomes.filter(
+    (o) => o.action === 'accept' || (o.action === 'reject' && o.levelReject)
+  );
+  const acceptIds = outcomes.filter((o) => o.action === 'accept').map((o) => o.collectionItemId);
   const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
-    UPDATE "CollectionItem"
+    UPDATE "CollectionItem" ci
     SET "reviewedById" = ${SYSTEM_USER_ID}, "reviewedAt" = now(), "updatedAt" = now()
-    WHERE "collectionId" = ${collectionId}
-      AND id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
-      AND status = 'REVIEW'
-      AND "reviewedById" IS NULL
-    RETURNING id
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci.id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
+      AND ci.status = 'REVIEW'
+      AND ci."reviewedById" IS NULL
+      ${
+        levelBound.length
+          ? Prisma.sql`AND NOT EXISTS (
+              SELECT 1
+              FROM (VALUES ${Prisma.join(
+                levelBound.map((o) => Prisma.sql`(${o.collectionItemId}::int, ${o.nsfwLevel}::int)`)
+              )}) AS decided(id, "nsfwLevel")
+              JOIN "Image" i ON i.id = ci."imageId"
+              WHERE decided.id = ci.id AND i."nsfwLevel" IS DISTINCT FROM decided."nsfwLevel"
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Re-checks the minor flag for accepts; an unclaimed item is held on the next run.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Image" i
+                WHERE i.id = ci."imageId" AND (i.minor OR i."acceptableMinor")
+              )
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Where judges apply the rating, an accept needs a judge's rating and no moderator hold: such
+        // an item stays in REVIEW, unclaimed, and the rest of the batch goes ahead.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Collection" c
+                WHERE c.id = ci."collectionId"
+                  AND c.type = 'Image'
+                  AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "Image" i WHERE i.id = ci."imageId" AND ${judgeRatedSql(
+                  'i',
+                  collectionId
+                )}
+              )
+            )`
+          : Prisma.empty
+      }
+    RETURNING ci.id
   `;
   if (!claimed.length) return;
 
@@ -422,7 +527,7 @@ async function applyOutcomes({
         error: `Failed to apply ${write.status} to ${write.ids.length} items: ${
           (error as Error).message
         }`,
-      }).catch(() => undefined);
+      });
     }
   }
 }

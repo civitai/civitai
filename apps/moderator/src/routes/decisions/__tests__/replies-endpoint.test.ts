@@ -35,7 +35,7 @@ const GK = 'g_8e21f0c4b7a9';
 const BOTH = { 'decisions.rule': true, 'decisions.answer': true } as const;
 const FOUND = {
   status: 'found',
-  replies: [{ conversationId: '150003911207', createdAt: null, text: 'Try again.' }],
+  replies: [{ conversationId: '990000000001', createdAt: null, text: 'Try again.' }],
 };
 
 const call = async (
@@ -90,7 +90,7 @@ describe('the replies endpoint', () => {
   });
 
   it('404s a ticket that is not a current member — Freshdesk is never asked', async () => {
-    expect((await call({ ticketId: '73618' })).status).toBe(404);
+    expect((await call({ ticketId: '990200000' })).status).toBe(404);
     expect(getPublicAgentReplies).not.toHaveBeenCalled();
   });
 

@@ -12,7 +12,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUs
 vi.mock('~/components/Dialog/triggers/report', () => ({
   openReportModal: mocks.openReportModal,
 }));
-vi.mock('~/components/CommentsV2/ToggleLockComments', () => ({
+vi.mock('~/components/CommentsV3/ToggleLockComments', () => ({
   ToggleLockComments: ({
     children,
   }: {

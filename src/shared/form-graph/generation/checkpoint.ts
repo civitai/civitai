@@ -6,7 +6,7 @@ import {
   ecosystemByKey,
   getEcosystemDefaults,
 } from '~/shared/constants/basemodel.constants';
-import { unselectableVersionIds } from '~/shared/generation/gates';
+import { rulesToStates, unselectableVersionIds } from '~/shared/generation/gates';
 import type { GenerationCtx } from '~/shared/generation/context';
 import {
   getResourceSelectOptions,
@@ -23,6 +23,8 @@ export type VersionOption = {
   baseModel?: string;
   /** Child options shown when this option is selected */
   children?: VersionGroup;
+  /** Shows a "New" badge on the option until this date. */
+  newUntil?: Date;
 };
 
 export type VersionGroup = {
@@ -130,7 +132,6 @@ export function checkpointDef(opts: {
   const { ecosystem: ecosystemKey, workflow, ext, versions, defaultModelId } = opts;
   const ecosystem = ecosystemByKey.get(ecosystemKey);
   const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
-  const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
   const modelLocked = opts.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
   // A `disabled` version stays in the picker and is refused at whatIf/submit
@@ -139,6 +140,18 @@ export function checkpointDef(opts: {
   const visibleVersions =
     versions && ruleVersionIds.length ? filterVersionGroup(versions, ruleVersionIds) : versions;
   const validVersionIds = visibleVersions ? getAllVersionIds(visibleVersions) : undefined;
+
+  // A default the user is gated from (hidden, disabled or members-only) gives way to the ecosystem
+  // default, then to the first version they can pick, so `correct` never lands them on one they
+  // cannot use.
+  const gatedVersionIds = rulesToStates(ext.gateRules ?? []).modelVersionIds;
+  const requestedDefault = defaultModelId ?? ecosystemDefaults?.model?.id;
+  const modelVersionId =
+    requestedDefault !== undefined && gatedVersionIds.has(requestedDefault)
+      ? [ecosystemDefaults?.model?.id, ...(validVersionIds ?? [])].find(
+          (id) => id !== undefined && !gatedVersionIds.has(id)
+        ) ?? requestedDefault
+      : requestedDefault;
 
   return {
     input: CHECKPOINT_INPUT,

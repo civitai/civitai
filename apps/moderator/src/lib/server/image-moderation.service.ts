@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead, dbWrite } from './db';
+import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
 import { syncSearchIndex } from './search-index';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
@@ -7,6 +9,8 @@ import {
   applyBlockSideEffects,
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
+  CsamBlocklistWriteError,
+  writeBlockBlocklistEntry,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -18,13 +22,21 @@ import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
 import {
+  claimDeferredBlockEffects,
+  dropDeferredBlockEffects,
+  fireDeferredBlockEffects,
+  type DeferredBlockEffect,
+} from './deferred-block-effects';
+import {
   imagesVersion,
   imageVersion,
   removedNotDismissed,
   setAsideCounts,
   setAsideState,
 } from './csam-queue-set-aside';
-import type { Transaction } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -32,24 +44,22 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
+const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
- * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
- * so this un-block's `review` activity would read as a takedown of the next block.
+ * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
+ * sends no owner notice and actions no report: for one under review they wait in
+ * `ImageDeferredBlockEffect` for the review to close. The main app's twin is `heldImageSql`.
  */
-async function dropBlockedImageDeleteQueue(imageId: number) {
-  await dbWrite
-    .deleteFrom('JobQueue')
-    .where('type', '=', 'BlockedImageDelete')
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .execute();
-}
+const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
+  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
+)))`;
 
 /**
- * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
+ * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
+ * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
+ * `PRIOR_NEEDS_REVIEW_KEY` in
  * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
  * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
  *
@@ -59,11 +69,65 @@ async function dropBlockedImageDeleteQueue(imageId: number) {
  */
 const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
+const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
+};
+
+// The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
+// its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to the
+// scanner, as the main app's rescanUnratedImages does. An image with tags, live or disabled by this
+// ruling, or with an earlier moderator review, is left as it is: a rescan would re-audit it over the
+// moderator's decision. This accept's own review row is written after this runs, so it does not
+// count. One out of rescan retries goes to Error instead.
+const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
+const rescanIfUnrated = async (imageId: number) => {
+  // Read first: most restores are rated, and need neither the tag check nor the write.
+  const image = await dbWrite
+    .selectFrom('Image')
+    .select(['ingestion', 'nsfwLevel', 'blockedFor'])
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  if (!image || image.ingestion !== 'Scanned' || image.nsfwLevel !== 0 || image.blockedFor) return;
+  const tagged = await sql<{ one: number }>`
+    SELECT 1 AS one FROM "TagsOnImageDetails" WHERE "imageId" = ${imageId} LIMIT 1`.execute(
+    dbWrite
+  );
+  if (tagged.rows.length) return;
+  const { rows } = await sql<{ retryCount: number | null }>`
+    SELECT ("scanJobs"->>'retryCount')::int AS "retryCount" FROM "Image" WHERE id = ${imageId}`.execute(
+    dbWrite
+  );
+  const outOfRetries = (rows[0]?.retryCount ?? 0) >= IMAGE_RESCAN_RETRY_LIMIT;
+  const updated = await dbWrite
+    .updateTable('Image')
+    .set({ ingestion: outOfRetries ? 'Error' : 'Rescan' })
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Scanned')
+    .where('nsfwLevel', '=', 0)
+    .where('blockedFor', 'is', null)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('ModActivity')
+            .select(sql<number>`1`.as('one'))
+            .where('entityType', '=', 'image')
+            .where('entityId', '=', imageId)
+            .where('activity', '=', 'review')
+        )
+      )
+    )
+    .executeTakeFirst();
+  if (outOfRetries || !updated.numUpdatedRows) return;
+  await dbWrite
+    .insertInto('JobQueue')
+    .values({ type: 'ImageScan', entityType: 'Image', entityId: imageId })
+    .onConflict((oc) => oc.columns(['entityType', 'entityId', 'type']).doNothing())
+    .execute();
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -76,10 +140,27 @@ const resetBlockedNsfwLevel = (imageId: number) =>
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
-/** An accept refused because the image is removed with only the review flag left. */
-export class FlagOnlyRemovedError extends Error {
+// pHash is a signed 64-bit value; the Kysely clients parse INT8 as a float, which rounds it.
+const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
+
+/** An accept refused because the image is removed and a review queue cannot put it back. */
+export class RemovedImageNotRestorableError extends Error {
   constructor(readonly imageId: number) {
-    super(`Image ${imageId} is removed with only its review flag left`);
+    super(`Image ${imageId} is removed, and a review queue cannot put it back`);
+  }
+}
+
+/** An explicit restore that left the image removed: it is lifted only through its own review. */
+export class ImageNotRestoredError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not restored`);
+  }
+}
+
+/** An explicit restore of an image that does not exist. */
+export class ImageNotFoundError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not found`);
   }
 }
 
@@ -95,15 +176,24 @@ export async function acceptImage({
   userId: number;
   deferAppealEmail?: boolean;
   /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
-   *  left cannot come back live from one; they throw `FlagOnlyRemovedError` instead. */
+   *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
+   *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
-  const img = await dbRead
-    .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  if (!img) return;
+  const readImage = (db: Kysely<DB>) =>
+    db
+      .selectFrom('Image')
+      .select(['needsReview', pHashText, 'postId', 'ingestion', 'blockedFor'])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+  // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
+  const fromReplica = await readImage(dbRead);
+  const reader = fromReplica ? dbRead : dbWrite;
+  const img = fromReplica ?? (await readImage(dbWrite));
+  if (!img) {
+    if (restoreRemoved) throw new ImageNotFoundError(imageId);
+    return;
+  }
   const nr = img.needsReview;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
@@ -114,7 +204,7 @@ export async function acceptImage({
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
   // Refused in the statement itself, not off the replica read above.
-  const { numUpdatedRows } = await dbWrite
+  const updated = await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
@@ -134,17 +224,28 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
+    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
+    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
+    .returning([
+      'id',
+      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+      sql<boolean | null>`${
+        nr === 'minor'
+          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+          : sql`NULL`
+      }`.as('wasMinor'),
+    ])
     .executeTakeFirst();
-  if (!numUpdatedRows) {
-    if (restoreRemoved) return;
-    throw new FlagOnlyRemovedError(imageId);
+  if (!updated) {
+    if (restoreRemoved) throw new ImageNotRestoredError(imageId);
+    throw new RemovedImageNotRestorableError(imageId);
   }
-
   await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
-  const reviewTags = await dbRead
+  const reviewTags = await reader
     .selectFrom('ImageTagForReview')
     .select('tagId')
     .where('imageId', '=', imageId)
@@ -164,15 +265,35 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  // A minor-queue accept rewrites "minor", which no trigger watches.
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+  }
+  await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
   if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
-    await trackImageRestore({ imageId, actorUserId: userId });
+    await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
+  // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
+  // which queue it came from and whether it lifted the flag.
+  if (nr === 'minor')
+    await recordModActivity({
+      userId,
+      entityType: 'image',
+      entityId: imageId,
+      activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
+    });
 
-  await applyAcceptSideEffects(img, imageId);
+  await applyAcceptSideEffects(img, imageId, userId);
+
+  // Drops its blocks' deferred effects unfired. Last and best-effort: the image is already restored.
+  await dropDeferredBlockEffects(dbWrite, [imageId]).catch((e: Error) =>
+    console.error('[accept] deferred block effects not dropped', { imageId, error: e.message })
+  );
 
   if (nr === 'appeal') {
     const appeal = await closePendingAppeal(imageId, {
@@ -201,6 +322,16 @@ export async function isModerationBlocked(imageId: number): Promise<boolean> {
   return !!row;
 }
 
+/** `HELD_IMAGE`, read on the primary. */
+export async function isHeldImage(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select(HELD_IMAGE.as('held'))
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return !!row?.held;
+}
+
 export async function blockImage({
   imageId,
   userId,
@@ -224,12 +355,16 @@ export async function blockImage({
   source?: string;
   /** The actor may confirm re-removals themselves, or this IS the confirmation. */
   skipAppealCheck?: boolean;
-}): Promise<{ held?: HeldRemoval }> {
+}): Promise<{
+  held?: HeldRemoval;
+  /** `HELD_IMAGE`: the caller leaves its reports open. */
+  skipped?: true;
+}> {
   const img = await dbRead
     .selectFrom('Image')
     .select([
       'needsReview',
-      'pHash',
+      pHashText,
       'blockedFor',
       'postId',
       'nsfwLevel',
@@ -249,34 +384,85 @@ export async function blockImage({
     if (held.length) return { held: held[0] };
   }
 
-  const { numUpdatedRows } = await dbWrite
-    .updateTable('Image')
-    .set({
-      // The moderator-only review flag survives a block: only its own queue, a filed report or an
-      // explicit unblock clears it.
-      needsReview: sql<
-        string | null
-      >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
-      ingestion: 'Blocked',
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BLOCKED_REASON_MODERATED,
-      updatedAt: new Date(),
-      // Two things happen to `metadata` on a block, and they compose in one expression:
-      //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
-      //     row whose metadata is NULL stays NULL rather than becoming `{}`.
-      //   - remixSource gets its stamp. COALESCE guards the usual metadata=NULL, because `||`
-      //     NULL-propagates too and would drop the stamp.
-      metadata:
-        img.needsReview === 'remixSource'
-          ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
-          : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
-    })
-    .where('id', '=', imageId)
-    // Already removed with only the review flag left: blocking again would only notify the uploader a
-    // second time. Decided here, not off the replica read above.
-    .where(NOT_FLAG_ONLY_REMAINING)
-    .executeTakeFirst();
-  if (!numUpdatedRows) return {};
+  const { updated, state } = await dbWrite.transaction().execute(async (tx) => {
+    const updated = await tx
+      .updateTable('Image')
+      .set({
+        // The moderator-only review flag survives a block: only its own queue, a filed report or an
+        // explicit unblock clears it.
+        needsReview: sql<
+          string | null
+        >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
+        ingestion: 'Blocked',
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: sql<string>`CASE WHEN "blockedFor" = ${BLOCKED_REASON_CSAM} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
+        updatedAt: new Date(),
+        // Two things happen to `metadata` on a block, and they compose in one expression:
+        //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
+        //     row whose metadata is NULL stays NULL rather than becoming `{}`.
+        //   - remixSource gets its stamp. COALESCE guards the usual metadata=NULL, because `||`
+        //     NULL-propagates too and would drop the stamp.
+        metadata:
+          img.needsReview === 'remixSource'
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
+      })
+      .where('id', '=', imageId)
+      // Already removed with only the review flag left: blocking again would only notify the uploader a
+      // second time. Decided here, not off the replica read above.
+      .where(NOT_FLAG_ONLY_REMAINING)
+      .returning('id')
+      .executeTakeFirst();
+    // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
+    // reads the set-aside row that dismissal committed.
+    const state = await tx
+      .selectFrom('Image')
+      .select([
+        // Read here, not off the replica read above, which may not have the scan's hash yet.
+        pHashText,
+        HELD_IMAGE.as('held'),
+        sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
+        sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
+      ])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+    // A re-block of an image already removed under the flag defers its reports, not a notice.
+    if (state?.held && !state.removedForCsam)
+      await tx
+        .insertInto('ImageDeferredBlockEffect')
+        .values({
+          imageId,
+          violationType: violationType ?? null,
+          notifyOwner: !!updated,
+          reportIds: reportIds ?? [],
+          blockedBy: userId,
+        })
+        .onConflict((oc) =>
+          oc.column('imageId').doUpdateSet({
+            notifyOwner: sql<boolean>`"ImageDeferredBlockEffect"."notifyOwner" OR excluded."notifyOwner"`,
+            reportIds: sql<
+              number[]
+            >`ARRAY(SELECT DISTINCT unnest("ImageDeferredBlockEffect"."reportIds" || excluded."reportIds"))`,
+          })
+        )
+        .execute();
+    return { updated: !!updated, state };
+  });
+  const blockRow = { ...img, pHash: state?.pHash ?? null };
+  if (!updated) {
+    // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
+    // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
+    // A TOS entry is best-effort, with no retry to honour.
+    if (state?.removedForCsam)
+      await writeBlockBlocklistEntry(blockRow, { imageId, actorUserId: userId, csam: true }).catch(
+        (e: unknown) => {
+          if (e instanceof CsamBlocklistWriteError) e.skipped = true;
+          throw e;
+        }
+      );
+    return state?.held ? { skipped: true } : {};
+  }
+  const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
   await bustProfilePictures({ imageIds: [imageId] });
@@ -284,23 +470,29 @@ export async function blockImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
-  // `img` is the pre-block row (read above, before the update).
-  await applyBlockSideEffects(img, {
+  // The pre-block row (read above, before the update), with the hash read under the block.
+  await applyBlockSideEffects(blockRow, {
     imageId,
     actorUserId: userId,
     ip,
     userAgent,
     violationType,
     violationDetails,
+    heldImage: blocked.held,
+    underReview: blocked.underReview,
+    removedForCsam: blocked.removedForCsam,
+  }).catch((e: unknown) => {
+    if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
+    throw e;
   });
-  return {};
+  return blocked.held ? { skipped: true } : {};
 }
 
 export type DismissResult = { ok: true } | { ok: false; reason: 'changed' | 'unavailable' };
 
 /**
  * Takes a removed image out of the CSAM review queue as dismissed, leaving the image itself as it is:
- * flag, block and uploader untouched. `version` is the `imageVersion` the moderator was shown; an
+ * flag and block untouched. What its block put off then runs (`fireDeferredBlockEffects`). `version` is the `imageVersion` the moderator was shown; an
  * image written since (reported again, say) is 'changed', as is one no longer removed and flagged or
  * already dismissed.
  */
@@ -313,7 +505,8 @@ export async function dismissFromCsamQueue({
   version: string;
   userId: number;
 }): Promise<DismissResult> {
-  return dbWrite.transaction().execute(async (tx) => {
+  let claimed: DeferredBlockEffect[] = [];
+  const result = await dbWrite.transaction().execute(async (tx) => {
     const state = await setAsideState(tx);
     if (!state.writable) return { ok: false, reason: 'unavailable' } as const;
     const image = await tx
@@ -327,13 +520,18 @@ export async function dismissFromCsamQueue({
       .executeTakeFirst();
     if (!image) return { ok: false, reason: 'changed' } as const;
     const dismissed = await insertDismissals(tx, [{ imageId, userId: image.userId }], userId);
-    return dismissed === 1 ? ({ ok: true } as const) : ({ ok: false, reason: 'changed' } as const);
+    claimed = dismissed.claimed;
+    return dismissed.count === 1
+      ? ({ ok: true } as const)
+      : ({ ok: false, reason: 'changed' } as const);
   });
+  if (result.ok) await fireDeferredBlockEffects(claimed, { moderatorId: userId });
+  return result;
 }
 
 export type DismissUserResult =
   | { ok: true; dismissed: number; remaining: number }
-  | { ok: false; reason: 'changed' | 'unavailable' };
+  | { ok: false; reason: 'changed' | 'unavailable' | 'capture' };
 
 class QueueChanged extends Error {}
 
@@ -354,8 +552,11 @@ export async function dismissUserFromCsamQueue({
   version: string;
   moderatorId: number;
 }): Promise<DismissUserResult> {
+  // Captures belong to no one; each is dismissed on its own, from its image.
+  if (isFeedbackCaptureOwner(userId)) return { ok: false, reason: 'capture' };
+  let claimed: DeferredBlockEffect[] = [];
   try {
-    return await dbWrite.transaction().execute(async (tx) => {
+    const result = await dbWrite.transaction().execute(async (tx) => {
       const state = await setAsideState(tx);
       if (!state.writable) return { ok: false, reason: 'unavailable' } as const;
       const live = removedNotDismissed(tx, state).where('i.userId', '=', userId);
@@ -365,7 +566,9 @@ export async function dismissUserFromCsamQueue({
       const shown = await live.select(imagesVersion('i').as('version')).executeTakeFirst();
       if (shown?.version !== version) throw new QueueChanged();
       const rows = images.map(({ id }) => ({ imageId: id, userId }));
-      if ((await insertDismissals(tx, rows, moderatorId)) !== rows.length) throw new QueueChanged();
+      const dismissed = await insertDismissals(tx, rows, moderatorId);
+      if (dismissed.count !== rows.length) throw new QueueChanged();
+      claimed = dismissed.claimed;
       const { remaining } = await tx
         .selectFrom('Image as i')
         .select(sql<number>`count(*)::int`.as('remaining'))
@@ -375,19 +578,22 @@ export async function dismissUserFromCsamQueue({
         .executeTakeFirstOrThrow();
       return { ok: true, dismissed: rows.length, remaining: Number(remaining) } as const;
     });
+    await fireDeferredBlockEffects(claimed, { moderatorId });
+    return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
     throw e;
   }
 }
 
-/** Writes a Dismissed row and its log entry for each image without a row. Returns how many it wrote. */
+/** Writes a Dismissed row and its log entry for each image without a row, and claims those images'
+ *  deferred block effects. Returns how many rows it wrote. */
 async function insertDismissals(
   tx: Transaction<DB>,
   rows: { imageId: number; userId: number }[],
   moderatorId: number
-): Promise<number> {
-  if (!rows.length) return 0;
+): Promise<{ count: number; claimed: DeferredBlockEffect[] }> {
+  if (!rows.length) return { count: 0, claimed: [] };
   const inserted = await tx
     .insertInto('CsamQueueSetAside')
     .values(
@@ -408,7 +614,11 @@ async function insertDismissals(
     entityIds: inserted.map((r) => r.imageId),
     activity: 'dismissFromCsamQueue',
   });
-  return inserted.length;
+  const claimed = await claimDeferredBlockEffects(
+    tx,
+    inserted.map((r) => r.imageId)
+  );
+  return { count: inserted.length, claimed };
 }
 
 /**
@@ -418,10 +628,16 @@ async function insertDismissals(
  * snapshot, so it misses an appeal committed while it waited.
  */
 async function keepPendingAppealFlag(imageId: number) {
-  await dbWrite
+  await keepPendingAppealFlags(dbWrite, [imageId]);
+}
+
+/** `keepPendingAppealFlag` for a close that takes the review flag off. */
+export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly number[]) {
+  if (!imageIds.length) return;
+  await db
     .updateTable('Image')
     .set({ needsReview: 'appeal' })
-    .where('id', '=', imageId)
+    .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     .where((eb) =>
       eb.exists(
@@ -437,6 +653,16 @@ async function keepPendingAppealFlag(imageId: number) {
 }
 
 export type AppealDecision = 'Approved' | 'Rejected';
+
+export const APPEAL_RESTORE_REFUSED =
+  'This image is removed, and approving its appeal cannot put it back. The appeal is still pending: reject it, or restore the image explicitly.';
+
+/** An approval refused because the image is `HELD_IMAGE`: the appeal stays Pending. */
+export class AppealRestoreRefusedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is removed, and approving its appeal cannot put it back`);
+  }
+}
 
 /**
  * Closes the image's pending appeal and returns it, or nothing when another resolution closed it
@@ -462,6 +688,12 @@ function closePendingAppeal(
       .where('status', '=', 'Pending')
       // Removed-content appeals are decided on /images/removed-appeals, not here.
       .where('entityRemovedAt', 'is', null)
+      // An approval never closes over a `HELD_IMAGE`; the restore below re-checks it.
+      .$if(decision.status === 'Approved', (qb) =>
+        qb.where(
+          sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "id" = ${imageId} AND ${HELD_IMAGE})`
+        )
+      )
       .returning(['id', 'userId', 'buzzTransactionId'])
       .executeTakeFirst()
   );
@@ -572,6 +804,8 @@ export async function resolveImageAppeal({
     ...(internalNotes ? { internalNotes } : {}),
     resolvedAt: new Date(),
   });
+  if (!appeal && approved && (await isHeldImage(imageId)))
+    throw new AppealRestoreRefusedError(imageId);
   if (!appeal) {
     // Another resolution decided it, so this verdict must not reach the image. Only the queue flag is
     // cleared: an image flagged for appeal with no pending appeal would otherwise never leave the queue.
@@ -586,7 +820,7 @@ export async function resolveImageAppeal({
 
   const img = await dbRead
     .selectFrom('Image')
-    .select(['postId', 'pHash'])
+    .select(['postId', pHashText])
     .where('id', '=', imageId)
     .executeTakeFirst();
 
@@ -599,6 +833,7 @@ export async function resolveImageAppeal({
       .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+      .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
       .executeTakeFirst();
     restored = numUpdatedRows > 0n;
     if (restored) {
@@ -606,6 +841,7 @@ export async function resolveImageAppeal({
       await resetBlockedNsfwLevel(imageId);
     }
     await recompute(imageId);
+    await rescanIfUnrated(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {
@@ -618,8 +854,27 @@ export async function resolveImageAppeal({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }
 
+  // Restored nothing: back to Pending, with no refund and no notice, even if the revert fails.
+  if (approved && !restored) {
+    await dbWrite
+      .updateTable('Appeal')
+      .set({ status: 'Pending', resolvedBy: null, resolvedAt: null })
+      .where('id', '=', appeal.id)
+      .where('status', '=', 'Approved')
+      .execute()
+      .catch((e: Error) =>
+        console.error('[resolveImageAppeal] revert to Pending failed', {
+          appealId: appeal.id,
+          imageId,
+          error: e.message,
+        })
+      );
+    throw new AppealRestoreRefusedError(imageId);
+  }
+
   const postId = img?.postId ?? null;
-  if (restored) await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId);
+  if (restored)
+    await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 
   await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);

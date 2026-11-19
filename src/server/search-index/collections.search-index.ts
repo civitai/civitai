@@ -13,20 +13,23 @@ import type {
   CosmeticSource,
   CosmeticType,
 } from '~/shared/utils/prisma/enums';
-import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import type { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { collectionsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { collectionsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
+import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-search-eligibility';
 import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   collectionIndexImageSql,
   type CollectionIndexImage,
 } from '~/server/search-index/collection-index-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
-import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
   collectionItemCoversSql,
   coverUploadSql,
@@ -138,14 +141,6 @@ type CollectionImageRaw = {
   src: string | null;
 };
 
-const WHERE = [
-  Prisma.sql`c."userId" != -1`,
-  Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
-  // Don't index empty collections:
-  Prisma.sql`EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`,
-  Prisma.sql`c."availability" != 'Unsearchable'::"Availability"`,
-];
-
 /**
  * What `pullData` hands `transformData`. Declared so `pullData` can be annotated with
  * it: an early `return []` for an empty batch type-checks against an inferred return
@@ -170,22 +165,25 @@ export const transformData = async ({
   profilePictures,
   disqualifiedIds,
 }: CollectionPullData) => {
+  const tagIdsOf = (imageId: number) =>
+    tags.filter((t) => t.imageId === imageId).map((t) => t.tagId);
+  const isIndexed = (image: { id: number; nsfwLevel: number }) =>
+    !isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags: tagIdsOf(image.id) });
+
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
-      const collectionImage = image
-        ? {
-            ...image,
-            tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
-          }
-        : null;
-      const collectionImages = itemImages.filter((i) => i.id === collection.id);
+      const collectionImage =
+        image && isIndexed(image)
+          ? { ...image, tags: tagIdsOf(image.id).map((id) => ({ id })) }
+          : null;
+      // A left-out image takes its item's cover string with it.
+      const collectionImages = itemImages.filter(
+        (i) => i.id === collection.id && (!i.image || isIndexed(i.image))
+      );
       const images = collectionImages
         .map((i) => i.image)
         .filter(isDefined)
-        .map((i) => ({
-          ...i,
-          tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
-        }));
+        .map((i) => ({ ...i, tags: tagIdsOf(i.id).map((id) => ({ id })) }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
@@ -217,7 +215,7 @@ export const pullData = async (
 ): Promise<CollectionPullData> => {
   logger(`PullData :: Pulling data for batch: ${batch}`);
   const where = [
-    ...WHERE,
+    ...COLLECTION_SEARCH_ELIGIBLE,
     batch.type === 'update' ? Prisma.sql`c.id IN (${Prisma.join(batch.ids)})` : undefined,
     batch.type === 'new'
       ? Prisma.sql`c.id >= ${batch.startId} AND c.id <= ${batch.endId}`
@@ -249,7 +247,7 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image,
+        'image', ${Prisma.raw(fallbackUserImageColumn)},
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u
@@ -342,16 +340,18 @@ export const pullData = async (
 
   logger(`PullData :: Pulled collection images.`);
 
-  // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  // Use Redis cache for tag lookups (much faster than direct DB query).
+  // Past this process's L1: a document written here keeps these tag ids until its next reindex, so an
+  // L1 entry from before a tag edit would outlive the L1 window by that much.
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
   const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
     cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
   );
 
-  const profilePictures = await db.image.findMany({
-    where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },
-    select: profileImageSelect,
-  });
+  const profilePictures = await getServableProfilePictures(
+    db,
+    collections.map((c) => c.user.profilePictureId).filter(isDefined)
+  );
 
   logger(`PullData :: Pulled tags & profile pics.`);
 
@@ -388,7 +388,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
-      ...WHERE,
+      ...COLLECTION_SEARCH_ELIGIBLE,
       lastUpdatedAt ? Prisma.sql`c."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 

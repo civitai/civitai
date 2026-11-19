@@ -1,6 +1,14 @@
 import { NsfwLevel } from '~/server/common/enums';
+import type { CategoryTagType } from '~/server/services/system-cache';
 
-export const TEXT_SCAN_LABELS = ['nsfw', 'poi', 'minor', 'scam', 'csam'] as const;
+export const TEXT_SCAN_LABELS = [
+  'nsfw',
+  'poi',
+  'minor',
+  'scam',
+  'csam',
+  'model-com-face-intent',
+] as const;
 export type TextScanLabel = (typeof TEXT_SCAN_LABELS)[number];
 
 export const NSFW_LEVEL_NAMES = ['none', 'pg13', 'r', 'x', 'xxx'] as const;
@@ -22,8 +30,7 @@ export type TextScanEntityType =
   | 'BountyEntry'
   | 'Challenge'
   | 'ChatMessage'
-  | 'Comment'
-  | 'CommentV2'
+  | 'CommentV3'
   | 'ResourceReview'
   | 'User'
   | 'UserProfile'
@@ -31,7 +38,10 @@ export type TextScanEntityType =
   | 'Collection'
   | 'Storyline'
   | 'ImageCaption'
-  | 'ModelRules';
+  | 'ServiceOffering'
+  | 'PostText'
+  | 'ModelRules'
+  | 'AppDoc';
 
 export type TextScanField = { heading: string; text: string | null | undefined };
 
@@ -56,6 +66,14 @@ export type TextScanProfile = {
   load: (ids: number[]) => Promise<Map<number, TextScanSubject>>;
   /** The subset of `labels` this subject is scanned for; all of them when absent. */
   labelsFor?: (subject: TextScanSubject) => TextScanLabel[];
+  /** Also classify the subject into one of these category tags, in a call apart from the scan. */
+  category?: TextScanCategoryHook;
+};
+
+export type TextScanCategoryHook = {
+  tagType: CategoryTagType;
+  /** null clears it. */
+  write: (entityId: number, tagId: number | null) => Promise<void>;
 };
 
 export type TextScanOutput = {
@@ -64,6 +82,7 @@ export type TextScanOutput = {
   minor?: { detected: boolean; reason: string };
   scam?: { detected: boolean; reason: string };
   csam?: { detected: boolean; reason: string };
+  'model-com-face-intent'?: { detected: boolean; reason: string };
 };
 
 /** `base` plus one entry per label, each the `TextScanPrompt.id` used. */

@@ -4,6 +4,7 @@
   import { goto, invalidate } from '$app/navigation';
   import { env } from '$env/dynamic/public';
   import { setHostContext, type StudioLocation } from '$lib/host';
+  import { PUBLISH_PATH, publishSearchParams } from '$lib/publish-url-core';
   import { shellBackend } from '$lib/shell-backend';
   import { connectSignals, onSignal } from '$lib/signals';
   import { BUZZ_UPDATE_SIGNAL } from '$lib/signal-events';
@@ -22,11 +23,26 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — fixed for the session (false only in the dev-login preview)
+      canAutoLabel: data.canAutoLabel,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      autoLabelUrl: `${data.civitaiUrl}/models/train`,
       // canGenerateUnpublished stays unset: the standalone shell doesn't gate epoch generation.
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — the session user's tier is fixed for the page's life
       isPaidMember: data.isPaidMember,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       pricingUrl: `${data.civitaiUrl}/pricing`,
+      // The main app redirects this to the ticket portal (next.config.mjs).
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      supportUrl: `${data.civitaiUrl}/support-portal`,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      dataPolicyUrl: `${data.civitaiUrl}/content/training/data-policy`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
@@ -36,11 +52,7 @@
     // the link goes live per-user as the flag widens.
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
-    publishUrl: ({ workflowId, epoch }) =>
-      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
-        workflowId,
-        epoch: String(epoch),
-      })}`,
+    publishUrl: (req) => `${data.civitaiUrl}${PUBLISH_PATH}?${publishSearchParams(req)}`,
     modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 
@@ -55,6 +67,6 @@
   });
 </script>
 
-<div class="mx-auto w-full max-w-6xl overflow-x-hidden px-6 py-10">
+<div class="mx-auto w-full max-w-6xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-10">
   {@render children()}
 </div>

@@ -124,6 +124,14 @@ export interface PageContext extends SlotContext {
    *  slash. Empty string for the page root. Forwarded so the block can deep-link. */
   subPath: string;
   /**
+   * The query string below the app route, `''` or starting with `?`, from
+   * `router.asPath` with every host-owned pair (`HOST_OWNED_RUN_PARAMS`: `from`, `sl`,
+   * `src`) removed. Optional on the type because hosts before this field sent none.
+   */
+  search?: string;
+  /** The fragment, `''` or starting with `#`, from the same source as `search`. */
+  hash?: string;
+  /**
    * @deprecated Same unconditional identity disclosure as
    * `BlockInitPayload.viewer.id`, through a SECOND, currently-UNPROJECTED
    * channel. `GET_VIEWER` / `blocks.getMyViewer` is the replacement.
@@ -428,6 +436,14 @@ export interface BlockInitPayload {
    * wrong-shape rejections documented above.
    */
   storageMode?: 'local-preview';
+  /**
+   * Bridge capabilities this host handles, e.g. `workflowMedia:v1`. An SDK sends
+   * a capability's message only when it is listed: a host bundle loaded before
+   * the capability shipped never receives a request it would leave hanging.
+   * `blockErrors:v1` is a host saying it collects the block's non-fatal errors
+   * (`BLOCK_HOST_ERROR_REPORTS`).
+   */
+  capabilities?: string[];
 }
 
 export interface BlockManifest {

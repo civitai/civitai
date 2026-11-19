@@ -137,15 +137,17 @@ export async function confirmRemoval({
   if (!claimed) return { ok: false, error: NOT_PENDING };
   if (voidNote === 'A later appeal was approved') return { ok: true, status, note: voidNote };
 
+  let skipped = false;
   if (!voidNote)
     try {
-      await blockImage({
+      const result = await blockImage({
         imageId: row.imageId,
         userId: row.requestedById,
         violationType: row.violationType ?? undefined,
         violationDetails: row.violationDetails ?? undefined,
         skipAppealCheck: true,
       });
+      skipped = !!result.skipped;
     } catch (e) {
       // Back to Pending so it is not recorded as confirmed with the image still up.
       await dbWrite
@@ -155,9 +157,11 @@ export async function confirmRemoval({
         .execute();
       throw e;
     }
-  // The image is down either way, so the reports the removal answered are actioned.
-  for (const reportId of claimed.reportIds)
-    await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
+  // The image is down either way, so the reports the removal answered are actioned, unless it is
+  // held.
+  if (!skipped)
+    for (const reportId of claimed.reportIds)
+      await setReportStatus({ id: reportId, status: ReportStatus.Actioned, userId });
   await recordModActivity({
     userId,
     entityType: 'image',

@@ -5,6 +5,7 @@ import {
   type FeedbackStatus,
   type FeedbackStatusOffer,
 } from '@civitai/app-assistant';
+import { BUTTON_STYLE, CARD_STYLE, line } from '~/components/Apps/AppAssistant/assistantCards';
 
 /**
  * The card a `set_feedback_status` offer shows, on the page whichever side ran the reply. Only the
@@ -86,11 +87,6 @@ interface Card {
   pending: FeedbackStatusOffer['items'];
 }
 
-const CARD_STYLE =
-  'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-const BUTTON_STYLE =
-  'min-height:44px;margin-top:8px;padding:0 16px;border-radius:6px;border:0;cursor:pointer;font:inherit;font-weight:600;color:#fff;background:var(--civitai-color-primary, #228be6)';
-
 /**
  * The status-change cards. Only an offer this page heard of as it was made (`onToolResult`) gets a
  * button: one shown again from a saved chat says to ask again. Each press writes, as the user, the
@@ -103,13 +99,6 @@ export function createFeedbackStatusCards({
 }): FeedbackStatusCards {
   const cards = new Map<string, Card>();
   const live = new Set<string>();
-
-  const line = (text: string, role: 'status' | 'alert' | null = null) => {
-    const el = document.createElement('div');
-    el.textContent = text;
-    if (role) el.setAttribute('role', role);
-    return el;
-  };
 
   const show = (card: Card, ...children: HTMLElement[]) => {
     const title = document.createElement('div');

@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
@@ -90,7 +91,6 @@ export function GenerateButton({
       price={shownPrice ?? 0}
       acceptsBlueBuzz={acceptsBlueBuzz}
       listedOnly={isListedOnly}
-      decimals={0}
     />
   );
 

@@ -5,7 +5,6 @@ import {
   bountiesSearchIndex,
   collectionsSearchIndex,
   comicsSearchIndex,
-  imagesSearchIndex,
   imagesMetricsSearchIndex,
   modelsSearchIndex,
   toolsSearchIndex,
@@ -19,7 +18,8 @@ const searchIndexes = {
   bounty: bountiesSearchIndex,
   collection: collectionsSearchIndex,
   comic: comicsSearchIndex,
-  image: imagesSearchIndex,
+  // The moderator app syncs moderated images here.
+  image: imagesMetricsSearchIndex,
   model: modelsSearchIndex,
   tool: toolsSearchIndex,
   user: usersSearchIndex,
@@ -64,11 +64,7 @@ export default WebhookEndpoint(async (req, res) => {
   const ids = [...new Set(entityIds ?? [entityId as number])];
   const updates = ids.map((id) => ({ id, action: queueAction }));
 
-  await index.queueUpdate(updates);
-
-  // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
-  // queueImageSearchIndexUpdate.
-  if (entityType === 'image') await imagesMetricsSearchIndex.queueUpdate(updates);
+  await index.queueUpdate(updates, { reason: 'internal-api' });
 
   return res.status(200).json({ ok: true, entityType, count: ids.length });
 });

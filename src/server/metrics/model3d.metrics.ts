@@ -129,7 +129,7 @@ export const model3dMetrics = createMetricProcessor({
 });
 
 // ---------------------------------------------------------------------------
-// Comments (CommentV2 attached to a Thread with model3dId)
+// Comments on a Model3D
 // ---------------------------------------------------------------------------
 async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`

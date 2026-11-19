@@ -224,6 +224,12 @@ describe('storylineCeilingImpact', () => {
     expect(storylineCeilingImpact(NsfwLevel.PG13, levels)).toEqual({ allowed: true, hidden: 2 });
   });
 
+  test('refuses a ceiling below the spark image, as the server does', () => {
+    const sparked = { ...levels, sparkNsfwLevel: NsfwLevel.R };
+    expect(storylineCeilingImpact(NsfwLevel.PG13, sparked).allowed).toBe(false);
+    expect(storylineCeilingImpact(NsfwLevel.R, sparked).allowed).toBe(true);
+  });
+
   test('refuses a ceiling below chapter 1, judged by its most severe image', () => {
     expect(storylineCeilingImpact(NsfwLevel.PG, levels).allowed).toBe(false);
     expect(
@@ -235,7 +241,7 @@ describe('storylineCeilingImpact', () => {
   });
 
   // Must agree with the server, or the picker offers a ceiling the server refuses:
-  // assertCeilingKeepsFirstChapter refuses when firstChapterFloor (the root's highest bit,
+  // assertCeilingKeepsFloor refuses when firstChapterFloor (the root's highest bit,
   // module-private) is above the ceiling, and getStorylineChapterLevels sends null wherever that
   // floor is null.
   test('agrees with the server floor for every ceiling and root level', () => {

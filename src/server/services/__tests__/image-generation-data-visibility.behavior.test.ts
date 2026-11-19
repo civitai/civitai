@@ -31,11 +31,26 @@ vi.mock('@civitai/db-queries/image', () => ({ getImageGenerationFields: vi.fn() 
 
 import { getImageGenerationData } from '../image.service';
 import { imageResourcesCache } from '~/server/redis/caches';
-import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
+import {
+  assertImageVisibleToViewer,
+  imageVisibilityConditions,
+} from '~/server/services/image-visibility.service';
 import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { getImageGenerationFields } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+// assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
+// answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
 
 const imageRow = vi.mocked(getImageGenerationFields);
 
@@ -52,17 +67,20 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" (
+      minor boolean DEFAULT false,
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
-      "needsReview" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+      "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
       availability "Availability" DEFAULT 'Public', "collectionId" int
     );
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
+      "bannerId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -72,6 +90,11 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CollectionItem" (
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
+      status text NOT NULL
+    );
   `);
   const raw = pgliteRaw(db);
   // Tagged-template calls, and `managesPostCollection`'s single prebuilt `Prisma.sql` argument.
@@ -85,7 +108,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(
-    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection";`
+    `TRUNCATE "Image", "Post", "CollectionContributor", "Article", "Bounty", "BountyEntry", "ImageConnection", "Collection", "CollectionItem";`
   );
   vi.mocked(amIBlockedByUser).mockReset().mockResolvedValue(false);
   vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({});
@@ -140,8 +163,15 @@ const SELF: Viewer = { userId: OWNER };
 const MOD: Viewer = { userId: VIEWER, isModerator: true };
 
 /** A request context: on the mature domain unless `canViewNsfw` is false, optionally a crawler. */
-function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false } = {}) {
+function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false, scopedToken = false } = {}) {
   return {
+    // A personal key limited to reading models; no key fields is a browser session.
+    ...(scopedToken && {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ModelsRead,
+    }),
     user: viewer.userId ? { id: viewer.userId, isModerator: viewer.isModerator } : undefined,
     features: { canViewNsfw },
     req: { headers: crawler ? { 'x-civitai-verified-bot': 'googlebot' } : {} },
@@ -162,7 +192,11 @@ async function sees(viewer: Viewer) {
 }
 
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
   [
     'with a mod-locked rating from a Knights vote whose scan errored',
@@ -178,7 +212,7 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
     'removed at ingestion, even with a locked rating',
     { image: { ingestion: `'Blocked'`, '"nsfwLevelLocked"': 'true' } },
   ],
-  ['awaiting review, with no post', { image: { '"needsReview"': `'minor'` }, post: null }],
+  ['awaiting review, with no post', { image: { '"needsReview"': `'poi'` }, post: null }],
   [
     'rated Blocked, with no post',
     { image: { '"nsfwLevelLocked"': 'false', '"nsfwLevel"': '32' }, post: null },
@@ -324,7 +358,7 @@ describe('getImageGenerationData visibility', () => {
   });
 
   it('serves an unreviewed image to a manager of the collection its post was submitted to', async () => {
-    await seed({ image: { '"needsReview"': `'minor'` }, post: { '"collectionId"': '7' } });
+    await seed({ image: { '"needsReview"': `'poi'` }, post: { '"collectionId"': '7' } });
     await db.exec(
       `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
         (7, ${VIEWER}, ARRAY['ADD']::"CollectionContributorPermission"[])`
@@ -333,10 +367,48 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(OTHER)).toBe(false);
   });
 
+  describe.each(['csam', 'minor'])('an image held for %s review', (hold) => {
+    beforeEach(async () => {
+      await seed({ image: { '"needsReview"': `'${hold}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+    });
+
+    it('is not found for its owner or a manager of the collection', async () => {
+      expect(await sees(SELF)).toBe(false);
+      expect(await sees({ userId: MANAGER })).toBe(false);
+    });
+
+    it('is served to a moderator', async () => {
+      expect(await sees(MOD)).toBe(true);
+    });
+
+    // Control: the manager loses held rows only. The same image under another review still opens.
+    it('is served again to its owner and the manager once under another review', async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'poi'`);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees({ userId: MANAGER })).toBe(true);
+    });
+  });
+
+  it.each(['Pending', 'Error'])(
+    'does not serve a manager of that collection an image whose ingestion is %s',
+    async (state) => {
+      await seed({ image: { ingestion: `'${state}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+      expect(await sees({ userId: MANAGER })).toBe(false);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees(MOD)).toBe(true);
+    }
+  );
+
   it("does not serve it to a manager when the post's author does not own the image", async () => {
     // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.
     await seed({
-      image: { '"needsReview"': `'minor'`, '"userId"': String(VIEWER) },
+      image: { '"needsReview"': `'poi'`, '"userId"': String(VIEWER) },
       post: { '"collectionId"': '7' },
     });
     await db.exec(
@@ -447,7 +519,6 @@ describe('getImageGenerationData media links', () => {
 
   it.each([
     [2, true],
-    [0, false],
     [2 | 4, false],
   ])(
     'a signed-in viewer on the SFW domain, image rated %i: links kept is %s',
@@ -457,6 +528,13 @@ describe('getImageGenerationData media links', () => {
       expect(leaked(json)).toEqual(kept ? MARKERS : []);
     }
   );
+
+  it('refuses an unrated image to a signed-in viewer who does not own it', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 0`);
+    await expect(fetchFor(OTHER, { canViewNsfw: false })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 
   it('keeps them for a signed-out viewer of a PG image', async () => {
     await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1`);
@@ -545,6 +623,15 @@ describe('getImageGenerationData source media', () => {
     expect(await linksFor(viewer, options)).toBe(true);
   });
 
+  it.each([
+    ["the output's owner", SELF],
+    ["the source's owner", { userId: SOURCE_OWNER }],
+    ['a moderator', MOD],
+  ] as const)('withholds an R source from %s on a scoped token', async (_label, viewer) => {
+    await seedEdit(4);
+    expect(await linksFor(viewer, { canViewNsfw: false, scopedToken: true })).toBe(false);
+  });
+
   it('keeps a PG source for a signed-out viewer', async () => {
     await seedEdit(1);
     expect(await linksFor(ANON, { canViewNsfw: false })).toBe(true);
@@ -571,7 +658,7 @@ describe('getImageGenerationData source media', () => {
 
   it('withholds a source the viewer could not open', async () => {
     await seedEdit(1);
-    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 2`);
     expect(await linksFor(OTHER, {})).toBe(false);
     expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
     await db.exec(`
@@ -782,5 +869,114 @@ describe('imageVisibilityConditions for image.get', () => {
     await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 32`);
     expect(await visibleTo(ANON)).toBe(false);
     expect(await visibleTo(SELF)).toBe(true);
+  });
+});
+
+describe('blockedFor on a single-image read', () => {
+  async function visibleTo(viewer: Viewer) {
+    const raw = pgliteRaw(db);
+    const where = Prisma.join(
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      ' AND '
+    );
+    const rows =
+      await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+    return rows.length === 1;
+  }
+
+  async function assertAdmits(viewer: Viewer) {
+    try {
+      return (await assertImageVisibleToViewer({ id: 1, ...viewer })).id === 1;
+    } catch (e) {
+      if ((e as { code?: string }).code === 'NOT_FOUND') return false;
+      throw e;
+    }
+  }
+
+  it.each(['moderated', 'AiNotVerified', 'a prompt audit reason'])(
+    'shows an image blocked for %s only to its owner and moderators',
+    async (reason) => {
+      await seed({ image: { '"blockedFor"': `'${reason}'` } });
+      expect(await visibleTo(ANON)).toBe(false);
+      expect(await visibleTo(OTHER)).toBe(false);
+      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(MOD)).toBe(true);
+    }
+  );
+
+  it('applies to assertImageVisibleToViewer, which gates generation data', async () => {
+    await seed({ image: { '"blockedFor"': `'moderated'` } });
+    expect(await assertAdmits(ANON)).toBe(false);
+    expect(await assertAdmits(OTHER)).toBe(false);
+    expect(await assertAdmits(SELF)).toBe(true);
+    expect(await assertAdmits(MOD)).toBe(true);
+  });
+
+  it('leaves an unblocked image visible to everyone', async () => {
+    await seed({});
+    expect(await visibleTo(ANON)).toBe(true);
+    expect(await assertAdmits(OTHER)).toBe(true);
+  });
+});
+
+describe('a flagged image on a single-image read', () => {
+  async function visibleTo(viewer: Viewer) {
+    const raw = pgliteRaw(db);
+    const where = Prisma.join(
+      [Prisma.sql`i.id = 1`, ...imageVisibilityConditions(viewer)],
+      ' AND '
+    );
+    const rows =
+      await raw.queryRaw`SELECT i.id FROM "Image" i LEFT JOIN "Post" p ON p.id = i."postId" WHERE ${where}`;
+    return rows.length === 1;
+  }
+
+  it('shows it only to its owner and moderators', async () => {
+    await seed({ image: { '"acceptableMinor"': 'true' } });
+    expect(await visibleTo(ANON)).toBe(false);
+    expect(await visibleTo(OTHER)).toBe(false);
+    expect(await visibleTo(SELF)).toBe(true);
+    expect(await visibleTo(MOD)).toBe(true);
+  });
+
+  it("hides it from a manager of the collection the owner's post went to", async () => {
+    await seed({ image: { '"acceptableMinor"': 'true' }, post: { '"collectionId"': '7' } });
+    await db.exec(`INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, '{MANAGE}')`);
+    expect(await visibleTo({ userId: MANAGER })).toBe(false);
+    await db.exec(`UPDATE "Image" SET "acceptableMinor" = false`);
+    expect(await visibleTo({ userId: MANAGER })).toBe(true);
+  });
+
+  describe('submitted to a contest collection', () => {
+    beforeEach(async () => {
+      await seed({ image: { '"acceptableMinor"': 'true' } });
+      await db.exec(`
+        INSERT INTO "Collection" VALUES (7, ${VIEWER + 1});
+        INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, '{MANAGE}');
+        INSERT INTO "CollectionItem" ("collectionId", "imageId", "addedById", status)
+          VALUES (7, 1, ${OWNER}, 'REVIEW');
+      `);
+    });
+
+    it('hides it from a manager and the collection owner while it is under review', async () => {
+      expect(await visibleTo({ userId: MANAGER })).toBe(false);
+      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(false);
+    });
+
+    it('shows it to its owner and a moderator while it is under review', async () => {
+      expect(await visibleTo(SELF)).toBe(true);
+      expect(await visibleTo(MOD)).toBe(true);
+    });
+
+    it('hides it from a stranger and a signed-out viewer while it is under review', async () => {
+      expect(await visibleTo(OTHER)).toBe(false);
+      expect(await visibleTo(ANON)).toBe(false);
+    });
+
+    it('shows a manager the same submission when it is not acceptableMinor', async () => {
+      await db.exec(`UPDATE "Image" SET "acceptableMinor" = false`);
+      expect(await visibleTo({ userId: MANAGER })).toBe(true);
+      expect(await visibleTo({ userId: VIEWER + 1 })).toBe(true);
+    });
   });
 });

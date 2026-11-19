@@ -10,10 +10,10 @@ import {
   Stack,
   Tabs,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconClockHour4,
   IconInfoCircle,
@@ -34,7 +34,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -58,6 +59,7 @@ import {
 } from '~/shared/constants/challenge.constants';
 import {
   addSimpleImagePostInput,
+  BULK_SAVE_MAX_ITEMS,
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
@@ -127,8 +129,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // Selection state
   const selectedImageIds = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   // Upload state
   const { files: uploadedFiles, uploadToCF, resetFiles, removeImage } = useCFImageUpload();
@@ -258,7 +260,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     const data = { collectionId, imageIds: selectedImageIds, tagId };
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
-      setError('You must select at least one image.');
+      setError(
+        selectedImageIds.length > BULK_SAVE_MAX_ITEMS
+          ? `You can add up to ${BULK_SAVE_MAX_ITEMS} images at a time`
+          : 'You must select at least one image.'
+      );
       return;
     }
 
@@ -356,7 +362,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     const data = { collectionId, images };
     const results = addSimpleImagePostInput.safeParse(data);
     if (!results.success) {
-      setError('You must upload at least one image.');
+      setError(
+        images.length > BULK_SAVE_MAX_ITEMS
+          ? `You can upload up to ${BULK_SAVE_MAX_ITEMS} images at a time`
+          : 'You must upload at least one image.'
+      );
       return;
     }
 

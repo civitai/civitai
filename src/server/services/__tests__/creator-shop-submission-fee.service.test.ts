@@ -51,7 +51,7 @@ const { submitCreatorShopPack } = await import('../creator-shop-pack.service');
 // Shop artwork is a bare upload key; this one's issue record names the caller.
 const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
 beforeEach(() => {
-  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['11'] as never);
 });
 
 const submitInput = {
@@ -248,7 +248,7 @@ describe('pack submission fee charged', () => {
   it('refuses a cover whose key was issued to someone else, before charging', async () => {
     const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
-    redisMock.sysRedis.mGet.mockResolvedValueOnce(['55'] as never);
+    redisMock.redis.mGet.mockResolvedValueOnce(['55'] as never);
     try {
       await expect(
         submitCreatorShopPack({

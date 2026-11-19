@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { uniq } from 'lodash-es';
 import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -6,6 +7,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import {
   MINOR_FLAG_SNAPSHOT_KEY,
   MINOR_LOCKED_PROPERTIES,
@@ -235,7 +237,7 @@ export async function checkMinorHashOnScan({
           sha256,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     return outcome;
@@ -250,7 +252,7 @@ export async function checkMinorHashOnScan({
         sha256,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return 'skipped';
   }
 }
@@ -332,7 +334,7 @@ export async function sweepMinorHashMatches({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
@@ -340,7 +342,7 @@ export async function sweepMinorHashMatches({
 
   // Logged here rather than by the caller so an HTTP timeout on a long backfill
   // cannot lose the record of writes that already committed.
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-sweep',
@@ -352,7 +354,7 @@ export async function sweepMinorHashMatches({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }
@@ -372,6 +374,43 @@ export type MinorHashReviewRow = {
   minorModelVersionId: number | null;
 };
 
+// The review queue's matches, one row per matching file hash. Shared with the lock-review approval
+// check, so a model that is on the queue is exactly a model that check refuses.
+const reviewMatchFrom = Prisma.sql`
+  FROM "ModelFileHash" mfh
+  JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+  JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mfh.type = 'SHA256'
+    AND mfh.hash IN (SELECT hash FROM minor_src)
+    AND NOT m.minor
+    AND m.status <> 'Deleted'
+    AND NOT (m.meta ? 'minorHashDismissed')
+    -- A targeted rollback of a manual flag applied from this very queue would
+    -- otherwise put the model straight back on it.
+    AND ${notMinorHashClearedPredicate}
+`;
+// A same-uploader match is flagged by the sweep rather than queued.
+const reviewMatchSameUploader = Prisma.sql`bool_or(EXISTS (
+  SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+))`;
+
+/** Whether the model is on the minor file-match review queue, waiting for a moderator. */
+export async function hasPendingMinorHashMatch(
+  modelId: number,
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+): Promise<boolean> {
+  const [row] = await db.$queryRaw<{ pending: boolean }[]>`
+    WITH ${minorSrcCte}
+    SELECT EXISTS (
+      SELECT 1 ${reviewMatchFrom} AND m.id = ${modelId}
+      GROUP BY m.id
+      HAVING NOT ${reviewMatchSameUploader}
+    ) AS pending
+  `;
+  return row?.pending === true;
+}
+
 export async function getMinorHashMatchesForReview({ limit }: { limit: number }) {
   // One extra row tells us the cap truncated the queue, so the UI can say so
   // rather than silently presenting a partial list as the whole thing.
@@ -382,26 +421,13 @@ export async function getMinorHashMatchesForReview({ limit }: { limit: number })
     candidates AS (
       SELECT m.id AS "modelId", m.name AS "modelName", m."userId", m.status::text AS status,
              m."createdAt",
-             bool_or(EXISTS (
-               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-             )) AS "sameUploader",
+             ${reviewMatchSameUploader} AS "sameUploader",
              -- Same ORDER BY in both aggregates so element [1] of each comes from
              -- the same row: the reported version is the one carrying the
              -- reported hash, not just any version of the model.
              (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
              (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId"
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
-      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mfh.type = 'SHA256'
-        AND mfh.hash IN (SELECT hash FROM minor_src)
-        AND NOT m.minor
-        AND m.status <> 'Deleted'
-        AND NOT (m.meta ? 'minorHashDismissed')
-        -- A targeted rollback of a manual flag applied from this very queue would
-        -- otherwise put the model straight back on it.
-        AND ${notMinorHashClearedPredicate}
+      ${reviewMatchFrom}
       GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
     )
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
@@ -688,7 +714,7 @@ export async function confirmMinorHashAutoFlag({
       message: 'moderator minor ruling not recorded on confirm',
       modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
     return { hadVerdict, stamped: false };
   }
 }
@@ -738,7 +764,7 @@ export async function revertMinorHashAutoFlag({
       name: 'text-scan',
       message: 'moderator minor ruling not recorded: model text unreadable',
       modelId,
-    }).catch(() => null);
+    });
 
   const report = await rollbackMinorHashAutoFlags({
     dryRun: false,
@@ -830,6 +856,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
     WHERE a."entityType" = 'Model' AND a.category IS NULL
+      AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -956,7 +983,7 @@ export async function resolveMinorFlagAppeal({
         name: 'minor-hash-rollback',
         message: 'appeal overturn: the flag rollback failed, unsetting minor instead',
         modelId,
-      }).catch(() => null);
+      });
     // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
     if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
   }
@@ -974,6 +1001,7 @@ export async function resolveMinorFlagAppeal({
     resolvedReason,
     internalNotes,
     userId,
+    modelAppealKind: 'flag',
   });
 
   // The grants cover the current text, so there is nothing to rescan. The moderator app still reads
@@ -1112,7 +1140,7 @@ async function rollBackFlagOnMinorModel(
   }).catch(() => null);
   await reassertModelPoiRestrictions(row.modelId);
   if (keptBy === 'sfwOnly')
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'info',
         name: 'minor-hash-rollback',
@@ -1120,7 +1148,7 @@ async function rollBackFlagOnMinorModel(
         modelId: row.modelId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 }
 
 export async function rollbackMinorHashAutoFlags({
@@ -1170,7 +1198,8 @@ export async function rollbackMinorHashAutoFlags({
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevMinor')::boolean AS "prevMinor",
-           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
+           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false)
+             OR COALESCE(m.meta->'ownerDeclaredFlags'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
@@ -1273,6 +1302,7 @@ export async function rollbackMinorHashAutoFlags({
           ids: row.prevMinorImageIds,
           action: SearchIndexUpdateQueueAction.Update,
         });
+        await queueModelsForImageChildTagChanges({ minorImageIds: row.prevMinorImageIds });
       }
 
       report.rolledBack++;
@@ -1288,14 +1318,14 @@ export async function rollbackMinorHashAutoFlags({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
   await limitConcurrency(tasks, concurrency);
   addConfirmedSamples();
 
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-rollback',
@@ -1307,7 +1337,7 @@ export async function rollbackMinorHashAutoFlags({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }
@@ -1340,6 +1370,7 @@ export async function acceptExpiredMinorAutoFlags({
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
             AND (a.category IS NULL OR a.status = 'Pending')
+            AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         )
     `;
     return { accepted: row?.count ?? 0 };
@@ -1360,6 +1391,7 @@ export async function acceptExpiredMinorAutoFlags({
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
             AND (a.category IS NULL OR a.status = 'Pending')
+            AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         )
       ORDER BY m.id
       LIMIT ${limit}

@@ -15,6 +15,11 @@ import {
   swapIndex,
 } from '~/server/meilisearch/util';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import {
+  forwardSearchUpdate,
+  type SearchOutboxEntity,
+  type SearchUpdateReason,
+} from '~/server/search-index/search-outbox-forward';
 import type {
   PullTask,
   PushTask,
@@ -95,6 +100,11 @@ type SearchIndexProcessor = {
    * re-running a `reset` — the index is stale for as long as it is retired.
    */
   retired?: boolean;
+  /**
+   * Forward each queued update to "Outbox" for the semantic search sync. Retiring the index does
+   * not stop it: the sync outlives the Meilisearch index.
+   */
+  outboxEntity?: SearchOutboxEntity;
 };
 
 /**
@@ -432,7 +442,15 @@ export type SearchIndexUpdateSyncResult = {
   handledWithoutDocument: number;
 };
 
-export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
+/**
+ * A processor that forwards to the Outbox takes a reason on every queueUpdate, so a metrics refresh
+ * (reason 'metrics', never forwarded) cannot be queued as a content change by omission.
+ */
+type QueueUpdateOptions<P> = P extends { outboxEntity: SearchOutboxEntity }
+  ? [options: { reason: SearchUpdateReason }]
+  : [options?: { reason?: SearchUpdateReason }];
+
+export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>(processor: P) {
   const {
     indexName,
     setup,
@@ -446,6 +464,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     queues,
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
     retired = false,
+    outboxEntity,
   } = processor;
 
   // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
@@ -611,11 +630,15 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // timestamps, so an id queued in both carries no record of which action came last, and the
       // drain order alone decides the outcome. Pulling second lets `pullData`'s own WHERE
       // arbitrate; pulling first rebuilt the document and then deleted it.
-      if (queuedDeletes.content.length > 0 && !partial) {
+      // The cleanup commits the Delete checkout itself, before any re-queue of a failed delete.
+      const cleanupCommitsDeletes = queuedDeletes.content.length > 0 && !partial;
+      if (cleanupCommitsDeletes) {
         await onSearchIndexDocumentsCleanup({
           indexName,
           ids: queuedDeletes.content,
           client: processor.client,
+          commit: queuedDeletes.commit,
+          rebuilding: new Set(updatedItems),
         });
       }
 
@@ -633,7 +656,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       // Commit queues:
       await queuedUpdates.commit();
-      await queuedDeletes.commit();
+      if (!cleanupCommitsDeletes) await queuedDeletes.commit();
       // Also re-queues failed ids that came from `updateIds` rather than the queue: `setLastUpdate`
       // below moves the window past them, so the queue is the only place they can be retried.
       if (!partial && (!queues || queues.includes('update')))
@@ -742,6 +765,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         return true;
       });
       const batches = chunk(dedupedItems, updateSyncChunkSize);
+      const rebuilding = new Set(
+        dedupedItems
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Update)
+          .map(({ id }) => id)
+      );
       let totalTasks = 0;
 
       for (const batch of batches) {
@@ -757,6 +785,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             indexName,
             ids: deleteIds,
             client: processor.client,
+            rebuilding,
           });
         }
 
@@ -811,7 +840,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       return result;
     },
-    async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+    async queueUpdate(
+      items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
+      ...[options]: QueueUpdateOptions<P>
+    ) {
+      const reason = options?.reason;
+      if (outboxEntity) await forwardSearchUpdate({ entityType: outboxEntity, items, reason });
       if (retired) return;
       await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
@@ -843,10 +877,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             indexName,
             ids: queuedDeletes.content,
             client: processor.client,
+            commit: queuedDeletes.commit,
           });
-        }
-
-        await queuedDeletes.commit();
+        } else await queuedDeletes.commit();
       }
 
       if (opts.processUpdates) {

@@ -250,7 +250,26 @@ describe('introspect — active tokens', () => {
     });
     // `scope` is the DECIMAL BITMASK STRING this provider uses everywhere, not the RFC's
     // space-separated list — link-service tests the LinkConnect bit against it.
-    expect(Number(body.scope) & TokenScope.LinkConnect).toBe(TokenScope.LinkConnect);
+    expect(BigInt(body.scope as string) & TokenScope.LinkConnect).toBe(TokenScope.LinkConnect);
+  });
+
+  it('answers the scope from tokenScopeWide, bits 31 and 32 included', async () => {
+    // As the writer splits it: the 32-bit column holds UserRead alone, the wide one the whole scope.
+    h.apiKeys.push({
+      key: generateSecretHash('civitai_apps'),
+      type: 'Access',
+      userId: 4242,
+      tokenScope: 1,
+      tokenScopeWide: 6442450945,
+      clientId: 'civitai-link-desktop',
+      expiresAt: EXPIRES_AT,
+    });
+    const res = await post({
+      token: 'civitai_apps',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    expect(((await res.json()) as Record<string, unknown>).scope).toBe('6442450945');
   });
 
   it('omits exp for a token with no expiry', async () => {

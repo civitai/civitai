@@ -149,8 +149,8 @@ export function buildFilter({
     hidePaid,
   } = input;
 
-  // On the featured tab, determine which types have featured models so we can
-  // skip the baseModel filter for those types and instead AND an explicit id set.
+  // Featured checkpoints span ecosystems (picking one switches it), so only their base models are
+  // skipped.
   const featuredByType = new Map<string, number[]>();
   if (tab === 'featured' && featuredModels?.length) {
     for (const fm of featuredModels) {
@@ -160,17 +160,18 @@ export function buildFilter({
     }
   }
 
-  const skipBaseModel = featuredByType.size > 0 || skipBaseModelForOwnTabs(tab, selectSource);
+  const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource);
 
   const typeClauses = resources.map(({ type, baseModels = [] }) => {
     const _type = filterTypes.length > 0 ? filterTypes.find((x) => x === type) : type;
     if (!_type) return null;
 
-    const _baseModels = skipBaseModel
-      ? []
-      : filterBaseModels.length > 0
-      ? filterBaseModels.filter((baseModel) => baseModels.includes(baseModel))
-      : baseModels;
+    const _baseModels =
+      skipBaseModel || (featuredByType.size > 0 && _type === 'Checkpoint')
+        ? []
+        : filterBaseModels.length > 0
+        ? filterBaseModels.filter((baseModel) => baseModels.includes(baseModel))
+        : baseModels;
 
     return _baseModels.length
       ? and(eq('type', _type), inArray('versions.baseModel', _baseModels))

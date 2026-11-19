@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CacheModule from '../lib/server/cache';
 import type * as EnvModule from '../env';
 
 // Behavioral coverage for the fan-out worker (closes G1 from the 2026-07-03 coverage audit). The sibling
@@ -45,7 +46,9 @@ vi.mock('../lib/server/clients/axiom', () => ({
 
 vi.mock('./email', () => ({ dispatchEmail: vi.fn(async () => undefined) }));
 
-vi.mock('../lib/server/cache', () => ({
+vi.mock('../lib/server/cache', async (importOriginal) => ({
+  // The real redisWithin: the code under test bounds its redis calls through it.
+  ...(await importOriginal<typeof CacheModule>()),
   notificationCache: {
     incrementUser: vi.fn(async () => {}),
     decrementUser: vi.fn(async () => {}),
@@ -62,6 +65,7 @@ vi.mock('../lib/server/metrics', () => ({
   workerPendingProcessedTotal: { inc: vi.fn() },
   workerTickSeconds: { startTimer: () => () => {} },
   writePoolActive: { set: vi.fn() },
+  redisErrorsTotal: { inc: vi.fn() },
 }));
 
 vi.mock('../env', async (importOriginal) => ({
@@ -88,6 +92,7 @@ type Responses = Partial<
     | 'notifUpdate'
     | 'notifInsert'
     | 'userInsert'
+    | 'userUnread'
     | 'pendingDelete'
     | 'pendingUpdate',
     Resp | Resp[]
@@ -99,6 +104,7 @@ function keyFor(sql: string): keyof Responses | 'txn' | null {
   if (sql.includes('SELECT id FROM "Notification"')) return 'notifSelect';
   if (sql.includes('UPDATE "Notification" SET')) return 'notifUpdate';
   if (sql.includes('INSERT INTO "Notification"')) return 'notifInsert';
+  if (sql.includes('SELECT "userId" FROM "UserNotification"')) return 'userUnread';
   if (sql.includes('INSERT INTO "UserNotification"')) return 'userInsert';
   if (sql.includes('DELETE FROM "PendingNotification"')) return 'pendingDelete';
   if (sql.includes('UPDATE "PendingNotification"')) return 'pendingUpdate';
@@ -289,14 +295,14 @@ describe('handleDebounce', () => {
     const ret = await handleDebounce(fanoutRow as any, client);
 
     // UPDATE-first (no INSERT since UPDATE returned an id), fan-out, then reschedule (NOT delete).
-    expect(client.keys()).toEqual(['notifUpdate', 'userInsert', 'pendingUpdate']);
+    expect(client.keys()).toEqual(['notifUpdate', 'userUnread', 'userInsert', 'pendingUpdate']);
     expect(client.calls.some((s: string) => keyFor(s) === 'notifInsert')).toBe(false);
     expect(client.calls.some((s: string) => keyFor(s) === 'pendingDelete')).toBe(false);
     // Reschedule clears the claim and pushes nextSendAt out by debounceSeconds.
     const rescheduleSql = client.calls.find((s: string) => keyFor(s) === 'pendingUpdate')!;
     expect(rescheduleSql).toContain('"claimedAt" = null');
     expect(rescheduleSql).toContain(`"debounceSeconds", ' seconds'`);
-    expect(ret).toEqual([{ id: 1, userId: 11, createdAt: 'c' }]);
+    expect(ret).toEqual([{ id: 1, userId: 11, createdAt: 'c', wasUnread: false }]);
   });
 
   it('FAN-OUT path: INSERT ON CONFLICT DO UPDATE when the notification key is new (UPDATE hits 0 rows)', async () => {
@@ -307,7 +313,13 @@ describe('handleDebounce', () => {
     });
     await handleDebounce(fanoutRow as any, client);
 
-    expect(client.keys()).toEqual(['notifUpdate', 'notifInsert', 'userInsert', 'pendingUpdate']);
+    expect(client.keys()).toEqual([
+      'notifUpdate',
+      'notifInsert',
+      'userUnread',
+      'userInsert',
+      'pendingUpdate',
+    ]);
     const insertSql = client.calls.find((s: string) => keyFor(s) === 'notifInsert')!;
     expect(insertSql).toContain('ON CONFLICT ("key") DO UPDATE');
   });
@@ -457,6 +469,37 @@ describe('run (poll pass)', () => {
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body);
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
+  });
+
+  it('does not bump the unread counter for a recipient who already had it unread, but signals them', async () => {
+    const client = makeClient({
+      notifUpdate: { rows: [{ id: 42 }] },
+      userUnread: { rows: [{ userId: 11 }] },
+      userInsert: {
+        rows: [
+          { id: 9, userId: 11, createdAt: 'q' },
+          { id: 10, userId: 22, createdAt: 'q' },
+        ],
+      },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [
+      {
+        ...baseRow,
+        debounceSeconds: 60,
+        lastTriggered: '2026-01-01T00:05:00.000Z',
+        nextSendAt: '2026-01-01T00:05:30.000Z',
+      },
+    ];
+
+    await run();
+
+    expect(vi.mocked(notificationCache.incrementUser).mock.calls).toEqual([[22, 'Comment']]);
+    const signalled = (globalThis.fetch as any).mock.calls.map(([url]: [string]) => url);
+    expect(signalled).toEqual([
+      expect.stringContaining('/users/11/signals/'),
+      expect.stringContaining('/users/22/signals/'),
+    ]);
   });
 
   it('hands email only the recipients this pass newly delivered to', async () => {

@@ -605,6 +605,7 @@ export type ToolRequest = {
   response: string | null;
   createdAt: Date;
   resolvedAt: Date | null;
+  resolvedBy: number | null;
 };
 
 export async function fileToolRequest(input: {
@@ -648,8 +649,33 @@ export async function listToolRequests(limit = 100): Promise<ToolRequest[]> {
       'response',
       'created_at as createdAt',
       'resolved_at as resolvedAt',
+      'resolved_by as resolvedBy',
     ])
     .orderBy('id', 'desc')
     .limit(limit)
     .execute();
+}
+
+const RESOLVED: readonly ToolRequestStatus[] = ['built', 'declined'];
+
+/** Answers a request. Returns false when there is no such request. */
+export async function resolveToolRequest(input: {
+  id: number;
+  status: ToolRequestStatus;
+  response: string | null;
+  resolverId: number;
+}): Promise<boolean> {
+  const row = await db()
+    .updateTable('assistant_tool_request')
+    .set({
+      status: input.status,
+      response: input.response,
+      resolved_by: input.resolverId,
+      // Reopening a request clears when it was resolved, so the page never shows an open row as done.
+      resolved_at: RESOLVED.includes(input.status) ? sql<Date>`now()` : null,
+    })
+    .where('id', '=', input.id)
+    .returning('id')
+    .executeTakeFirst();
+  return !!row;
 }

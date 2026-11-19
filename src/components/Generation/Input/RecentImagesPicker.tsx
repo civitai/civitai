@@ -287,6 +287,7 @@ export function RecentImagesButton(props: RecentImagesPickerProps) {
       size="xs"
       c="blue"
       className="flex cursor-pointer items-center gap-1 whitespace-nowrap border-0 bg-transparent p-0"
+      data-tap-area
       onClick={() => dialogStore.trigger({ component: RecentImagesPicker, props })}
     >
       <IconClockHour9 size={12} />

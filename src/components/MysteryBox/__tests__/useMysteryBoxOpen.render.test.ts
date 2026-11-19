@@ -22,6 +22,7 @@ const { spies } = vi.hoisted(() => ({
     setData: vi.fn(),
     invalidateBoxes: vi.fn(),
     invalidateHats: vi.fn(),
+    invalidateStickerHats: vi.fn(),
     setHeld: vi.fn(),
     invalidateHeld: vi.fn(),
     invalidateOpenings: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           getOpenings: { invalidate: spies.invalidateOpenings },
         },
         event: { getMyHats: { invalidate: spies.invalidateHats } },
+        hatTurf: { getMyStickerHats: { invalidate: spies.invalidateStickerHats } },
         user: { checkNotifications: { setData: spies.setCounts } },
       }),
     }
@@ -72,6 +74,14 @@ const view = (overrides: Partial<MysteryBoxView> = {}): MysteryBoxView => ({
   team: 'Pink',
   art: null,
   listing: { shopItemId: 42, title: 'Box', unitAmount: 500, availableTo: null },
+  packListing: {
+    shopItemId: 43,
+    title: 'Box 3-pack',
+    unitAmount: 1350,
+    availableTo: null,
+    size: 3,
+    guaranteedTierIds: [1],
+  },
   tiers: [{ id: 7, key: 'common', name: 'Common', color: null, weight: 1, sortOrder: 0 }],
   contents: [
     { contentId: 1, tierId: 7, cosmeticId: 1001, name: 'A', url: null, fit: null, left: true },
@@ -132,7 +142,12 @@ afterEach(async () => {
 
 describe('useMysteryBoxOpen', () => {
   it('buys under the shown price and version, opens the box it granted, then plays the show', async () => {
-    spies.purchase.mockResolvedValue({ kind: 'box', boxItemId: '501', boxDefinitionId: 9 });
+    spies.purchase.mockResolvedValue({
+      kind: 'box',
+      boxItemId: '501',
+      boxItemIds: ['501'],
+      boxDefinitionId: 9,
+    });
     spies.open.mockResolvedValue(opened());
 
     await act(async () => {
@@ -153,6 +168,8 @@ describe('useMysteryBoxOpen', () => {
     expect(spies.invalidateBoxes).not.toHaveBeenCalled();
     for (const [key] of spies.setData.mock.calls) expect(key).toEqual({ event: 'birthday2026' });
     expect(spies.invalidateHats).toHaveBeenCalledWith({ event: 'birthday2026' });
+    // A won hat must show in the Hat Turf sticker list without a reload.
+    expect(spies.invalidateStickerHats).toHaveBeenCalledWith({ event: 'birthday2026' });
     // Bought and opened: the menu badge ends where it began, and the Inventory reloads when shown.
     expect(unopenedAfterUpdates(2)).toBe(2);
     expect(spies.setHeld).not.toHaveBeenCalled();
@@ -168,10 +185,39 @@ describe('useMysteryBoxOpen', () => {
     expect(hook.phase).toBe('revealed');
   });
 
+  it('buys the pack at its own price, holds every box it granted, and opens its first', async () => {
+    spies.purchase.mockResolvedValue({
+      kind: 'box',
+      boxItemId: '501',
+      boxItemIds: ['501', '502', '503'],
+      boxDefinitionId: 9,
+    });
+    spies.open.mockResolvedValue(opened());
+
+    await act(async () => {
+      await hook.buyAndOpen(view(), { pack: true });
+    });
+
+    expect(spies.purchase).toHaveBeenCalledWith({
+      shopItemId: 43,
+      expectedUnitAmount: 1350,
+      expectedVersion: 3,
+    });
+    expect(spies.open).toHaveBeenCalledWith({ boxItemId: '501', expectedVersion: 3 });
+    expect(viewAfterUpdates(view()).heldBoxItemIds).toEqual(['502', '503']);
+    // Three bought, one opened.
+    expect(unopenedAfterUpdates(0)).toBe(2);
+  });
+
   it('goes straight to the reveal with reduced motion', async () => {
     spies.reducedMotion.value = true;
     await act(async () => root.render(React.createElement(Harness)));
-    spies.purchase.mockResolvedValue({ kind: 'box', boxItemId: '501', boxDefinitionId: 9 });
+    spies.purchase.mockResolvedValue({
+      kind: 'box',
+      boxItemId: '501',
+      boxItemIds: ['501'],
+      boxDefinitionId: 9,
+    });
     spies.open.mockResolvedValue(opened());
 
     await act(async () => {
@@ -207,7 +253,12 @@ describe('useMysteryBoxOpen', () => {
   });
 
   it('keeps the bought box held when its open fails, and says the box is safe', async () => {
-    spies.purchase.mockResolvedValue({ kind: 'box', boxItemId: '501', boxDefinitionId: 9 });
+    spies.purchase.mockResolvedValue({
+      kind: 'box',
+      boxItemId: '501',
+      boxItemIds: ['501'],
+      boxDefinitionId: 9,
+    });
     spies.open.mockRejectedValue(new Error('This box could not be opened. Please try again.'));
 
     await act(async () => {
@@ -260,7 +311,7 @@ describe('useMysteryBoxOpen', () => {
       await hook.buyAndOpen(view());
     });
     await act(async () => {
-      finish({ kind: 'box', boxItemId: '501', boxDefinitionId: 9 });
+      finish({ kind: 'box', boxItemId: '501', boxItemIds: ['501'], boxDefinitionId: 9 });
     });
 
     expect(spies.purchase).toHaveBeenCalledTimes(1);

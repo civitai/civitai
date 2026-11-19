@@ -62,8 +62,7 @@ The system moderates text content from multiple entity types:
 ### Primary Entities (Job Queue Based)
 ```typescript
 const queues = {
-  Comment: { fields: { content: true } },
-  CommentV2: { fields: { content: true } },
+  CommentV3: { fields: { content: true } }, // Comment/CommentV2 removed in CommentV3 Phase 5
   User: { fields: { username: true } },
   UserProfile: { fields: { bio: true, message: true } },
   Model: { fields: { name: true, description: true } },

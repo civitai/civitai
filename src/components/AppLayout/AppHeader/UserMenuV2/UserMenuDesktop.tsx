@@ -2,7 +2,8 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Menu, Text, UnstyledButton } from '@mantine/core';
+import { Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconChevronRight, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { createContext, useContext, useRef, useState } from 'react';
@@ -31,6 +32,7 @@ import {
   PinGlyph,
   PROFILE_PIN,
   pinMoveDirection,
+  useDismissClickGuard,
   useDragClickGuard,
   usePinActions,
   useTrackHeaderOpen,
@@ -45,13 +47,17 @@ import type { UserMenuShellProps } from './UserMenuV2';
  */
 export function UserMenuDesktop({ open, setOpen, pins, trigger }: UserMenuShellProps) {
   const [switching, setSwitching] = useState(false);
+  const dismissGuard = useDismissClickGuard();
 
   return (
     <Menu
       opened={open}
       onChange={(next) => {
         setOpen(next);
-        if (!next) setSwitching(false);
+        if (!next) {
+          setSwitching(false);
+          dismissGuard.onClose();
+        }
       }}
       position="bottom-end"
       width={260}

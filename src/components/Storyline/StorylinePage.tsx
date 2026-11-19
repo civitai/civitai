@@ -18,7 +18,7 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
 import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
-import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
@@ -26,12 +26,14 @@ import { openStorylineFirstChapterModal } from '~/components/Storyline/openStory
 import {
   StorylineClosedChip,
   StorylineRoleChip,
+  StorylineRootHiddenChip,
   StorylineStat,
   StorylineStatusChip,
   storylineCardClass,
 } from '~/components/Storyline/StorylineChips';
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
+import { StorylineFollowButton } from '~/components/Storyline/StorylineFollowButton';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import {
   StorylineInviteAlert,
@@ -43,6 +45,7 @@ import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read
 import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { StorylineSparkCredit } from '~/components/Storyline/StorylineSparkCredit';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
@@ -125,17 +128,15 @@ export function StorylinePage({ id }: { id: number }) {
           </div>
           {/* A storyline with no chapter 1 yet is its owner's draft, with nothing to discuss. */}
           {mainPath.length > 0 && (
-            // The thread brings its own "Comments" heading; the card only names the region.
-            // The thread keeps its own top margin for the pages it stands alone on; here the card's
-            // padding is the only space above it.
-            <section
-              aria-label="Discussion"
-              className={clsx(storylineCardClass, 'p-3.5 sm:p-5 [&>.mantine-Stack-root]:!mt-0')}
-            >
-              <EntityDiscussion
+            <section aria-label="Discussion" className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
+              <CommentSection
                 entityType="storyline"
                 entityId={storyline.id}
-                userId={storyline.user.id}
+                ownerId={storyline.user.id}
+                ownerModerates={false}
+                title={<Title order={2}>Discussion</Title>}
+                hideWhenLocked
+                anchorId="comments"
               />
             </section>
           )}
@@ -145,7 +146,7 @@ export function StorylinePage({ id }: { id: number }) {
   );
 }
 
-function StorylineHeader({
+export function StorylineHeader({
   storyline,
   startLink,
   lastPostId,
@@ -164,7 +165,7 @@ function StorylineHeader({
         'flex flex-col gap-4 p-3.5 sm:p-5 md:flex-row md:items-end'
       )}
     >
-      <div className="flex min-w-0 flex-1 items-end gap-3.5">
+      <div className="flex min-w-0 flex-1 items-end gap-3.5 md:min-w-[50%]">
         <div className="mt-[-50px] w-[92px] shrink-0 sm:mt-[-80px] sm:w-[150px]">
           <StorylineThumb
             image={storyline.coverImage}
@@ -176,6 +177,9 @@ function StorylineHeader({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-1.5">
             <StorylineStatusChip status={storyline.status} />
+            {storyline.rootHiddenReason && (
+              <StorylineRootHiddenChip reason={storyline.rootHiddenReason} />
+            )}
             <StorylineClosedNotice storyline={storyline} terms={terms} />
           </div>
           <Title order={1} fw={800} lh={1.05} className="break-words text-[26px] sm:text-[40px]">
@@ -203,7 +207,7 @@ function StorylineHeader({
       </div>
 
       <div className="flex flex-col gap-2.5 md:items-end">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 md:justify-end">
           {startLink && (
             <Button
               component={Link}
@@ -220,7 +224,7 @@ function StorylineHeader({
               component={Link}
               href={storylineWriteChapterUrl(storyline.id)}
               size="lg"
-              className="grow basis-[140px] sm:grow-0 sm:basis-auto"
+              className="grow basis-full sm:grow-0 sm:basis-auto"
               leftSection={<IconPlus size={18} />}
             >
               Write chapter 1
@@ -249,6 +253,7 @@ function StorylineHeader({
               Continue the story
             </Button>
           )}
+          <StorylineFollowButton storylineId={storyline.id} />
           {(storyline.viewerRole === 'owner' || currentUser?.isModerator) && (
             <ActionIcon
               variant="default"
@@ -312,6 +317,7 @@ function Section({
 function StorylineChapters({ storyline }: { storyline: Storyline }) {
   return (
     <Section icon={<IconBook2 size={20} />} title="Chapters" id="storyline-chapters">
+      {storyline.spark && <StorylineSparkCredit spark={storyline.spark} />}
       <StorylineChapterLanes storyline={storyline} />
     </Section>
   );

@@ -14,7 +14,7 @@ import { CRUCIBLE_NO_DESCRIPTION } from '~/utils/crucible-helpers';
  *
  * Displays the featured crucible (highest prize pool active crucible) prominently:
  * - 2-column layout: gradient image on left, content on right
- * - "Paid Placement" badge (placeholder for future sponsored content)
+ * - "Biggest prize pool" badge
  * - Title and description
  * - Stats: Prize Pool (gold), Time Remaining, Entries
  * - Two CTAs: "Enter Competition" and "Learn More"
@@ -87,7 +87,7 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
         {/* Content area */}
         <div className="flex min-h-[300px] flex-col justify-between p-6 md:p-8">
           <div>
-            {/* Paid Placement badge */}
+            {/* Biggest prize pool badge */}
             <Badge
               size="md"
               radius="sm"
@@ -102,7 +102,7 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
                 },
               }}
             >
-              Paid Placement
+              Biggest prize pool
             </Badge>
 
             {/* Title */}

@@ -12,7 +12,7 @@ import type * as TrpcMod from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // Part B: the per-app "Permissions & activity" drawer. It reuses
-// `BlockScopeList` for the granted scopes (filtered to THIS app's grant) and the
+// `ScopeConsentList` for the granted scopes (filtered to THIS app's grant) and the
 // shared `AppActivityPanel` for the interleaved Buzz + scope-invocation audit,
 // scoped by appBlockId. Both feeds are viewer-scoped; an anonymous viewer gets a
 // friendly empty state and the protected queries don't fire.
@@ -220,9 +220,11 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
 
-    // Granted scope for ab-1 shows (via BlockScopeList); ab-2's scope must NOT leak.
-    await expect.element(page.getByText('user:read:self')).toBeInTheDocument();
-    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+    // Granted scope for ab-1 shows, by its plain title; ab-2's scope must NOT leak.
+    await expect
+      .element(page.getByText('See your username and account status'))
+      .toBeInTheDocument();
+    expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
 
     // Activity timeline: the scope-invocation row (workflow submit) humanises to
     // "Generated an image" and the Buzz row to "Spent Buzz on a per-model install".
@@ -348,11 +350,11 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
     // The retained grant for THIS app still renders, and the other app's still does not leak.
-    await expect.element(page.getByText('user:read:self')).toBeInTheDocument();
-    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+    await expect.element(page.getByText('See your username and account status')).toBeInTheDocument();
+    expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
     // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
     // `isError` fails this test on the GRANT-BADGE WAIT above, with
-    // `VitestBrowserElementError: Cannot find element with locator: getByText('user:read:self')`
+    // `VitestBrowserElementError: Cannot find element with locator: getByText(<the grant's title>)`
     // — i.e. on the claim that the retained grant is rendered, which is the guard's own reason. The
     // `not.toContain` below never executes on that mutant and is NOT what catches it; it is the
     // second pin, for a component that renders BOTH the list and the read-failure sentence, which
@@ -397,7 +399,7 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     expect(deniedLabel.length).toBeGreaterThan(40);
     await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
     // …and the OTHER app's retained scope must not leak into this drawer either.
-    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+    expect(page.getByText('See your Buzz balance').elements()).toHaveLength(0);
   });
 
   test('anonymous viewer gets a sign-in empty state and the activity queries do not fire', async () => {

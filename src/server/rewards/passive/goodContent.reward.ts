@@ -27,7 +27,8 @@ export const goodContentReward = createBuzzEvent({
   getKey: async (input: ReactionEvent, { db }) => {
     if (input.ownerId === input.reactorId) return false;
 
-    const table = typeToTable[input.type];
+    // A comment's author is read from CommentV3; the transaction keeps its CommentV2 type.
+    const table = input.type === 'comment' ? 'CommentV3' : typeToTable[input.type];
     if (!table) return false;
     try {
       const [{ userId } = { userId: undefined }] = await db.$queryRawUnsafe<{ userId?: number }[]>(`
@@ -94,10 +95,7 @@ export const goodContentReward = createBuzzEvent({
 });
 
 const typeToTable: Partial<Record<ReactionEntityType, string>> = {
-  question: 'Question',
-  answer: 'Answer',
   comment: 'CommentV2',
-  commentOld: 'Comment',
   image: 'Image',
   article: 'Article',
 };

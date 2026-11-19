@@ -9,9 +9,9 @@ import {
   Title,
   Paper,
   Center,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   Availability,
   CollectionType,
@@ -47,10 +47,11 @@ import {
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
+import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
-import { POST_INFO_PANEL_PIN } from '~/components/Post/Detail/postInfoPanelPin';
 import { StorylinePostNext, StorylinePostPill } from '~/components/Storyline/StorylinePostChapter';
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
@@ -63,7 +64,7 @@ import { toStringList } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -81,7 +82,11 @@ import {
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-type Props = { postId: number };
+type Props = {
+  postId: number;
+  /** The `ssrSignedInSkipPrefetchPosts` `skip` arm (`~/hooks/useSsrDeferredShell`). */
+  deferredSsr?: boolean;
+};
 
 export function PostDetail(props: Props) {
   return (
@@ -93,13 +98,17 @@ export function PostDetail(props: Props) {
   );
 }
 
-export function PostDetailContent({ postId }: Props) {
+export function PostDetailContent({ postId, deferredSsr }: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const { query } = useBrowserRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
+  const postTexts = useMemo(
+    () => post?.texts.map((text) => ({ ...text, postId: post.id })),
+    [post]
+  );
   const {
     collectionItems = [],
     permissions,
@@ -172,18 +181,42 @@ export function PostDetailContent({ postId }: Props) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
   const sidebarEnabled = true;
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const touchStartY = useRef<number | null>(null);
-  const hasPendingInvite = postCollaborators.some(
-    (c) => c.user.id === currentUser?.id && c.status === EntityCollaboratorStatus.Pending
-  );
-  // The accept/reject buttons live in the creator block, which a collapsed phone panel hides.
-  useEffect(() => {
-    if (hasPendingInvite) setSheetOpen(true);
-  }, [hasPendingInvite]);
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
+
+  // One `<Gated>` (rating gate, ads and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: collectionForcedLevel || post.nsfwLevel,
+    nsfw: post.nsfw,
+    bypassRating: isOwnerOrMod,
+    suppressAds: !post.publishedAt,
+    meta: {
+      title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',
+      description:
+        `A post by ${post?.user.username ?? 'civitai'}. ` +
+        (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : ''),
+      keywords: toStringList(post?.tags.map((x) => x.name) ?? []),
+      images,
+      ogEndpoint: `/api/og?type=post&id=${postId}`,
+      canonical: `/posts/${postId}`,
+      deIndex: post?.availability === Availability.Unsearchable,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetchPosts`: getServerSideProps prefetched the post, its contest details and
+  // the hidden preferences (so a missing post or a blocked creator is already NotFound above), so
+  // the server renders the gate and `<head>` with a loader in place of the content. `images` is
+  // still loading here, which leaves the head unchanged: `ogEndpoint` sets its image. The hydrating
+  // render matches it; the content then renders as it does after a client-side navigation.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
 
   const relatedResource =
     post.modelVersion?.id &&
@@ -275,9 +308,11 @@ export function PostDetailContent({ postId }: Props) {
   );
 
   const postCard = (
-    <div className="flex flex-col gap-2">
-      <StorylinePostPill postId={post.id} />
-      <div className="flex items-start justify-between gap-2">
+    <div className="flex flex-col gap-2 @max-lg:contents">
+      <div className="empty:hidden @max-lg:order-first">
+        <StorylinePostPill postId={post.id} />
+      </div>
+      <div className="flex items-start justify-between gap-2 @max-lg:order-first">
         {post.title ? (
           <Title order={1} lineClamp={3} size={20} className="min-w-0 break-words">
             {post.title}
@@ -287,7 +322,7 @@ export function PostDetailContent({ postId }: Props) {
         )}
         {postActions}
       </div>
-      <Text size="xs" c="dimmed">
+      <Text size="xs" c="dimmed" className="@max-lg:order-first">
         {relatedResource && relatedResource.modelId && (
           <>
             Posted to{' '}
@@ -306,8 +341,12 @@ export function PostDetailContent({ postId }: Props) {
         )}
         {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
       </Text>
-      {post.detail && <RenderHtml html={post.detail} withMentions />}
-      {postTags}
+      {post.detail && (
+        <div className="@max-lg:order-1">
+          <RenderHtml html={post.detail} withMentions />
+        </div>
+      )}
+      {postTags && <div className="@max-lg:order-first">{postTags}</div>}
     </div>
   );
 
@@ -409,23 +448,7 @@ export function PostDetailContent({ postId }: Props) {
   const panelClass = 'rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4';
 
   return (
-    <Gated
-      contentNsfwLevel={collectionForcedLevel || post.nsfwLevel}
-      nsfw={post.nsfw}
-      bypassRating={isOwnerOrMod}
-      suppressAds={!post.publishedAt}
-      meta={{
-        title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',
-        description:
-          `A post by ${post?.user.username ?? 'civitai'}. ` +
-          (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : ''),
-        keywords: toStringList(post?.tags.map((x) => x.name) ?? []),
-        images,
-        ogEndpoint: `/api/og?type=post&id=${postId}`,
-        canonical: `/posts/${postId}`,
-        deIndex: post?.availability === Availability.Unsearchable,
-      }}
-    >
+    <Gated {...gatedProps}>
       <TrackView entityId={post.id} entityType="Post" type="PostView" />
       <RenderAdUnitOutstream minContainerWidth={1964} />
       <ReactionSettingsProvider
@@ -435,8 +458,11 @@ export function PostDetailContent({ postId }: Props) {
           ),
         }}
       >
-        <div className="flex justify-center gap-8 px-3 @max-lg:flex-col @max-lg:items-center @max-lg:gap-0">
-          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
+        <div className="flex justify-center gap-8 px-3 @max-lg:mx-auto @max-lg:w-full @max-lg:max-w-[752px] @max-lg:flex-col @max-lg:gap-3">
+          {/* On a phone the main column and the sidebar are `display: contents`, so their pieces
+              sit in one column and `@max-lg:order-*` sets the screen order: title, where it was
+              posted to and tags, then the images, description, creator, app card, comments. */}
+          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3 @max-lg:contents">
             {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
               <Alert
                 color="yellow"
@@ -508,6 +534,9 @@ export function PostDetailContent({ postId }: Props) {
                 <PostImages
                   postId={post.id}
                   images={images}
+                  texts={postTexts}
+                  authorId={post.user.id}
+                  linkedTextId={Number(query.text) || undefined}
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}
                   isOwner={currentUser?.id === post.user.id}
@@ -521,42 +550,30 @@ export function PostDetailContent({ postId }: Props) {
               </>
             )}
             <StorylinePostNext postId={post.id} />
-            <Stack className="mb-20 mt-6 gap-6" id="comments" mb={90}>
-              <PostComments postId={postId} userId={post.user.id} />
+            <Stack className="mb-20 mt-6 gap-6 @max-lg:order-4" id="comments" mb={90}>
+              {/* `ssr-client-only-sections`: the server never has the comments (they are not
+                  prefetched, so it renders the composer over a loader), and this is the last
+                  thing in the column on every width, so its arrival moves nothing above it. The
+                  `#comments` anchor stays server-rendered. */}
+              <ClientOnlySection name="post-comments" minHeight={200}>
+                <PostComments postId={postId} userId={post.user.id} />
+              </ClientOnlySection>
             </Stack>
           </div>
           <div className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:contents">
             <div className="sticky top-3 flex flex-col gap-3 @max-lg:contents">
               <div
-                className={clsx(
-                  'flex min-w-0 flex-col gap-3',
-                  POST_INFO_PANEL_PIN,
-                  'bg-white @max-lg:rounded-t-2xl @max-lg:shadow-[0_-6px_20px_rgba(0,0,0,0.25)] dark:bg-dark-7',
-                  !sheetOpen && '@max-lg:max-h-[112px] @max-lg:overflow-hidden',
-                  sheetOpen && '@max-lg:max-h-[75dvh] @max-lg:overflow-y-auto',
-                  '@max-lg:px-3 @max-lg:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]'
-                )}
+                className="flex min-w-0 flex-col gap-3 @max-lg:contents"
                 data-testid="post-info-panel"
               >
-                <button
-                  type="button"
-                  className="mx-auto mt-2 hidden h-6 w-full shrink-0 cursor-pointer border-0 bg-transparent p-0 @max-lg:block"
-                  aria-label={sheetOpen ? 'Collapse post details' : 'Expand post details'}
-                  aria-expanded={sheetOpen}
-                  onClick={() => setSheetOpen((open) => !open)}
-                  onTouchStart={(e) => (touchStartY.current = e.touches[0].clientY)}
-                  onTouchEnd={(e) => {
-                    const dy = e.changedTouches[0].clientY - (touchStartY.current ?? 0);
-                    if (dy < -30) setSheetOpen(true);
-                    if (dy > 30) setSheetOpen(false);
-                  }}
-                >
-                  <span className="mx-auto block h-1 w-9 rounded-full bg-gray-4 dark:bg-dark-3" />
-                </button>
-                <div className={clsx(panelClass, '@max-lg:border-0 @max-lg:p-0')}>{postCard}</div>
-                <div className={clsx('flex flex-col gap-3', !sheetOpen && '@max-lg:invisible')}>
-                  <div className={panelClass}>{creatorCard}</div>
-                  <PostPublishedWithApp app={post.publishedWithApp} />
+                <div className={clsx(panelClass, '@max-lg:contents')}>{postCard}</div>
+                <div className="flex flex-col gap-3 @max-lg:contents">
+                  <div className={clsx(panelClass, '@max-lg:order-2 @max-lg:border-0 @max-lg:p-0')}>
+                    {creatorCard}
+                  </div>
+                  <div className="empty:hidden @max-lg:order-3">
+                    <PostPublishedWithApp app={post.publishedWithApp} />
+                  </div>
                 </div>
               </div>
 

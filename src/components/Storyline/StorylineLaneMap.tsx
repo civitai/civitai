@@ -9,7 +9,8 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { ActionIcon, Alert, Menu, Text } from '@mantine/core';
+import { ActionIcon, Alert, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconDotsVertical,
   IconGitFork,
@@ -284,6 +285,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                     reorder={reorderOf(row.canon.chapterId)}
                     onMove={moveAfter}
                     ownerId={storyline.userId}
+                    takenDown={storyline.tosViolation}
                   />
                 ) : null
               )}
@@ -453,9 +455,11 @@ function CanonStop({
   reorder,
   onMove,
   ownerId,
+  takenDown,
 }: {
   node: LaneNode;
   ownerId: number;
+  takenDown: boolean;
   /** Where the owner may move it by one place, set only inside a straight run of their own. */
   reorder?: { up: number | null; down: number | null };
   onMove: (chapterId: number, afterChapterId: number) => void;
@@ -476,7 +480,6 @@ function CanonStop({
   const canRemove =
     !!post &&
     canRemoveStorylineChapter({
-      depth: node.chapter.depth,
       authorId: post.userId,
       ownerId,
       viewer: currentUser,
@@ -527,8 +530,11 @@ function CanonStop({
                 <RemoveChapterMenuItem
                   chapterId={node.chapterId}
                   title={node.title}
+                  depth={node.chapter.depth}
+                  takenDown={takenDown}
                   hasChildren={(canon?.childCount ?? 0) > 0}
                   byAuthor={post.userId === currentUser?.id}
+                  paid={canon?.paid ?? node.chapter.paid}
                 />
               )}
             </Menu.Dropdown>

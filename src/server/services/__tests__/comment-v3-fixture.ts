@@ -34,6 +34,7 @@ CREATE TYPE "ReviewReactions" AS ENUM ('Like','Dislike','Laugh','Cry','Heart');
 ${ENTITY_TABLES.map((t) => `CREATE TABLE "${t}"(id serial PRIMARY KEY);`).join('\n')}
 CREATE TABLE "ComicChapter"(id serial UNIQUE NOT NULL, "projectId" int NOT NULL, position int NOT NULL, PRIMARY KEY ("projectId", position));
 CREATE TABLE app_listings(id text PRIMARY KEY, serial_id serial UNIQUE);
+CREATE TABLE "KeyValue"(key text PRIMARY KEY, value jsonb NOT NULL);
 
 CREATE TABLE "Comment"(
   id serial PRIMARY KEY, content text NOT NULL,
@@ -42,7 +43,8 @@ CREATE TABLE "Comment"(
   "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
   "userId" int NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
-  locked boolean DEFAULT false, hidden boolean DEFAULT false, "pinnedAt" timestamp(3));
+  locked boolean DEFAULT false, hidden boolean DEFAULT false, "pinnedAt" timestamp(3),
+  "removedByAuthor" boolean NOT NULL DEFAULT false);
 
 CREATE TABLE "Thread"(
   id serial PRIMARY KEY, locked boolean NOT NULL DEFAULT false,

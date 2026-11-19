@@ -7,6 +7,10 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
+  assertNoPayoutHold,
+  hasPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
+import {
   payToStripeConnectAccount,
   payToTipaltiAccount,
   revertStripeConnectTransfer,
@@ -45,6 +49,7 @@ CreateBuzzWithdrawalRequestSchema & {
   if (provider === UserPaymentConfigurationProvider.Stripe) {
     throw throwBadRequestError('We have disabled Stripe payments for the time being.');
   }
+  await assertNoPayoutHold(userId);
 
   const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
@@ -430,6 +435,18 @@ export const updateBuzzWithdrawalRequest = async ({
       request.platformFeeRate
     );
 
+    // The webhook (userId -1) only records what the provider already did, so it is never refused.
+    if (
+      (status === BuzzWithdrawalRequestStatus.Approved ||
+        status === BuzzWithdrawalRequestStatus.Transferred) &&
+      userId !== -1 &&
+      request.userId &&
+      (await hasPayoutHold(request.userId))
+    )
+      throw throwBadRequestError(
+        'This user has an active payout hold. Reject the request or release the hold first.'
+      );
+
     if (status === BuzzWithdrawalRequestStatus.ExternallyResolved && !note) {
       throw throwBadRequestError(
         'You must provide a note when resolving a withdrawal request externally'
@@ -679,7 +696,7 @@ export const updateBuzzWithdrawalRequest = async ({
         // escapes to Promise.all and the log never runs).
         return await processRequest(req);
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           type: 'update-buzz-withdrawal-request-error',
           message: 'Failed to update withdrawal request',
           data: {

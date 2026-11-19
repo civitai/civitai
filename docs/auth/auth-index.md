@@ -40,6 +40,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | [auth-verification-strategy.md](./auth-verification-strategy.md) | How a spoke verifies a session — Shared-lib (A) vs JWKS hybrid (C). Determines whether auth changes force consumer redeploys. (2026-06-09) |
 | [thin-session-token-design.md](./thin-session-token-design.md) | The **thin ES256 token** model — *decided*; supersedes the fat-token framing elsewhere. |
 | [choosing-sign-in-for-an-app.md](./choosing-sign-in-for-an-app.md) | Which sign-in an app uses: first-party, a system OAuth app, or a developer OAuth app. (Proposed 2026-10-26) |
+| [auth-invites.md](./auth-invites.md) | Emailed sign-in invites: a system app calls `POST /api/auth/invite`, the recipient accepts at `/invite`. |
 
 ## Visual reference (read alongside the specs)
 

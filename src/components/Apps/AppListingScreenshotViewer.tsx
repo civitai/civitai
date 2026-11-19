@@ -1,4 +1,5 @@
-import { ActionIcon, Modal, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Modal, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect } from 'react';

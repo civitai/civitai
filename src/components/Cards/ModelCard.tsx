@@ -2,10 +2,10 @@ import {
   Badge,
   getPrimaryShade,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
@@ -48,6 +48,10 @@ import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import {
+  isNonCommercialBaseModel,
+  NOT_COMMERCIALLY_AVAILABLE_LABEL,
+} from '~/server/common/constants';
 import { pickCoverImageId } from '~/shared/utils/model-sfw-face';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
@@ -62,8 +66,8 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
   );
 }
 
-export const ModelCard = memo(function ModelCard({ data }: Props) {
-  return <ModelCardContent data={data} />;
+export const ModelCard = memo(function ModelCard({ data, linkVersionId }: Props) {
+  return <ModelCardContent data={data} linkVersionId={linkVersionId} />;
 });
 
 const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
@@ -136,7 +140,7 @@ function AccessChip({
   );
 }
 
-function ModelCardContent({ data }: Props) {
+function ModelCardContent({ data, linkVersionId }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -177,7 +181,9 @@ function ModelCardContent({ data }: Props) {
   // reading `!!salesByModelId` fired every card once on first paint and the requests were already gone
   // by the time the flag flipped.
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
-  const sale = salesByModelId?.[data.id] ?? ownSale;
+  // A non-commercial base can't be bought, so a sale or price hint would advertise nothing.
+  const isNonCommercial = isNonCommercialBaseModel(data.version.baseModel);
+  const sale = isNonCommercial ? undefined : salesByModelId?.[data.id] ?? ownSale;
 
   const showSfwFace = useShowsSfwFace();
   // Search hits carry both names; feed items arrive resolved.
@@ -201,9 +207,9 @@ function ModelCardContent({ data }: Props) {
       getModelUrl({
         modelId: data.id,
         modelName,
-        modelVersionId: useModelVersionRedirect ? targetVersionId : null,
+        modelVersionId: linkVersionId ?? (useModelVersionRedirect ? targetVersionId : null),
       }),
-    [data.id, modelName, targetVersionId, useModelVersionRedirect]
+    [data.id, modelName, targetVersionId, useModelVersionRedirect, linkVersionId]
   );
 
   // The search doc carries images for the newest version of each base model, but
@@ -281,14 +287,14 @@ function ModelCardContent({ data }: Props) {
             )}
             {isEarlyAccess ? (
               <AccessChip
-                label="Early Access"
+                label={isNonCommercial ? NOT_COMMERCIALLY_AVAILABLE_LABEL : 'Early Access'}
                 icon={<IconClockDollar size={16} color="white" />}
                 href={href}
                 sale={sale}
               />
             ) : isPaidAccess ? (
               <AccessChip
-                label="Paid"
+                label={isNonCommercial ? NOT_COMMERCIALLY_AVAILABLE_LABEL : 'Paid'}
                 icon={<IconLockDollar size={16} color="white" />}
                 href={href}
                 sale={sale}
@@ -452,4 +458,9 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };
+type Props = {
+  data: UseQueryModelReturn[number];
+  forceInView?: boolean;
+  /** Links to this version instead of the model; set by article embeds of a version URL. */
+  linkVersionId?: number;
+};

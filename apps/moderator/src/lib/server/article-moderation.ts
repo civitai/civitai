@@ -4,14 +4,17 @@ import { articleModerationFloorText } from '@civitai/shared/rated-entity-sql';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
-import { deleteImageRows, finishImageDeletes } from './image-deletion';
+import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import { syncSearchIndex } from './search-index';
-import { logToAxiom } from './axiom';
-import type { KeptImage } from '$lib/image-kept-reasons';
-import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import {
+  ArticleStatus,
+  canRestoreArticle,
+  restoreStatus,
+  type ArticleMetadata,
+} from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
-type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
+type ModerateResult = { ok: true } | { ok: false; error: string };
 
 const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.Unpublished,
@@ -30,12 +33,11 @@ export async function moderateArticle(
         customMessage: string | null;
       }
 ): Promise<ModerateResult> {
-  let kept: KeptImage[] | undefined;
   try {
     if (input.action === 'restore') await restoreArticle(input.articleId);
     else if (input.action === 'unpublish')
       await unpublishArticle(input.articleId, input.userId, input.reason, input.customMessage);
-    else kept = await deleteArticle(input.articleId);
+    else await deleteArticle(input.articleId, input.userId);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -51,7 +53,7 @@ export async function moderateArticle(
   if (input.action === 'unpublish')
     void recordArticleEvent('Unpublish', input.articleId, input.userId);
 
-  return kept?.length ? { ok: true, kept } : { ok: true };
+  return { ok: true };
 }
 
 async function recordArticleEvent(
@@ -109,6 +111,9 @@ async function unpublishArticle(
       customMessage,
       unpublishedAt: new Date().toISOString(),
       unpublishedBy: moderatorId,
+      // Only a Published article gets here: a restore must publish it again, whatever an earlier
+      // block recorded.
+      statusBeforeViolation: undefined,
     };
     await trx
       .updateTable('Article')
@@ -140,8 +145,23 @@ export function withContentLinkHold(
   return derived;
 }
 
+// The main app's share-link lock (`lockAccessTokens` in access-token.service.ts), taken before the
+// row lock as it is there, so a link being created waits for this transaction.
+const ACCESS_TOKEN_LOCK_CLASS = 0x41544b;
+
 async function restoreArticle(id: number): Promise<void> {
   const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
+    // A share link made while it was unpublished must not read it again after a later unpublish.
+    await sql`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${id}::int)`.execute(
+      trx
+    );
+    await trx
+      .updateTable('AccessToken')
+      .set({ revokedAt: new Date() })
+      .where('resourceType', '=', 'Article')
+      .where('resourceId', '=', id)
+      .where('revokedAt', 'is', null)
+      .execute();
     const article = await trx
       .selectFrom('Article')
       .select([
@@ -150,30 +170,41 @@ async function restoreArticle(id: number): Promise<void> {
         'metadata',
         'userId',
         'coverId',
+        'bannerId',
         'title',
         'content',
         'ingestion',
         'moderatorNsfwLevel',
       ])
       .where('id', '=', id)
+      .forUpdate()
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
     if (!UNPUBLISHED.includes(article.status as ArticleStatus))
       throw new Error('Article is not unpublished');
+    if (!canRestoreArticle({ ...article, metadata: article.metadata as ArticleMetadata }))
+      throw new Error('The author unpublished this article; only they can republish it.');
 
     const meta = { ...((article.metadata as ArticleMetadata) ?? {}) } as Record<string, unknown>;
     delete meta.unpublishedReason;
     delete meta.customMessage;
     delete meta.unpublishedAt;
     delete meta.unpublishedBy;
+    delete meta.statusBeforeViolation;
+    const status = restoreStatus(article.metadata as ArticleMetadata, article.publishedAt);
 
     await trx
       .updateTable('Article')
       .set({
-        status: ArticleStatus.Published,
+        status,
         // Preserve the original publishedAt so a restored article doesn't bump to the top of the feed.
-        publishedAt: article.publishedAt ?? new Date(),
+        publishedAt:
+          status === ArticleStatus.Published
+            ? article.publishedAt ?? new Date()
+            : article.publishedAt,
         metadata: sql`${JSON.stringify(meta)}::jsonb`,
+        // The author schedules it again: one that lapsed while it was blocked would go live at once.
+        ...(status === ArticleStatus.Draft ? { scheduledAt: null } : {}),
       })
       .where('id', '=', id)
       .execute();
@@ -184,11 +215,14 @@ async function restoreArticle(id: number): Promise<void> {
       WITH level AS (
         SELECT a.id, GREATEST(
           COALESCE(max(cover."nsfwLevel"), 0),
+          COALESCE(max(banner."nsfwLevel"), 0),
           COALESCE(max(content_imgs."nsfwLevel"), 0)
         ) AS "nsfwLevel"
         FROM "Article" a
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id AND cover."ingestion" IN ('Scanned', 'Blocked')
+        LEFT JOIN "Image" banner
+          ON a."bannerId" = banner.id AND banner."ingestion" IN ('Scanned', 'Blocked')
         LEFT JOIN "ImageConnection" ic
           ON ic."entityId" = a.id AND ic."entityType" = 'Article'
         LEFT JOIN "Image" content_imgs
@@ -223,14 +257,11 @@ async function restoreArticle(id: number): Promise<void> {
       .where('ic.entityId', '=', id)
       .where('ic.entityType', '=', 'Article')
       .execute();
-    const cover = article.coverId
-      ? await trx
-          .selectFrom('Image')
-          .select('ingestion')
-          .where('id', '=', article.coverId)
-          .executeTakeFirst()
-      : null;
-    const states = [...conn.map((c) => c.ingestion), ...(cover ? [cover.ingestion] : [])];
+    const ownImageIds = [article.coverId, article.bannerId].filter((x): x is number => x != null);
+    const own = ownImageIds.length
+      ? await trx.selectFrom('Image').select('ingestion').where('id', 'in', ownImageIds).execute()
+      : [];
+    const states = [...conn.map((c) => c.ingestion), ...own.map((o) => o.ingestion)];
     const total = states.length;
     const terminal = states.filter(
       (s) => s === 'Scanned' || s === 'Blocked' || s === 'Error' || s === 'NotFound'
@@ -289,8 +320,8 @@ async function restoreArticle(id: number): Promise<void> {
   await bustArticleCounts(userId);
 }
 
-/** Deletes the article and its orphaned images; returns the images a hold kept. */
-async function deleteArticle(id: number): Promise<KeptImage[]> {
+/** Deletes the article and queues its orphaned images for deletion. */
+async function deleteArticle(id: number, moderatorId: number): Promise<void> {
   // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
@@ -301,15 +332,32 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .execute()
   ).map((c) => c.imageId);
 
-  // The orphaned images go in the same transaction, so a delete that cannot finish leaves the
-  // article and its images as they were, and can be retried.
-  const rows = await dbWrite.transaction().execute(async (trx) => {
+  await dbWrite.transaction().execute(async (trx) => {
     const article = await trx
       .selectFrom('Article')
-      .select('coverId')
+      .select(['userId', 'coverId', 'bannerId'])
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
+
+    const candidates = [
+      ...new Set(
+        [article.coverId, article.bannerId, ...contentImageIds].filter(
+          (x): x is number => x != null
+        )
+      ),
+    ].sort((x, y) => x - y);
+    // Locked before anything is deleted: two articles deleted together would each still see the
+    // other's uncommitted links and both skip a shared image. Images before the article, the order
+    // an image delete takes them (its banner foreign key sets the article's column).
+    if (candidates.length)
+      await trx
+        .selectFrom('Image')
+        .select('id')
+        .where('id', 'in', candidates)
+        .orderBy('id')
+        .forNoKeyUpdate()
+        .execute();
 
     await trx
       .deleteFrom('File')
@@ -323,42 +371,10 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
       .execute();
     await trx.deleteFrom('Article').where('id', '=', id).execute();
 
-    // "Orphaned" means no remaining ImageConnection; a post membership (postId) does NOT keep an image alive.
-    const toDelete: number[] = [];
-    if (article.coverId) toDelete.push(article.coverId);
-
-    const orphanCandidates = contentImageIds.filter((imageId) => imageId !== article.coverId);
-    if (orphanCandidates.length) {
-      const orphaned = await trx
-        .selectFrom('Image')
-        .select('Image.id')
-        .where('Image.id', 'in', orphanCandidates)
-        .where((eb) =>
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('ImageConnection')
-                .select('ImageConnection.imageId')
-                .whereRef('ImageConnection.imageId', '=', 'Image.id')
-            )
-          )
-        )
-        .execute();
-      toDelete.push(...orphaned.map((o) => o.id));
-    }
-
-    return toDelete.length ? deleteImageRows(trx, toDelete) : null;
+    // A moderator deleting their own article deletes it as its owner.
+    await queueImageDeletes(trx, candidates, {
+      ownerId: article.userId,
+      moderatorDelete: article.userId !== moderatorId,
+    });
   });
-
-  if (!rows) return [];
-  if (rows.refused.length)
-    void logToAxiom({
-      type: 'info',
-      name: 'image-deletion',
-      message: 'images kept by a hold',
-      articleId: id,
-      kept: rows.refused,
-    }).catch(() => undefined);
-  await finishImageDeletes(rows);
-  return rows.refused;
 }

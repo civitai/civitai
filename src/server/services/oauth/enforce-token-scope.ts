@@ -17,10 +17,13 @@
 
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+  type BearerCredential,
+} from '~/server/auth/full-user-credential';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -44,13 +47,7 @@ export function auditStatusFromError(error: unknown): number {
   return 500;
 }
 
-/** Whether the request came from a session or carries a bearer credential `isFullScopeUserKey` accepts. */
-export function isSessionOrFullUserKey(ctx: BearerCredential & { apiKeyId?: number | null }) {
-  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
-  // so it is not a bearer marker.
-  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
-  return !presentedBearer || isFullScopeUserKey(ctx);
-}
+export { credentialViews, isSessionOrFullUserKey };
 
 /** Throws FORBIDDEN unless `isSessionOrFullUserKey`. */
 export function assertSessionOrFullUserKey(
@@ -65,6 +62,15 @@ export function assertSessionOrFullUserKey(
 }
 
 /**
+ * The first scope in `anyOf` that `tokenScope` carries, or `undefined` when it carries none. An
+ * empty `anyOf` matches nothing, so a route that lists no scopes refuses every scoped token.
+ * The one "has any of these scopes" rule: tRPC `anyOfScopes` and REST handlers both call it.
+ */
+export function matchedScope(tokenScope: bigint, anyOf: readonly bigint[]): bigint | undefined {
+  return anyOf.find((scope) => scope !== 0n && hasScope(tokenScope, scope));
+}
+
+/**
  * The `enforceTokenScope` middleware body. Generic over `next()`'s return so it
  * stays transparent to tRPC's MiddlewareResult typing (same shape as
  * `runRecordProcedureDuration`). `meta` is typed structurally (only the two
@@ -72,14 +78,19 @@ export function assertSessionOrFullUserKey(
  */
 export function runEnforceTokenScope<T>(opts: {
   ctx: {
-    tokenScope: number;
+    tokenScope: bigint;
     apiKeyId?: number | null;
     apiKeyType?: ApiKeyType | null;
     subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
     user?: { id: number } | null;
   };
   meta:
-    | { requiredScope?: number; blockApiKeys?: boolean; requireFullUserCredential?: boolean }
+    | {
+        requiredScope?: bigint;
+        anyOfScopes?: readonly bigint[];
+        blockApiKeys?: boolean;
+        requireFullUserCredential?: boolean;
+      }
     | undefined;
   path: string;
   next: () => Promise<T>;
@@ -98,16 +109,26 @@ export function runEnforceTokenScope<T>(opts: {
 
   if (meta?.requireFullUserCredential) assertSessionOrFullUserKey(ctx);
 
-  // The scope this call exercises — the declared requiredScope, or Full for an
-  // unannotated endpoint (which implicitly requires Full). Also the value the
-  // external-OAuth scope-usage audit records below.
-  const requiredScope = meta?.requiredScope ?? TokenScope.Full;
+  // A merged meta can carry both; neither reading is safe, so refuse rather than pick one.
+  if (meta?.anyOfScopes && meta.requiredScope !== undefined) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: `${path} declares both requiredScope and anyOfScopes`,
+    });
+  }
+
+  // The scope this call exercises — the declared requiredScope, the first anyOfScopes bit the
+  // token carries, or Full for an unannotated endpoint (which implicitly requires Full).
+  // `undefined` when no anyOfScopes bit matched; the audit below then records Full.
+  const requiredScope = meta?.anyOfScopes
+    ? matchedScope(ctx.tokenScope, meta.anyOfScopes)
+    : meta?.requiredScope ?? TokenScope.Full;
 
   // Session auth (cookies) and full-access API keys pass through the scope check;
   // a scoped token must carry the required bit. A scope-denied call throws HERE,
   // before the emit block → it records nothing.
   if (ctx.tokenScope !== TokenScope.Full) {
-    if (!Flags.hasFlag(ctx.tokenScope, requiredScope)) {
+    if (requiredScope === undefined || !hasScope(ctx.tokenScope, requiredScope)) {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'Your API key does not have the required scope for this action',
@@ -126,6 +147,8 @@ export function runEnforceTokenScope<T>(opts: {
   if (ctx.subject?.type !== 'oauth' || ctx.user?.id == null) {
     return next();
   }
+  // A Full token passes an anyOfScopes route that lists nothing it can match; audit it as Full.
+  const auditScope = requiredScope ?? TokenScope.Full;
   const subject = ctx.subject;
   const userId = ctx.user.id;
   return next().then(
@@ -137,7 +160,7 @@ export function runEnforceTokenScope<T>(opts: {
       maybeRecordOauthScopeUsage({
         subject,
         userId,
-        scopeBit: requiredScope,
+        scopeBit: auditScope,
         endpoint: path,
         statusCode,
       });
@@ -149,7 +172,7 @@ export function runEnforceTokenScope<T>(opts: {
       maybeRecordOauthScopeUsage({
         subject,
         userId,
-        scopeBit: requiredScope,
+        scopeBit: auditScope,
         endpoint: path,
         statusCode: auditStatusFromError(err),
       });

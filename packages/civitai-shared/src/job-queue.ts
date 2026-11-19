@@ -43,14 +43,19 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   ImageScan: MINUTES_PER_DAY,
   // Waits REPLACED_IMAGE_RETENTION_DAYS, then a once-daily job.
   ReplacedImageDelete: (REPLACED_IMAGE_RETENTION_DAYS + 1) * MINUTES_PER_DAY,
-  // `retry-image-storage-deletes`, every 15 minutes; a failed retry keeps its `createdAt`, so a row
-  // this old has failed for a day.
-  ImageStorageDelete: MINUTES_PER_DAY,
+  // `image-storage-deletes`, every minute; a failed delete keeps its `createdAt`, so a row this old
+  // has failed, or waited behind a backlog, for an hour, its file still public.
+  ImageStorageDelete: MINUTES_PER_HOUR,
+  // `image-deletes`, every minute; an hour old means it keeps failing or is behind a backlog.
+  ImageDelete: MINUTES_PER_HOUR,
   // `cdn-access-sync`, every minute; a failed call keeps its row and retries next run. While the
   // `cdn-access-sync` flag is off nothing drains, so rows read overdue until it is turned on.
   CdnAccessSync: 15,
   // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
   ImageCdnPersistRetry: 15,
+  // Drained outside this repo, by the CSAM report archiver's own database functions; never 0,
+  // which would read as stranded.
+  CsamArchive: MINUTES_PER_DAY,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

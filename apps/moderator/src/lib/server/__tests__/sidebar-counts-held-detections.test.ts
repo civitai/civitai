@@ -6,7 +6,11 @@ const {
   getMinorQueueCounts,
   countStrikeReview,
   countSiteAppeals,
+  getRestrictedVerdictCount,
+  countTrainingDataReview,
 } = vi.hoisted(() => ({
+  countTrainingDataReview: vi.fn(),
+  getRestrictedVerdictCount: vi.fn(),
   getFlaggedCount: vi.fn(),
   getHeldDetectionModelCount: vi.fn(),
   getMinorQueueCounts: vi.fn(),
@@ -22,10 +26,21 @@ const redis = vi.hoisted(() => {
   return {
     store,
     get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => void store.set(key, value)),
+    set: vi.fn(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }),
+    eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) =>
+      store.get(opts.keys[0]) === opts.arguments[0] ? Number(store.delete(opts.keys[0])) : 0
+    ),
   };
 });
 
+vi.mock('../image-tags-count', () => ({
+  countImageTagsNeedingReview: async () => 0,
+  IMAGE_TAGS_COUNT_TIMEOUT_MS: 120_000,
+}));
 vi.mock('../redis', () => ({ getRedis: () => redis }));
 vi.mock('../db', () => ({
   dbRead: {
@@ -61,7 +76,9 @@ vi.mock('../minor-hash.service', () => ({
   getFlaggedCount,
 }));
 
+vi.mock('../training-moderation.service', () => ({ countTrainingDataReview }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
+vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
 
 const { getSidebarCounts, LAST_GOOD_MS } = await import('../sidebar-counts.service');
@@ -71,6 +88,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   getFlaggedCount.mockResolvedValue(0);
   getHeldDetectionModelCount.mockResolvedValue(3);
+  getRestrictedVerdictCount.mockResolvedValue(0);
+  countTrainingDataReview.mockResolvedValue(0);
   getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
 });
 
@@ -93,6 +112,15 @@ describe('sidebar counts for Model Flags', () => {
     });
   });
 
+  it('adds restricted-verdict leads to the held-detection badges', async () => {
+    getRestrictedVerdictCount.mockResolvedValue(2);
+    expect((await getSidebarCounts()).counts).toMatchObject({
+      modelFlagsNeedsReview: 14,
+      modelFlagsNeedsReviewDetections: 5,
+      modelFlagsNeedsReviewMatches: 10,
+    });
+  });
+
   it('drops only the Needs review badges that need a count that failed', async () => {
     getMinorQueueCounts.mockRejectedValue(new Error('slow'));
     const counts = (await getSidebarCounts()).counts;
@@ -109,6 +137,20 @@ describe('sidebar counts for Model Flags', () => {
     const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('modelFlagsAuto');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsNeedsReview: 12 });
+  });
+});
+
+describe('sidebar count trainingDataReview', () => {
+  it('is the review count, and unavailable rather than 0 when the count is unknown', async () => {
+    countTrainingDataReview.mockResolvedValue(7);
+    const known = await getSidebarCounts();
+    expect(known.counts).toMatchObject({ trainingDataReview: 7 });
+    expect(known.unavailable).not.toContain('trainingDataReview');
+
+    countTrainingDataReview.mockResolvedValue(null);
+    const unknown = await getSidebarCounts();
+    expect(unknown.counts).not.toHaveProperty('trainingDataReview');
+    expect(unknown.unavailable).toContain('trainingDataReview');
   });
 });
 
@@ -231,8 +273,8 @@ describe('Needs review badge when a part does not answer', () => {
   });
 
   it('still answers when Redis does not', async () => {
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
-    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    // One per last-good part: image tags, minor queue, held detections, training data review.
+    for (let part = 0; part < 4; part++) redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
     redis.get.mockRejectedValueOnce(new Error('redis down'));
     getHeldDetectionModelCount.mockReturnValue(hang());

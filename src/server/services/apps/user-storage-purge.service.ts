@@ -89,6 +89,7 @@
 // defaulting it. Where it CAN be established, it must not hide behind
 // `'unknown'` either.
 
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import type { Prisma } from '@prisma/client';
 // The pool's `connect` is OVERLOADED (callback form + promise form), so deriving
 // the client type from its return — `Awaited<ReturnType<…['connect']>>` — selects
@@ -404,6 +405,8 @@ async function resolveSchemaOwnership(): Promise<{
   collidingSchemas: Set<string>;
 }> {
   const blocks = await dbRead.appBlock.findMany({
+    // A remix app row has no storage schema.
+    where: { status: { notIn: REMIX_STATUSES } },
     select: { id: true, blockId: true, appListing: { select: { id: true, slug: true } } },
   });
   const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();
@@ -764,7 +767,7 @@ export async function previewUserAppStorageAsModerator(args: {
       schemasTruncated: preview.schemasTruncated,
     },
     PURGE_LOG
-  ).catch(() => undefined);
+  );
   return preview;
 }
 
@@ -1105,7 +1108,7 @@ async function purgeOneApp(args: {
         error: err instanceof Error ? err.message : String(err),
       },
       PURGE_LOG
-    ).catch(() => undefined);
+    );
 
     throw new AppUserStoragePurgeFailed(
       err instanceof Error ? err.message : String(err),
@@ -1144,7 +1147,7 @@ async function purgeOneApp(args: {
         error: err instanceof Error ? err.message : String(err),
       },
       PURGE_LOG
-    ).catch(() => undefined);
+    );
   }
 
   logToAxiom(
@@ -1163,7 +1166,7 @@ async function purgeOneApp(args: {
       userQuotaReset,
     },
     PURGE_LOG
-  ).catch(() => undefined);
+  );
 
   return {
     appBlockId: identity.appBlockId,

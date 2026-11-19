@@ -372,3 +372,26 @@ describe('applyStorylineTextScan', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 });
+
+// RESTRICT site of the minor content rule: a minor at a missing, unrated or mature title rating
+// takes the storyline down.
+describe('applyStorylineTextScan minor content truth table', () => {
+  it.each([
+    [true, undefined, true],
+    [true, 0, true],
+    [false, 0, false],
+    [true, NsfwLevel.PG, false],
+    [true, NsfwLevel.PG13, false],
+    [true, NsfwLevel.R, true],
+    [true, NsfwLevel.X, true],
+    [true, NsfwLevel.XXX, true],
+    [false, undefined, false],
+    [false, NsfwLevel.PG, false],
+    [false, NsfwLevel.R, false],
+    [false, NsfwLevel.XXX, false],
+  ])('minor %s at title rating %s takes the storyline down: %s', async (minor, nsfw, down) => {
+    await applyStorylineTextScan(args({ nsfw, poi: false, minor }) as never);
+    if (down) expect(updates()).toContainEqual(takedownWrite);
+    else expect(updates()).not.toContainEqual(takedownWrite);
+  });
+});

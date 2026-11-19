@@ -4,13 +4,14 @@ import {
   Button,
   Center,
   CloseButton,
-  HoverCard,
   Loader,
   Modal,
   Progress,
   Tabs,
   Text,
 } from '@mantine/core';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
+import { HoverCard } from '~/components/MantineOverlays';
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconAlertCircle,
@@ -36,7 +37,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -69,6 +71,7 @@ import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 import { formatDate } from '~/utils/date-helpers';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -151,6 +154,7 @@ function ImageCard({
   onClick,
   isAlreadySubmitted,
   isChecking,
+  overlayLabel,
 }: {
   image: {
     id: number;
@@ -166,6 +170,7 @@ function ImageCard({
   onClick: () => void;
   isAlreadySubmitted: boolean;
   isChecking: boolean;
+  overlayLabel?: string;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -324,6 +329,12 @@ function ImageCard({
         </HoverCard.Dropdown>
       </HoverCard>
 
+      {overlayLabel && (
+        <div className="absolute inset-x-0 bottom-0 rounded-b-md bg-black/70 px-1.5 py-1 text-center text-xs font-semibold text-red-300">
+          {overlayLabel}
+        </div>
+      )}
+
       {/* Selection Indicator */}
       {isSelected && !disabled && (
         <div className="absolute inset-0 flex items-center justify-center rounded-md bg-green-500/20">
@@ -384,8 +395,8 @@ export default function CrucibleSubmitEntryModal({
   const countAutoSubmitFailure = () =>
     setAutoSubmit((prev) => prev && { ...prev, failed: prev.failed + 1 });
 
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   const createEntryPostMutation = trpc.crucible.createEntryPost.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
@@ -554,7 +565,11 @@ export default function CrucibleSubmitEntryModal({
 
   // Flatten images from pages
   const images = useMemo(() => {
-    return imagesData?.pages.flatMap((page) => page.items) ?? [];
+    // A failed upload listed on page 1 can come back on a later page once its rescan succeeds.
+    const seen = new Set<number>();
+    return (imagesData?.pages.flatMap((page) => page.items) ?? []).filter(
+      (item) => !seen.has(item.id) && !!seen.add(item.id)
+    );
   }, [imagesData]);
 
   // Answered with submission's own rule — don't re-derive recency from the listing's `createdAt`.
@@ -596,6 +611,22 @@ export default function CrucibleSubmitEntryModal({
       };
     }
 
+    if (image.ingestion === ImageIngestionStatus.Error) {
+      return {
+        isValid: false,
+        isAlreadySubmitted: false,
+        isChecking: false,
+        criteria: [
+          {
+            label: 'Content scan',
+            passes: false,
+            failReason: 'Processing failed. Upload it again, or try again later.',
+          },
+        ],
+        message: 'Processing failed',
+      };
+    }
+
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
     const matchesContentType = image.type === contentType;
     const isAlreadySubmitted = submittedImageIds.has(image.id);
@@ -608,6 +639,7 @@ export default function CrucibleSubmitEntryModal({
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
     const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
+    const levelAllowedByLicense = !ineligibleReasons?.includes('restricted-model');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
@@ -663,10 +695,12 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw && levelAllowedByModels,
+        passes: isCompatibleNsfw && levelAllowedByModels && levelAllowedByLicense,
         passText: `${imageNsfwLabel} content`,
         failReason: !isCompatibleNsfw
           ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : !levelAllowedByLicense
+          ? `${imageNsfwLabel} content (${RESTRICTED_IMAGE_REASON})`
           : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds
@@ -780,13 +814,28 @@ export default function CrucibleSubmitEntryModal({
     const vanished = awaitingScan.filter(
       (id) => seenAwaitingScan.current.has(id) && !listedIds.has(id)
     );
+    const failed = images.filter(
+      (image) => awaitingScan.includes(image.id) && image.ingestion === ImageIngestionStatus.Error
+    );
     const settled = images.filter(
       (image) =>
         awaitingScan.includes(image.id) &&
-        !validateImage(image).isChecking &&
-        ineligibleReasonsById.has(image.id)
+        (image.ingestion === ImageIngestionStatus.Error ||
+          (!validateImage(image).isChecking && ineligibleReasonsById.has(image.id)))
     );
     if (!settled.length && !vanished.length) return;
+    // A generator submit reports its failures in one notice once the batch settles.
+    if (failed.length && !autoSubmit)
+      showErrorNotification({
+        title: 'Processing failed',
+        error: new Error(
+          `${
+            failed.length === 1 ? `Your ${noun}` : `${failed.length} ${nounPlural}`
+          } couldn't be processed. Upload ${
+            failed.length === 1 ? 'it' : 'them'
+          } again, or try again later.`
+        ),
+      });
     setAwaitingScan((prev) =>
       prev.filter((id) => !vanished.includes(id) && !settled.some((image) => image.id === id))
     );
@@ -828,10 +877,13 @@ export default function CrucibleSubmitEntryModal({
 
     try {
       for (const imageId of validImageIds) {
-        await submitEntryMutation.mutateAsync({
-          crucibleId,
-          imageId,
-        });
+        // One key per entry (crucible and image), held across a failure that may have charged the
+        // fee, so submitting it again is the same entry, charged once.
+        await withPaymentIntentKey(
+          submissionIntent('crucible-entry', { crucibleId, imageId }),
+          (idempotencyKey) =>
+            submitEntryMutation.mutateAsync({ crucibleId, imageId, idempotencyKey })
+        );
       }
 
       showSuccessNotification({
@@ -1071,7 +1123,7 @@ export default function CrucibleSubmitEntryModal({
                 <>
                   <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                     {images.map((image) => {
-                      const { isValid, isAlreadySubmitted, isChecking, criteria } =
+                      const { isValid, isAlreadySubmitted, isChecking, criteria, message } =
                         validateImage(image);
                       const isSelected = selectedImages.includes(image.id);
 
@@ -1092,6 +1144,9 @@ export default function CrucibleSubmitEntryModal({
                           onClick={() => toggleImage(image.id)}
                           isAlreadySubmitted={isAlreadySubmitted}
                           isChecking={isChecking}
+                          overlayLabel={
+                            image.ingestion === ImageIngestionStatus.Error ? message : undefined
+                          }
                         />
                       );
                     })}

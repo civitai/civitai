@@ -44,18 +44,32 @@ describe('ConnectScopesDisclosure', () => {
 
     // `BuzzRead` is sensitive (money), `ModelsRead` is not. Asserting the SPLIT, not just
     // that both render — a component that dropped the grouping would still show both.
+    // The group ids are the SHARED renderer's (`ListingPermissionsDisclosure`), the same
+    // ones an on-site app's permission list carries.
     await expect
-      .element(within.getByTestId('connect-scopes-disclosure-sensitive-group'))
+      .element(within.getByTestId('listing-permissions-sensitive-group'))
       .toBeInTheDocument();
-    await expect
-      .element(within.getByTestId('connect-scopes-disclosure-normal-group'))
-      .toBeInTheDocument();
+    await expect.element(within.getByTestId('listing-permissions-other-group')).toBeInTheDocument();
 
     const sensitive = container.querySelector(
-      '[data-testid="connect-scopes-disclosure-sensitive-group"]'
+      '[data-testid="listing-permissions-sensitive-group"]'
     );
-    expect(sensitive?.textContent).toContain('BuzzRead');
-    expect(sensitive?.textContent).not.toContain('ModelsRead');
+    expect(sensitive?.textContent).toContain('View buzz balance & history');
+    expect(sensitive?.textContent).not.toContain('Browse & download models');
+  });
+
+  test('speaks plain language: the scope LABEL, never the TokenScope key', async () => {
+    const { container } = await renderWithProviders(
+      <ConnectScopesDisclosure scopes={['ModelsRead', 'BuzzRead']} />
+    );
+    const section = container.querySelector('[data-testid="connect-scopes-disclosure"]');
+    expect(section, 'the section must render').not.toBeNull();
+    // Positive control first: the labels ARE there, so the absences below are not an
+    // empty section passing vacuously.
+    expect(section!.textContent).toContain('Browse & download models');
+    expect(section!.textContent).toContain('View buzz balance & history');
+    expect(section!.textContent).not.toContain('ModelsRead');
+    expect(section!.textContent).not.toContain('BuzzRead');
   });
 
   test('a lone non-sensitive scope renders without a sensitive group', async () => {
@@ -63,14 +77,16 @@ describe('ConnectScopesDisclosure', () => {
       <ConnectScopesDisclosure scopes={['ModelsRead']} />
     );
     expect(
-      container.querySelector('[data-testid="connect-scopes-disclosure-sensitive-group"]')
+      container.querySelector('[data-testid="listing-permissions-sensitive-group"]')
     ).toBeNull();
-    expect(container.textContent).toContain('ModelsRead');
+    expect(container.textContent).toContain('Browse & download models');
+    // No "Other permissions" heading when there is nothing to tell the group apart from.
+    expect(container.textContent).not.toContain('Other permissions');
   });
 
   test('NEVER renders developer-authored justification text', async () => {
     // Structural, not conventional: the component takes no justifications prop and the
-    // shared row cannot render the text without children. This asserts the OUTCOME, so
+    // shared row model has no field for the text. This asserts the OUTCOME, so
     // it still fails if someone later threads a prop through.
     const { container } = await renderWithProviders(
       <ConnectScopesDisclosure scopes={['BuzzRead']} />

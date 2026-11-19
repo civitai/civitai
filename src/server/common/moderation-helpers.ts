@@ -109,6 +109,12 @@ export const unpublishReasons = {
       'Spam, or advertisements disguised as resources, are strictly prohibited under our Terms of Service.',
     type: 'policy',
   },
+  'failed-scan': {
+    optionLabel: 'Failed security scan',
+    notificationMessage:
+      'A file in your resource did not pass our security scan. Remove or replace the file, then contact support to have the resource reviewed.',
+    type: 'quality',
+  },
   other: {
     optionLabel: 'Other',
     notificationMessage: '',

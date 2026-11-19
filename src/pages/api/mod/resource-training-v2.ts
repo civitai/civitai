@@ -18,7 +18,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 export default ModEndpoint(async (req, res) => {

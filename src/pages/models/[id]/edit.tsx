@@ -26,7 +26,10 @@ export default function ModelEditPage() {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const modelId = Number(router.query.id);
-  const { data, isLoading, isError } = trpc.model.getById.useQuery({ id: modelId });
+  const { data, isLoading, isError } = trpc.model.getById.useQuery({
+    id: modelId,
+    forEditor: true,
+  });
   const model = useMemo(
     () => ({
       ...data,
@@ -59,11 +62,7 @@ export default function ModelEditPage() {
               "Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."
             }
           />
-          <Link
-            legacyBehavior
-            href={getModelUrl({ modelId, modelName: model.name })}
-            passHref
-          >
+          <Link legacyBehavior href={getModelUrl({ modelId, modelName: model.name })} passHref>
             <Anchor size="xs">
               <Group gap={4}>
                 <IconArrowLeft size={12} />

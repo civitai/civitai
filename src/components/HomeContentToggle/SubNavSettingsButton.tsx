@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconLayoutNavbar, IconLayoutGrid, IconSettings } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';

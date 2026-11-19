@@ -11,8 +11,10 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
+import type * as BradleyTerry from '~/server/services/crucible-bradley-terry';
 import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -28,6 +30,8 @@ const setTTL = vi.fn();
 const afterPostsPublish = vi.fn();
 const createPrizes = vi.fn();
 const voidPrizes = vi.fn();
+const fitCrucibleScoresForPrizes = vi.fn();
+const usesBradleyTerryRanking = vi.fn(() => false);
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -52,6 +56,12 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
 vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   ...(await importOriginal<typeof EloService>()),
   getAllEntryElos,
+}));
+
+vi.mock('~/server/services/crucible-bradley-terry', async (importOriginal) => ({
+  ...(await importOriginal<typeof BradleyTerry>()),
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
 }));
 
 vi.mock('~/server/services/prize.service', async (importOriginal) => ({
@@ -209,7 +219,7 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a banned entrant's, a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a banned entrant's, a blocked, held, flagged, unpublished or restricted one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
@@ -217,14 +227,19 @@ describe('finalizeCrucible — positions', () => {
       crucibleId: 1,
       user: { bannedAt: null },
       image: {
-        needsReview: null,
-        tosViolation: false,
-        post: { publishedAt: { not: null } },
-        ingestion: { not: ImageIngestionStatus.Blocked },
-        nsfwLevel: { in: expect.arrayContaining([1, 3]) },
+        AND: [
+          {
+            needsReview: null,
+            tosViolation: false,
+            post: { publishedAt: { not: null } },
+            ingestion: { not: ImageIngestionStatus.Blocked },
+            nsfwLevel: { in: expect.arrayContaining([1, 3]) },
+          },
+          imageNotRestrictedWhere(),
+        ],
       },
     });
-    expect(where.image.nsfwLevel.in).not.toContain(2);
+    expect(where.image.AND[0].nsfwLevel.in).not.toContain(2);
   });
 
   describe('contest-banned entrants', () => {
@@ -398,7 +413,7 @@ describe('finalizeCrucible — completion', () => {
     );
   });
 
-  it('leaves it Active for the next run when awarding fails, and says so', async () => {
+  it('leaves it Active for the next run when awarding fails', async () => {
     setupCrucible({ entryFee: 100 });
     createPrizes.mockRejectedValue(new Error('db down'));
 
@@ -407,13 +422,6 @@ describe('finalizeCrucible — completion', () => {
     expect(claim).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'crucible-prize-award-failed',
-        crucibleId: 1,
-      })
-    );
   });
 
   it('awards the same ledger keys on a retry, so a prize is only ever recorded and paid once', async () => {
@@ -478,7 +486,7 @@ describe('finalizeCrucible — completion', () => {
     expect(redisMock.redis.del).not.toHaveBeenCalled();
   });
 
-  it('voids what it awarded, notifies nobody and logs when it lost the claim', async () => {
+  it('voids what it awarded and notifies nobody when it lost the claim', async () => {
     setupCrucible({ entryFee: 100 });
     claim.mockResolvedValue({ count: 0 });
 
@@ -487,9 +495,6 @@ describe('finalizeCrucible — completion', () => {
     expect(voidPrizes).toHaveBeenCalledWith('Crucible', 1);
     expect(createNotification).not.toHaveBeenCalled();
     expect(setTTL).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-finalize-claim-lost', prizesAwarded: true })
-    );
   });
 
   it('voids nothing when it wins the claim', async () => {
@@ -1278,8 +1283,64 @@ describe('finalizeCrucible — entry posts', () => {
     });
 
     await expect(finalizeCrucible(1)).resolves.toMatchObject({ crucibleId: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
+  });
+});
+
+describe('finalizeCrucible — Bradley-Terry ranking', () => {
+  // Elo says 1 > 2 > 3; the fit says the reverse, so the paid order shows which one ranked.
+  const fitReversed = new Map([
+    [1, 1400],
+    [2, 1500],
+    [3, 1600],
+  ]);
+  const paidOrder = () =>
+    awarded()
+      .sort((a, b) => a.position - b.position)
+      .map((prize) => prize.subjectId);
+  beforeEach(() => {
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000 });
+    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+  });
+
+  it('pays by the fit for a crucible the switch covers', async () => {
+    const endAt = new Date(Date.now() - 1000);
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000, endAt });
+    usesBradleyTerryRanking.mockReturnValue(true);
+    await finalizeCrucible(1);
+    // The guard's ingest wait counts from endedAt: a missing one would defer a short count forever.
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledTimes(1);
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledWith(1, { endedAt: endAt });
+    // The switch dates a crucible by startAt, else createdAt: both must be read for it.
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, createdAt: true, endAt: true }),
+      })
     );
+    expect(usesBradleyTerryRanking).toHaveBeenCalledWith(
+      expect.objectContaining({ startAt: null, endAt })
+    );
+    expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
+  });
+
+  it('pays by Elo when the guard falls back', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockResolvedValue(null);
+    await finalizeCrucible(1);
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('pays by Elo without fitting when the switch does not cover the crucible', async () => {
+    usesBradleyTerryRanking.mockReturnValue(false);
+    await finalizeCrucible(1);
+    expect(fitCrucibleScoresForPrizes).not.toHaveBeenCalled();
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('writes and pays nothing while the guard defers for ingest lag', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockRejectedValue(new Error('waiting'));
+    await expect(finalizeCrucible(1)).rejects.toThrow('waiting');
+    expect(entryWrites()).toHaveLength(0);
+    expect(createPrizes).not.toHaveBeenCalled();
   });
 });

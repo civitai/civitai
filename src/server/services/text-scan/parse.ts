@@ -48,9 +48,10 @@ const labelValidators: Record<TextScanLabel, z.ZodType> = {
   minor: z.object({ detected: z.boolean(), reason: z.string() }),
   scam: z.object({ detected: z.boolean(), reason: z.string() }),
   csam: z.object({ detected: z.boolean(), reason: z.string() }),
+  'model-com-face-intent': z.object({ detected: z.boolean(), reason: z.string() }),
 };
 
-function tryParseJson(content: string): unknown {
+export function tryParseJson(content: string): unknown {
   try {
     return JSON.parse(content.trim());
   } catch {

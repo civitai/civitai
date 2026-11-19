@@ -6,6 +6,8 @@ export type RefundSummary = {
   amount: number;
   /** Total originally charged. */
   charged: number;
+  /** What the user still paid: `charged - amount`, 0 on a full refund. */
+  net: number;
   /** Friendly Buzz label, e.g. "Green Buzz". Plain "Buzz" when mixed or yellow. */
   label: string;
   /** Badge text, e.g. "Refunded 108 Green Buzz". */
@@ -57,6 +59,7 @@ export function getRefundSummary(
     state: partial ? 'partial' : 'refunded',
     amount,
     charged,
+    net: charged - amount,
     label,
     text: partial
       ? `Refunded ${amount.toLocaleString('en-US')} of ${charged.toLocaleString('en-US')} ${label}`

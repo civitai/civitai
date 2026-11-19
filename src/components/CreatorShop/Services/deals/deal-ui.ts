@@ -1,13 +1,16 @@
 import {
+  SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
   SERVICE_DEAL_DECLINE_REASON_CODES,
   SERVICE_DEAL_DISPUTE_REASON_CODES,
+  SERVICE_DEAL_DISPUTE_WINDOW_MS,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealCancellationReasonCode,
   ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
+import { SERVICE_DEAL_CLOSE_LABELS } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -19,6 +22,7 @@ const EXIT_ACTIONS: readonly DealAction[] = [
   'decline',
   'withdraw',
   'cancelLate',
+  'cancelAndRefund',
   'requestCancellation',
   'respondCancellation',
   'acceptDelivery',
@@ -106,6 +110,21 @@ export type EscrowState =
 
 const REFUND_STATUSES: ServiceDealStatus[] = ['Declined', 'Expired', 'Cancelled'];
 
+const SELLER_HELD_STATUSES: ServiceDealStatus[] = [
+  'Requested',
+  'Accepted',
+  'InRevision',
+  'Delivered',
+];
+
+export function sellerHeldLine(deal: { status: ServiceDealStatus; held: boolean; price: number }) {
+  if (!deal.held || !SELLER_HELD_STATUSES.includes(deal.status)) return null;
+  const hours = (ms: number) => ms / 3_600_000;
+  const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
+  const unanswered = hours(SERVICE_DEAL_AUTO_COMPLETE_MS) + dispute;
+  return `${deal.price.toLocaleString()} Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled.`;
+}
+
 /**
  * Never says "held" until the hold is confirmed. A closed deal whose hold never confirmed took no
  * Buzz; the server still looks for a charge that lands late and returns it.
@@ -134,7 +153,7 @@ export const escrowCopy: Record<EscrowState, { title: string; body: string; colo
   },
   held: {
     title: 'Held in escrow',
-    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is cancelled.',
+    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is canceled.',
     color: 'yellow',
   },
   awaitingRelease: {
@@ -183,15 +202,26 @@ export const dealStatusLabel: Record<ServiceDealStatus, string> = {
   Declined: 'Declined',
   Expired: 'Expired',
   CancellationRequested: 'Cancellation requested',
-  Cancelled: 'Cancelled',
+  Cancelled: 'Canceled',
   Disputed: 'In dispute',
 };
+
+/** A deal a moderator settled shows how the dispute ended; its status alone reads as a plain cancel or completion. */
+export function dealStatusBadge(deal: {
+  status: ServiceDealStatus;
+  disputeResolution?: 'Refund' | 'Release' | null;
+}) {
+  if (deal.disputeResolution === 'Refund') return 'Refunded';
+  if (deal.disputeResolution === 'Release') return 'Released';
+  return dealStatusLabel[deal.status];
+}
 
 export const dealActionLabel: Record<DealAction, string> = {
   accept: 'Accept request',
   decline: 'Decline',
   withdraw: 'Withdraw request',
   cancelLate: 'Cancel (overdue)',
+  cancelAndRefund: 'Cancel and refund',
   requestCancellation: 'Request cancellation',
   respondCancellation: 'Respond to cancellation',
   acceptDelivery: 'Accept delivery',
@@ -236,13 +266,23 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
   return !!latest && isSystemDispute(latest);
 };
 
+/** The codes the server writes as the comment of a Cancelled or Completed event it closed itself. */
+export const closeCommentLabel: Record<string, string> = SERVICE_DEAL_CLOSE_LABELS;
+
+const closeCommentText = (event: SheetEvent) =>
+  (event.type === 'Cancelled' || event.type === 'Completed') &&
+  event.comment &&
+  Object.hasOwn(closeCommentLabel, event.comment)
+    ? closeCommentLabel[event.comment]
+    : event.comment;
+
 /** What the accountability sheet prints for one event. */
 export function sheetEventText<T extends SheetEvent>(
   event: T,
   viewerRole: 'buyer' | 'seller' | 'moderator',
   label: string
 ) {
-  if (!isSystemDispute(event)) return { label, comment: event.comment };
+  if (!isSystemDispute(event)) return { label, comment: closeCommentText(event) };
   return {
     label: 'Held the deal for moderator review',
     comment: viewerRole === 'moderator' ? event.comment : null,

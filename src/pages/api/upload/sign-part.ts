@@ -1,17 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getUploadPartUrl, getUploadS3Client, getUploadBucket } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 // Part URLs from /api/upload expire 12h after the upload starts, which a multi-hour
 // transfer of a very large file can outlive. Without this the client's retry replays
 // the same expired URL and the upload dies with the bytes already half-uploaded.
 const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
   instrumentApiResponse(req, res);
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
+  if (session === false) return;
   const userId = session?.user?.id;
-  if (!userId || session.user?.bannedAt) {
+  if (!userId) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -54,7 +59,7 @@ const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
     const result = await getUploadPartUrl({ bucket, key, uploadId, partNumber, s3 });
     res.status(200).json(result);
     try {
-      await logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
+      logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
     } catch {
       /* contained — @civitai/axiom reports its own ingest failures */
     }
@@ -64,7 +69,7 @@ const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
     // rest-error-envelope-ledger baseline alongside its siblings), only the ORDER changes.
     res.status(500).json({ error: error.message });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-sign-part-error',
         userId,
         key,

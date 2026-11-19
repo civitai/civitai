@@ -1,35 +1,50 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as Constants from '~/server/common/constants';
+import type * as BaseModelConstants from '~/shared/constants/basemodel.constants';
 import { logToAxiom } from '~/server/logging/client';
 
-const executeRaw = dbMock.dbWrite.$executeRaw;
 const queryRaw = dbMock.dbWrite.$queryRaw;
+// The per-chunk UPDATE goes out through `$queryRaw` (it returns the posts it touched); this stands
+// in for it and returns the chunk's rowcount.
+const executeRaw = vi.fn<(...call: unknown[]) => Promise<number>>();
+const bustCachesForPosts = vi.fn(async (_postIds: number[]) => undefined);
+// The search-index queues, at the Redis boundary: `<index>:<action>` and the ids queued under it.
+const { addToQueue } = vi.hoisted(() => ({
+  addToQueue: vi.fn(async (_key: string, _ids: number[]) => true),
+}));
+vi.mock('~/server/redis/queues', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  addToQueue,
+}));
 
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import {
-  restrictedBaseModelDivergenceGauge,
   restrictedImageDriftGauge,
   restrictedImageOverhiddenGauge,
   restrictedImageReconcileLastSuccessGauge,
 } from '~/server/prom/client';
 
-// Synthetic, deliberately NOT the real prod rows and NOT the real code list. The
-// divergence is a set difference, and a fixture snapshotting production would go red
-// the moment a licence is added in code — greenable only by a production DB write,
-// which is the wrong-direction guard this job's gauge exists to avoid.
-const { CODE_LIST } = vi.hoisted(() => ({ CODE_LIST: ['Alpha', 'Beta', 'Gamma'] }));
-const TABLE_ROWS = ['Alpha', 'Beta'].map((baseModel) => ({ baseModel }));
+// Synthetic, so a base model gaining or losing the restriction doesn't rewrite these tests.
+const restricted = vi.hoisted(() => ({ list: ['Alpha', 'Beta'] }));
 
-vi.mock('~/server/common/constants', async (importOriginal) => ({
-  ...(await importOriginal<typeof Constants>()),
-  nsfwRestrictedBaseModels: CODE_LIST,
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
 
-const sqlOf = (call: unknown[]) => (call[0] as string[]).join('');
+vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof BaseModelConstants>()),
+  matureRestrictedBaseModels: () => restricted.list,
+}));
+
+const sqlOf = (call: unknown[]) =>
+  Array.isArray(call[0])
+    ? (call[0] as string[]).join('')
+    : ((call[0] as Prisma.Sql | undefined)?.strings ?? []).join('');
 const valuesOf = (call: unknown[]) =>
   call.slice(1).flatMap((v) => ((v as Prisma.Sql)?.values ?? [v]) as unknown[]);
+const isUpdateQuery = (call: unknown[]) => /SET\s+"modelRestricted"/i.test(sqlOf(call));
 // Both the version query and the over-hidden count name `ModelVersion`, so the
 // narrower test has to be asked first.
 const isOverhiddenQuery = (call: unknown[]) => sqlOf(call).includes('NOT EXISTS');
@@ -37,90 +52,67 @@ const isVersionQuery = (call: unknown[]) =>
   !isOverhiddenQuery(call) && sqlOf(call).includes('"ModelVersion"');
 
 let versionIds: number[] = [1, 2, 3];
-let tableRows = TABLE_ROWS;
 let overhidden = 0;
+let chunkPostIds: number[][] = [];
+let chunkImageIds: number[][] = [];
+let notMature = new Set<number>();
+let collectionsShowing: number[] = [];
+let collectionLookups: unknown[][] = [];
+let articlesShowing: number[] = [];
+// Fixture image ids start here; the lookup's other numeric parameter (its cap) is far above them.
+const FIRST_IMAGE_ID = 501;
+const CAP_PARAM = 5000;
 
 const run = () =>
   reconcileRestrictedImages.run({}).result as Promise<{
     flagged: number;
     overhidden: number;
-    missingInDb: string[];
-    missingInCode: string[];
     versions: number;
   }>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   versionIds = [1, 2, 3];
-  tableRows = TABLE_ROWS;
+  restricted.list = ['Alpha', 'Beta'];
   overhidden = 0;
+  chunkPostIds = [];
+  chunkImageIds = [];
+  notMature = new Set();
+  collectionsShowing = [];
+  collectionLookups = [];
+  articlesShowing = [];
+  executeRaw.mockReset();
   executeRaw.mockResolvedValue(0);
   queryRaw.mockImplementation((...call: unknown[]) => {
+    if (isUpdateQuery(call)) {
+      const chunk = executeRaw.mock.calls.length;
+      return executeRaw(...call).then((flagged) => [
+        {
+          flagged,
+          postIds: chunkPostIds[chunk] ?? [],
+          imageIds: chunkImageIds[chunk] ?? [],
+          matureImageIds: (chunkImageIds[chunk] ?? []).filter((id) => !notMature.has(id)),
+        },
+      ]);
+    }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
+    if (sqlOf(call).includes('pg_index')) return Promise.resolve([{ present: true }]);
+    if (sqlOf(call).includes('"ComicProject"'))
+      return Promise.resolve(articlesShowing.map((id) => ({ kind: 'article', id })));
+    if (sqlOf(call).includes('"CollectionItem"')) {
+      collectionLookups.push(
+        valuesOf(call).filter((v) => typeof v === 'number' && v >= FIRST_IMAGE_ID && v < CAP_PARAM)
+      );
+      return Promise.resolve(collectionsShowing.map((collectionId) => ({ collectionId })));
+    }
     if (isVersionQuery(call)) return Promise.resolve(versionIds.map((id) => ({ id })));
-    return Promise.resolve(tableRows);
+    return Promise.resolve([]);
   });
 });
 
 describe('reconcile-restricted-images', () => {
   it('runs hourly', () => {
     expect(reconcileRestrictedImages.cron).toBe('0 * * * *');
-  });
-
-  it('names the base models the code list has and the table does not', async () => {
-    const result = await run();
-
-    expect(result.missingInDb).toEqual(['Gamma']);
-    expect(result.missingInCode).toEqual([]);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      1
-    );
-  });
-
-  it('names the base models the table has and the code list does not', async () => {
-    tableRows = [...TABLE_ROWS, { baseModel: 'Retired' }];
-
-    const result = await run();
-
-    expect(result.missingInCode).toEqual(['Retired']);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_code' },
-      1
-    );
-  });
-
-  it('publishes zero divergence when the lists agree, so a fixed divergence clears', async () => {
-    tableRows = CODE_LIST.map((baseModel) => ({ baseModel }));
-
-    const result = await run();
-
-    expect(result.missingInDb).toEqual([]);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      0
-    );
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_code' },
-      0
-    );
-  });
-
-  // DELIBERATE: the divergence read is sequenced BEFORE the chunk loop. A labelled
-  // gauge that is never set does not scrape at all, so a chunk hitting
-  // statement_timeout would otherwise take the divergence signal down with it — going
-  // silent in exactly the state the alert exists to report.
-  it('publishes divergence even when the chunk loop fails', async () => {
-    executeRaw.mockRejectedValue(new Error('statement timeout'));
-
-    await expect(run()).rejects.toThrow('statement timeout');
-
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      1
-    );
-    expect(restrictedImageDriftGauge.set).not.toHaveBeenCalled();
-    expect(restrictedImageReconcileLastSuccessGauge.set).not.toHaveBeenCalled();
   });
 
   it('publishes the flagged count and a heartbeat, so a zero from a job that never ran is distinguishable', async () => {
@@ -183,18 +175,13 @@ describe('reconcile-restricted-images', () => {
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
   });
 
-  it('reconciles against the table, not the code list', async () => {
+  it('selects the versions of the base models that restrict mature images', async () => {
     await run();
 
     const versionQuery = queryRaw.mock.calls.find(isVersionQuery);
-    expect(versionQuery && sqlOf(versionQuery)).toContain('"RestrictedBaseModels"');
-    for (const call of executeRaw.mock.calls) {
-      expect(sqlOf(call)).not.toContain('RestrictedBaseModels');
-      for (const baseModel of CODE_LIST) {
-        expect(sqlOf(call)).not.toContain(baseModel);
-        expect(valuesOf(call)).not.toContain(baseModel);
-      }
-    }
+    expect(versionQuery && valuesOf(versionQuery)).toEqual(restricted.list);
+    const overhiddenQuery = queryRaw.mock.calls.find(isOverhiddenQuery);
+    expect(overhiddenQuery && valuesOf(overhiddenQuery)).toEqual(restricted.list);
   });
 
   // DELIBERATE, DO NOT UNCHUNK: the whole-table anti-join measured 22.4 s, then
@@ -212,7 +199,8 @@ describe('reconcile-restricted-images', () => {
     // The parameters, not the statement text. Every assertion in an earlier draft read
     // only the static strings, so slicing the id list down to one version per chunk
     // passed the whole file while flagging a fraction of what it should.
-    const sent = executeRaw.mock.calls.map(valuesOf);
+    // The level mask that picks the mature images is the last parameter, after the versions.
+    const sent = executeRaw.mock.calls.map((call) => valuesOf(call).slice(0, -1));
     expect(sent.flat()).toEqual(versionIds);
     expect(sent.map((ids) => ids.length)).toEqual([100, 100, 50]);
   });
@@ -234,32 +222,167 @@ describe('reconcile-restricted-images', () => {
   // `Prisma.join([])` throws, so a chunking rewrite that yields a trailing empty chunk
   // would turn an empty restricted list into a job that fails every hour.
   it('issues no statement when nothing is restricted', async () => {
-    versionIds = [];
-    tableRows = [];
+    restricted.list = [];
 
     const result = await run();
 
+    expect(queryRaw.mock.calls.filter((call) => !isOverhiddenQuery(call))).toEqual([]);
     expect(executeRaw).not.toHaveBeenCalled();
     expect(result.flagged).toBe(0);
     expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
   });
 
-  it('logs drift for an operator, and stays quiet when there is none', async () => {
-    executeRaw.mockResolvedValue(4);
+  it('refreshes the caches of the posts each chunk restricted, once per chunk', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkPostIds = [[11, 12], [], [13]];
 
     await run();
 
+    expect(bustCachesForPosts.mock.calls).toEqual([[[11, 12]], [[13]]]);
+  });
+
+  it('logs a failed cache refresh and goes on to the next chunk', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkPostIds = [[11], [], [13]];
+    bustCachesForPosts.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await run();
+
+    expect(result.flagged).toBe(3);
+    expect(bustCachesForPosts.mock.calls).toEqual([[[11]], [[13]]]);
     expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'reconcile-restricted-images', flagged: 4 }),
+      expect.objectContaining({ postIds: [11], error: 'redis down' }),
       'webhooks'
     );
+  });
+});
 
-    vi.clearAllMocks();
-    executeRaw.mockResolvedValue(0);
-    tableRows = CODE_LIST.map((baseModel) => ({ baseModel }));
+describe('reconcile-restricted-images search reindex', () => {
+  // The image Delete path refreshes the cached thumbnails; that read is how the batch shows up here.
+  const thumbnailRefreshes = () =>
+    queryRaw.mock.calls
+      .filter((call) => sqlOf(call).includes("'parentId'"))
+      .map((call) => valuesOf(call).filter((v) => typeof v === 'number'));
+
+  it('takes each newly restricted image out of the image queues as a Delete', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
 
     await run();
 
-    expect(logToAxiom).not.toHaveBeenCalled();
+    expect(thumbnailRefreshes()).toEqual([[501, 502], [503]]);
+  });
+
+  const collectionUpdates = () =>
+    addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('collections') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+
+  it('rebuilds the collection documents showing each newly restricted image', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
+    collectionsShowing = [77];
+
+    await run();
+
+    expect(collectionLookups.map((ids) => [...new Set(ids)])).toEqual([[501, 502], [503]]);
+    expect(collectionUpdates()).toEqual([77, 77]);
+  });
+
+  it('retries a failed image queue removal once', async () => {
+    chunkImageIds = [[501]];
+    executeRaw.mockResolvedValue(1);
+    const flag = queryRaw.getMockImplementation()!;
+    let failed = false;
+    queryRaw.mockImplementation((...call: unknown[]) => {
+      if (sqlOf(call).includes("'parentId'") && !failed) {
+        failed = true;
+        return Promise.reject(new Error('db blip'));
+      }
+      return flag(...call);
+    });
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501], [501]]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.some(
+          ([entry]) => (entry as { message?: string }).message === 'Image queue removal failed'
+        )
+    ).toBe(false);
+  });
+
+  it('keeps a restricted image the restriction does not hide in the image queues', async () => {
+    chunkImageIds = [[501, 502]];
+    notMature = new Set([502]);
+    executeRaw.mockResolvedValue(2);
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501]]);
+  });
+
+  it('leaves the documents of a restricted image the restriction does not hide', async () => {
+    chunkImageIds = [[501]];
+    notMature = new Set([501]);
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    expect(addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('also queues the articles whose cover or banner it is', async () => {
+    chunkImageIds = [[501]];
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    const articleUpdates = addToQueue.mock.calls
+      .filter(([key]) => key.startsWith('articles') && key.endsWith(':Update'))
+      .flatMap(([, ids]) => ids);
+    expect(articleUpdates).toEqual([9]);
+  });
+
+  it('queues nothing when no image was newly restricted', async () => {
+    collectionsShowing = [77];
+    await run();
+    expect(collectionLookups).toEqual([]);
+    expect(addToQueue).not.toHaveBeenCalled();
+  });
+
+  it('looks the collections up in bounded batches', async () => {
+    chunkImageIds = [Array.from({ length: 1200 }, (_, i) => i + 501)];
+    executeRaw.mockResolvedValue(1200);
+    await run();
+    expect(collectionLookups.map((ids) => new Set(ids).size)).toEqual([500, 500, 200]);
+  });
+
+  it('logs counts, not ids, when the reindex fails, and still finishes the run', async () => {
+    chunkImageIds = [[501, 502]];
+    executeRaw.mockResolvedValue(2);
+    const flag = queryRaw.getMockImplementation()!;
+    queryRaw.mockImplementation((...call: unknown[]) =>
+      sqlOf(call).includes("'parentId'") ? Promise.reject(new Error('db down')) : flag(...call)
+    );
+
+    const result = await run();
+
+    expect(result.flagged).toBe(2);
+    expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
+    const failure = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .find((entry) => entry.message === 'Image queue removal failed');
+    expect(failure).toMatchObject({ images: 2, failedBatches: 1 });
+    expect(JSON.stringify(failure)).not.toContain('501');
   });
 });

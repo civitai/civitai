@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import type { TrainingStepTemplate } from '@civitai/orchestration-client';
 import { OrchPriorityTypes } from '~/server/common/enums';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type { BlockTrainingBody } from '~/server/schema/blocks/workflow.schema';
 import type { AiToolkitTrainingParams } from '~/server/schema/orchestrator/training.schema';
 import {
@@ -19,10 +19,12 @@ import { buildAiToolkitTrainingStep } from '~/server/services/orchestrator/train
 import {
   getTrainingFields,
   isAiToolkitEnabled,
+  trainingRolloutRefusal,
   isInvalidAiToolkit,
   trainingBaseModelTypesImage,
   trainingModelInfo,
 } from '~/utils/training';
+import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks `kind:'training'` — run resolution and the QUOTE record.
@@ -85,10 +87,10 @@ export type BlockTrainingRunOwner = { userId: number; appBlockId: string };
 function runGenerationKey(
   owner: BlockTrainingRunOwner,
   body: BlockTrainingBody
-): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_RUNS}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_RUNS}:${owner.userId}:${
-    owner.appBlockId
-  }:${hashTrainingBody(body)}`;
+): `${typeof REDIS_KEYS.BLOCKS.TRAINING_RUNS}:${string}` {
+  return `${REDIS_KEYS.BLOCKS.TRAINING_RUNS}:${owner.userId}:${owner.appBlockId}:${hashTrainingBody(
+    body
+  )}`;
 }
 
 /**
@@ -100,7 +102,7 @@ export async function readTrainingRunGeneration(
   owner: BlockTrainingRunOwner,
   body: BlockTrainingBody
 ): Promise<number> {
-  const raw = await sysRedis.get(runGenerationKey(owner, body));
+  const raw = await redis.get(runGenerationKey(owner, body));
   const n = Number(raw ?? 0);
   return Number.isInteger(n) && n >= 0 ? n : 0;
 }
@@ -113,8 +115,8 @@ export async function bumpTrainingRunGeneration(
   body: BlockTrainingBody
 ): Promise<void> {
   try {
-    await sysRedis.incrBy(runGenerationKey(owner, body), 1);
-    await sysRedis.expire(runGenerationKey(owner, body), TRAINING_RUN_GENERATION_TTL_SECONDS);
+    await redis.incrBy(runGenerationKey(owner, body), 1);
+    await redis.expire(runGenerationKey(owner, body), TRAINING_RUN_GENERATION_TTL_SECONDS);
   } catch {
     // best-effort
   }
@@ -125,6 +127,7 @@ export type TrainingServiceStatus = {
   available: boolean;
   message?: string | null;
   blockedModels?: string[] | null;
+  blockedModelReasons?: Record<string, string> | null;
 };
 
 export type ResolvedBlockTrainingRun = {
@@ -187,15 +190,19 @@ export function resolveBlockTrainingRun(input: {
   ) {
     refuse('params.ecosystem / params.modelVariant do not match the base model');
   }
-  if ((status.blockedModels ?? []).includes(modelKey)) {
-    refuse('This model has been blocked from training - please try another one.');
-  }
+  const unavailable = modelUnavailability(status, modelKey);
+  if (unavailable) refuse(unavailableModelMessage(info.pretty, unavailable.reason));
   if (isInvalidAiToolkit(info.type, 'ai-toolkit')) {
     refuse('AI Toolkit training is not supported for this model.');
   }
   if (!isAiToolkitEnabled(info.type, features)) {
     refuse('AI Toolkit training is not currently enabled for this base model.');
   }
+  const rolloutRefusal = trainingRolloutRefusal(
+    { types: [info.type], ecosystem: params.ecosystem },
+    features
+  );
+  if (rolloutRefusal) refuse(rolloutRefusal);
   if (params.continueFrom !== undefined) {
     refuse('continuing from a checkpoint is not supported for app training');
   }

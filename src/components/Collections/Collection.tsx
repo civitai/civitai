@@ -2,22 +2,20 @@ import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
+  Badge,
   Box,
   Button,
   Center,
   Divider,
   Group,
-  HoverCard,
-  Menu,
-  Popover,
   Progress,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -63,6 +61,7 @@ import {
   resolveImageCollectionSort,
   toSortMenuOptions,
 } from '~/components/Collections/collection-sort';
+import { useRememberCollectionFilters } from '~/components/Collections/useRememberCollectionFilters';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -94,11 +93,20 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
+import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import {
+  FlagRowProviders,
+  useCollectionFlagRace,
+  useFlagRow,
+} from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import type { ImageSort } from '~/server/common/enums';
+import { ArticleSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
@@ -133,6 +141,11 @@ const ModelCollection = ({
 }) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'models',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
@@ -146,6 +159,7 @@ const ModelCollection = ({
         status: undefined,
         earlyAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -232,6 +246,11 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
+  useRememberCollectionFilters({
+    type: 'images',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = resolveImageCollectionSort({
     querySort: query.sort,
     isContest: isContestCollection,
@@ -239,6 +258,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
+  const flagRow = useFlagRow(useCollectionFlagRace(collection.id), { past: true });
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
 
@@ -317,6 +337,12 @@ const ImageCollection = ({
     >
       <Stack gap="xs">
         <IsClient>
+          {flagRow && (
+            <Group justify="space-between" gap="xs">
+              <FlagRaceHeader summary={flagRow.summary} />
+              <FlagEnterButton event={flagRow.event} />
+            </Group>
+          )}
           {!isContestCollection && (
             <>
               <Group justify="flex-end" gap={4}>
@@ -378,7 +404,14 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
+            <FlagRowProviders row={flagRow}>
+              <ImagesInfinite
+                filters={filters}
+                disableStoreFilters
+                collectionId={collection.id}
+                hideHatTurf={collectionHidesHatTurf(collection)}
+              />
+            </FlagRowProviders>
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -389,6 +422,11 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'posts',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
@@ -441,6 +479,11 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { replace, query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'articles',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection
     ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
@@ -743,6 +786,11 @@ export function Collection({
                         <Title order={1} lineClamp={1} className={classes.title}>
                           {collection?.name ?? 'Loading...'}
                         </Title>
+                        {collection?.archivedAt && (
+                          <Badge color="gray" variant="light" radius="sm">
+                            Archived
+                          </Badge>
+                        )}
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (

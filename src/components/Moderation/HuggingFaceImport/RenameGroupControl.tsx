@@ -1,4 +1,5 @@
-import { ActionIcon, Button, Group, Popover, Stack, TextInput } from '@mantine/core';
+import { ActionIcon, Button, Group, Stack, TextInput } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconPencil } from '@tabler/icons-react';
 import { useState } from 'react';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

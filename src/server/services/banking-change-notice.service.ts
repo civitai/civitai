@@ -3,13 +3,18 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { isEmailConfigured } from '~/server/email/client';
 import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
+import type { Sleep } from '~/server/services/notice-ledger.service';
+import {
+  getNoticeSentIds,
+  sendLedgeredNotice,
+  withThrottleRetry,
+} from '~/server/services/notice-ledger.service';
 import { Flags } from '~/shared/utils/flags';
 
 const SENT_KEY = REDIS_SYS_KEYS.NOTICES.BANKING_CHANGE_SENT;
 const SENT_LEDGER_EXPIRES_AT = new Date('2027-03-01T00:00:00Z');
-const READ_CHUNK = 500;
 
 type CandidateRow = {
   id: number;
@@ -62,32 +67,26 @@ export async function getBankingChangeNoticeAudience() {
   };
 }
 
-async function getSentIds(ids: number[]) {
-  const sent = new Set<number>();
-  for (let i = 0; i < ids.length; i += READ_CHUNK) {
-    const chunk = ids.slice(i, i + READ_CHUNK);
-    const values = await sysRedis.hmGet(SENT_KEY, chunk.map(String));
-    values.forEach((value, j) => {
-      if (value) sent.add(chunk[j]);
-    });
-  }
-  return sent;
-}
-
 export async function sendBankingChangeNotice({
   dryRun,
   count,
   batchSize,
+  minIntervalMs,
+  sleep,
 }: {
   dryRun: boolean;
   count: number;
   batchSize: number;
+  minIntervalMs?: number;
+  sleep?: Sleep;
 }) {
   const { bankers, members, recipients } = await getBankingChangeNoticeAudience();
   const withEmail = recipients.filter((r) => !!r.email);
-  const alreadySent = await getSentIds(withEmail.map((r) => r.id));
+  const alreadySent = await getNoticeSentIds(
+    SENT_KEY,
+    withEmail.map((r) => r.id)
+  );
   const pending = withEmail.filter((r) => !alreadySent.has(r.id));
-  const batch = pending.slice(0, count);
   const summary = {
     bankers,
     members,
@@ -95,47 +94,28 @@ export async function sendBankingChangeNotice({
     noEmail: recipients.length - withEmail.length,
     alreadySent: alreadySent.size,
   };
-  if (dryRun) return { dryRun: true, ...summary, wouldSend: batch.length };
+  if (dryRun) return { dryRun: true, ...summary, wouldSend: Math.min(count, pending.length) };
   // sendEmail returns without sending when there is no transport, which would record users as sent.
   if (!isEmailConfigured()) throw new Error('Email is not configured on this server');
 
-  let sent = 0;
-  let skipped = 0;
-  const failedUserIds: number[] = [];
-  const stuckUserIds: number[] = [];
-  for (let i = 0; i < batch.length; i += batchSize) {
-    await Promise.all(
-      batch.slice(i, i + batchSize).map(async (user) => {
-        // The claim, not the earlier read, is what stops a concurrent or repeated run sending twice.
-        const claimed = await sysRedis.hSetNX(SENT_KEY, String(user.id), new Date().toISOString());
-        if (!claimed) {
-          skipped++;
-          return;
-        }
-        try {
-          await bankingChangeNoticeEmail.send({
+  const result = await sendLedgeredNotice({
+    ledgerKey: SENT_KEY,
+    expiresAt: SENT_LEDGER_EXPIRES_AT,
+    logName: 'banking-change-notice',
+    pending,
+    count,
+    batchSize,
+    minIntervalMs,
+    sleep,
+    send: (user) =>
+      withThrottleRetry(
+        () =>
+          bankingChangeNoticeEmail.send({
             to: user.email as string,
             username: user.username ?? 'there',
-          });
-          sent++;
-        } catch {
-          failedUserIds.push(user.id);
-          await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => stuckUserIds.push(user.id));
-        }
-      })
-    );
-  }
-  if (sent) await sysRedis.expireAt(SENT_KEY, SENT_LEDGER_EXPIRES_AT);
-
-  return {
-    dryRun: false,
-    ...summary,
-    sent,
-    skipped,
-    failed: failedUserIds.length,
-    failedUserIds,
-    // Failed AND still recorded as sent, so later runs skip them until they are unmarked.
-    stuckUserIds,
-    remaining: pending.length - sent - skipped,
-  };
+          }),
+        { sleep }
+      ),
+  });
+  return { dryRun: false, ...summary, ...result };
 }

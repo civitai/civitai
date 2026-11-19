@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as Caches from '~/server/redis/caches';
 import type * as TagService from '~/server/services/tag.service';
 import type { SessionUser } from '~/types/session';
@@ -8,6 +10,17 @@ import type { SessionUser } from '~/types/session';
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+  getKyselyWithoutLag: vi.fn(async () => (await import('~/server/db/kyselyDb')).kyselyRead),
+}));
+// The post detail is read through Kysely: the post row, then its user.
+const { getPostDetailRow, getUserWithCosmetics } = vi.hoisted(() => ({
+  getPostDetailRow: vi.fn(),
+  getUserWithCosmetics: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getPostDetailRow,
+  getUserWithCosmetics,
 }));
 vi.mock('~/server/services/tag.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TagService>()),
@@ -33,14 +46,24 @@ const givenPost = ({
 }: {
   publishedAt: Date | null;
   modelVersionId: number | null;
-}) =>
-  vi.mocked(dbMock.dbRead.post.findFirst).mockResolvedValue({
+}) => {
+  getPostDetailRow.mockResolvedValue({
     id: 1,
     publishedAt,
     modelVersionId,
-    user: { id: POST_OWNER },
+    publishedModelVersionId: null,
+    userId: POST_OWNER,
     tags: [],
-  } as never);
+  });
+  getUserWithCosmetics.mockResolvedValue({
+    id: POST_OWNER,
+    username: 'owner',
+    deletedAt: null,
+    image: null,
+    profilePictureId: null,
+    cosmetics: [],
+  });
+};
 
 const givenVersionOf = (model: { id: number; userId: number; name?: string } | null) =>
   vi.mocked(dbMock.dbRead.modelVersion.findUnique).mockResolvedValue(model && ({ model } as never));
@@ -59,7 +82,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt, modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER, name: 'My Model' });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.parentModelName).toBe('My Model');
@@ -71,7 +98,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: POST_OWNER });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.ownModelId).toBe(3);
@@ -81,7 +112,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(99, true) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(99, true),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.ownModelId).toBeNull();
@@ -90,7 +125,11 @@ describe('getPostEditDetail model', () => {
   it('has no model for a post without a version, and asks nothing', async () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: null });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBeNull();
     expect(post.parentModelName).toBeNull();
@@ -102,7 +141,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf(null);
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBeNull();
   });
@@ -111,7 +154,9 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER });
 
-    await expect(getPostEditDetail({ id: 1, user: viewer(MODEL_OWNER) })).rejects.toThrow();
+    await expect(
+      getPostEditDetail({ id: 1, user: viewer(MODEL_OWNER), servableLevels: allBrowsingLevelsFlag })
+    ).rejects.toThrow();
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
   });
 });

@@ -61,6 +61,7 @@ import {
   createModel3DReport,
   createModel3DReviewReport,
 } from '~/server/services/model3d-report.service';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 // All model3d procedures are gated by the `model3dFeed` flag. The feed flag
 // controls viewing + commenting + reviewing the Model3D entity itself; the
@@ -145,9 +146,7 @@ export const model3dRouter = router({
   ensureFromWorkflow: protectedProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(ensureModel3DFromWorkflowSchema)
-    .mutation(({ input, ctx }) =>
-      ensureModel3DFromWorkflow({ input, user: ctx.user, ctx })
-    ),
+    .mutation(({ input, ctx }) => ensureModel3DFromWorkflow({ input, user: ctx.user, ctx })),
   getLicenses: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .query(() => getModel3DLicenses()),
@@ -194,7 +193,13 @@ export const model3dRouter = router({
   getRelatedPosts: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DRelatedPostsSchema)
-    .query(({ input, ctx }) => getModel3DRelatedPosts({ input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getModel3DRelatedPosts({
+        input,
+        user: ctx.user,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, input.browsingLevel),
+      })
+    ),
 
   // Mod-only — used by the image-mod surface to surface a thumbnail-driven
   // affordance against the linked Model3D. Returns ownership info, so guard

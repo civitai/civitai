@@ -3,8 +3,8 @@
 // WHY this exists: `moderatePrompt` is an OUTBOUND HTTP call to a third-party classifier that runs
 // INLINE and SERIALLY on the generation submission path (`generateFromGraph` → `auditPromptServer` →
 // here). It is bounded by `AbortSignal.timeout(EXTERNAL_MODERATION_TIMEOUT_MS)` (default 5 s), and it
-// is FAIL-SOFT: the caller catches, logs, and proceeds with `flagged:false`. Those two properties
-// together are what made it invisible. Nothing timed it, nothing counted its failures, and because a
+// was FAIL-SOFT: the caller caught, logged, and proceeded with `flagged:false`. Those
+// two properties together are what made it invisible. Nothing timed it, nothing counted its failures, and because a
 // failure is swallowed, a fully-down moderation gateway and a healthy one look identical from every
 // instrument the app had — the only trace was a one-line Axiom event per failure, which carries no
 // duration and cannot be aggregated into a rate or a quantile.
@@ -151,7 +151,7 @@ export function clampExternalModerationSource(source: unknown): ExternalModerati
  * non-2xx from the classifier, a connection failure, a malformed body.
  *
  * The `timeout`/`error` split is the point of the label, not a refinement of it: from the caller's
- * side both are "fail soft, proceed unmoderated", but they cost completely different amounts of wall
+ * side both are "the classifier did not answer" (a 503 refusal at `auditPromptServer`), but they cost completely different amounts of wall
  * time (a full deadline vs. an immediate reject) and they call for opposite responses (re-size the
  * deadline vs. fix or route around the gateway).
  */
@@ -241,9 +241,9 @@ const durationHistogram = registerHistogram({
     'Duration (seconds) of an external prompt-moderation call (extModeration.moderatePrompt) as the ' +
     'CALLER experiences it: the whole outbound classifier request, including body parse. Labeled by ' +
     'source (generate|preset|remixAudit|other) + outcome (ok|error|timeout). The call sits inline and ' +
-    'serially on the generation submission path and is FAIL-SOFT, so a rising error rate here is ' +
-    'invisible to every user-facing signal — it means prompts are being generated with only the local ' +
-    'regex gate applied. outcome=timeout is the EXTERNAL_MODERATION_TIMEOUT_MS deadline firing, ' +
+    'serially on the generation submission path; a failed call refuses the submit with a 503 ' +
+    '(prompt check temporarily unavailable), so a rising error rate here is a rising rate of refused ' +
+    'submits. outcome=timeout is the EXTERNAL_MODERATION_TIMEOUT_MS deadline firing, ' +
     'branched off the abort error rather than off the duration: IDENTIFY CAPPED CALLS BY THAT LABEL, ' +
     'never by which bucket they land in — a capped call and one that answered a hair under the cap are ' +
     'arbitrarily close in duration, so no bucket edge separates them. Filter on source ' +

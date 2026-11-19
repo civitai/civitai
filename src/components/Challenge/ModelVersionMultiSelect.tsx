@@ -10,8 +10,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlus, IconX, IconCube } from '@tabler/icons-react';
 import { useMemo, useState, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';

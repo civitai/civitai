@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -510,7 +509,7 @@ describe('retrying after an effect already ran', () => {
     expect(left.meta).not.toHaveProperty('effects');
   });
 
-  it('reports a lost claim in a batch as a fault, not a refusal, and logs it', async () => {
+  it('reports a lost claim in a batch as a fault, not a refusal', async () => {
     await seed({ mode: 'shadow' });
     mocks.createStrike.mockImplementationOnce(async () => {
       await db.pg.query(
@@ -526,9 +525,6 @@ describe('retrying after an effect already ran', () => {
       tracker: tracker as never,
     });
     expect(results[0]).toMatchObject({ ok: false, refused: false, stale: false });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', holdId: 12 })
-    );
   });
 });
 

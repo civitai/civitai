@@ -6,6 +6,9 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the app publish review-queue gauges (collect()-based, one replica
+// read per minute, served from the last good snapshot).
+import '~/server/prom/app-publish-queue.metrics';
 // Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
 // cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
@@ -13,10 +16,7 @@ import '~/server/prom/resource-intent-cooc.metrics';
 // and held-snapshot gauges, and the weekly job's persisted heartbeats (KeyValue) and the newest
 // ready snapshot's createdAt, both cached for a minute and read only while the build flag is on.
 import '~/server/prom/resource-intent-tags.metrics';
-// Side-effect import: registers the session-resolution metrics, including the UNLABELLED
-// session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
-// the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
-// which is the exact ambiguity that counter exists to remove.
+// Side-effect import: registers the session-resolution metrics.
 import '~/server/auth/session-metrics';
 // Side-effect import: registers auth_internal_parity (collect()-based, probed at most every ten minutes).
 import '~/server/prom/auth-internal-parity.metrics';
@@ -72,16 +72,25 @@ import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared
 // The App Blocks document store: its review-storage counters and server-fault error series are
 // published at 0, and its enabled gauge is evaluated from the store's own predicate on every
 // scrape, so an alert on it fires on a pod that has served no storage traffic.
-import { seedAppBlockDocStoreMetrics } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  seedAppBlockDocStoreMetrics,
+  seedAppBlockMediaMetrics,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instance';
+import { seedAppBlockSourceMetrics } from '~/server/prom/app-block-source.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
+import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
+import { ensureRegisterFeedbackHqSyncMetrics } from '~/server/prom/feedback-hq-sync.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
 // Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
 // that module's graph never loads the redis client.
 import '~/server/prom/ingestion-gauge-store';
 import { ensureRegisterThreadCpuMetrics } from '~/server/prom/thread-cpu.metrics';
+// Seeds civitai_provider_download_total at 0 for every live provider. The providers are read on each
+// scrape, so a new one is seeded by the first scrape after it is minted.
+import { seedProviderDownloadMetrics } from '~/server/prom/provider-download.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -89,6 +98,8 @@ seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
+ensureRegisterAppReviewAutodeployMetrics();
+ensureRegisterFeedbackHqSyncMetrics();
 ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};
@@ -225,7 +236,10 @@ const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
+  seedAppBlockMediaMetrics();
+  seedAppBlockSourceMetrics();
   await refreshDocStoreEnabled();
+  await seedProviderDownloadMetrics();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import { page, userEvent } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -53,6 +55,8 @@ const mocks = vi.hoisted(() => ({
   assetsError: { current: false },
   // The moderator preview projection; `undefined` = the placeholder-art fallback.
   previewData: { current: undefined as unknown },
+  holds: { current: [] as unknown[] },
+  placeMutate: vi.fn(),
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -68,12 +72,20 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
+// The embedded listing card's creator is the shared `UserAvatar` (hover card), which reads user data
+// this suite's `trpc` stand-in does not serve. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -93,23 +105,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: {
-          listPendingRequests: { invalidate: mocks.invalidate },
-          listApprovedRequests: { invalidate: mocks.invalidate },
-          listRejectedRequests: { invalidate: mocks.invalidate },
-        },
-      }),
-      appListings: {
-        listPendingRequests: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listPendingRequests': {
           useQuery: () => ({
             data: { items: [OFFSITE_ROW], nextCursor: null },
             isLoading: false,
             error: null,
           }),
         },
-        getAssets: {
+        'appListings.getAssets': {
           useQuery: () => ({
             // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r', which is
             // HIGHER than the declared 'g' (mismatch case). Scan state is configurable
@@ -120,14 +125,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             error: null,
           }),
         },
-        approveExternalRequest: {
+        'appListings.approveExternalRequest': {
           useMutation: () => ({
             mutate: mocks.approveMutate,
             mutateAsync: vi.fn(),
             isPending: false,
           }),
         },
-        rejectExternalRequest: {
+        'appListings.rejectExternalRequest': {
           useMutation: () => ({
             mutate: mocks.rejectMutate,
             mutateAsync: vi.fn(),
@@ -136,11 +141,34 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         // Listing-preview projection — undefined data → the section falls back to the
         // placeholder-art layout preview (these tests assert checklist/scan behaviour).
-        getListingPreviewForReview: {
+        'blocks.listPublishRequestHolds': {
+          useQuery: () => ({ data: mocks.holds.current }),
+        },
+        'blocks.placePublishRequestHold': {
+          useMutation: () => ({ mutate: mocks.placeMutate, isPending: false }),
+        },
+        'blocks.clearPublishRequestHold': {
+          useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+        },
+        'appListings.getListingPreviewForReview': {
           useQuery: () => ({ data: mocks.previewData.current, isLoading: false, error: null }),
         },
       },
-    },
+      // Stable, so assertions on `mocks.invalidate` read the spy the component called.
+      {
+        useUtils: () => ({
+          blocks: {
+            listPublishRequestHolds: { invalidate: mocks.invalidate },
+            listPendingRequests: { invalidate: mocks.invalidate },
+          },
+          appListings: {
+            listPendingRequests: { invalidate: mocks.invalidate },
+            listApprovedRequests: { invalidate: mocks.invalidate },
+            listRejectedRequests: { invalidate: mocks.invalidate },
+          },
+        }),
+      }
+    ),
   };
 });
 
@@ -154,6 +182,8 @@ beforeEach(() => {
   mocks.assetsData.current = { ...DEFAULT_ASSETS };
   mocks.assetsError.current = false;
   mocks.previewData.current = undefined;
+  mocks.holds.current = [];
+  mocks.placeMutate.mockClear();
 });
 
 /**
@@ -953,5 +983,75 @@ describe('OffsiteReviewModal — civitai.com / civitai.red media split', () => {
     expect(mocks.approveMutate).toHaveBeenCalledWith(
       expect.objectContaining({ mediaSplit: 'rate-mature' })
     );
+  });
+});
+
+describe('OffsiteReviewModal — review holds', () => {
+  const HOLD = {
+    id: 7,
+    slug: 'ci-ext-app',
+    publishRequestId: 'req-1',
+    requestKind: 'listing',
+    placedByUserId: 3,
+    placedByUsername: 'mod-agent',
+    placedByLabel: 'code-check',
+    reason: 'security check still running',
+    createdAt: new Date(),
+    clearedAt: null,
+    clearedByUserId: null,
+    clearedKind: null,
+    clearedReason: null,
+  };
+
+  test('🔴 with an open hold, Approve stays disabled until an override reason is typed, which it then sends with the hold ids', async () => {
+    mocks.holds.current = [HOLD];
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect.element(page.getByText('security check still running')).toBeInTheDocument();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const confirm = page.getByTestId('apps-offsite-approve-confirm');
+    await expect.element(confirm).toBeDisabled();
+    const reason = page.getByTestId('apps-review-hold-override-reason');
+    await reason.fill('too short');
+    await expect.element(confirm).toBeDisabled();
+    await reason.fill('  checked by hand, a false alarm  ');
+    await expect.element(confirm).toBeEnabled();
+    await confirm.click();
+    expect(mocks.approveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        publishRequestId: 'req-1',
+        holdOverrideReason: 'checked by hand, a false alarm',
+        holdOverrideIds: [7],
+      })
+    );
+  });
+
+  test('with no open hold, approve sends no override', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-approve-open').click();
+    await page.getByTestId('apps-offsite-approve-confirm').click();
+    const vars = mocks.approveMutate.mock.calls[0][0];
+    expect(vars).not.toHaveProperty('holdOverrideReason');
+    expect(vars).not.toHaveProperty('holdOverrideIds');
+  });
+
+  test('🔴 placing a hold needs a label and a reason, and places it on this listing request', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-review-hold-add').click();
+    const place = page.getByTestId('apps-review-hold-place');
+    await expect.element(place).toBeDisabled();
+    await page.getByRole('textbox', { name: 'Label' }).fill('code-check');
+    await expect.element(place).toBeDisabled();
+    await page.getByTestId('apps-review-hold-reason').fill('security check still running');
+    await expect.element(place).toBeEnabled();
+    await place.click();
+    expect(mocks.placeMutate).toHaveBeenCalledWith({
+      publishRequestId: 'req-1',
+      kind: 'listing',
+      label: 'code-check',
+      reason: 'security check still running',
+    });
   });
 });

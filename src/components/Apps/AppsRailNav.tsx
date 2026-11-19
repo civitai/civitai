@@ -1,4 +1,5 @@
-import { Group, Text, Tooltip } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import React, { type ReactNode } from 'react';
 import type { AppsSection } from '~/components/Apps/apps-sections';

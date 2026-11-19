@@ -2,12 +2,13 @@ import { Alert, Collapse, Group, Stack, Text, Textarea, UnstyledButton } from '@
 import { useDisclosure, useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   isSensitiveTokenScope,
   tokenScopeKeyByBit,
-  tokenScopeLabels,
+  tokenScopeLabel,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 
@@ -47,7 +48,7 @@ export function DerivedScopesDisclosure({
   forceShowErrors = false,
 }: {
   /** The derived requested-scope mask (= the selected client's `allowedScopes`). */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (prefilled + edited here). */
   justifications: Record<string, string>;
   onJustificationChange: (key: string, text: string) => void;
@@ -65,7 +66,8 @@ export function DerivedScopesDisclosure({
   const [otherOpened, { toggle: toggleOther }] = useDisclosure(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
-  const scopes = tokenScopeMaskToList(requestedScopes);
+  // The mask arrives as a number (the client's scope from tRPC); widened before it is decoded.
+  const scopes = tokenScopeMaskToList(BigInt(requestedScopes));
   const sensitive = scopes.filter((s) => isSensitiveTokenScope(s.bit));
   const nonSensitive = scopes.filter((s) => !isSensitiveTokenScope(s.bit));
 
@@ -95,7 +97,7 @@ export function DerivedScopesDisclosure({
                 <Group gap={6} wrap="nowrap">
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitive.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
@@ -108,7 +110,7 @@ export function DerivedScopesDisclosure({
                   const isEmpty = text.trim().length === 0;
                   const showError = isEmpty && (forceShowErrors || touched[justificationKey]);
                   return (
-                    <div key={bit}>
+                    <div key={key}>
                       <Group gap={8} wrap="nowrap" align="center" mb={4}>
                         <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                           {key}
@@ -168,7 +170,7 @@ export function DerivedScopesDisclosure({
                     }}
                   />
                   <Text size="sm" fw={500}>
-                    Other permissions ({nonSensitive.length})
+                    {PERMISSION_GROUP_LABELS.other} ({nonSensitive.length})
                   </Text>
                   <Text size="xs" c="dimmed">
                     {otherOpened ? 'Hide' : 'Show'}
@@ -186,13 +188,13 @@ export function DerivedScopesDisclosure({
                     Standard permissions — no justification needed.
                   </Text>
                   {nonSensitive.map(({ bit, key, label }) => (
-                    <Group key={bit} gap={8} wrap="nowrap" align="center">
+                    <Group key={key} gap={8} wrap="nowrap" align="center">
                       <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                         {key}
                       </Text>
-                      {(label || tokenScopeLabels[bit]) && (
+                      {(label || tokenScopeLabel(bit)) && (
                         <Text size="xs" c="dimmed">
-                          {label || tokenScopeLabels[bit]}
+                          {label || tokenScopeLabel(bit)}
                         </Text>
                       )}
                     </Group>

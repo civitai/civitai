@@ -1328,6 +1328,175 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     });
   });
 
+  describe('collection schemas', () => {
+    // Bounds and names distinct from every other literal here: a 2-7 character title, tags
+    // from {x, y}, and a property whose name needs both JSON Pointer escapes.
+    const NOTE_SCHEMA = {
+      type: 'object',
+      required: ['title'],
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string', minLength: 2, maxLength: 7 },
+        tags: { type: 'array', items: { enum: ['x', 'y'] } },
+        'a/b~c': { type: 'integer' },
+      },
+    };
+    const NOTES: DocCollection = {
+      name: 'notes',
+      config: decl({ visibility: 'private', schema: NOTE_SCHEMA }),
+    };
+    const NOTES_UNCHECKED: DocCollection = {
+      name: 'notes',
+      config: decl({ visibility: 'private' }),
+    };
+    const PUB = (schema?: Record<string, unknown>): DocCollection => ({
+      name: 'pubnotes',
+      config: decl({
+        visibility: 'shared',
+        write: 'own',
+        counters: ['views'],
+        marks: ['vote'],
+        ...(schema ? { schema } : {}),
+      }),
+    });
+    const docCount = async (app: string) =>
+      Number(
+        (await h.raw(`SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`, [app]))[0].n
+      );
+
+    it('accepts a conforming create and put, private and shared, where a violating body is refused', async () => {
+      const app = freshApp('schema-ok');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      const put = await store.put(me, NOTES, 'n1', { title: 'Lamp', tags: ['x', 'y'], 'a/b~c': 3 });
+      expect(put.data).toEqual({ title: 'Lamp', tags: ['x', 'y'], 'a/b~c': 3 });
+      const created = await store.create(me, PUB(NOTE_SCHEMA), { title: 'Moth' });
+      expect(created.version).toBe(1);
+      expect((await store.put(me, PUB(NOTE_SCHEMA), created.key, { title: 'Moths' })).version).toBe(
+        2
+      );
+      // Control: the same collection does check.
+      await expectCode(
+        store.put(me, NOTES, 'n2', { title: 'Lamp', tags: ['z'] }),
+        'schema_violation'
+      );
+    });
+
+    it('refuses a violating write with schema_violation naming the first failing pointer, and stores nothing', async () => {
+      const app = freshApp('schema-bad');
+      const me = ctx(app, NS_PROD, VIEWER_1);
+      const cases: [Record<string, unknown>, string, string, string][] = [
+        [
+          { title: 'Lamp', tags: ['x', 'q'] },
+          '/tags/1',
+          'enum',
+          "must be one of the schema's enum values",
+        ],
+        [{ tags: [] }, '/title', 'required', 'is required'],
+        [{ title: 'Lamp', 'a/b~c': 1.5 }, '/a~1b~0c', 'type', 'expected integer, got number'],
+        [{ title: 'L' }, '/title', 'minLength', 'must be at least 2 characters'],
+        [{ title: 'Lanterns' }, '/title', 'maxLength', 'must be at most 7 characters'],
+        // Own keys in ascending order: `aaa` is reached before `zzz`.
+        [
+          { zzz: 1, title: 'Lamp', aaa: 2 },
+          '/aaa',
+          'additionalProperties',
+          'is not a property the schema allows',
+        ],
+      ];
+      for (const [data, pointer, keyword, reason] of cases) {
+        const err = await expectCode(store.put(me, NOTES, 'n1', data), 'schema_violation');
+        expect(err.message).toBe(
+          `document does not match the schema of collection notes at "${pointer}": ${reason}`
+        );
+        expect(err.details).toEqual({ collection: 'notes', pointer, keyword });
+      }
+      const created = await expectCode(
+        store.create(me, PUB(NOTE_SCHEMA), { title: 42 }),
+        'schema_violation'
+      );
+      expect(created.details).toEqual({
+        collection: 'pubnotes',
+        pointer: '/title',
+        keyword: 'type',
+      });
+      expect(await store.get(me, NOTES, 'n1')).toBeNull();
+      expect(await docCount(app)).toBe(0);
+    });
+
+    it('an update that would leave the document invalid is refused, and the stored version is kept', async () => {
+      const me = ctx(freshApp('schema-upd'), NS_PROD, VIEWER_1);
+      await store.put(me, NOTES, 'n1', { title: 'Lamp', tags: ['x'] });
+      // What a client-side merge that removed `title` sends: the whole resulting body.
+      const err = await expectCode(
+        store.put(me, NOTES, 'n1', { tags: ['x', 'y'] }),
+        'schema_violation'
+      );
+      expect(err.details).toEqual({ collection: 'notes', pointer: '/title', keyword: 'required' });
+      const stored = await store.get(me, NOTES, 'n1');
+      expect(stored?.version).toBe(1);
+      expect(stored?.data).toEqual({ title: 'Lamp', tags: ['x'] });
+    });
+
+    it('a collection with no schema accepts every body the schema refuses', async () => {
+      const me = ctx(freshApp('schema-none'), NS_PROD, VIEWER_1);
+      const bodies = [
+        { title: 'Lamp', tags: ['q'] },
+        { tags: [] },
+        { title: 9, extra: { deep: [1] } },
+      ];
+      for (const [i, data] of bodies.entries()) {
+        await expectCode(store.put(me, NOTES, `k${i}`, data), 'schema_violation');
+        expect((await store.put(me, NOTES_UNCHECKED, `k${i}`, data)).data).toEqual(data);
+      }
+    });
+
+    it('does not check counters or marks, even on a document the schema would refuse', async () => {
+      const app = freshApp('schema-tally');
+      const author = ctx(app, NS_PROD, VIEWER_1);
+      const reader = ctx(app, NS_PROD, VIEWER_2);
+      // Written before the collection declared a schema (a later manifest added it).
+      await store.put(author, PUB(), 'old', { legacy: true });
+      expect(await store.increment(reader, PUB(NOTE_SCHEMA), 'old', 'views', 3)).toEqual({
+        value: 3,
+      });
+      expect(await store.mark(reader, PUB(NOTE_SCHEMA), 'old', 'vote')).toEqual({
+        marked: true,
+        count: 1,
+      });
+      expect(await store.unmark(reader, PUB(NOTE_SCHEMA), 'old', 'vote')).toEqual({
+        marked: false,
+        count: 0,
+      });
+      // Control: a document write to the same collection is checked.
+      await expectCode(
+        store.put(author, PUB(NOTE_SCHEMA), 'old', { legacy: true }),
+        'schema_violation'
+      );
+      expect((await store.get(reader, PUB(NOTE_SCHEMA), 'old'))?.data).toEqual({ legacy: true });
+    });
+
+    it('a changed schema applies at once, and changing it back restores the old rule', async () => {
+      const me = ctx(freshApp('schema-change'), NS_PROD, VIEWER_1);
+      const tighter: DocCollection = {
+        name: 'notes',
+        config: decl({
+          visibility: 'private',
+          schema: {
+            ...NOTE_SCHEMA,
+            properties: { ...NOTE_SCHEMA.properties, title: { type: 'string', maxLength: 3 } },
+          },
+        }),
+      };
+      expect((await store.put(me, NOTES, 'n1', { title: 'Lamp' })).version).toBe(1);
+      const err = await expectCode(
+        store.put(me, tighter, 'n1', { title: 'Lamp' }),
+        'schema_violation'
+      );
+      expect(err.details).toEqual({ collection: 'notes', pointer: '/title', keyword: 'maxLength' });
+      expect((await store.put(me, NOTES, 'n1', { title: 'Lamp' })).version).toBe(2);
+    });
+  });
+
   describe('size, shape and the stored unit', () => {
     it('the cap is exactly 65536 stored bytes, enforced by the database even when the wire size fits', async () => {
       const me = ctx(freshApp('cap'), NS_PROD, VIEWER_1);

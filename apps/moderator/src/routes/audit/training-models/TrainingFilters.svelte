@@ -11,6 +11,7 @@
     filters,
   }: {
     filters: {
+      modelId: string;
       username: string;
       workflowId: string;
       from?: string;
@@ -86,12 +87,25 @@
     PUBLISHING.find(([v]) => v === filters.publishing)?.[1] ?? 'All models'
   );
   const active = $derived(
-    !!(filters.username || filters.workflowId || filters.from || filters.to) ||
+    !!(filters.modelId || filters.username || filters.workflowId || filters.from || filters.to) ||
       filters.publishing !== 'all'
   );
 </script>
 
 <form onsubmit={submit} class="mb-5 flex flex-wrap items-end gap-3">
+  {#if filters.modelId}
+    <div class="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
+      <span>Model <span class="font-mono">{filters.modelId}</span></span>
+      <button
+        type="button"
+        class="min-h-8 min-w-8 rounded text-dark-2 hover:text-foreground"
+        aria-label="Show all models"
+        onclick={() => navigate({ modelId: '' })}
+      >
+        ✕
+      </button>
+    </div>
+  {/if}
   <div>
     <Label for="tm-username" class="text-xs text-dark-2">Username</Label>
     <Input id="tm-username" bind:value={() => username, typed((v) => (draftUsername = v))} class="mt-1 w-52" placeholder="Exact username" />

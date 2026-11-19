@@ -16,7 +16,10 @@ const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
 }));
 
 // Not a held-gallery test: no model is held.
-vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: async () => undefined }));
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: async () => undefined,
+  isModelGalleryWithheld: async () => false,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: getAllImagesMock,
@@ -175,6 +178,19 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     // unpublished carve-out, which cannot match rows scoped to someone else.
     expect(getAllImagesIndexMock.mock.calls[0][0].publishedOnly).toBeUndefined();
     expect(result.source).toBe('meili');
+  });
+
+  // ids alone must reach the DB for a non-owner; the index feed ignores ids and returns the creator's newest.
+  it('serves an ids query from the database for a viewer who is not the owner', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: { ...(pickerInput as object), userId: 999, ids: [1, 2] } as never,
+      ctx,
+    });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(getAllImagesMock.mock.calls[0][0].ids).toEqual([1, 2]);
+    expect(result.source).toBe('db');
   });
 
   it('leaves a broad feed on the index when only publishedOnly is set', async () => {

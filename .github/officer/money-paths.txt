@@ -1,0 +1,69 @@
+# money-paths.txt: money, auth and gating code. An officer PR may change only the TESTS of a
+# file whose path matches a pattern here (`*.test.*` / `*.spec.*`); any other change, addition,
+# deletion or rename away from a matching path fails .github/workflows/officer-pr-check.yml.
+#
+# Read from the PR's BASE commit only (fail closed if missing or empty), like
+# forbidden-paths.txt, so a PR cannot shrink the list it is judged by. This file is itself
+# forbidden to officer PRs (.github).
+#
+# The set: the ci-watch officer charter's `*buzz*`, `*stripe*`, `*paddle*`, `*payment*`
+# services, and the hosted review gate's sensitive-path topics (auth, money, PII, NSFW and
+# moderation gating), then the request-auth core and the named money and gating domains in
+# the second block, which are scoped more precisely. Broad on purpose: a false positive costs an officer an escalation to a
+# human, a false negative lets an unreviewed money or auth change through.
+#
+# Grammar: forbidden-paths.txt's, but matched CASE-INSENSITIVELY (`*buzz*` matches
+# src/components/BuzzButton.tsx). A pattern without '/' is tried against every segment, so a
+# directory name matches too (src/server/services/buzz/x.ts).
+*auth*
+*session*
+*permission*
+*buzz*
+*payment*
+*stripe*
+*paddle*
+*billing*
+*purchase*
+*payout*
+*withdraw*
+*subscription*
+*email*
+*pii*
+*nsfw*
+*browsing-level*
+*browsinglevel*
+*moderat*
+
+# The request-auth core: procedure builders (protected, moderator, guarded), the tRPC
+# middleware, the request context, and the API-route auth wrappers.
+src/server/trpc.ts
+src/server/middleware.trpc.ts
+src/server/createContext.ts
+src/server/utils/endpoint-helpers.ts
+# Credentials and their revocation.
+*api-key*
+*apikey*
+*access-token*
+*accesstoken*
+*revocation*
+*revoke-user-token*
+# Payment providers, payouts and redeemable value.
+*coinbase*
+*tipalti*
+*creator-program*
+*creatorprogram*
+*redeemable*
+*refund*
+src/pages/api/v1/blocks/tip*
+# Bounties and the model vault hold or move Buzz: their server code and API routes.
+src/server/**/*bount*
+src/server/**/*vault*
+src/pages/api/**/*bount*
+src/pages/api/**/*bount*/**
+src/pages/api/**/*vault*
+src/pages/api/**/*vault*/**
+packages/**/*bount*
+# CSAM handling and moderator gates and bans.
+*csam*
+*mod-gate*
+*ban-user*

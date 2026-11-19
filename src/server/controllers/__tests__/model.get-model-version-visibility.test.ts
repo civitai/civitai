@@ -1,13 +1,21 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as ModelService from '~/server/services/model.service';
 import type * as UserService from '~/server/services/user.service';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 
-const { getModel, amIBlockedByUser } = vi.hoisted(() => ({
+const { getModel, amIBlockedByUser, ownerPosts } = vi.hoisted(() => ({
   getModel: vi.fn(),
   amIBlockedByUser: vi.fn(),
+  ownerPosts: vi.fn(),
+}));
+
+// The owner's posts on the visible versions (one Kysely read).
+vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads3>()),
+  listModelPagePosts: ownerPosts,
 }));
 
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
@@ -54,23 +62,37 @@ const VIEWERS = {
 } as const;
 type ViewerKey = keyof typeof VIEWERS;
 
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.MediaRead,
+};
+const FULL_KEY = { ...SCOPED_KEY, tokenScope: TokenScope.Full };
+const CREDENTIALS = { session: {}, scopedKey: SCOPED_KEY, fullKey: FULL_KEY } as const;
+type CredentialKey = keyof typeof CREDENTIALS;
+
 const STOP = new Error('stop after the visible-version read');
 
-function arrange(modelStatus: ModelStatus) {
+function arrange(modelStatus: ModelStatus, poi = false) {
   getModel.mockResolvedValue({
     id: 1,
+    poi,
     status: modelStatus,
     user: { id: OWNER_ID },
     modelVersions: ALL.map((key) => ({ id: idOf(key), ...VERSIONS[key] })),
   });
   amIBlockedByUser.mockResolvedValue(false);
-  dbMock.dbRead.post.findMany.mockRejectedValue(STOP);
+  ownerPosts.mockRejectedValue(STOP);
 }
 
-async function visibleVersions(viewer: ViewerKey): Promise<VersionKey[] | 'not-found'> {
+async function visibleVersions(
+  viewer: ViewerKey,
+  credential: CredentialKey = 'session'
+): Promise<VersionKey[] | 'not-found'> {
   const result = await getModelHandler({
     input: { id: 1 },
-    ctx: { user: VIEWERS[viewer], features: {} },
+    ctx: { user: VIEWERS[viewer], features: {}, ...CREDENTIALS[credential] },
   } as never).then(
     () => {
       throw new Error('handler was expected to stop at the post read');
@@ -79,8 +101,8 @@ async function visibleVersions(viewer: ViewerKey): Promise<VersionKey[] | 'not-f
   );
   if (result instanceof TRPCError && result.code === 'NOT_FOUND') return 'not-found';
   if (!(result instanceof Error) || result.message !== STOP.message) throw result;
-  expect(dbMock.dbRead.post.findMany).toHaveBeenCalledTimes(1);
-  const ids: number[] = dbMock.dbRead.post.findMany.mock.calls[0][0].where.modelVersionId.in;
+  expect(ownerPosts).toHaveBeenCalledTimes(1);
+  const ids: number[] = ownerPosts.mock.calls[0][1].modelVersionIds;
   return ids.map((id) => ALL[id - 1]);
 }
 
@@ -109,5 +131,34 @@ describe('getModelHandler version visibility', () => {
   ])('draft model: %s gets %j', async (viewer, expected) => {
     arrange(ModelStatus.Draft);
     expect(await visibleVersions(viewer)).toEqual(expected);
+  });
+
+  it.each<[CredentialKey, VersionKey[]]>([
+    ['scopedKey', PUBLIC_VIEW],
+    ['fullKey', ALL],
+  ])('published model: the owner on a %s sees exactly %j', async (credential, expected) => {
+    arrange(ModelStatus.Published);
+    expect(await visibleVersions('owner', credential)).toEqual(expected);
+  });
+
+  it.each<[CredentialKey, VersionKey[] | 'not-found']>([
+    ['scopedKey', 'not-found'],
+    ['fullKey', ALL],
+  ])('draft model: the owner on a %s gets %j', async (credential, expected) => {
+    arrange(ModelStatus.Draft);
+    expect(await visibleVersions('owner', credential)).toEqual(expected);
+  });
+
+  it('a moderator whose key kept moderator rights sees every version', async () => {
+    arrange(ModelStatus.Draft);
+    expect(await visibleVersions('moderator', 'scopedKey')).toEqual(ALL);
+  });
+
+  it.each<[CredentialKey, VersionKey[] | 'not-found']>([
+    ['scopedKey', 'not-found'],
+    ['fullKey', ALL],
+  ])('poi model: the owner on a %s gets %j', async (credential, expected) => {
+    arrange(ModelStatus.Published, true);
+    expect(await visibleVersions('owner', credential)).toEqual(expected);
   });
 });

@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import {
   readActiveDonationGoalsViaKysely,
@@ -49,11 +48,9 @@ export const publicDonationGoalsLookupFn = async (
   ids: number[],
   fromWrite?: boolean
 ): Promise<Record<number, ModelVersionPublicDonationGoalCacheItem>> => {
-  // The replica reads (never the primary's) go through Kysely when this is on.
-  const replica =
-    !fromWrite && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? (await loadKyselyDb()).kyselyRead
-      : undefined;
+  // The replica reads go through Kysely; the primary's (fromWrite, and the fallback below) through
+  // Prisma.
+  const replica = !fromWrite ? (await loadKyselyDb()).kyselyRead : undefined;
 
   // fromWrite (refresh() right after a write) checks existence on the primary too: a version created
   // moments ago may not be on the replica, and an empty result here makes refresh() delete the entry.

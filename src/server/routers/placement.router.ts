@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import {
   actOnRemixGallerySubmissionSchema,
   declineOutOfBandRemixGallerySubmissionsSchema,
@@ -18,6 +19,7 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerTracksSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -45,8 +47,10 @@ import {
   getPlacementSpaceRow,
   getPlacementSpaces,
   resolvePlacementSpaceFor,
+  resolvePlacementSpaceForDisplay,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import {
   countPendingPlacementsFrom,
   isPlacementSuspended,
@@ -65,6 +69,7 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -181,7 +186,9 @@ function assertStorylinesEnabled(ctx: Context) {
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
     assertPromotionSurfaceReadable(ctx, input.surface);
-    return resolvePlacementSpaceFor(input);
+    return isFliptSync(FLIPT_FEATURE_FLAGS.PLACEMENT_SPACE_READ_CACHE) === true
+      ? resolvePlacementSpaceForDisplay(input)
+      : resolvePlacementSpaceFor(input);
   }),
 
   // The row for one level, so a toggle shows what that level is set to rather
@@ -279,6 +286,16 @@ export const placementRouter = router({
       })
     ),
 
+  getStickerTracks: publicProcedure.input(getStickerTracksSchema).query(({ input, ctx }) =>
+    ctx.features.stickerVideoTracks
+      ? getStickerPlacementTracks({
+          imageId: input.imageId,
+          viewerId: ctx.user?.id,
+          isModerator: ctx.user?.isModerator,
+        })
+      : []
+  ),
+
   // Derived from the ledger, never from `Placement.status` — that column says a
   // placement was processed, not that anyone was paid.
   getSettlementStates: protectedProcedure
@@ -293,6 +310,8 @@ export const placementRouter = router({
    */
   createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
     assertPlacementEnabled(ctx);
+    if (input.track && !ctx.features.stickerVideoTracks)
+      throw throwAuthorizationError('placement: moving stickers are not available yet');
     return createStickerPlacement({
       ...input,
       // After the spread, and the schema has no `placerId` to strip anyway —
@@ -452,6 +471,7 @@ export const placementRouter = router({
       // preferences — a gallery is other people's content on someone else's
       // page, so it is exactly where a block should still bite.
       user: ctx.user ?? undefined,
+      ...credentialViews(ctx),
     })
   ),
 
@@ -466,6 +486,10 @@ export const placementRouter = router({
       getRemixGalleryCardSummaries({
         imageIds: input.imageIds,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        storylinesFor:
+          ctx.features.storylines && ctx.features.remixGallery
+            ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
+            : undefined,
       })
     ),
 

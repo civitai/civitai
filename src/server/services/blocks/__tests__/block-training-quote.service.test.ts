@@ -160,9 +160,15 @@ describe('resolveBlockTrainingRun — the gates', () => {
   });
 
   it('refuses a base model blocked from training', () => {
-    expect(() => resolve({ status: { available: true, blockedModels: ['sdxl'] } })).toThrow(
-      'blocked from training'
-    );
+    expect(() =>
+      resolve({
+        status: {
+          available: true,
+          blockedModels: ['sdxl'],
+          blockedModelReasons: { sdxl: 'Provider outage.' },
+        },
+      })
+    ).toThrow('SDXL is temporarily unavailable for training. Provider outage.');
     // Control: a different blocked model does not refuse this one.
     expect(() => resolve({ status: { available: true, blockedModels: ['pony'] } })).not.toThrow();
   });
@@ -270,6 +276,7 @@ describe('the quote record', () => {
   });
 });
 
+// The run generation is on the cache cluster.
 describe('readTrainingRunGeneration', () => {
   const owner = { userId: 42, appBlockId: 'apb_1' };
 
@@ -280,18 +287,23 @@ describe('readTrainingRunGeneration', () => {
     ['1.5', 0],
     ['junk', 0],
   ])('reads %s as %s', async (raw, expected) => {
-    redisMock.sysRedis.get.mockResolvedValueOnce(raw);
+    redisMock.redis.get.mockResolvedValueOnce(raw);
     expect(await readTrainingRunGeneration(owner, body())).toBe(expected);
   });
 
   it('is kept per viewer and app: another viewer’s identical body reads another counter', async () => {
-    redisMock.sysRedis.get.mockReset();
-    redisMock.sysRedis.get.mockResolvedValue(null);
+    redisMock.redis.get.mockReset();
+    redisMock.redis.get.mockResolvedValue(null);
     await readTrainingRunGeneration(owner, body());
     await readTrainingRunGeneration({ ...owner, userId: 7 }, body());
     await readTrainingRunGeneration({ ...owner, appBlockId: 'apb_2' }, body());
-    const keys = redisMock.sysRedis.get.mock.calls.map((c) => c[0]);
+    const keys = redisMock.redis.get.mock.calls.map((c) => c[0]);
     expect(new Set(keys).size).toBe(3);
     expect(keys[0]).toBe(`system:blocks:training-runs:42:apb_1:${hashTrainingBody(body())}`);
+    expect(
+      redisMock.sysRedis.get.mock.calls.filter(([k]: unknown[]) =>
+        String(k).startsWith('system:blocks:training-runs:')
+      )
+    ).toEqual([]);
   });
 });

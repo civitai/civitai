@@ -154,6 +154,20 @@ describe('YuE2', () => {
     expect(music.input).not.toHaveProperty('abc');
   });
 
+  it('submits instrumental Custom requests without lyrics and keeps score planning enabled', async () => {
+    const [music] = await submit({ instrumental: true, lyrics: undefined, yue2Mode: 'off' });
+    expect(music.input).toMatchObject({ instrumental: true, lyrics: '', mode: 'full' });
+  });
+
+  it('sends a Simple instrumental with empty lyrics, whatever the draft writes', async () => {
+    const [, music] = await submit({
+      yue2MusicMode: 'simple',
+      instrumental: true,
+      prompt: 'A quiet piano instrumental',
+    });
+    expect(music.input).toMatchObject({ instrumental: true, lyrics: '', mode: 'full' });
+  });
+
   it('sends required text and the live contract defaults without a resource override', async () => {
     const steps = await submit();
     expect(steps).toEqual([

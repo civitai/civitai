@@ -1,9 +1,12 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
-import { invalidateManyImageExistence } from '~/server/services/image.service';
+import { leavePrivateWithHeldVerdict } from '~/server/services/model.service';
+import { deleteImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { numericString } from '~/utils/zod-helpers';
@@ -24,14 +27,16 @@ export default WebhookEndpoint(async (req, res) => {
     return;
   }
 
-  await dbWrite.model.update({
-    where: { id: params.id },
-    data: {
-      status: ModelStatus.Draft,
-      availability: Availability.Public,
-      lastVersionAt: null,
-    },
-  });
+  await leavePrivateWithHeldVerdict(params.id, (tx) =>
+    tx.model.update({
+      where: { id: params.id },
+      data: {
+        status: ModelStatus.Draft,
+        availability: Availability.Public,
+        lastVersionAt: null,
+      },
+    })
+  );
 
   const modelVersions = await dbWrite.modelVersion.findMany({
     where: { modelId: params.id },
@@ -50,30 +55,28 @@ export default WebhookEndpoint(async (req, res) => {
     where: { modelVersionId: { in: modelVersions.map((v) => v.id) } },
   });
 
-  // Images first, by id: the post delete only unlinks them. A held owner's rows are left, and the
-  // comment threads of the rows that go are detached when they hold a held author's comment.
+  // Images first, by id: the post delete only unlinks them. A held owner's rows are left.
   const postIds = posts.map((p) => p.id);
-  if (postIds.length)
-    await dbWrite.$transaction([
-      dbWrite.$executeRaw`
-        WITH doomed AS (
-          SELECT i.id FROM "Image" i
-          WHERE i."postId" = ANY(${postIds}::int[])
-            AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
-        ),
-        ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
-        DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
-      `,
-      dbWrite.$executeRaw`
-        WITH doomed AS (
-          SELECT p.id FROM "Post" p
-          WHERE p.id = ANY(${postIds}::int[])
-            AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
-        ),
-        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
-        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-      `,
-    ]);
+  if (postIds.length) {
+    const actor = { system: 'reset-training-model' };
+    const images = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Image" WHERE "postId" = ANY(${postIds}::int[])
+    `;
+    await deleteImages(
+      images.map((i) => i.id),
+      {
+        actor,
+        onlyWhere: Prisma.sql`NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}`,
+        updatePosts: false,
+        keepStoredFiles: true,
+      }
+    );
+    await deletePostRows(kyselyOver(dbWrite), {
+      ids: postIds,
+      actor,
+      where: fromPrismaSql(Prisma.sql`NOT ${accountHoldSql(Prisma.raw('"Post"."userId"'), true)}`),
+    });
+  }
 
   res.status(200).json({ finished: true });
 });

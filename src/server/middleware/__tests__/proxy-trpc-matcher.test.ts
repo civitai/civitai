@@ -1,8 +1,11 @@
-import * as pageStaticInfo from 'next/dist/build/analysis/get-page-static-info';
-import { normalizeLocalePath } from 'next/dist/shared/lib/i18n/normalize-locale-path';
-import { addPathPrefix } from 'next/dist/shared/lib/router/utils/add-path-prefix';
 import { describe, expect, it } from 'vitest';
 import { config } from '~/proxy';
+import {
+  getMiddlewareMatchers,
+  matchingSources,
+  NO_I18N,
+  PRODUCTION,
+} from '~/server/middleware/__tests__/next-proxy-matcher';
 
 /**
  * Next must never invoke the proxy for `/api/trpc/*`: the tRPC route applies the API policy itself
@@ -20,48 +23,8 @@ import { config } from '~/proxy';
  * checked, so the guard holds whether or not `i18n` stays in `next.config.mjs`.
  */
 
-type CompiledMatcher = { regexp: string; originalSource: string };
-type I18n = { locales: string[]; defaultLocale: string };
-type NextConfigSubset = { i18n?: I18n; basePath?: string };
-
-// Not in Next's published types, so typed here. The `typeof` check below fails loudly if it moves.
-const { getMiddlewareMatchers } = pageStaticInfo as unknown as {
-  getMiddlewareMatchers: (matchers: string[], nextConfig: NextConfigSubset) => CompiledMatcher[];
-};
-
-// next.config.mjs: `i18n: { locales: ['en'], defaultLocale: 'en' }`, no basePath.
-const PRODUCTION: NextConfigSubset = { i18n: { locales: ['en'], defaultLocale: 'en' } };
-const NO_I18N: NextConfigSubset = {};
-
-/** The pathname Next's router tests the matchers against, for a request URL (path + query). */
-function routerPathname(url: string, nextConfig: NextConfigSubset) {
-  let pathname = new URL(url, 'http://localhost').pathname;
-  const { i18n } = nextConfig;
-  if (i18n) {
-    const result = normalizeLocalePath(pathname, i18n.locales);
-    if (!result.detectedLocale && !result.pathname.startsWith('/_next/')) {
-      pathname =
-        result.pathname === '/'
-          ? `/${i18n.defaultLocale}`
-          : addPathPrefix(result.pathname, `/${i18n.defaultLocale}`);
-    }
-  }
-  return pathname;
-}
-
-/** The matcher sources that make Next invoke the proxy for `url`. Empty: the proxy does not run. */
-function matchingSources(matcher: string[], url: string, nextConfig: NextConfigSubset) {
-  const pathname = routerPathname(url, nextConfig);
-  let decoded = pathname;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    /* Next tries the raw form only, too */
-  }
-  return getMiddlewareMatchers(matcher, nextConfig)
-    .filter(({ regexp }) => new RegExp(regexp).test(pathname) || new RegExp(regexp).test(decoded))
-    .map(({ originalSource }) => originalSource);
-}
+// The broad page pattern; its exact text is pinned by `proxy-static-asset-matcher.test.ts`.
+const PAGE_PATTERN = config.matcher.find((source) => source.startsWith('/((?!')) ?? '(missing)';
 
 const TRPC_URLS = [
   '/api/trpc/model.getById',
@@ -89,10 +52,7 @@ describe.each([
     ['/api/v1/images', '/api/v1/:path*'],
     ['/api/page-data/images/123', '/api/page-data/:path*'],
     ['/api/testing/x', '/api/testing/:path*'],
-    [
-      '/models/123/slug',
-      '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest).*)',
-    ],
+    ['/models/123/slug', PAGE_PATTERN],
   ])('still matches %s (via %s)', (url, source) => {
     expect(config.matcher).toContain(source);
     expect(matchingSources(config.matcher, url, nextConfig)).toContain(source);

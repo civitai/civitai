@@ -4,29 +4,29 @@ import {
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
-import {
-  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
-  RESTRICTED_ACCOUNT_MESSAGE,
-} from '~/server/common/content-restriction';
+import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
-import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
-import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
+import { mutedAccountRefusal } from '~/server/services/account-restriction.service';
+import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
-import {
-  acquireBulkheadSlot,
-  BulkheadFullError,
-  HEAVY_REQUEST_CONCURRENCY,
-} from '~/server/utils/request-bulkhead';
+import { HEAVY_REQUEST_CONCURRENCY, withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration, trpcClientReadCapabilityRequests } from '~/server/prom/client';
 import { recordTrpcCall } from '~/server/prom/route-traffic.metrics';
+import {
+  recordTrpcCaller,
+  safeClassifyTrpcCaller,
+  TRPC_CALLER_METRICS_ENABLED,
+  type TrpcCallerClass,
+} from '~/server/prom/trpc-caller.metrics';
 import { canDecodeDevalueResponse, isWebClient } from '~/server/utils/client-version-saturation';
 import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-union-transformer';
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
+import { captureFeedGoShadowResponse } from '~/server/trpc/feed-go-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
@@ -39,6 +39,7 @@ import {
   runEnforceTokenScope,
 } from '~/server/services/oauth/enforce-token-scope';
 import { errorFormatter } from '~/server/trpc/error-formatter';
+import { toDbUnavailableError } from '~/server/utils/errorHandling';
 import type { Context } from './createContext';
 
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
@@ -66,13 +67,28 @@ onDevalueWriteFallback((error) => {
       type: 'warning',
       path,
       message,
-    }).catch(() => undefined);
+    });
   }
 });
 
-export interface TRPCMeta {
-  /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-  requiredScope?: number;
+/**
+ * How a procedure gates scoped tokens: one required bitmask (every bit needed), or a list of
+ * scopes of which any one admits. Never both: a meta that sets both is a type error here and
+ * refused at call time by `runEnforceTokenScope`.
+ */
+type TRPCScopeMeta =
+  | {
+      /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
+      requiredScope?: bigint;
+      anyOfScopes?: never;
+    }
+  | {
+      requiredScope?: never;
+      /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
+      anyOfScopes: readonly bigint[];
+    };
+
+export type TRPCMeta = TRPCScopeMeta & {
   /**
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
@@ -86,7 +102,7 @@ export interface TRPCMeta {
    * (`isFullScopeUserKey`); session auth is unaffected.
    */
   requireFullUserCredential?: boolean;
-}
+};
 
 const t = initTRPC
   .context<Context>()
@@ -109,11 +125,15 @@ const t = initTRPC
       // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
       // written (superjson vs devalue). The wrappers are pass-through.
       const devalue = responseWritesDevalue();
-      return instrumentSerialize(() =>
+      const written = instrumentSerialize(() =>
         withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
           responseWriteSerialize(data)
         )
       );
+      // feed-go shadow: keeps a reference to what was written for a sampled request (one integer
+      // compare when no sample is in flight). See src/server/trpc/feed-go-shadow.ts.
+      captureFeedGoShadowResponse(data, written, devalue);
+      return written;
     }),
     errorFormatter,
   });
@@ -233,6 +253,7 @@ function runRecordProcedureDuration<T>(
   path: string,
   type: string,
   userId: number | undefined,
+  caller: TrpcCallerClass | undefined,
   next: () => Promise<T>
 ): Promise<T> {
   const startedAt = performance.now();
@@ -248,12 +269,14 @@ function runRecordProcedureDuration<T>(
       // the always-on slow-log — avoids startTimer's separate hrtime capture +
       // Object.assign per procedure. Same histogram semantics (wall-clock seconds).
       if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({ path, type, durationMs, ok, errorCode, userId });
       return result;
     },
     (err) => {
       const durationMs = performance.now() - startedAt;
       if (TRPC_PROCEDURE_METRICS) trpcProcedureDuration.observe({ path }, durationMs / 1000);
+      if (caller) recordTrpcCaller(path, caller, durationMs / 1000);
       maybeLogTrpcSlow({
         path,
         type,
@@ -270,6 +293,16 @@ function runRecordProcedureDuration<T>(
 const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   const userId = ctx.user?.id;
   recordTrpcCall(ctx.req?.headers, !!ctx.user);
+  const caller = TRPC_CALLER_METRICS_ENABLED
+    ? safeClassifyTrpcCaller({
+        cache: ctx.cache,
+        apiKeyId: ctx.apiKeyId,
+        subject: ctx.subject,
+        user: ctx.user,
+        bannedUser: ctx.bannedUser,
+        userAgent: ctx.req?.headers?.['user-agent'],
+      })
+    : undefined;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
@@ -278,14 +311,28 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   if (longTaskLabelsArmed) {
     return runWithLongTaskLabel(`trpc:${path}`, () =>
-      runRecordProcedureDuration(path, type, userId, next)
+      runRecordProcedureDuration(path, type, userId, caller, next)
     );
   }
-  return runRecordProcedureDuration(path, type, userId, next);
+  return runRecordProcedureDuration(path, type, userId, caller, next);
+});
+
+// An unreachable database (or no pooled connection in time) answers a retryable 503 with a generic
+// message instead of a 500 carrying the driver's text. Database-originated errors only (db-errors.ts),
+// and each re-map logs a warning line, since a 503 skips the central error log. Inside
+// recordProcedureDuration, so the duration metric records the code the client actually gets.
+const mapDbUnavailable = t.middleware(async ({ path, next }) => {
+  const result = await next();
+  if (!result.ok) {
+    const mapped = toDbUnavailableError(result.error, path);
+    if (mapped) throw mapped;
+  }
+  return result;
 });
 
 export const publicProcedure = t.procedure
   .use(recordProcedureDuration)
+  .use(mapDbUnavailable)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
@@ -297,21 +344,7 @@ export const publicProcedure = t.procedure
 // timeout → Error/137. Keyed so the tRPC feed procedures and the REST
 // /api/v1/images handler share one per-pod budget (they hit the same heavy path).
 const withBulkhead = (key: string) =>
-  t.middleware(async ({ next }) => {
-    let release: () => void;
-    try {
-      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
-    } catch (e) {
-      if (e instanceof BulkheadFullError)
-        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
-      throw e;
-    }
-    try {
-      return await next();
-    } finally {
-      release();
-    }
-  });
+  t.middleware(({ next }) => withBulkheadSlotOrBusy(key, HEAVY_REQUEST_CONCURRENCY, next));
 
 /**
  * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod
@@ -331,8 +364,9 @@ function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null |
   return user;
 }
 
+// A banned viewer is on `bannedUser`, not `user` (see `trpcViewer`), so these two read both.
 const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
-  const user = requireSignedIn(maybeUser);
+  const user = requireSignedIn(maybeUser ?? ctx.bannedUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -346,17 +380,9 @@ const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ct
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted) {
-    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
-    // rejecting here would turn the refusal into a 500 carrying the driver's message.
-    const offer = couldAwaitTosReacceptance(user)
-      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
-      : false;
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: RESTRICTED_ACCOUNT_MESSAGE,
-      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
-    });
+  // The stored standing, not just the session's copy of it.
+  if (user.muted || (await isAccountMuted(user.id, !!user.muted))) {
+    throw await mutedAccountRefusal(user.id, user);
   }
 
   return next({
@@ -407,9 +433,11 @@ export function guardFlagEnabled(
   return !!getFeatureFlags(ctx)[flag];
 }
 
-export const isFlagProtected = (flag: keyof FeatureAccess) =>
+/** Refuses unless the caller has at least one of `flags`. */
+export const isFlagProtected = (...flags: (keyof FeatureAccess)[]) =>
   middleware(({ ctx, next }) => {
-    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!flags.some((flag) => guardFlagEnabled(ctx, flag)))
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });
@@ -494,7 +522,7 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
 const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
-  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+  next({ ctx: { ...ctx, user: requireSignedIn(user ?? ctx.bannedUser), acceptableOrigin } })
 );
 
 /**

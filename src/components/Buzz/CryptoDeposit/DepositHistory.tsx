@@ -4,16 +4,15 @@ import {
   Badge,
   Button,
   Group,
-  HoverCard,
   Pagination,
   Paper,
-  Popover,
   Skeleton,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { HoverCard, Popover } from '~/components/MantineOverlays';
 import {
   IconCheck,
   IconClock,
@@ -585,6 +584,7 @@ export function DepositStatusBadge({ status }: { status: string }) {
         </Badge>
       );
     case 'held':
+    case 'hand_paid':
       return (
         <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
           Credited by support

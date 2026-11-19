@@ -1,21 +1,25 @@
 import { Anchor } from '@mantine/core';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { isDailyPostLimitMessage } from '~/server/schema/post.schema';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { showErrorNotification } from '~/utils/notifications';
+import { getRateLimit, withRetryText } from '~/utils/rate-limit';
+
+type PostError = string | { message: string };
 
 export function showCreatePostError(
-  message: string,
+  error: PostError,
   { journey, title = 'Failed to create post' }: { journey: boolean; title?: string }
 ) {
-  const linked = journey && isDailyPostLimitMessage(message);
+  const message = typeof error === 'string' ? error : error.message;
+  const rateLimit = getRateLimit(error);
+  const linked = journey && rateLimit?.id === 'posts.daily';
   showErrorNotification({
     title,
-    error: new Error(message),
+    error: typeof error === 'string' ? new Error(error) : error,
     reason: linked ? (
       <>
-        {message}{' '}
+        {withRetryText(message, rateLimit)}{' '}
         <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
           See your journey
         </Anchor>
@@ -29,5 +33,5 @@ export function showCreatePostError(
 /** `showCreatePostError` with the journey link only for viewers who have Creator Journey. */
 export function useShowCreatePostError() {
   const journey = !!useFeatureFlags().creatorJourney;
-  return (message: string, title?: string) => showCreatePostError(message, { journey, title });
+  return (error: PostError, title?: string) => showCreatePostError(error, { journey, title });
 }

@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
 import { openRemixSourcesModal } from '~/components/Dialog/triggers/remix-sources';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';

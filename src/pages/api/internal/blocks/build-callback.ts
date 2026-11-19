@@ -12,6 +12,7 @@ import {
 } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import { liveAppImageRef } from '~/server/services/blocks/app-block-image';
 import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
 import {
   isSupersededRun,
@@ -183,7 +184,7 @@ const SHA_RE = /^[0-9a-f]{40}$/;
  * would also accept a mutable `:latest` tag.
  */
 export function expectedImageRef(slug: string, sha: string): string {
-  return `ghcr.io/civitai/app-block-${slug}:${sha}`;
+  return liveAppImageRef(slug, sha);
 }
 
 // Replay guard (audit LOW). The payload's signed `ts` (see
@@ -536,6 +537,11 @@ async function watchApplyJobAndRecord(args: {
       await bustAppListingCatalogCache().catch(() => undefined);
 
       await markRequestDeployState(args.slug, args.sha, 'live');
+      // This publish wrote the app's live pointer, so it is no longer taken down; a delist that
+      // landed while it ran is taken down again (flag-gated inside; never throws).
+      void import('~/server/services/blocks/live-unpublish.service')
+        .then((m) => m.afterLiveDeploy(args.slug))
+        .catch(() => undefined);
       await safe(setCommitStatus, {
         slug: args.slug,
         sha: args.sha,

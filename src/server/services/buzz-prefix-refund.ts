@@ -7,6 +7,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 export type PrefixRefundResult = {
   /** Legs this call reversed, and the Buzz they returned. */
@@ -43,27 +44,38 @@ export async function refundAllLegsByPrefix(
 }
 
 /**
- * Refunds one transaction, treating "already refunded" as done. A repeat refund answers 200 today
- * and 409 once Buzz stops pre-checking duplicate external ids; the client's own retry after a lost
- * response gets the same 409. A 409 counts as done only when `refund-<transactionId>` is on the
- * ledger, so any other conflict still throws.
+ * Refunds one transaction, treating "already refunded" as done. Buzz may answer a repeat refund 200
+ * or 409, and the client's own retry after a lost response gets the same 409. A 409 counts as done
+ * only when `refund-<transactionId>` is on the ledger, so any other conflict still throws.
+ *
+ * `created` says whether THIS call made the refund. A 409 with the refund on the ledger is `false`.
+ * Because a repeat can also answer 200, a caller that must not count someone else's refund passes
+ * `readLedgerFirst`: the ledger is read before the call, and a refund already there is returned as
+ * `created: false` without calling Buzz.
  */
 export async function refundTransactionOnce(
   transactionId: string,
   description?: string,
-  details?: MixedObject
-): Promise<{ transactionId: string }> {
+  details?: MixedObject,
+  opts?: { readLedgerFirst?: boolean }
+): Promise<{ transactionId: string; created: boolean }> {
+  if (
+    opts?.readLedgerFirst &&
+    (await getTransactionByExternalId(refundExternalTransactionId(transactionId)))
+  )
+    return { transactionId, created: false };
   try {
-    return await refundTransaction(transactionId, description, details);
+    const result = await refundTransaction(transactionId, description, details);
+    return { ...result, created: true };
   } catch (error) {
     if (!(await isConflictWithRefundOnLedger(error, transactionId))) throw error;
-    return { transactionId };
+    return { transactionId, created: false };
   }
 }
 
 async function isConflictWithRefundOnLedger(error: unknown, transactionId: string) {
   if (getBuzzApiStatus(error) !== 409) return false;
-  return !!(await getTransactionByExternalId(`refund-${transactionId}`));
+  return !!(await getTransactionByExternalId(refundExternalTransactionId(transactionId)));
 }
 
 type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
@@ -84,7 +96,7 @@ export async function getPrefixRefundState(
     ? await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix, opts)
     : await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix);
   for (const leg of legs) {
-    const refundId = `refund-${leg.transactionId}`;
+    const refundId = refundExternalTransactionId(leg.transactionId);
     const refund = opts
       ? await getTransactionByExternalId(refundId, opts)
       : await getTransactionByExternalId(refundId);

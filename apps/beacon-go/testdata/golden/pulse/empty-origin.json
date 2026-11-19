@@ -1,0 +1,34 @@
+{
+  "name": "empty-origin",
+  "endpoint": "pulse",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/pulse",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "referer": "https://www.example.test/models/123/some-slug"
+    },
+    "body": "{\"type\":\"ImageView\",\"entityType\":\"Image\",\"entityId\":123,\"ads\":\"Served\",\"nsfw\":false,\"nsfwLevel\":1,\"browsingLevel\":31}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 400,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"weftv9g98bf\""
+    },
+    "body": "invalid request",
+    "writes": []
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/pulse\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"\",\"referer\":\"https://www.example.test/models/123/some-slug\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"{\\\"type\\\":\\\"ImageView\\\",\\\"entityType\\\":\\\"Image\\\",\\\"entityId\\\":123,\\\"ads\\\":\\\"Served\\\",\\\"nsfw\\\":false,\\\"nsfwLevel\\\":1,\\\"browsingLevel\\\":31}\",\"bodyIsString\":false,\"node\":{\"status\":400,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"weftv9g98bf\\\"\"},\"body\":\"invalid request\",\"writes\":[]}}"
+}

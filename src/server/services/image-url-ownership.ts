@@ -1,12 +1,23 @@
+import { storedKeySql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import type { NextApiResponse } from 'next';
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbWrite } from '~/server/db/client';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import type { RedisKeyTemplateCache, RedisKeyTemplateSys } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  redis,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { backoffDelay } from '~/utils/backoff';
+import { sleep } from '~/utils/errorHandling';
 
 /** Shown when a client-supplied image url cannot be used. Keep it actionable. */
 export const COVER_IMAGE_UNAVAILABLE_MESSAGE =
@@ -29,8 +40,13 @@ const SCHEME = /^[\x00-\x20]*([a-z][a-z0-9+.-]*):/i;
  * before its upload finishes. It names no stored object, so it holds no upload key.
  */
 export function isUnfinishedUploadUrl(url: string | null | undefined) {
-  const scheme = url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
+  const scheme = urlScheme(url);
   return !!scheme && scheme !== 'http' && scheme !== 'https';
+}
+
+/** The url's scheme, lowercased, as a url parser reads it; undefined for a relative url or key. */
+export function urlScheme(url: string | null | undefined) {
+  return url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
 }
 
 /** Refuses a save holding an image url that names no stored object. */
@@ -59,9 +75,10 @@ export type DecodeBudget = { left: number };
 
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
- * on its own.
+ * on its own, with the characters a url parser drops (tab, CR, LF) removed. Shared with the
+ * content-level rater's image-url scan (`doc-rating-media.ts`).
  */
-function decodedForms(value: string, budget?: DecodeBudget) {
+export function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
@@ -153,15 +170,8 @@ export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] 
   return [...new Set(keysInForms(forms))];
 }
 
-/**
- * The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url: shop
- * columns hold whatever the client sent. 🔴 Must match the expression indexes in migration
- * `20261211120000_shop_artwork_key_indexes` exactly, or every image create scans these tables.
- */
-export const keyIn = (column: string) =>
-  Prisma.raw(
-    `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
-  );
+/** The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url. */
+export const keyIn = (column: string) => Prisma.raw(storedKeySql(column));
 
 /** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
 const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;
@@ -288,49 +298,130 @@ export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise
 
 const UPLOAD_KEY_OWNER_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** From then, every upload key in a client url needs an issue record or a row of the caller's. */
-export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
+export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-12-09T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
-  help: 'Image upload key issue records: failed writes, and unrecorded keys accepted or refused on save.',
+  help: 'Image upload key issue records: writes that needed a retry or failed, reads that failed or were answered by the sysRedis fallback, keys handed out or withheld without one, and unrecorded keys accepted or refused on save.',
   labelNames: ['outcome'] as const,
 });
 
 const ownerKey = (key: string) =>
+  `${REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateCache;
+
+/**
+ * Issue records written to sysRedis before the move expire 30 days after their write, so the
+ * sysRedis fallback finds nothing after this date.
+ * 🔴 Delete the fallback (`sysOwnerKey`, its read in `ownersFromRedis`) and
+ * `REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER` after this date.
+ */
+export const UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL = new Date('2027-01-01T00:00:00Z');
+
+const sysOwnerKey = (key: string) =>
   `${REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateSys;
 
-/** Records that upload key `key` was issued to `userId`. Never throws. */
-export async function recordUploadKeyOwner(key: string, userId: number) {
-  try {
-    await withSysReadDeadline(
-      sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
-        EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
-      })
-    );
-  } catch (e) {
-    uploadKeyOwnerCounter.inc({ outcome: 'record_failed' });
-    logToAxiom({
-      type: 'error',
-      name: 'upload-key-owner',
-      message: 'Failed to record upload key owner',
-      error: (e as Error).message,
-    }).catch(() => undefined);
+/** Writes an issue record gets before it is given up on: the write is idempotent, so a retry is safe. */
+const RECORD_ATTEMPTS = 3;
+const RECORD_RETRY_BASE_MS = 100;
+/**
+ * Bounds each issue-record read and write: the cluster client's own command deadline is far longer
+ * than a request should wait.
+ */
+const RECORD_DEADLINE_MS = 1_000;
+
+/** Answered, with a 503, instead of an upload key whose issue record could not be written (when refusing is on). */
+export const UPLOAD_KEY_UNRECORDED_MESSAGE =
+  "We couldn't start this upload. Please try again in a moment.";
+
+/**
+ * Records that upload key `key` was issued to `userId`, in the cluster. A failed write is retried,
+ * up to `RECORD_ATTEMPTS` writes with a jittered backoff between them, each one bounded by
+ * `RECORD_DEADLINE_MS` so a write that never settles cannot hold the request. Never throws: resolves whether
+ * the record was written; a route handing the key to a client passes that to
+ * `withholdUnrecordedUploadKey`.
+ */
+export async function recordUploadKeyOwner(key: string, userId: number): Promise<boolean> {
+  let error: unknown;
+  for (let attempt = 0; attempt < RECORD_ATTEMPTS; attempt++) {
+    if (attempt)
+      await sleep(
+        backoffDelay(attempt - 1, { baseMs: RECORD_RETRY_BASE_MS, jitterMs: RECORD_RETRY_BASE_MS })
+      );
+    try {
+      await withDeadline(
+        redis.set(ownerKey(key.toLowerCase()), String(userId), {
+          EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
+        }),
+        RECORD_DEADLINE_MS
+      );
+      if (attempt) uploadKeyOwnerCounter.inc({ outcome: 'record_retried' });
+      return true;
+    } catch (e) {
+      error = e;
+    }
   }
+  uploadKeyOwnerCounter.inc({ outcome: 'record_failed' });
+  logToAxiom({
+    type: 'error',
+    name: 'upload-key-owner',
+    message: 'Failed to record upload key owner',
+    error: (error as Error).message,
+    attempts: RECORD_ATTEMPTS,
+  });
+  return false;
 }
 
-async function ownersFromRedis(keys: string[]) {
-  const owners = new Map<string, number>();
-  try {
-    const values = await withSysReadDeadline(sysRedis.mGet(keys.map(ownerKey)));
-    values.forEach((value, i) => {
-      const owner = Number(value);
-      if (value && owner) owners.set(keys[i], owner);
-    });
-    return { owners, readFailed: false };
-  } catch {
-    uploadKeyOwnerCounter.inc({ outcome: 'record_read_failed' });
-    return { owners, readFailed: true };
+/**
+ * Whether an upload route withholds a key whose issue record `recordUploadKeyOwner` could not
+ * write. With `UPLOAD_KEY_REFUSE_UNRECORDED` off (the default) it returns false and the key is
+ * handed out. With it on, it answers a 503 the client can retry and returns true: the route must
+ * hand out nothing more.
+ */
+export function withholdUnrecordedUploadKey(res: NextApiResponse, recorded: boolean) {
+  if (recorded) return false;
+  if (!env.UPLOAD_KEY_REFUSE_UNRECORDED) {
+    uploadKeyOwnerCounter.inc({ outcome: 'issued_unrecorded' });
+    return false;
   }
+  uploadKeyOwnerCounter.inc({ outcome: 'issue_refused' });
+  res.setHeader('Retry-After', '2');
+  res.status(503).json({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+  return true;
+}
+
+const ownersIn = (owners: Map<string, number>, keys: string[], values: (string | null)[]) =>
+  values.forEach((value, i) => {
+    const owner = Number(value);
+    if (value && owner) owners.set(keys[i], owner);
+  });
+
+/**
+ * The issue records of `keys`: the cluster's, then, before `UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL`,
+ * sysRedis's for the keys the cluster lacks. `readFailed` when either read failed, so a key
+ * missing from `owners` may still have a record; the records that were read are kept.
+ */
+async function ownersFromRedis(keys: string[], now: Date) {
+  const owners = new Map<string, number>();
+  let readFailed = false;
+  try {
+    // The cluster client's mGet is one GET per key, never a multi-key command (CROSSSLOT).
+    ownersIn(owners, keys, await withDeadline(redis.mGet(keys.map(ownerKey)), RECORD_DEADLINE_MS));
+  } catch {
+    readFailed = true;
+  }
+  const missing = keys.filter((k) => !owners.has(k));
+  if (missing.length && now < UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL) {
+    try {
+      const before = owners.size;
+      ownersIn(owners, missing, await withSysReadDeadline(sysRedis.mGet(missing.map(sysOwnerKey))));
+      // Shows when the fallback stops finding records, so it can be deleted.
+      if (owners.size > before) uploadKeyOwnerCounter.inc({ outcome: 'record_sys_fallback_hit' });
+    } catch {
+      readFailed = true;
+    }
+  }
+  if (readFailed) uploadKeyOwnerCounter.inc({ outcome: 'record_read_failed' });
+  return { owners, readFailed };
 }
 
 const CLICKHOUSE_LOOKUP_DEADLINE_MS = 2_000;
@@ -367,7 +458,7 @@ async function ownersFromClickhouse(keys: string[]) {
       name: 'upload-key-owner',
       message: 'Failed to read the upload request log',
       error: (e as Error).message,
-    }).catch(() => undefined);
+    });
     return { owners, failed: true };
   }
 }
@@ -381,6 +472,8 @@ type KeyIssuerArgs = {
   readLogForAll?: boolean;
   /** Most keys one call reads (`MAX_KEYS` by default); past it the result is `tooMany`. */
   maxKeys?: number;
+  /** When the issue records are read: decides whether the sysRedis fallback is read. */
+  now?: Date;
 };
 
 /**
@@ -394,6 +487,7 @@ export async function keyIssuers({
   db = dbWrite,
   readLogForAll = false,
   maxKeys = MAX_KEYS,
+  now = new Date(),
 }: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
@@ -409,7 +503,7 @@ export async function keyIssuers({
   if (!keys.length) return result;
   if (keys.length > maxKeys) return { ...result, tooMany: true };
 
-  const { owners, readFailed } = await ownersFromRedis(keys);
+  const { owners, readFailed } = await ownersFromRedis(keys, now);
   result.recordReadFailed = readFailed;
   const unrecorded = keys.filter((k) => !owners.has(k));
   const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
@@ -459,7 +553,7 @@ export async function assertClientKeysIssuedToCaller({
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
   assertNoUnfinishedUploads(args.urls);
-  const issuers = await keyIssuers(args);
+  const issuers = await keyIssuers({ ...args, now });
   const { tooMany, issuedToOthers, unrecorded: remaining, requestLogReadFailed } = issuers;
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
@@ -480,7 +574,7 @@ export async function assertClientKeysIssuedToCaller({
     userId,
     keys: remaining.join(','),
     ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -501,7 +595,7 @@ export async function clientKeysToReupload({
   if (keys.length > MAX_KEYS) return keys;
   const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
   // Every key reaches the request log, so whether it failed does not depend on which keys were sent.
-  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true });
+  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true, now });
   // Marked only from records that were read, or a key of another user's would differ from an absent one.
   if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
   const refused = new Set(issuerRefusals(issuers, at).refused);
@@ -535,8 +629,8 @@ async function ownersFromShopArtwork(keys: string[], db: Db) {
  * upload request log. No row of anyone's counts. `failed`: a read failed, so a key missing from
  * `owners` may still have a record.
  */
-export async function keyIssueRecords(keys: string[], db: Db = dbWrite) {
-  const recorded = await ownersFromRedis(keys);
+export async function keyIssueRecords(keys: string[], db: Db = dbWrite, now = new Date()) {
+  const recorded = await ownersFromRedis(keys, now);
   const kept = await ownersFromShopArtwork(
     keys.filter((k) => !recorded.owners.has(k)),
     db

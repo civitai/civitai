@@ -1,0 +1,1010 @@
+{
+  "numberStrings": [
+    {
+      "in": "",
+      "out": "0"
+    },
+    {
+      "in": " ",
+      "out": "0"
+    },
+    {
+      "in": "0",
+      "out": "0"
+    },
+    {
+      "in": "-0",
+      "out": "0"
+    },
+    {
+      "in": "42",
+      "out": "42"
+    },
+    {
+      "in": " 42 ",
+      "out": "42"
+    },
+    {
+      "in": " 42　",
+      "out": "42"
+    },
+    {
+      "in": "﻿7",
+      "out": "7"
+    },
+    {
+      "in": "1.",
+      "out": "1"
+    },
+    {
+      "in": ".5",
+      "out": "0.5"
+    },
+    {
+      "in": "-.5",
+      "out": "-0.5"
+    },
+    {
+      "in": "+1",
+      "out": "1"
+    },
+    {
+      "in": "1e3",
+      "out": "1000"
+    },
+    {
+      "in": "1E-3",
+      "out": "0.001"
+    },
+    {
+      "in": "1e",
+      "out": "NaN"
+    },
+    {
+      "in": "e1",
+      "out": "NaN"
+    },
+    {
+      "in": "0x1F",
+      "out": "31"
+    },
+    {
+      "in": "0X1f",
+      "out": "31"
+    },
+    {
+      "in": "0x",
+      "out": "NaN"
+    },
+    {
+      "in": "-0x10",
+      "out": "NaN"
+    },
+    {
+      "in": "0o17",
+      "out": "15"
+    },
+    {
+      "in": "0b101",
+      "out": "5"
+    },
+    {
+      "in": "0b2",
+      "out": "NaN"
+    },
+    {
+      "in": "0x1_0",
+      "out": "NaN"
+    },
+    {
+      "in": "1_000",
+      "out": "NaN"
+    },
+    {
+      "in": "Infinity",
+      "out": "Infinity"
+    },
+    {
+      "in": "-Infinity",
+      "out": "-Infinity"
+    },
+    {
+      "in": "+Infinity",
+      "out": "Infinity"
+    },
+    {
+      "in": "infinity",
+      "out": "NaN"
+    },
+    {
+      "in": "NaN",
+      "out": "NaN"
+    },
+    {
+      "in": "1e400",
+      "out": "Infinity"
+    },
+    {
+      "in": "-1e400",
+      "out": "-Infinity"
+    },
+    {
+      "in": "1e-400",
+      "out": "0"
+    },
+    {
+      "in": "9007199254740993",
+      "out": "9007199254740992"
+    },
+    {
+      "in": "0x20000000000001",
+      "out": "9007199254740992"
+    },
+    {
+      "in": "12abc",
+      "out": "NaN"
+    },
+    {
+      "in": "1 2",
+      "out": "NaN"
+    },
+    {
+      "in": "  3  ",
+      "out": "3"
+    }
+  ],
+  "numbers": [
+    {
+      "in": 0,
+      "out": "0",
+      "json": "0"
+    },
+    {
+      "in": 0,
+      "out": "0",
+      "json": "0"
+    },
+    {
+      "in": 1,
+      "out": "1",
+      "json": "1"
+    },
+    {
+      "in": -1,
+      "out": "-1",
+      "json": "-1"
+    },
+    {
+      "in": 0.1,
+      "out": "0.1",
+      "json": "0.1"
+    },
+    {
+      "in": 0.5,
+      "out": "0.5",
+      "json": "0.5"
+    },
+    {
+      "in": 1.5,
+      "out": "1.5",
+      "json": "1.5"
+    },
+    {
+      "in": 100,
+      "out": "100",
+      "json": "100"
+    },
+    {
+      "in": 100000000000000000000,
+      "out": "100000000000000000000",
+      "json": "100000000000000000000"
+    },
+    {
+      "in": 1e+21,
+      "out": "1e+21",
+      "json": "1e+21"
+    },
+    {
+      "in": 1.5e+21,
+      "out": "1.5e+21",
+      "json": "1.5e+21"
+    },
+    {
+      "in": 123456789012345680000,
+      "out": "123456789012345680000",
+      "json": "123456789012345680000"
+    },
+    {
+      "in": 0.000001,
+      "out": "0.000001",
+      "json": "0.000001"
+    },
+    {
+      "in": 1e-7,
+      "out": "1e-7",
+      "json": "1e-7"
+    },
+    {
+      "in": 1.2345e-7,
+      "out": "1.2345e-7",
+      "json": "1.2345e-7"
+    },
+    {
+      "in": 5e-324,
+      "out": "5e-324",
+      "json": "5e-324"
+    },
+    {
+      "in": 1.7976931348623157e+308,
+      "out": "1.7976931348623157e+308",
+      "json": "1.7976931348623157e+308"
+    },
+    {
+      "in": 9007199254740992,
+      "out": "9007199254740992",
+      "json": "9007199254740992"
+    },
+    {
+      "in": 0.000001234,
+      "out": "0.000001234",
+      "json": "0.000001234"
+    },
+    {
+      "in": 4294967295,
+      "out": "4294967295",
+      "json": "4294967295"
+    },
+    {
+      "in": 0.3333333333333333,
+      "out": "0.3333333333333333",
+      "json": "0.3333333333333333"
+    },
+    {
+      "in": 0.6666666666666666,
+      "out": "0.6666666666666666",
+      "json": "0.6666666666666666"
+    },
+    {
+      "in": 123.456,
+      "out": "123.456",
+      "json": "123.456"
+    },
+    {
+      "in": 1e+100,
+      "out": "1e+100",
+      "json": "1e+100"
+    },
+    {
+      "in": -1e-10,
+      "out": "-1e-10",
+      "json": "-1e-10"
+    }
+  ],
+  "urls": [
+    {
+      "in": "https://www.example.test/x",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "http://www.example.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:443/",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "http://www.example.test:80",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "http://www.example.test:443",
+      "host": "www.example.test:443",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:0443/",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:/x",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:8443",
+      "host": "www.example.test:8443",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:65535",
+      "host": "www.example.test:65535",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test:65536",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "https://www.example.test:8a",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "HTTPS://WWW.EXAMPLE.TEST/A",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test.",
+      "host": "www.example.test.",
+      "throws": false
+    },
+    {
+      "in": "https://a_b.example.test",
+      "host": "a_b.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://-a-.example.test",
+      "host": "-a-.example.test",
+      "throws": false
+    },
+    {
+      "in": "example",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "1http://x",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "h t://x",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "https://",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "https://:80/",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "https://www.example.test?q",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test#f",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "mailto:x@example.test",
+      "host": "",
+      "throws": false
+    },
+    {
+      "in": "https://user@www.example.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://[2001:db8::1]/",
+      "host": "[2001:db8::1]",
+      "throws": false
+    },
+    {
+      "in": "https://192.0.2.1/",
+      "host": "192.0.2.1",
+      "throws": false
+    },
+    {
+      "in": "https://0x7f.1/",
+      "host": "127.0.0.1",
+      "throws": false
+    },
+    {
+      "in": "https://1.2.3/",
+      "host": "1.2.0.3",
+      "throws": false
+    },
+    {
+      "in": "https://xn--caf-dma.example.test",
+      "host": "xn--caf-dma.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://café.example.test",
+      "host": "xn--caf-dma.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.example.test\\x",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https:/www.example.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https:///www.example.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https:www.example.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://a..b.example.test",
+      "host": "a..b.example.test",
+      "throws": false
+    },
+    {
+      "in": "https://.example.test",
+      "host": ".example.test",
+      "throws": false
+    },
+    {
+      "in": "https://www.ex%41mple.test",
+      "host": "www.example.test",
+      "throws": false
+    },
+    {
+      "in": "android-app://com.example.app/",
+      "host": "com.example.app",
+      "throws": false
+    },
+    {
+      "in": "null",
+      "host": "",
+      "throws": true
+    },
+    {
+      "in": "https://www.example.test:00000000000080/",
+      "host": "www.example.test:80",
+      "throws": false
+    }
+  ],
+  "isIP": [
+    {
+      "in": "1.2.3.4",
+      "out": 4
+    },
+    {
+      "in": "01.2.3.4",
+      "out": 0
+    },
+    {
+      "in": "1.2.3",
+      "out": 0
+    },
+    {
+      "in": "256.1.1.1",
+      "out": 0
+    },
+    {
+      "in": "0.0.0.0",
+      "out": 4
+    },
+    {
+      "in": "::",
+      "out": 6
+    },
+    {
+      "in": "::1",
+      "out": 6
+    },
+    {
+      "in": "2001:db8::1",
+      "out": 6
+    },
+    {
+      "in": "2001:DB8::1",
+      "out": 6
+    },
+    {
+      "in": "::ffff:1.2.3.4",
+      "out": 6
+    },
+    {
+      "in": "1:2:3:4:5:6:7:8",
+      "out": 6
+    },
+    {
+      "in": "1:2:3:4:5:6:7:8:9",
+      "out": 0
+    },
+    {
+      "in": "1::2::3",
+      "out": 0
+    },
+    {
+      "in": "fe80::1%eth0",
+      "out": 6
+    },
+    {
+      "in": " 1.2.3.4",
+      "out": 0
+    },
+    {
+      "in": "x",
+      "out": 0
+    },
+    {
+      "in": "",
+      "out": 0
+    },
+    {
+      "in": "1:2:3:4:5:6:1.2.3.4",
+      "out": 6
+    },
+    {
+      "in": "::1.2.3.4",
+      "out": 6
+    },
+    {
+      "in": "1::",
+      "out": 6
+    },
+    {
+      "in": "gggg::1",
+      "out": 0
+    },
+    {
+      "in": "0000:0000:0000:0000:0000:ffff:255.255.255.255",
+      "out": 6
+    }
+  ],
+  "clientIp": [
+    {
+      "headers": {
+        "x-client-ip": "192.0.2.1"
+      },
+      "out": "192.0.2.1"
+    },
+    {
+      "headers": {
+        "x-client-ip": "junk",
+        "x-forwarded-for": "198.51.100.1, 192.0.2.2"
+      },
+      "out": "198.51.100.1"
+    },
+    {
+      "headers": {
+        "x-forwarded-for": "198.51.100.1:443"
+      },
+      "out": "198.51.100.1"
+    },
+    {
+      "headers": {
+        "x-forwarded-for": " unknown ,198.51.100.3"
+      },
+      "out": "198.51.100.3"
+    },
+    {
+      "headers": {
+        "x-forwarded-for": "",
+        "x-real-ip": "192.0.2.9"
+      },
+      "out": "192.0.2.9"
+    },
+    {
+      "headers": {
+        "cf-connecting-ip": " 192.0.2.5"
+      },
+      "out": "192.0.2.5"
+    },
+    {
+      "headers": {
+        "fastly-client-ip": "192.0.2.6"
+      },
+      "out": "192.0.2.6"
+    },
+    {
+      "headers": {
+        "true-client-ip": "192.0.2.7"
+      },
+      "out": "192.0.2.7"
+    },
+    {
+      "headers": {
+        "x-cluster-client-ip": "192.0.2.8"
+      },
+      "out": "192.0.2.8"
+    },
+    {
+      "headers": {
+        "x-forwarded": "192.0.2.10"
+      },
+      "out": "192.0.2.10"
+    },
+    {
+      "headers": {
+        "forwarded-for": "192.0.2.11"
+      },
+      "out": "192.0.2.11"
+    },
+    {
+      "headers": {
+        "forwarded": "192.0.2.12"
+      },
+      "out": "192.0.2.12"
+    },
+    {
+      "headers": {
+        "x-appengine-user-ip": "192.0.2.13"
+      },
+      "out": "192.0.2.13"
+    },
+    {
+      "headers": {
+        "x-real-ip": "192.0.2.300",
+        "x-appengine-user-ip": "192.0.2.14"
+      },
+      "out": "192.0.2.14"
+    },
+    {
+      "headers": {
+        "cf-connecting-ip": "2001:db8::5",
+        "x-forwarded-for": "198.51.100.1"
+      },
+      "out": "2001:db8::5"
+    },
+    {
+      "headers": {
+        "cf-connecting-ip": "fe80::1%eth0",
+        "x-real-ip": "192.0.2.15"
+      },
+      "out": "192.0.2.15"
+    },
+    {
+      "headers": {
+        "x-forwarded-for": "junk"
+      },
+      "out": "unknown"
+    },
+    {
+      "headers": {},
+      "out": "unknown"
+    }
+  ],
+  "pathnames": [
+    {
+      "in": "/",
+      "out": "/"
+    },
+    {
+      "in": "",
+      "out": "/"
+    },
+    {
+      "in": "/models",
+      "out": "/models/[id]/edit"
+    },
+    {
+      "in": "/models/1",
+      "out": "/models/[id]/[[...slug]]"
+    },
+    {
+      "in": "/models/1/slug",
+      "out": "/models/[id]/[[...slug]]"
+    },
+    {
+      "in": "/models/1/slug/extra",
+      "out": "/models/1/slug/extra"
+    },
+    {
+      "in": "/user/a",
+      "out": "/user/[username]"
+    },
+    {
+      "in": "/user/a/images",
+      "out": "/user/[username]/images"
+    },
+    {
+      "in": "/user/a/b",
+      "out": "/user/[username]/[list]"
+    },
+    {
+      "in": "/images",
+      "out": "/images"
+    },
+    {
+      "in": "/images/5",
+      "out": "/images/[imageId]"
+    },
+    {
+      "in": "/posts/1",
+      "out": "/posts/[postId]/[[...postSlug]]"
+    },
+    {
+      "in": "/posts/1/x",
+      "out": "/posts/[postId]/[[...postSlug]]"
+    },
+    {
+      "in": "/posts/1/edit",
+      "out": "/posts/[postId]/edit"
+    },
+    {
+      "in": "/articles/1",
+      "out": "/articles/[id]/[[...slug]]"
+    },
+    {
+      "in": "/content/x/y",
+      "out": "/content/x/y"
+    },
+    {
+      "in": "/unknown",
+      "out": "/unknown"
+    },
+    {
+      "in": "//double",
+      "out": "//double"
+    },
+    {
+      "in": "/models/",
+      "out": "/models/[id]/[[...slug]]"
+    },
+    {
+      "in": "models",
+      "out": "/models/[id]/edit"
+    },
+    {
+      "in": "/bounties/1/entries/2",
+      "out": "/bounties/[id]/entries/[entryId]"
+    },
+    {
+      "in": "/bounties/1/entries/2/edit",
+      "out": "/bounties/[id]/entries/[entryId]/edit"
+    },
+    {
+      "in": "/user/account/x/y",
+      "out": "/user/account/x/y"
+    },
+    {
+      "in": "/comics/1",
+      "out": "/comics/1"
+    },
+    {
+      "in": "/search/models",
+      "out": "/search/models"
+    },
+    {
+      "in": "/tag/x",
+      "out": "/tag/[tagname]"
+    },
+    {
+      "in": "/collections/1/review",
+      "out": "/collections/[collectionId]/review"
+    }
+  ],
+  "utf8": [
+    {
+      "in": "",
+      "units": ""
+    },
+    {
+      "in": "61",
+      "units": "0061"
+    },
+    {
+      "in": "c328",
+      "units": "fffd 0028"
+    },
+    {
+      "in": "e282",
+      "units": "fffd"
+    },
+    {
+      "in": "e282ac",
+      "units": "20ac"
+    },
+    {
+      "in": "f09f98",
+      "units": "fffd"
+    },
+    {
+      "in": "f09f9880",
+      "units": "d83d de00"
+    },
+    {
+      "in": "ed9fbf",
+      "units": "d7ff"
+    },
+    {
+      "in": "eda080",
+      "units": "fffd fffd fffd"
+    },
+    {
+      "in": "c0af",
+      "units": "fffd fffd"
+    },
+    {
+      "in": "f4908080",
+      "units": "fffd fffd fffd fffd"
+    },
+    {
+      "in": "ff",
+      "units": "fffd"
+    },
+    {
+      "in": "80",
+      "units": "fffd"
+    },
+    {
+      "in": "e0a080",
+      "units": "0800"
+    },
+    {
+      "in": "e080",
+      "units": "fffd fffd"
+    },
+    {
+      "in": "f0808080",
+      "units": "fffd fffd fffd fffd"
+    },
+    {
+      "in": "efbbbf61",
+      "units": "feff 0061"
+    }
+  ],
+  "jsonRoundTrip": [
+    {
+      "in": "{\"b\":1,\"a\":2,\"1\":3,\"0\":4,\"01\":5,\"4294967294\":6,\"4294967295\":7,\"-1\":8}",
+      "out": "{\"0\":4,\"1\":3,\"4294967294\":6,\"b\":1,\"a\":2,\"01\":5,\"4294967295\":7,\"-1\":8}"
+    },
+    {
+      "in": "{\"a\":1,\"a\":2,\"b\":3}",
+      "out": "{\"a\":2,\"b\":3}"
+    },
+    {
+      "in": "[1.0,1e2,-0,0.1,1E21,1e-7,123456789012345678901234567890]",
+      "out": "[1,100,0,0.1,1e+21,1e-7,1.2345678901234568e+29]"
+    },
+    {
+      "in": "\"\\ud83d\\ude00\\ud800x\\udc00\\u0000\\u001f\\u007f\\u2028\\/\"",
+      "out": "\"😀\\ud800x\\udc00\\u0000\\u001f /\""
+    },
+    {
+      "in": "{\"__proto__\":1,\"x\":{\"__proto__\":[]}}",
+      "out": "{\"__proto__\":1,\"x\":{\"__proto__\":[]}}"
+    },
+    {
+      "in": " \t\n\r{\"a\" : [ true , false , null ] } ",
+      "out": "{\"a\":[true,false,null]}"
+    },
+    {
+      "in": "\"<script>&amp;</script>\"",
+      "out": "\"<script>&amp;</script>\""
+    }
+  ],
+  "jsonInvalid": [
+    {
+      "in": "",
+      "throws": true
+    },
+    {
+      "in": "{",
+      "throws": true
+    },
+    {
+      "in": "[1,]",
+      "throws": true
+    },
+    {
+      "in": "{\"a\":1,}",
+      "throws": true
+    },
+    {
+      "in": "01",
+      "throws": true
+    },
+    {
+      "in": "1.",
+      "throws": true
+    },
+    {
+      "in": ".5",
+      "throws": true
+    },
+    {
+      "in": "+1",
+      "throws": true
+    },
+    {
+      "in": "\"\t\"",
+      "throws": true
+    },
+    {
+      "in": "'a'",
+      "throws": true
+    },
+    {
+      "in": "tru",
+      "throws": true
+    },
+    {
+      "in": "nul",
+      "throws": true
+    },
+    {
+      "in": "﻿{}",
+      "throws": true
+    },
+    {
+      "in": "{\"a\"}",
+      "throws": true
+    },
+    {
+      "in": "[1] x",
+      "throws": true
+    },
+    {
+      "in": "NaN",
+      "throws": true
+    },
+    {
+      "in": "\"\\x\"",
+      "throws": true
+    },
+    {
+      "in": "\"\\u12\"",
+      "throws": true
+    }
+  ],
+  "trims": [
+    {
+      "in": "  a  ",
+      "units": "0061"
+    },
+    {
+      "in": " a ",
+      "units": "0061"
+    },
+    {
+      "in": "﻿a",
+      "units": "0061"
+    },
+    {
+      "in": " a ",
+      "units": "0061"
+    },
+    {
+      "in": "​a",
+      "units": "200b 0061"
+    },
+    {
+      "in": "a",
+      "units": "0085 0061"
+    },
+    {
+      "in": "᠎a",
+      "units": "180e 0061"
+    },
+    {
+      "in": "　a",
+      "units": "0061"
+    },
+    {
+      "in": "\t\u000b\f\r\na",
+      "units": "0061"
+    }
+  ]
+}

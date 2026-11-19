@@ -14,9 +14,9 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconArrowRight,

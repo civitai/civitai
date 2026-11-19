@@ -50,6 +50,69 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
+// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
+const v3 = vi.hoisted(() => ({
+  comments: [] as { id: number; userId: number; content: string }[],
+  tables: {} as Record<string, Record<string, unknown>[]>,
+  calls: [] as { table?: string; userId?: number; afterId?: number; take?: number }[],
+}));
+vi.mock('~/server/db/kyselyDb', () => {
+  type State = {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+  };
+  const query = (state: State): Record<string, unknown> => ({
+    selectAll: () => query(state),
+    orderBy: () => query(state),
+    where: (column: string, _op: string, value: number) =>
+      query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
+    limit: (take: number) => query({ ...state, take }),
+    execute: async () => {
+      // A cursor that never advances fails here rather than hanging the test.
+      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
+      v3.calls.push(state);
+      return v3.comments
+        .filter(
+          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
+        )
+        .slice(0, state.take);
+    },
+  });
+  // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
+  // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
+  type MainState = {
+    afterId?: number;
+    take?: number;
+    eq?: Record<string, number>;
+    pool?: 'readLong';
+  };
+  const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
+    select: () => mainQuery(table, state),
+    distinct: () => mainQuery(table, state),
+    orderBy: () => mainQuery(table, state),
+    where: (column: string, op: string, value: number) =>
+      mainQuery(
+        table,
+        op === '>'
+          ? { ...state, afterId: value }
+          : { ...state, eq: { ...state.eq, [column]: value } }
+      ),
+    limit: (take: number) => mainQuery(table, { ...state, take }),
+    execute: async () =>
+      (v3.tables[table] ?? [])
+        .filter((r) => Object.entries(state.eq ?? {}).every(([c, v]) => r[c] === v))
+        .filter((r) => state.afterId === undefined || (r.id as number) > state.afterId)
+        .slice(0, state.take),
+  });
+  return {
+    kyselyV3Read: { selectFrom: () => query({}) },
+    kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: {
+      selectFrom: (table: string) => mainQuery(table, { pool: 'readLong' }),
+    },
+  };
+});
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
@@ -230,7 +293,12 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 let mockIsFlipt: (...args: unknown[]) => unknown = async () => false;
 let recordedArchiveCalls: Array<[string, string, string]> = [];
 
-import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
+import {
+  archiveCsamDataForReport,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
+} from '~/server/services/csam.service-new';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -360,7 +428,7 @@ async function zipManifest(bytes: Buffer) {
 
 const report = {
   id: 4242,
-  userId: 909090,
+  userId: 990200011,
   reportedById: 5,
   reportId: 77,
   type: 'Image',
@@ -447,6 +515,8 @@ beforeEach(() => {
   storedObjects.clear();
   pendingUploads.clear();
   recordedArchiveCalls = [];
+  v3.calls = [];
+  v3.tables = {};
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {
@@ -636,7 +706,12 @@ describe('csam archive streaming upload', () => {
     ];
     mockIsFlipt = async () => false;
 
-    await archiveCsamDataForReport({ ...report, type: 'GeneratedImage' } as never);
+    // Past the give-up window, so the absent URLs are counted misses rather than failing the pass.
+    await archiveCsamDataForReport({
+      ...report,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
+    } as never);
 
     const stored = storedObjects.get('generated-images.zip');
     expect(
@@ -860,6 +935,42 @@ describe('a supplemental report archive', () => {
     });
     expect(byId.get(1)).not.toHaveProperty('preservedNotSent');
     expect(byId.get(4)).not.toHaveProperty('preservedNotSent');
+  });
+});
+
+describe("a report's attached text", () => {
+  it('is archived in data.json as the page incidents it was sent as, with the snapshot', async () => {
+    seedDb(1);
+    const contextText = [
+      {
+        source: 'comment',
+        id: 11,
+        postId: 100,
+        authorId: 31,
+        authorIsReportedUser: false,
+        postedAt: '2026-10-03T14:05:00.000Z',
+        text: 'a & b <c> nul\u0000',
+        capturedAt: '2026-10-08T14:05:00.000Z',
+        capturedById: 5,
+      },
+    ] as CsamContextText[];
+    await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data.reportContext).toEqual({
+      webPageIncidents: contextWebPageIncidents(contextText),
+      contextText,
+    });
+    expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
+  });
+
+  it('is left out of data.json for a report with none', async () => {
+    seedDb(1);
+    await archiveCsamDataForReport(report as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data).not.toHaveProperty('reportContext');
+    expect(data).toHaveProperty('images');
   });
 });
 

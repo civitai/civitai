@@ -1,5 +1,8 @@
-import type { PageServerLoad } from './$types';
-import { listToolRequests } from '$lib/server/assistant/store';
+import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
+import type { Actions, PageServerLoad } from './$types';
+import { TOOL_REQUEST_STATUSES } from '$lib/assistant/types';
+import { listToolRequests, resolveToolRequest } from '$lib/server/assistant/store';
 import { canAccess, canSeeAddresses } from '$lib/server/access';
 import { redactAddresses } from '$lib/server/redact-addresses';
 import { moderatorDbStatus } from '$lib/moderator-db-status';
@@ -18,6 +21,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     const requests = await listToolRequests();
     return {
       storeError: null,
+      canResolve: auditor,
       requests: requests.map((r) => {
         const mine = r.moderatorId === locals.user.id;
         const text = mine || seesAddresses ? (t: string) => t : redactAddresses;
@@ -39,6 +43,32 @@ export const load: PageServerLoad = async ({ locals }) => {
     };
   } catch (e) {
     console.error('[assistant] tool requests unavailable', e);
-    return { storeError: assistantStoreMessage(moderatorDbStatus(e)), requests: [] };
+    return {
+      storeError: assistantStoreMessage(moderatorDbStatus(e)),
+      canResolve: false,
+      requests: [],
+    };
   }
+};
+
+const resolveSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  status: z.enum(TOOL_REQUEST_STATUSES),
+  response: z
+    .string()
+    .trim()
+    .max(4000)
+    .transform((s) => s || null),
+});
+
+export const actions: Actions = {
+  // The audit grant, not the assistant page: every assistant user can read this list.
+  resolve: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/assistant/audit'))
+      return fail(403, { error: 'Only holders of the assistant audit can answer requests.' });
+    const parsed = resolveSchema.safeParse(Object.fromEntries(await request.formData()));
+    if (!parsed.success) return fail(400, { error: 'Invalid answer.' });
+    const ok = await resolveToolRequest({ ...parsed.data, resolverId: locals.user.id });
+    return ok ? { success: true } : fail(404, { error: 'No such request.' });
+  },
 };

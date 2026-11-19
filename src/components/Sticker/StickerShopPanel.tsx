@@ -1,14 +1,13 @@
 import {
   CloseButton,
   Group,
-  HoverCard,
   Skeleton,
   ScrollArea,
   Text,
   TextInput,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconInfoCircle, IconSearch, IconSticker } from '@tabler/icons-react';
 import clsx from 'clsx';

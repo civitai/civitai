@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
+import { logToAxiom } from '~/server/logging/client';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { findCatalogParentIdsForClient } from '~/server/services/blocks/app-sub-listing.service';
@@ -25,6 +26,11 @@ import {
   isAppBlockOauthClientId,
 } from '~/shared/constants/block-scope.constants';
 import type { Prisma } from '@prisma/client';
+import {
+  isAllowlistedMinter,
+  revokeLinksOfRevokedCredentials,
+} from '~/server/services/download-link/download-link.store';
+import { expireClientTokens } from '~/server/services/api-key.service';
 
 /**
  * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
@@ -94,13 +100,13 @@ export const oauthClientRouter = router({
         },
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
-      return client;
+      return { ...client, allowedScopes: Number(client.allowedScopes) };
     }),
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
     if (ctx.user.id === constants.system.user.id) return [];
-    return dbRead.oauthClient.findMany({
+    const clients = await dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
         id: true,
@@ -118,6 +124,7 @@ export const oauthClientRouter = router({
       },
       orderBy: { createdAt: 'desc' },
     });
+    return clients.map((client) => ({ ...client, allowedScopes: Number(client.allowedScopes) }));
   }),
 
   // MODERATOR-ONLY global OAuth-client search (App-Blocks external-submit mod picker).
@@ -186,7 +193,8 @@ export const oauthClientRouter = router({
         nextCursor = nextItem?.id;
       }
 
-      return { items: rows, nextCursor };
+      const items = rows.map((row) => ({ ...row, allowedScopes: Number(row.allowedScopes) }));
+      return { items, nextCursor };
     }),
 
   // Register a new OAuth client
@@ -269,7 +277,7 @@ export const oauthClientRouter = router({
             };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
-      return result;
+      return result && { ...result, allowedScopes: Number(result.allowedScopes) };
     }),
 
   // Rotate client secret
@@ -283,12 +291,31 @@ export const oauthClientRouter = router({
       const newSecret = generateKey(48);
       const hashedSecret = generateSecretHash(newSecret);
 
+      // A download-link minter's tokens die with its old secret, so they cannot mint new links;
+      // other clients keep theirs. Expired before the secret changes: the minter re-checks its
+      // token after reading the secret, so a link carrying the new secret's epoch was minted by a
+      // token still live after this. The second pass catches a token issued while rotating.
+      const credential = { kind: 'client' as const, id: input.id };
+      const minter = isAllowlistedMinter(credential);
+      if (minter) await expireClientTokens(input.id);
+
       await dbWrite.oauthClient.update({
         where: { id: input.id },
         data: { secret: hashedSecret },
       });
 
       logOAuthEvent({ type: 'client.secret_rotated', userId: ctx.user.id, clientId: input.id });
+      if (minter)
+        await expireClientTokens(input.id).catch((error: Error) =>
+          logToAxiom({
+            name: 'download-link',
+            type: 'error',
+            message: 'rotate-token-expiry-failed',
+            clientId: input.id,
+            error: error.message,
+          })
+        );
+      await revokeLinksOfRevokedCredentials([credential]);
 
       return { clientSecret: newSecret };
     }),
@@ -320,6 +347,7 @@ export const oauthClientRouter = router({
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
+      await revokeLinksOfRevokedCredentials([{ kind: 'client', id: input.id }]);
 
       // The DB cascade revokes the tokens, but the orchestrator caches them for auth.
       // Best-effort: revokeCivitaiUserTokens swallows its own errors.

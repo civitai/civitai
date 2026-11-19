@@ -9,8 +9,8 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconListCheck, IconSearch, IconSettings, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useMemo, useState } from 'react';
@@ -182,7 +182,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
         </div>
         <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
           {selectedTab === 'announcements' ? (
-            <AnnouncementsPanel sources={announcementSources} />
+            <AnnouncementsPanel sources={announcementSources} onNavigate={onClose} />
           ) : (
             <>
               {loadingNotifications ? (

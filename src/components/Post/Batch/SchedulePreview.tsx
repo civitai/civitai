@@ -1,4 +1,5 @@
-import { Badge, Loader, SegmentedControl, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Badge, Loader, SegmentedControl, Skeleton, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { useMemo } from 'react';
 import type { SchedulePerDay } from '@civitai/shared/post-scheduling';
