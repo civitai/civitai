@@ -625,6 +625,11 @@ describe('editorFileName', () => {
     ).toBe('mine.safetensors');
   });
 
+  it('falls back to the stored name when no download name came with it', () => {
+    expect(editorFileName({ name: jobIdName })).toBe(jobIdName);
+    expect(editorFileName({ name: jobIdName, downloadName: null })).toBe(jobIdName);
+  });
+
   it('keeps a name the creator uploaded', () => {
     expect(
       editorFileName({ name: 'model.safetensors', downloadName: 'realisticVision_v1.safetensors' })
