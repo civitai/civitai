@@ -684,8 +684,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,

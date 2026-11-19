@@ -316,6 +316,17 @@ describe('a legacy avatar image', () => {
     expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
+  it('compares an unchanged value against the primary, not a lagging replica', async () => {
+    // The replica still has the key the primary has since cleared; re-sending it is a change.
+    mockGetUserById.mockImplementation(async ({ db }: { db?: unknown }) =>
+      db === dbMock.dbWrite
+        ? { profilePictureId: null, image: null }
+        : { profilePictureId: null, image: AVATAR_KEY }
+    );
+    await expect(saveImage(AVATAR_KEY)).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
   it('may be an allowed external avatar url, or cleared', async () => {
     const external = 'https://avatars.githubusercontent.com/u/1?v=4';
     await saveImage(external);

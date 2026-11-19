@@ -455,8 +455,9 @@ export const getUsers = async ({
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
   id,
   select,
-}: GetByIdInput & { select: TSelect }) => {
-  return dbRead.user.findUnique({
+  db = dbRead,
+}: GetByIdInput & { select: TSelect; db?: typeof dbRead }) => {
+  return db.user.findUnique({
     where: { id },
     select,
   });
