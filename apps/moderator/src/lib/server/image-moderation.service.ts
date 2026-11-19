@@ -56,9 +56,10 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
 )))`;
 
 /**
- * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
+ * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
+ * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
+ * `PRIOR_NEEDS_REVIEW_KEY` in
  * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
  * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
  *

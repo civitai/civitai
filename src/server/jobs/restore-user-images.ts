@@ -38,9 +38,9 @@ async function filterRestored(userIds: number[]) {
  * rows and a filtered `User` scan measures ~1.7s, which a cron this frequent would pay on every
  * tick to learn that nobody was restored. An empty set costs one SMEMBERS and no query at all.
  *
- * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked or whose
- * reversal drained, before their worklist entries are cleared: the grace block cleared a `User.image` naming one of them, and the refresh puts it
- * back once the picture is servable again (`restoreClearedUserImages`).
+ * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked, drained
+ * or threw. The grace block cleared any `User.image` naming one of their images; the refresh puts it
+ * back once that picture is servable again (`restoreClearedUserImages`).
  */
 export async function runRestoreUserImages(
   refreshPictures: (userIds: number[]) => Promise<unknown> = refreshProfilePicturesForUsersLazy
@@ -84,8 +84,7 @@ export async function runRestoreUserImages(
     }
   }
 
-  // Before the worklist entries are cleared: a run cut short in between refreshes them next tick.
-  // An account deleted again since its unblock is left out: its grace block clears the picture.
+  // Before the worklist entries are cleared, so a run cut short in between refreshes them next tick.
   const stillRestored = await filterRestored(refreshed);
   if (stillRestored.length) await refreshPictures(stillRestored);
   for (const userId of drained) {

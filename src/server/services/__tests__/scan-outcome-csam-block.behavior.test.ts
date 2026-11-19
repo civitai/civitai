@@ -529,8 +529,16 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
         (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
         (86, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('minor')}),
-        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')});
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (88, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
     `);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    // An account deleted again keeps its grace block.
+    expect(
+      (await holder.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = 88`))
+        .rows[0]
+    ).toEqual({ ingestion: 'Blocked' });
 
     await unblockAccountDeletionImages(OWNER);
 

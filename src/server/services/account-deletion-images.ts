@@ -81,11 +81,9 @@ export async function unblockAccountDeletionImages(userId: number) {
             WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
             ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
           END,
-          -- A held review the block cleared comes back and wins over any flag set since, except a
-          -- 'csam' one: the minor review then decides. Only an owner-hidden value is put back, so a
-          -- forged breadcrumb cannot write any other; not 'csam', which the grace block keeps on the
-          -- row, so a recorded 'csam' with none left means a moderator dismissed it. No key (a row
-          -- blocked before it was recorded): the flag is left as it is.
+          -- A recorded owner-hidden review comes back over any flag but a current 'csam', so a forged
+          -- breadcrumb can write nothing else. Never a recorded 'csam': the block keeps that flag, so
+          -- one recorded with none left was dismissed.
           "needsReview" = CASE
             WHEN "needsReview" = 'csam' THEN "needsReview"
             ELSE CASE
