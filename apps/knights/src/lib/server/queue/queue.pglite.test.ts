@@ -14,6 +14,7 @@ import {
   castVote,
   applyPendingResolutions,
   closeModeratorRuledItems,
+  closeUnservableItems,
   closeWithoutOutcome,
   enqueueItem,
   ensureVotePartitions,
@@ -1621,6 +1622,154 @@ describe('closeModeratorRuledItems', () => {
 
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
     expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe('closeUnservableItems', () => {
+  const at = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
+  const sweep = (limit?: number) => closeUnservableItems(db, { now: NOW, limit });
+  /** An item queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
+  async function queued(
+    id: number,
+    {
+      publishedAt = at(-1000),
+      createdAt = NOW,
+      expiresAt = at(72) as Date | null,
+    }: { publishedAt?: Date | null; createdAt?: Date; expiresAt?: Date | null } = {}
+  ) {
+    await image(id, 4, publishedAt === null ? null : publishedAt.toISOString());
+    const itemId = await item(id, { expires: expiresAt ?? undefined });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2 WHERE id=$3`, [
+      createdAt,
+      expiresAt,
+      itemId,
+    ]);
+    return itemId;
+  }
+  async function countedVote(itemId: number, playerId: number, imageId: number) {
+    await player(playerId, 'Knight');
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold")
+       VALUES ($1,$2,$3,$4,$5,'Knight','8',1,5)`,
+      [itemId, playerId, NOW, Q, imageId]
+    );
+  }
+  const statusOf = async (ids: number[]) =>
+    Promise.all(ids.map(async (id) => [(await itemRow(id)).status, (await itemRow(id)).reason]));
+
+  it('closes items on a deleted image or post, and on a post publishing after the item would expire, with no outcome', async () => {
+    await active(1, 'Knight');
+    const servable = await queued(10);
+    const imageGone = await queued(11);
+    await pg.query(`DELETE FROM "Image" WHERE id=11`);
+    const postGone = await queued(12);
+    await pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=12`);
+    const draft = await queued(13, { publishedAt: null });
+    // Default window: the item can be open until 144h after it was queued.
+    const publishesInTime = await queued(14, { publishedAt: at(100) });
+    const publishesTooLate = await queued(15, { publishedAt: at(150) });
+    // Already extended: the current window is the last one, so it closes at `expiresAt` (here 144.5h after queueing).
+    const extended = { createdAt: at(-80), expiresAt: at(64.5) };
+    const extendedInTime = await queued(16, { ...extended, publishedAt: at(64.25) });
+    const extendedTooLate = await queued(17, { ...extended, publishedAt: at(64.75) });
+    // A custom short first window can be extended twice: open until at most 216h after queueing.
+    const shortWindow = await queued(18, { expiresAt: at(10), publishedAt: at(150) });
+    // A vote on a gone image is left over: it becomes inconclusive and settles unpaid.
+    await countedVote(imageGone, 3, 11);
+    const before = {
+      unservable: await counterValue('knights_escalations_total', { reason: 'unservable' }),
+      late: await counterValue('knights_escalations_total', {
+        reason: 'publishes-after-expiry',
+      }),
+    };
+
+    expect(await sweep()).toEqual({ unservable: 2, publishesAfterExpiry: 2 });
+
+    expect(
+      await statusOf([
+        servable,
+        imageGone,
+        postGone,
+        draft,
+        publishesInTime,
+        publishesTooLate,
+        extendedInTime,
+        extendedTooLate,
+        shortWindow,
+      ])
+    ).toEqual([
+      ['Open', null],
+      ['Closed', 'unservable'],
+      ['Closed', 'unservable'],
+      ['Open', null],
+      ['Open', null],
+      ['Closed', 'publishes-after-expiry'],
+      ['Open', null],
+      ['Closed', 'publishes-after-expiry'],
+      ['Open', null],
+    ]);
+    expect(await itemRow(postGone)).toMatchObject({ resolvedValue: null, escalationReason: null });
+    expect(await counterValue('knights_escalations_total', { reason: 'unservable' })).toBe(
+      before.unservable + 2
+    );
+    expect(
+      await counterValue('knights_escalations_total', { reason: 'publishes-after-expiry' })
+    ).toBe(before.late + 2);
+    expect(await verdicts(imageGone)).toEqual([
+      { playerId: 3, verdict: 'inconclusive', stage: 'Knight' },
+    ]);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 1, failed: 0 });
+    expect(
+      (await pg.query(`SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=3`)).rows[0]
+    ).toEqual({ goldEarned: 0 });
+    expect(await applyPendingResolutions(db, deps())).toMatchObject({ applied: 0 });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await sweep()).toEqual({ unservable: 0, publishesAfterExpiry: 0 });
+  });
+
+  it('leaves hidden checks, yes/no items, voted, escalated and never-expiring items alone, but closes any stage on a gone image', async () => {
+    await active(1, 'Knight');
+    await image(20);
+    const hidden = await item(20, { hidden: true });
+    await image(21);
+    const yesNo = await item(21, { question: 'knights.test.bool' });
+    await pg.query(`UPDATE "KnightsQueueItem" SET audience='players' WHERE id=$1`, [yesNo]);
+    await pg.query(`DELETE FROM "Image" WHERE id IN (20, 21)`);
+    const voted = await queued(22, { publishedAt: at(150) });
+    await countedVote(voted, 3, 22);
+    const escalated = await queued(23, { publishedAt: at(150) });
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "minRank"='Templar', "escalatedAt"=$1 WHERE id=$2`,
+      [NOW, escalated]
+    );
+    const neverExpires = await queued(24, { publishedAt: at(150), expiresAt: null });
+    const escalatedGone = await queued(25);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "minRank"='Templar', "escalatedAt"=$1 WHERE id=$2`,
+      [NOW, escalatedGone]
+    );
+    await pg.query(`DELETE FROM "Image" WHERE id=25`);
+
+    expect(await sweep()).toEqual({ unservable: 1, publishesAfterExpiry: 0 });
+    expect(await statusOf([hidden, yesNo, voted, escalated, neverExpires, escalatedGone])).toEqual([
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Open', null],
+      ['Closed', 'unservable'],
+    ]);
+  });
+
+  it('closes at most the batch limit per call', async () => {
+    const ids: number[] = [];
+    for (const id of [31, 32, 33, 34, 35]) ids.push(await queued(id));
+    await pg.query(`DELETE FROM "Image" WHERE id IN (31, 32, 33, 34, 35)`);
+
+    expect(await sweep(3)).toEqual({ unservable: 3, publishesAfterExpiry: 0 });
+    expect((await statusOf(ids)).filter(([status]) => status === 'Closed')).toHaveLength(3);
+    expect(await sweep(3)).toEqual({ unservable: 2, publishesAfterExpiry: 0 });
+    expect((await statusOf(ids)).every(([status]) => status === 'Closed')).toBe(true);
   });
 });
 
