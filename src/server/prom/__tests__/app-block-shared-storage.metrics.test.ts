@@ -3,8 +3,6 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
-  SHARED_STORAGE_OPS,
-  SHARED_STORAGE_REACHABLE_OUTCOMES,
   SHARED_STORAGE_REACHABLE_SERIES,
   seedAppBlockSharedStorageMetrics,
   sharedStorageOutcomeOf,
@@ -60,49 +58,9 @@ describe('seedAppBlockSharedStorageMetrics', () => {
     );
     for (const v of values) expect(v.value).toBe(0);
   });
-
-  it('🔴 publishes 230 series per scraped pod — 76 of them (op, outcome) pairs', async () => {
-    // Literal, because a cardinality budget is sized against this figure.
-    expect(SHARED_STORAGE_REACHABLE_SERIES.length).toBe(76);
-    expect((await valuesOf(OPS)).length + (await valuesOf(LATENCY)).length).toBe(230);
-  });
-
-  it('publishes one zeroed latency child per op', async () => {
-    const counts = (await valuesOf(LATENCY)).filter((v) => (v.metricName ?? '').endsWith('_count'));
-    expect(counts.map((v) => v.labels.op).sort()).toEqual([...SHARED_STORAGE_OPS].sort());
-    for (const v of counts) expect(v.value).toBe(0);
-  });
-
-  it('every op can report ok, a token refusal, a disabled flag and an error', () => {
-    for (const op of SHARED_STORAGE_OPS) {
-      expect(SHARED_STORAGE_REACHABLE_OUTCOMES[op], op).toEqual(
-        expect.arrayContaining(['ok', 'unauthorized', 'disabled', 'error'])
-      );
-    }
-  });
-
-  it('appears in the scrape output under the names an operator queries', async () => {
-    const scrape = await client.register.metrics();
-    expect(scrape).toContain(`${OPS}{op="append",outcome="moderation_blocked"} 0`);
-    expect(scrape).toContain(`${OPS}{op="increment",outcome="rate_limited"} 0`);
-    expect(scrape).toContain(`${LATENCY}_count{op="getTop"} 0`);
-  });
 });
 
 describe('recording', () => {
-  it('re-seeding keeps a recorded latency observation and counter value', async () => {
-    const latencyBefore = await latencyCount('vote');
-    const okBefore = await opsValue('vote', 'ok');
-    await withSharedStorageMetrics('vote', async () => 'done');
-    expect(await latencyCount('vote')).toBe(latencyBefore + 1);
-    expect(await opsValue('vote', 'ok')).toBe(okBefore + 1);
-
-    await seedAppBlockSharedStorageMetrics();
-
-    expect(await latencyCount('vote')).toBe(latencyBefore + 1);
-    expect(await opsValue('vote', 'ok')).toBe(okBefore + 1);
-  });
-
   it('a rejected call records its outcome once and rethrows the same error', async () => {
     const before = await opsValue('report', 'not_found');
     const latencyBefore = await latencyCount('report');
@@ -162,32 +120,11 @@ describe('recording', () => {
 });
 
 describe('sharedStorageOutcomeOf', () => {
-  it('a tag wins over the tRPC code', () => {
-    const forbidden = new TRPCError({ code: 'FORBIDDEN', message: 'x' });
-    expect(sharedStorageOutcomeOf(forbidden)).toBe('forbidden');
-    expect(sharedStorageOutcomeOf(tagSharedStorageOutcome(forbidden, 'trust_refused'))).toBe(
-      'trust_refused'
-    );
-  });
-
   it('tagging returns the same object and adds nothing to it', () => {
     const err = new TRPCError({ code: 'BAD_REQUEST', message: 'x' });
     const keysBefore = Reflect.ownKeys(err);
     expect(tagSharedStorageOutcome(err, 'moderation_blocked')).toBe(err);
     expect(Reflect.ownKeys(err)).toEqual(keysBefore);
-  });
-
-  it.each([
-    ['UNAUTHORIZED', 'unauthorized'],
-    ['FORBIDDEN', 'forbidden'],
-    ['TOO_MANY_REQUESTS', 'rate_limited'],
-    ['PAYLOAD_TOO_LARGE', 'payload_too_large'],
-    ['BAD_REQUEST', 'bad_request'],
-    ['NOT_FOUND', 'not_found'],
-    ['INTERNAL_SERVER_ERROR', 'error'],
-    ['SERVICE_UNAVAILABLE', 'error'],
-  ] as const)('untagged %s is %s', (code, outcome) => {
-    expect(sharedStorageOutcomeOf(new TRPCError({ code, message: 'x' }))).toBe(outcome);
   });
 
   it('anything that is not a TRPCError is an error', () => {

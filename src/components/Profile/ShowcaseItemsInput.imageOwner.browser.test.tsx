@@ -179,6 +179,8 @@ describe('Images search in the showcase picker', () => {
     await vi.waitFor(() => expect(offeredIds()).toEqual([RECENT_SAFE]), { timeout: 3000 });
     // A blurred row draws its placeholder from these; without them it is an empty box.
     expect(state.renderedHits.at(-1)).toMatchObject({ hash: 'h', width: 3, height: 2 });
+    // The select returns no `user`; the row's avatar needs the caller's.
+    expect(state.renderedHits.at(-1)).toMatchObject({ user: { id: 7, username: 'fox' } });
     expect(state.rowProps.at(-1)).toMatchObject({
       pickerRow: true,
       viewerLevel: 3,

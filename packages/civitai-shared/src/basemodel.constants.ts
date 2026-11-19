@@ -1309,7 +1309,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  // MAI - checkpoint only (Microsoft MAI Image, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
