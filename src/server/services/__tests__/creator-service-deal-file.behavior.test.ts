@@ -1296,15 +1296,18 @@ describe('preview pipeline', () => {
     ['flagged for review', `'Scanned'`, `, "needsReview" = 'poi'`],
     ['a person of interest', `'Scanned'`, `, poi = true`],
     ['a minor', `'Scanned'`, `, minor = true`],
+    ['rated above XXX', `'Scanned'`, `, "nsfwLevel" = 32`],
   ])(
-    'stops a preview that came back %s: no mark, no publish, failed for good',
+    'stops a preview that came back %s: no mark, no publish, failed for good, copy kept',
     async (_n, ingestion, flags) => {
       const { fileId } = await waiting();
       await files.startPreviewScans();
       await q(`UPDATE "Image" SET ingestion = ${ingestion}::"ImageIngestionStatus"${flags}`);
       await files.settlePreviewScans();
+      await files.deleteScanCopies();
 
       expect(await fileRow(fileId)).toMatchObject({ status: 'Failed', scanStatus: 'Failed' });
+      expect((await fileRow(fileId)).imageId).not.toBeNull();
       expect(await files.publishPreviews()).toBe(0);
       expect(preview.build).not.toHaveBeenCalled();
       expect((await list(1, BUYER)).filter((f) => f.kind === 'Preview')).toEqual([]);
