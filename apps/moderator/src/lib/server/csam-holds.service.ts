@@ -193,16 +193,18 @@ async function decideBatch(
 
 type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };
 
-/** The main app records that a confirmed hold's item went into a CSAM report or a supplemental. */
+/** The main app records that a confirmed hold's item went into a CSAM report, or takes the mark back. */
 export async function markCsamHoldReported({
   holdId,
+  included,
 }: {
   holdId: number;
+  included: boolean;
 }): Promise<CsamHoldDecisionResult> {
   const result = await callModEndpoint(
     'text-scan/csam-hold/mark-reported',
-    { holdId },
-    'Mark included in a report'
+    { holdId, included },
+    included ? 'Mark included in a report' : 'Undo included in a report'
   );
   if (!result.ok) {
     if (!result.requestNeverSent && result.status === undefined)

@@ -1313,4 +1313,13 @@ describe('the report-not-filed view matches a report to the held item', () => {
     );
     expect(held?.reportIncludedAt).toBe('2026-09-20T00:00:00Z');
   });
+
+  it('puts an unmarked hold back on the queue', async () => {
+    await db.query(
+      `UPDATE "TextScanHold" SET meta = meta || '{"reportIncluded":{"by":11,"at":"2026-09-20T00:00:00Z"}}' WHERE id = 24`
+    );
+    expect(await listed()).not.toContain(24);
+    await db.query(`UPDATE "TextScanHold" SET meta = meta - 'reportIncluded' WHERE id = 24`);
+    expect(await listed()).toContain(24);
+  });
 });

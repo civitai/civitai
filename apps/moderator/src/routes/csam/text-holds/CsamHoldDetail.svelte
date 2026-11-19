@@ -125,6 +125,8 @@
   // Every confirm asks it afresh; a dismissal sends none.
   let reportChoice = $state<CsamReportChoice | ''>('');
   let referEl: HTMLFormElement | undefined = $state();
+  let markEl: HTMLFormElement | undefined = $state();
+  let markOpen = $state(false);
   let referNote = $state('');
   // The note is typed in the decision form; "Not sure" sends it along.
   async function refer() {
@@ -455,20 +457,53 @@
       <IconLock class="size-3.5" aria-hidden="true" /> This hold is already decided.
     </p>
     {#if row.status === 'Confirmed' && row.reportChoice && isReportableChoice(row.reportChoice)}
-      {#if row.reportIncludedAt}
-        <p class="m-0 text-sm text-dark-2">
-          Marked as included in a report {shortAge(row.reportIncludedAt)} ago.
-        </p>
-      {:else if canDecide}
-        <form
-          method="POST"
-          action={actionHref('markReported')}
-          use:enhance={submit(() => 'Marked as included in a report')}
-        >
-          <input type="hidden" name="holdId" value={row.id} />
-          <Button type="submit" variant="outline" size="sm">Included in a report</Button>
-        </form>
-      {/if}
+      <div class="flex flex-wrap items-center gap-2">
+        {#if row.reportIncludedAt}
+          <p class="m-0 text-sm text-dark-2">
+            Marked as included in a report {shortAge(row.reportIncludedAt)} ago.
+          </p>
+        {/if}
+        {#if canDecide}
+          <form
+            bind:this={markEl}
+            method="POST"
+            action={actionHref('markReported')}
+            use:enhance={submit(() =>
+              row.reportIncludedAt ? 'Back on Report not filed' : 'Marked as included in a report'
+            )}
+          >
+            <input type="hidden" name="holdId" value={row.id} />
+            <input type="hidden" name="included" value={row.reportIncludedAt ? 'false' : 'true'} />
+            {#if row.reportIncludedAt}
+              <Button type="submit" variant="outline" size="sm">Undo</Button>
+            {:else}
+              <Button type="button" variant="outline" size="sm" onclick={() => (markOpen = true)}
+                >Included in a report</Button
+              >
+            {/if}
+          </form>
+        {/if}
+      </div>
+      <AlertDialog.Root bind:open={markOpen}>
+        <AlertDialog.Content>
+          <AlertDialog.Header>
+            <AlertDialog.Title>Mark {typeName} #{row.entityId} as included in a report?</AlertDialog.Title>
+            <AlertDialog.Description>
+              Only if this item's facts went into a CSAM report or a supplemental one. This hold leaves
+              the Report not filed queue.
+            </AlertDialog.Description>
+          </AlertDialog.Header>
+          <AlertDialog.Footer>
+            <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+            <AlertDialog.Action
+              onclick={() => {
+                markOpen = false;
+                markEl?.requestSubmit();
+              }}>Mark included</AlertDialog.Action
+            >
+          </AlertDialog.Footer>
+        </AlertDialog.Content>
+      </AlertDialog.Root>
     {/if}
   {:else if canDecide}
     <form

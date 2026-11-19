@@ -607,12 +607,13 @@ describe('referCsamHoldToLead', () => {
 });
 
 describe('markCsamHoldReported', () => {
-  const hold = async (status: string, label = 'csam') =>
+  const hold = async (status: string, label = 'csam', reportChoice = 'imagery') =>
     (
       await pg.query<{ id: number }>(
         `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta")
-         VALUES ('ChatMessage', 1, $2, $1, '{"decision":"remove","reportChoice":"imagery"}') RETURNING id`,
-        [status, label]
+         VALUES ('ChatMessage', 1, $2, $1, jsonb_build_object('decision', 'remove', 'reportChoice', $3::text))
+         RETURNING id`,
+        [status, label, reportChoice]
       )
     ).rows[0].id;
   const meta = async (id: number) =>
@@ -633,16 +634,28 @@ describe('markCsamHoldReported', () => {
     });
   });
 
-  it('refuses a pending hold, a non-csam hold and a second mark', async () => {
+  it('refuses a pending hold, a non-csam hold, a "none" choice and a second mark', async () => {
     const pending = await hold('Pending');
     const other = await hold('Confirmed', 'minor');
+    const none = await hold('Confirmed', 'csam', 'none');
     const marked = await hold('Confirmed');
     await markCsamHoldReported({ holdId: marked, actor: { id: 7 } });
-    for (const id of [pending, other, marked])
+    for (const id of [pending, other, none, marked])
       await expect(markCsamHoldReported({ holdId: id, actor: { id: 8 } })).rejects.toThrow(
-        /not confirmed, already marked or missing/
+        /not confirmed with a reportable choice, already marked or missing/
       );
-    expect(await meta(pending)).not.toHaveProperty('reportIncluded');
+    for (const id of [pending, other, none])
+      expect(await meta(id)).not.toHaveProperty('reportIncluded');
     expect(await meta(marked)).toMatchObject({ reportIncluded: { by: 7 } });
+  });
+
+  it('takes a mark back, keeping the decision, and refuses an unmarked hold', async () => {
+    const id = await hold('Confirmed');
+    await markCsamHoldReported({ holdId: id, actor: { id: 7 } });
+    await markCsamHoldReported({ holdId: id, included: false, actor: { id: 8 } });
+    expect(await meta(id)).toEqual({ decision: 'remove', reportChoice: 'imagery' });
+    await expect(
+      markCsamHoldReported({ holdId: id, included: false, actor: { id: 8 } })
+    ).rejects.toThrow(/not marked or missing/);
   });
 });

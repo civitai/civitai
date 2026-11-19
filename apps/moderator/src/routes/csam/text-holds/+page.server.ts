@@ -139,7 +139,10 @@ const decideSchema = z
     input.decision === 'dismiss' ? { ...input, reportChoice: undefined } : input
   );
 
-const markReportedSchema = z.object({ holdId: int4Id });
+const markReportedSchema = z.object({
+  holdId: int4Id,
+  included: z.enum(['true', 'false']).transform((v) => v === 'true'),
+});
 
 const referSchema = z.object({
   holdId: int4Id,
@@ -189,6 +192,6 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     const result = await markCsamHoldReported(input);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
-    return { success: true, key: input.holdId, reportIncluded: true };
+    return { success: true, key: input.holdId, reportIncluded: input.included };
   }),
 };

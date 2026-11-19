@@ -78,6 +78,19 @@ describe('textScan.markCsamHoldReported', () => {
     const res = await call({ holdId: 12 });
 
     expect(res.status).toBe(200);
-    expect(mocks.markCsamHoldReported).toHaveBeenCalledWith({ holdId: 12, actor: { id: 7 } });
+    expect(mocks.markCsamHoldReported).toHaveBeenCalledWith({
+      holdId: 12,
+      included: true,
+      actor: { id: 7 },
+    });
+  });
+
+  it('takes a mark back with the same permission', async () => {
+    expect((await call({ holdId: 12, included: false })).status).toBe(200);
+    expect(mocks.markCsamHoldReported).toHaveBeenCalledWith({
+      holdId: 12,
+      included: false,
+      actor: { id: 7 },
+    });
   });
 });
