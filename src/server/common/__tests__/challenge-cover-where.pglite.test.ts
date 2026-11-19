@@ -14,7 +14,15 @@ const FUTURE = new Date('2999-01-01T00:00:00Z');
 let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
 // One clean row per shape, then one row per condition that fails exactly that condition.
-const CLEAN = {
+type Cover = {
+  needsReview: string | null;
+  tosViolation: boolean;
+  acceptableMinor: boolean;
+  minor: boolean;
+  nsfwLevel: number;
+  postId: number | null;
+};
+const CLEAN: Cover = {
   needsReview: null,
   tosViolation: false,
   acceptableMinor: false,
@@ -22,7 +30,7 @@ const CLEAN = {
   nsfwLevel: PG,
   postId: null,
 };
-const COVERS: Record<string, Partial<typeof CLEAN> & { id: number }> = {
+const COVERS: Record<string, Partial<Cover> & { id: number }> = {
   'clean, postless': { id: 1 },
   'clean, in a published public post': { id: 2, postId: 1 },
   'clean, minor-flagged at PG': { id: 3, minor: true },
