@@ -4,6 +4,8 @@ import { useInstantSearch } from 'react-instantsearch';
 import { IconCloudOff } from '@tabler/icons-react';
 import { CollectionCard } from '~/components/Cards/CollectionCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { coversWithinBrowsingLevel } from '~/components/Search/collection-hit-covers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import {
   BrowsingLevelFilter,
@@ -53,6 +55,7 @@ const RenderFilters = () => {
 export function CollectionHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'collections'>();
   const { status } = useInstantSearch();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'collections',
@@ -128,7 +131,8 @@ export function CollectionHitList() {
           gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         }}
       >
-        {items.map((hit) => {
+        {items.map((item) => {
+          const hit = coversWithinBrowsingLevel(item, browsingLevel);
           return (
             <CollectionCard
               key={hit.id}
