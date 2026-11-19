@@ -48,8 +48,25 @@
 - **Site-wide `canGenerate`** — `getResourceCanGenerate` blocks **only on the
   `hidden` state** (`canGenerateBlockedTargets`, via `getCanGenerateHiddenGates`):
   membership is ignored (no tier lookup — `isMember: true` drops member rules),
-  so model pages / search / the API hard-block a resource only when a rule hides
-  its ecosystem or version.
+  so model pages and search hard-block a resource only when a rule hides its
+  ecosystem or version. Mini (the orchestrator's read) is the exception, below.
+- **Generation through the API (orchestrator)** — the orchestrator reads
+  `/api/v1/model-versions/mini/{id}`, then asks `/api/v1/permissions/check` for the
+  generating user when `checkPermission` is true. Mini's `canGenerate` leaves gate
+  rules out (`ignoreGateRules`); a version a hidden or disabled rule names (by id,
+  ecosystem, or its generation-alias target) answers `checkPermission: true`, the same
+  for every caller (`getGateSubjects` + `gatedVersionIds`). The permission check then
+  refuses anyone outside the rule's audience, from the user's real moderator, tester
+  and member status, and trusts the asked-about user only from a caller that may ask
+  about them. While a process has never read the rules, mini marks every version gated
+  for one minute and the check refuses non-moderators.
+- **Clearing the orchestrator on a change** — saving or deleting a rule clears the
+  orchestrator's cached mini answers for the versions the rule named before and after,
+  and for alias versions whose target it names by id or ecosystem
+  (`clearOrchestratorForGateChange`). A failed clear is shown to the moderator; saving
+  again retries it. Clearing every version of a named ecosystem needs orchestrator
+  support and is not done yet, so an ecosystem rule reaches existing cached answers
+  only when the orchestrator next refreshes them.
 - **Pickers** — `BaseModelInput` / `WorkflowPicker` read one per-item state;
   `FormFooter` resolves the selected ecosystem's state (members-only reuses the
   existing upsell + CTA).

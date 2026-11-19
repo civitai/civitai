@@ -20,7 +20,21 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GateAvailableTo, GatePresentation, GateRule } from '~/shared/generation/gates';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
+
+// The rule is saved either way; the orchestrator's cached answers just weren't cleared.
+const warnIfNotCleared = ({ orchestratorCacheCleared }: { orchestratorCacheCleared: boolean }) => {
+  if (!orchestratorCacheCleared)
+    showWarningNotification({
+      title: 'Orchestrator not updated',
+      message:
+        'The rule is saved, but the API may follow the old rule until its cache refreshes. Save the rule again to retry.',
+    });
+};
 import { trpc } from '~/utils/trpc';
 import {
   TargetDetails,
@@ -128,11 +142,12 @@ function GateRuleModal({ rule }: { rule?: GateRule }) {
   };
 
   const saveMutation = trpc.generation.saveGateRule.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       showSuccessNotification({
         title: 'Saved',
         message: 'Gate rule saved. Changes propagate as caches refresh.',
       });
+      warnIfNotCleared(data);
       invalidate();
       dialog.onClose();
     },
@@ -265,8 +280,9 @@ export function GateRulesSection() {
   const invalidate = useInvalidateGateRules();
   const { data, isLoading } = trpc.generation.getGateRules.useQuery();
   const deleteMutation = trpc.generation.deleteGateRule.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       showSuccessNotification({ title: 'Deleted', message: 'Gate rule deleted.' });
+      warnIfNotCleared(data);
       invalidate();
     },
     onError: (err) =>

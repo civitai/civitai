@@ -2,7 +2,7 @@ import { getResource, queryResources } from '@civitai/orchestration-client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
@@ -15,6 +15,8 @@ import {
 } from '~/server/utils/resource-air';
 import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { Prisma } from '@prisma/client';
+import { isTargetedBy, type GateRule } from '~/shared/generation/gates';
 
 export async function getModelClient({
   token,
@@ -111,8 +113,74 @@ export async function invalidateOrchestratorVersionsOrThrow(versionIds: number[]
   const airs = await versionAirs(versionIds);
   if (!airs.length) return 0;
   const etag = await getCurrentLSN();
-  await Promise.all(airs.map((air) => invalidateOrchestratorResource(air, etag)));
+  // Paced like `invalidateAirs`; every AIR is attempted before a failure is thrown.
+  const failures: string[] = [];
+  const tasks = chunk(airs, 100).map((batch) => async () => {
+    await Promise.all(
+      batch.map((air) =>
+        invalidateOrchestratorResource(air, etag).catch((error: Error) => {
+          failures.push(error.message);
+        })
+      )
+    );
+  });
+  await limitConcurrency(tasks, 3);
+  if (failures.length)
+    throw new Error(
+      `${failures.length}/${airs.length} resource invalidations failed: ${failures[0]}`
+    );
   return airs.length;
+}
+
+/**
+ * The versions whose cached orchestrator answer a gate rule change makes stale: the versions the
+ * rules name, and alias versions whose target the rules name by id or by ecosystem (an alias's own
+ * AIR carries its own ecosystem, so an ecosystem clear never reaches it).
+ */
+export async function gateChangeVersionIds(rules: (GateRule | undefined)[]): Promise<number[]> {
+  const targets = { ecosystems: new Set<string>(), versionIds: new Set<number>() };
+  for (const rule of rules) {
+    if (!rule) continue;
+    rule.ecosystems.forEach((e) => targets.ecosystems.add(e));
+    rule.modelVersionIds.forEach((id) => targets.versionIds.add(id));
+  }
+  if (!targets.ecosystems.size && !targets.versionIds.size) return [];
+  const aliases = await dbRead.$queryRaw<
+    { id: number; targetId: number; targetBaseModel: string }[]
+  >(
+    Prisma.sql`
+      SELECT mv.id, t.id AS "targetId", t."baseModel" AS "targetBaseModel"
+      FROM "ModelVersion" mv
+      JOIN "ModelVersion" t ON t.id = (mv.meta->'generationAlias'->>'versionId')::int
+      WHERE mv.meta->'generationAlias'->>'versionId' IS NOT NULL
+    `
+  );
+  const ids = new Set(targets.versionIds);
+  for (const alias of aliases)
+    if (isTargetedBy({ id: alias.targetId, baseModel: alias.targetBaseModel }, targets))
+      ids.add(alias.id);
+  return [...ids];
+}
+
+/**
+ * Clears the orchestrator's cached answers a gate rule change makes stale, so the change reaches
+ * the API at once. False when the clear failed (logged): the moderator is told, and saving the
+ * rule again retries it. Ecosystem-wide clearing waits on the orchestrator supporting it.
+ */
+export async function clearOrchestratorForGateChange(rules: (GateRule | undefined)[]) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return true;
+  try {
+    await invalidateOrchestratorVersionsOrThrow(await gateChangeVersionIds(rules));
+    return true;
+  } catch (error) {
+    logToAxiom({
+      name: 'gate-rule-orchestrator-clear',
+      type: 'error',
+      message: (error as Error).message,
+      ruleIds: rules.flatMap((r) => (r ? [r.id] : [])),
+    });
+    return false;
+  }
 }
 
 /**

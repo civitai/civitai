@@ -11,6 +11,9 @@ import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
+  gatedVersionIds,
+  getGateRuleState,
+  getGateSubjects,
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
@@ -586,28 +589,43 @@ async function handler(
   }
   const { format } = targetFile.metadata;
 
-  const genStates = await resolveCanGenerateForVersions(
-    [
+  // Gate rules decide per generating user, which only the permission check knows: a gated version
+  // asks for it (checkPermission), and canGenerate leaves the gate out. The same answer for every
+  // caller, so the orchestrator's account can't change what a gate does.
+  const [genStates, gateRuleState, gateSubjects] = await Promise.all([
+    resolveCanGenerateForVersions(
+      [
+        {
+          id: modelVersion.id,
+          status: modelVersion.status,
+          availability: modelVersion.availability,
+          usageControl: modelVersion.usageControl,
+          baseModel: modelVersion.baseModel,
+          covered: modelVersion.covered ?? false,
+          coveredLive: modelVersion.coveredLive ?? false,
+          modelUserId: modelVersion.modelUserId,
+          modelType: modelVersion.type,
+          flags: modelVersion.versionFlags,
+          modelVersionAlias: modelVersion.generationAlias,
+        },
+      ],
+      {
+        user: { id: user?.id, isModerator: user?.isModerator },
+        sfwOnly: false,
+        wildcardsEnabled: false,
+        ignoreGateRules: true,
+      }
+    ),
+    getGateRuleState(),
+    getGateSubjects([
       {
         id: modelVersion.id,
-        status: modelVersion.status,
-        availability: modelVersion.availability,
-        usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
-        covered: modelVersion.covered ?? false,
-        coveredLive: modelVersion.coveredLive ?? false,
-        modelUserId: modelVersion.modelUserId,
-        modelType: modelVersion.type,
-        flags: modelVersion.versionFlags,
-        modelVersionAlias: modelVersion.generationAlias,
+        generationAlias: modelVersion.generationAlias,
       },
-    ],
-    {
-      user: { id: user?.id, isModerator: user?.isModerator },
-      sfwOnly: false,
-      wildcardsEnabled: false,
-    }
-  );
+    ]),
+  ]);
+  const gateAsksPermission = gatedVersionIds(gateSubjects, gateRuleState).has(modelVersion.id);
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
     versionAvailability: modelVersion.availability,
@@ -804,7 +822,7 @@ async function handler(
     // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
     evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
-    checkPermission: modelVersion.checkPermission,
+    checkPermission: modelVersion.checkPermission || gateAsksPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
@@ -819,9 +837,16 @@ async function handler(
   logMiniModerationCaller(req, user, modelVersion, includeModeration);
   if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
   const preset = res.getHeader?.('X-Expires');
+  const presetAt = typeof preset === 'string' ? Date.parse(preset) : undefined;
+  // Built while the gate rules are unreadable (every version marked gated): kept briefly, so
+  // ungated versions don't pay a permission check for the orchestrator's whole refresh interval.
+  const unknownRulesAt = gateRuleState.known ? undefined : Date.now() + 60_000;
   const expiresAt = miniResponseExpiresAt({
     now: Date.now(),
-    alreadySet: typeof preset === 'string' ? Date.parse(preset) : undefined,
+    alreadySet:
+      presetAt !== undefined && unknownRulesAt !== undefined
+        ? Math.min(presetAt, unknownRulesAt)
+        : presetAt ?? unknownRulesAt,
     moderation: includeModeration,
     epochUrl: resignedEpochUrl,
     downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,
