@@ -1,5 +1,5 @@
 import { clearHeldUserImages, pictureUserIds } from '@civitai/db-queries/profile-picture-clear';
-import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
 import type { Kysely } from 'kysely';
@@ -54,9 +54,6 @@ export async function bustProfilePictures(
       ),
       bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust' })
-      ),
-      bustEventEngineProfilePictures(getRedis(), userIds).catch((error) =>
-        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'event-engine' })
       ),
     ]);
   } catch (error) {

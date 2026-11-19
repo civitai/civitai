@@ -15,14 +15,14 @@ const sqlLists = (source: string) =>
   );
 
 describe('copies of the owner-hidden review list', () => {
-  it.each([
-    'apps/feed-go/internal/hydrate/users.go',
-    'apps/event-engine/src/common/caches/imageData.cache.ts',
-  ])('%s holds exactly the shared list', (file) => {
-    const lists = sqlLists(read(file));
-    expect(lists.length).toBeGreaterThan(0);
-    for (const list of lists) expect(list).toEqual(sorted(OWNER_HIDDEN_REVIEWS));
-  });
+  it.each(['apps/feed-go/internal/hydrate/users.go'])(
+    '%s holds exactly the shared list',
+    (file) => {
+      const lists = sqlLists(read(file));
+      expect(lists.length).toBeGreaterThan(0);
+      for (const list of lists) expect(list).toEqual(sorted(OWNER_HIDDEN_REVIEWS));
+    }
+  );
 
   it('apps/feed-go/internal/feed/query.go binds exactly the shared list', () => {
     const line = read('apps/feed-go/internal/feed/query.go')

@@ -169,11 +169,6 @@ describe('moderator writes to an image that is a profile picture', () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(bustedKeys()).toContain(avatarKey);
-    // The event engine's copy too.
-    expect(hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
-      debounce: '1',
-      cachedAt: expect.any(String),
-    });
   });
 
   it('blockImage clears a User.image naming the blocked picture and evicts the basic user', async () => {

@@ -118,8 +118,7 @@ import {
   userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { bustEventEngineProfilePictures } from '@civitai/redis';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   DeleteUserInput,
@@ -2459,9 +2458,6 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
-  await bustEventEngineProfilePictures(redis, [userId]).catch((error) =>
-    logProfilePictureRefreshError(error, { userIds: String(userId), step: 'event-engine-cache' })
-  );
 }
 
 /** `getPictureUserIds` on the primary. */
@@ -2505,7 +2501,6 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
     heldIds = await clearHeldUserImages(dbWrite, ids);
   });
   await step('picture-cache', () => profilePictureCache.refresh(ids));
-  await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
   if (heldIds.length) {
     await step('basic-cache', () => userBasicCache.refresh(heldIds));
     await step('search-index', () =>
