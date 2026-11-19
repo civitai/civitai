@@ -30,6 +30,16 @@ import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import {
+  FlagRaceCollapsedBar,
+  flagRaceHomeKey,
+} from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
+import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
+import {
+  eventHomeBlockCollapseId,
+  eventHomeBlockDismissId,
+  eventHomeBlockDisplay,
+} from '~/components/HomeBlocks/scored-event-home-block.utils';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -82,6 +92,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // A Flag Race row is one row that scrolls, holding every one of today's flags.
   const rows = flagEvent ? 1 : metadata.collection?.rows ?? 2;
   const flagRow = useFlagRow(flagEvent);
+  const { dismissed, dismiss, restore } = useNavBannersDismissed();
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
     return shuffle([...collection.items]);
@@ -127,11 +138,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   if (flagRow) {
     const loading = isLoading || loadingPreferences;
+    const key = flagRaceHomeKey(flagRow.event);
+    const display = eventHomeBlockDisplay(key, dismissed);
+    if (display === 'hidden') return null;
+    if (display === 'collapsed')
+      return (
+        <HomeBlockWrapper py={16}>
+          <FlagRaceCollapsedBar
+            event={flagRow.event}
+            summary={flagRow.summary}
+            onExpand={() => restore(eventHomeBlockCollapseId(key))}
+            onClose={() => dismiss(eventHomeBlockDismissId(key), eventHomeBlockCollapseId(key))}
+          />
+        </HomeBlockWrapper>
+      );
     return (
       <HomeBlockWrapper py={32}>
         <div className={flagClasses.wrap}>
           <section className={clsx(partyClasses.party, flagClasses.row)}>
-            <FlagRacePanel event={flagRow.event} summary={flagRow.summary} />
+            <FlagRacePanel
+              event={flagRow.event}
+              summary={flagRow.summary}
+              onCollapse={() => dismiss(eventHomeBlockCollapseId(key))}
+            />
             <div className={flagClasses.flags}>
               {loading ? (
                 Array.from({ length: flagRow.summary.flags.length }).map((_, index) => (

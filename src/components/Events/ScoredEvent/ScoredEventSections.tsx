@@ -22,6 +22,7 @@ import {
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
 import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
 import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
+import { flagRaceHomeKey } from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import type { RouterOutput } from '~/types/router';
@@ -182,8 +183,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         />
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3 empty:hidden">
           {joined && !ended && <EventPointPopsSetting size="sm" />}
-          <div className="ml-auto">
+          <div className="ml-auto flex flex-wrap justify-end gap-1">
             <ShowEventHomeBlock event={event} title={data.title} />
+            <ShowEventHomeBlock event={flagRaceHomeKey(event)} title="the Flag Race" />
           </div>
         </div>
       </div>
