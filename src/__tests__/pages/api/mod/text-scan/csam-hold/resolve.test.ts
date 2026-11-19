@@ -74,8 +74,10 @@ const updateMany = hold.updateMany;
 const findFirst = hold.findFirst;
 
 import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
+import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-reported';
+import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
 
-function call(body: Record<string, unknown>) {
+function call(body: Record<string, unknown>, endpoint: typeof handler = handler) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
   let statusCode = 200;
   let payload: unknown;
@@ -91,7 +93,7 @@ function call(body: Record<string, unknown>) {
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
-  return handler(req, res).then(() => ({ status: statusCode, body: payload }));
+  return endpoint(req, res).then(() => ({ status: statusCode, body: payload }));
 }
 
 /** Filing a report needs a reportable category; every other confirm can say none. */
@@ -152,22 +154,39 @@ describe('textScan.resolveCsamHold', () => {
     expect(updateMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a confirm without a report choice, and a dismissal with one, before reading', async () => {
-    expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove' })).status).toBe(400);
+  it('refuses a dismissal with a report choice, and an unknown choice, before reading', async () => {
     expect(
       (await call({ holdId: 12, textHash: 'h-1', decision: 'dismiss', reportChoice: 'none' }))
         .status
     ).toBe(400);
     expect(
-      (
-        await call({
-          holds: [{ holdId: 12, textHash: 'h-1' }],
-          decision: 'remove',
-        })
-      ).status
+      (await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'bogus' }))
+        .status
     ).toBe(400);
     expect(findFirst).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('decides a confirm from an older moderator app without a choice, and counts it', async () => {
+    const res = await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+    expect(res.status).toBe(200);
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(updateMany.mock.calls[0])).not.toContain('reportChoice');
+    const missing = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.type === 'reportChoice-missing');
+    expect(missing).toEqual([
+      expect.objectContaining({ payload: { decision: 'remove', count: 1 } }),
+    ]);
+    expect(missing[0]).not.toHaveProperty('holdId');
+    expect(missing[0]).not.toHaveProperty('userId');
+  });
+
+  it('does not count a confirm that carries a choice', async () => {
+    await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
+    expect(
+      loggingMock.logToAxiom.mock.calls.filter(([entry]) => entry.type === 'reportChoice-missing')
+    ).toEqual([]);
   });
 
   it('refuses the report decision with "none", before reading or acting', async () => {
@@ -760,5 +779,31 @@ describe('textScan.resolveCsamHold', () => {
       expect(findFirst).not.toHaveBeenCalled();
       expect(updateMany).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The SQL of both is pinned against Postgres in csam-hold-mark.pglite.test.ts; these pin the endpoint.
+describe.each([
+  ['textScan.referCsamHold', referHandler, { holdId: 12, textHash: 'h-1', note: 'unsure' }],
+  ['textScan.markCsamHoldReported', markReportedHandler, { holdId: 12 }],
+  ['textScan.markCsamHoldReported (undo)', markReportedHandler, { holdId: 12, included: false }],
+] as const)('%s', (_, endpoint, body) => {
+  it('refuses a moderator without the csam permission, before writing', async () => {
+    mocks.hasModeratorGrant.mockResolvedValue(false);
+    expect((await call(body, endpoint)).status).toBe(403);
+    expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      'csam.report.file'
+    );
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('writes as the calling moderator', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 12 }] as never);
+    expect((await call(body, endpoint)).status).toBe(200);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const values = dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1);
+    expect(values).toContain(12);
+    if (!('included' in body)) expect(values).toContain(7);
   });
 });
