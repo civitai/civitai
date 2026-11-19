@@ -238,8 +238,8 @@ export async function resolveComFaceIntent(
   let verdict: ComFaceIntentVerdict;
   if (stored)
     verdict = stored.detected
-      ? { status: 'detected', reason: stored.reason }
-      : { status: 'allowed' };
+      ? { status: 'detected', reason: stored.reason, promptId: stored.promptId }
+      : { status: 'allowed', promptId: stored.promptId };
   else {
     verdict = await checkComFaceIntentVerdict(listing);
     if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;

@@ -178,3 +178,43 @@ describe('a refusal at save', () => {
     ]);
   });
 });
+
+describe('a stored detection reused under the active prompt', () => {
+  const linesFor = (message: string) =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as Record<string, unknown>)
+      .filter((line) => line.message === message);
+
+  it("logs the lock it adds with the stored verdict's promptId", async () => {
+    storeModel({ detected: true, promptId: PROMPT_B });
+    activeIntentPrompt(PROMPT_B);
+    await resolve();
+    expect(mockPreview).not.toHaveBeenCalled();
+    expect(writes.lock).toHaveBeenCalledTimes(1);
+    expect(linesFor('locked')).toEqual([
+      expect.objectContaining({ payload: { promptId: PROMPT_B } }),
+    ]);
+  });
+
+  it("logs a refusal of an intent-locked model with the stored verdict's promptId", async () => {
+    const comFaceIntent = { textHash, at: '2026-11-01T00:00:00.000Z', detected: true };
+    storeModel(
+      {},
+      {
+        lockedProperties: ['nsfw'],
+        meta: {
+          comFaceIntent: { ...comFaceIntent, promptId: PROMPT_B },
+          systemNsfwLock: { source: 'com-face-intent' },
+        },
+      }
+    );
+    activeIntentPrompt(PROMPT_B);
+    await expect(
+      assertComFaceAllowed({ modelId: MODEL_ID, userId: OWNER_ID, ...listing })
+    ).rejects.toThrow();
+    expect(mockPreview).not.toHaveBeenCalled();
+    expect(linesFor('refused at save')).toEqual([
+      expect.objectContaining({ payload: { promptId: PROMPT_B } }),
+    ]);
+  });
+});
