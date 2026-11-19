@@ -197,8 +197,7 @@ describe('base model filter (Models and Images)', () => {
 });
 
 describe('base model filter on images', () => {
-  // Images made with a hidden base (generation-only or retired, so no model uploads) can still be
-  // filtered. SDXL 1.0 is a visible base, so it proves the list rendered before an absence is read.
+  // SDXL 1.0 (visible) is awaited first, or the absence check passes on a list not yet rendered.
   const sdxlTurbo = async (includeHidden?: boolean) => {
     renderWithProviders(
       <BaseModelFilterSelect includeHidden={includeHidden} value={[]} onChange={vi.fn()} />
