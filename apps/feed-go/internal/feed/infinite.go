@@ -81,12 +81,9 @@ var infiniteUnsupported = func() []string {
 // exception to the unknown-key fallback, with a deploy-gap risk: see DESIGN.md §5.1.
 var strippedURLKeys = []string{"query", "section", "similarTo", "view"}
 
-// strippedLegacyKeys are keys outside getInfiniteImagesSchema that clients the site no longer ships
-// still send to image.getInfinite: `useIndex` (the client's index-or-database switch, removed when
-// the server took that decision over) and `search`. Nothing in the procedure's chain reads either
-// (zod strips them before the handler; applyDomainFeature reads only the browsing levels of the raw
-// input), so Node answers as if they were absent, and so does ParseInfinite. The same deliberate
-// exception as strippedURLKeys, with the same deploy-gap risk (DESIGN.md §5.1);
+// strippedLegacyKeys are keys outside getInfiniteImagesSchema that legacy clients still send to
+// image.getInfinite. zod strips them and nothing downstream reads them, so Node answers as if they
+// were absent. Same deploy-gap exception as strippedURLKeys (DESIGN.md §5.1);
 // TestStrippedLegacyKeysAreStrippedByZod fails when the schema gains one.
 var strippedLegacyKeys = []string{"search", "useIndex"}
 

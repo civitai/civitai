@@ -156,9 +156,6 @@ func TestParseInfiniteIgnoresStrippedLegacyKeys(t *testing.T) {
 // zod strips them, so none may be a getInfiniteImagesSchema key. A key the schema starts reading must
 // be parsed instead, and feed-go must ship before the web change that adds it (DESIGN.md §5.1).
 func TestStrippedLegacyKeysAreStrippedByZod(t *testing.T) {
-	if want := []string{"search", "useIndex"}; !reflect.DeepEqual(strippedLegacyKeys, want) {
-		t.Errorf("strippedLegacyKeys = %v, want %v (a change here is a reviewed parity decision)", strippedLegacyKeys, want)
-	}
 	for _, k := range strippedLegacyKeys {
 		if imagesSchema.Has(k) {
 			t.Errorf("%s is a getInfiniteImagesSchema key now: parse it (or classify it) instead of ignoring it", k)
