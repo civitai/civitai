@@ -77,6 +77,7 @@ import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
 import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-reported';
 import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
 import setReportChoiceHandler from '~/pages/api/mod/text-scan/csam-hold/set-report-choice';
+import { decideCsamHold } from '~/server/services/text-scan/csam-hold-decision';
 
 function call(body: Record<string, unknown>, endpoint: typeof handler = handler) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
@@ -803,6 +804,26 @@ describe('textScan.resolveCsamHold', () => {
       expect(findFirst).not.toHaveBeenCalled();
       expect(updateMany).not.toHaveBeenCalled();
     });
+  });
+});
+
+// The endpoint schema refuses these first; this pins the service for its direct callers.
+describe('decideCsamHold', () => {
+  it.each([
+    ['dismiss', 'none'],
+    ['remove_ban_report', 'none'],
+  ] as const)('refuses %s with %s before reading the hold', async (decision, reportChoice) => {
+    await expect(
+      decideCsamHold({
+        holdId: 12,
+        textHash: 'h-1',
+        decision,
+        reportChoice,
+        actor: { id: 7 },
+        tracker: {} as never,
+      })
+    ).rejects.toThrow();
+    expect(findFirst).not.toHaveBeenCalled();
   });
 });
 

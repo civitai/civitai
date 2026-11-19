@@ -100,7 +100,10 @@ type DecideArgs = {
   /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
   textHash: string;
   decision: CsamHoldDecision;
-  /** Refused with `dismiss`. Missing on a confirm only from an older moderator app: decided with no choice. */
+  /**
+   * Refused with `dismiss`. Missing on a confirm decided with another hold (a batch never carries one)
+   * or sent by an older moderator app: decided with no choice.
+   */
   reportChoice?: CsamReportChoice;
   note?: string;
   actor: { id: number; ip?: string };

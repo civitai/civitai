@@ -101,9 +101,8 @@ const STATUS_COLUMN = {
   dismissed: 'Dismissed',
 } as const;
 
-// A report covers a hold when it captured that item's text, or a moderator marked the item as included
-// in a report or a supplemental (`meta.reportIncluded`). A report on the author about something else
-// never covers it: a hold type a report never captures waits for the mark.
+// A report covers a hold only when it captured that item's text; one on the author about something
+// else never does.
 const ITEM_SOURCE: Record<string, string> = {
   PostText: 'postText',
   CommentV3: 'comment',
@@ -136,9 +135,8 @@ const csamHolds = ({
     .where('h.label', '=', 'csam');
   if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
   if (status === 'lead-review') query = query.where(sql<boolean>`h.meta ? 'needsLeadReview'`);
-  // Confirmed with a reportable choice, or with none yet because it was decided alongside another
-  // hold; and no CSAM report filed since the decision that covers it. A confirm by a moderator app
-  // that predates the choice (decided on its own, no choice) stays off.
+  // A hold decided alongside another has no choice until a moderator sets one. A confirm on its own
+  // without a choice came from a moderator app that predates it, and stays off.
   if (status === 'report-not-filed')
     query = query
       .where(
