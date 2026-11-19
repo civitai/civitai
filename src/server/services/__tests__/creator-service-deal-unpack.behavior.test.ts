@@ -2638,6 +2638,28 @@ describe('a video Final', () => {
     expect(await asModerator(31, true)).toMatchObject({ fileName: 'clip.mp4' });
   });
 
+  it('lets dispute review open a video the scan blocked, and no one else', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    await q(`UPDATE "ServiceDealFileEntry" SET "nsfwLevel" = $2 WHERE "fileId" = $1`, [
+      fileId,
+      32, // NsfwLevel.Blocked
+    ]);
+    const asModerator = (moderatorFetch: boolean) =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch,
+        servableLevels: 31,
+      });
+    expect(await asModerator(true)).toMatchObject({ versionId: 'ver1' });
+    expect(await asModerator(false)).toBeNull();
+    expect(await download(fileId, BUYER, 31)).toBeNull();
+  });
+
   it('gives a video not yet rated only to dispute review', async () => {
     const { fileId } = await videoFinal(4);
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });

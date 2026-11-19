@@ -1235,9 +1235,9 @@ export async function resolveServiceDealFileDownload({
     // A video is served only as the version its scan copy was made from, and only where its rating
     // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
     const disputeReview = isModerator && !!moderatorFetch;
-    const levelShown = row.contentLevel
-      ? Flags.intersects(row.contentLevel, servableLevels)
-      : disputeReview;
+    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold.
+    const levelShown =
+      disputeReview || (!!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels));
     if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
     if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
   }
