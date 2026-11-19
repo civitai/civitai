@@ -267,6 +267,7 @@ const reviewLogEntry = z.strictObject({
     'enabled',
     'disabled',
     'cleared-minor-themed',
+    'mature-revoked',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),

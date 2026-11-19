@@ -772,6 +772,55 @@ describe('user apps: submit, review and enable', () => {
     });
   });
 
+  it("takes the mature engine off the author's other apps when one is rejected as minor-themed", async () => {
+    // Approved mature itself, so the reject must not trip over its own stale copy in the sweep.
+    const reviewed = userRow('approved', SOURCE, 'remix');
+    (reviewed.manifest as { remix: { engine: object } }).remix.engine = DEFAULT_ENGINE;
+    const sibling = {
+      ...userRow('approved', 'other', 'remix'),
+      id: 'ab_rx_u7_other_____________',
+      blockId: 'remix-u7-other',
+    };
+    (sibling.manifest as { remix: { engine: object } }).remix.engine = DEFAULT_ENGINE;
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(reviewed as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([reviewed, sibling] as never);
+    // The table as it stands: a write conditional on a manifest that has since changed matches nothing.
+    const current = new Map([reviewed, sibling].map((r) => [r.id, JSON.stringify(r.manifest)]));
+    dbMock.dbWrite.appBlock.updateMany.mockImplementation((async ({ where, data }: Written) => {
+      const { id, manifest } = where as { id: string; manifest: { equals: unknown } };
+      if (current.get(id) !== JSON.stringify(manifest.equals)) return { count: 0 };
+      current.set(id, JSON.stringify(data.manifest));
+      return { count: 1 };
+    }) as never);
+
+    await reviewUserRemixApp({
+      slug: 'u7-probe',
+      sha256: hashOf(reviewed),
+      decision: 'rejected',
+      reason: 'minor-themed',
+      moderatorId: MOD,
+    });
+
+    const revoke = lastWrite();
+    expect(revoke.where).toEqual({ id: sibling.id, manifest: { equals: sibling.manifest } });
+    expect(revoke.data.contentRating).toBe('pg');
+    expect((revoke.data.manifest.remix as { engine: object }).engine).toEqual({
+      safe: DEFAULT_ENGINE.safe,
+    });
+    expect(logOf(revoke).at(-1)).toMatchObject({ by: MOD, action: 'mature-revoked' });
+
+    // And a mature app of a marked author is not enabled again.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(sibling as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      { manifest: { ...(reviewed.manifest as object), ...marked } },
+    ] as never);
+    dbMock.dbWrite.appBlock.updateMany.mockClear();
+    await expect(
+      setRemixAppEnabled({ slug: 'u7-other', enabled: true, moderatorId: MOD })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
   it('will not delete a marked app, which would drop its mark', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
       userRow('rejected', SOURCE, 'remix_disabled', marked) as never

@@ -640,7 +640,38 @@ export async function reviewUserRemixApp({
     contentRating: contentRatingOf(spec),
     ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
   });
+  if (reason === 'minor-themed' && stored.author)
+    await revokeAuthorMature(stored.author.userId, moderatorId, row.id);
   return { slug, review: decision, version: runVersion };
+}
+
+/** A minor-themed mark takes the mature engine off every app its author already holds. */
+async function revokeAuthorMature(authorId: number, moderatorId: number, reviewedId: string) {
+  // primary: the approvals to revoke are the ones stored now.
+  const rows = await dbWrite.appBlock.findMany({
+    where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
+    select: remixAppRowSelect,
+  });
+  // The reviewed row was just written without the mature engine; its stale read here would conflict.
+  for (const row of rows.filter((r) => r.id !== reviewedId)) {
+    const parsed = remixManifestSchema.safeParse(row.manifest);
+    if (!parsed.success || !('source' in parsed.data.remix) || !parsed.data.remix.engine.mature)
+      continue;
+    const spec: RemixUserSpec = {
+      ...parsed.data.remix,
+      engine: { safe: parsed.data.remix.engine.safe },
+    };
+    const runVersion = nextRunVersion(row, parsed, spec);
+    const manifest = withReviewLog(
+      { ...parsed.data, version: `${runVersion}.0.0`, remix: spec },
+      { by: moderatorId, action: 'mature-revoked' }
+    );
+    await writeUserRemixApp(row, {
+      manifest,
+      version: manifest.version,
+      contentRating: contentRatingOf(spec),
+    });
+  }
 }
 
 /** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */
@@ -765,6 +796,12 @@ export async function setRemixAppEnabled({
         code: 'PRECONDITION_FAILED',
         message: 'Approve this app before enabling it',
       });
+    if (enabled && remix.engine.mature && manifest.author)
+      if (await authorHasMinorThemedApp(manifest.author.userId))
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: "This author has a minor-themed app, so this one can't run on mature sources",
+        });
     const sha256 = remixReviewHash({ ...manifest, remix });
     await writeUserRemixApp(row, {
       status,
