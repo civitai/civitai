@@ -215,6 +215,64 @@ describe('queryBoard', () => {
     expect(rows.map((r) => r.image)).toEqual([null, null, '6b1c4e3a-2d9f-4e5c-9a43-7f8b9c0d1e23']);
   });
 
+  it('serves a picture only once scanned or locked at a rating that stands, and no mature one on a restricted model', async () => {
+    for (const [id, votes] of [
+      [1, 6],
+      [2, 5],
+      [3, 4],
+      [4, 3],
+      [5, 2],
+      [6, 1],
+    ])
+      await member(id, 'Knight', votes);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","nsfwLevelLocked","scanJobs","modelRestricted") VALUES
+        (90,'pic-pending',1,'Pending',false,NULL,false),
+        (91,'pic-locked',1,'Pending',true,NULL,false),
+        (92,'pic-failed',1,'Error',true,'{"permanentFailure": true}',false),
+        (93,'pic-restricted-r',4,'Scanned',false,NULL,true),
+        (94,'pic-r',4,'Scanned',false,NULL,false),
+        (95,'pic-restricted-pg',1,'Scanned',false,NULL,true)`
+    );
+    for (const [user, picture] of [
+      [1, 90],
+      [2, 91],
+      [3, 92],
+      [4, 93],
+      [5, 94],
+      [6, 95],
+    ])
+      await pg.query(`UPDATE "User" SET "profilePictureId"=$2 WHERE "id"=$1`, [user, picture]);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([
+      'img-1',
+      'pic-locked',
+      'img-3',
+      'img-4',
+      // Controls: a mature picture on an unrestricted model, and a PG one on a restricted model.
+      'pic-r',
+      'pic-restricted-pg',
+    ]);
+  });
+
+  it('drops a legacy User.image naming an own image by any block marker, in any case', async () => {
+    await member(1, 'Knight', 2);
+    await member(2, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","userId") VALUES
+        (96,'7c2d5f4b-3e0a-4f6d-8b54-8a9c0d1e2f34',1,'Blocked',1),
+        (97,'8D3E6A5C-4F1B-4A7E-9C65-9B0D1E2F3A45',32,'Scanned',2)`
+    );
+    await pg.exec(`UPDATE "User" SET "image"='7c2d5f4b-3e0a-4f6d-8b54-8a9c0d1e2f34' WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "image"='8d3e6a5c-4f1b-4a7e-9c65-9b0d1e2f3a45' WHERE "id"=2`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null]);
+  });
+
   it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {
     await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
       (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}'),
