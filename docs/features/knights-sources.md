@@ -26,7 +26,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
   removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
   the [game settings](#game-settings).
-- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
+- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant), tabbed Blocked, Pushed down and Write-back conflict; a rating with no consensus never comes here, Knights re-rates it ([queue escalation](knights-queue-escalation.md#rule-4-a-split-at-the-end-of-the-path-is-re-rated)). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
   A triage page: J/K move, 1 to 5 rate PG to XXX, 6 is Blocked, which asks for a reason from the Knights' list (`KNIGHTS_BLOCK_REASONS`, picked by
   digit) and records it on the image as `metadata.nsfwLevelReason` (`Inquisitor ruling: <reason>`); other levels record no reason.

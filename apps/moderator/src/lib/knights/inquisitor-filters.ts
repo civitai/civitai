@@ -4,8 +4,16 @@ import {
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
 
+/**
+ * The reasons with a tab. Knights no longer sends `no-consensus` here (it re-rates the image); historical rows keep the value,
+ * and one still waiting shows under All.
+ */
+const TABBED_ESCALATION_REASONS = KNIGHTS_ESCALATION_REASONS.filter(
+  (reason): reason is Exclude<KnightsEscalationReason, 'no-consensus'> => reason !== 'no-consensus'
+);
+
 /** 'write-back' filters on `reason` (a failed apply handed the item over); every other tab filters on `escalationReason`. */
-export const INQUISITOR_FILTERS = ['all', ...KNIGHTS_ESCALATION_REASONS, 'write-back'] as const;
+export const INQUISITOR_FILTERS = ['all', ...TABBED_ESCALATION_REASONS, 'write-back'] as const;
 export type InquisitorFilter = (typeof INQUISITOR_FILTERS)[number];
 
 export const DEFAULT_INQUISITOR_FILTER: InquisitorFilter = 'all';
@@ -25,7 +33,8 @@ export const WRITEBACK_REASON_LABELS: Record<KnightsWritebackReason, string> = {
 
 export const INQUISITOR_FILTER_LABELS: Record<InquisitorFilter, string> = {
   all: 'All',
-  ...ESCALATION_REASON_LABELS,
+  blocked: ESCALATION_REASON_LABELS.blocked,
+  'pushed-down': ESCALATION_REASON_LABELS['pushed-down'],
   'write-back': 'Write-back conflict',
 };
 
