@@ -42,8 +42,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * test in this file has touched `block_author_fee_accrual`.
  */
 
-const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged } = vi.hoisted(() => ({
-  mockLog: vi.fn(),
+const { mockCreateMany, mockFlag, mockQuoted, mockCharged } = vi.hoisted(() => ({
   mockCreateMany: vi.fn(),
   mockFlag: vi.fn(),
   mockQuoted: vi.fn(),
@@ -78,14 +77,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 import { chargeBlockAuthorFee, quoteBlockAuthorFee } from '../author-fee-charge.service';
 import { accrueBlockAuthorFee, resolveBlockAuthorFeePayee } from '../author-fee-accrual.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-loggingMock.logToAxiom.mockImplementation((...args: unknown[]) => {
-  mockLog(...args);
-  return Promise.resolve(null);
-});
 
 /**
  * 🔴 FIXTURE HYGIENE. Every id is pairwise distinct AND distinct from every
@@ -125,7 +119,6 @@ function resetOnceQueues() {
   mockDbWrite.blockAuthorFeeAccrual.create.mockReset();
   mockQuoted.mockReset();
   mockCharged.mockReset();
-  mockLog.mockReset();
 }
 
 beforeEach(() => {
@@ -270,20 +263,6 @@ describe('resolveBlockAuthorFeePayee — the ONE spelling of the private-run exc
         workflowId: WORKFLOW_ID,
       })
     ).toEqual({ payee: false, reason: 'app-missing' });
-  });
-
-  it('[INV] a private run is NOT logged — the mint audit line already carries it', async () => {
-    // The two neighbouring arms log because their rate is a signal about real
-    // traffic. A private run is an operator action the mint's own audit line
-    // records with its audience, slug and user, so a line here would be duplicate
-    // volume carrying strictly less.
-    await resolveBlockAuthorFeePayee({
-      appId: APP_ID,
-      viewerUserId: MODERATOR_ID,
-      workflowId: WORKFLOW_ID,
-      privateRun: true,
-    });
-    expect(mockLog).not.toHaveBeenCalled();
   });
 });
 

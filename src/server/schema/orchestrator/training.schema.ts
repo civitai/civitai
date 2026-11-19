@@ -150,6 +150,11 @@ export const aiToolkitTrainingParamsSchema = z
       batchSize: z.literal(1).optional(),
     }),
     aiToolkitBaseParams.extend({
+      ecosystem: z.literal('minimaxh3image'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
       ecosystem: z.literal('yue2'),
       modelVariant: z.undefined().optional(),
       batchSize: z.literal(1).optional(),

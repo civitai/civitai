@@ -2,6 +2,7 @@ import { ActionIcon, Card, Loader, Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconLock, IconTrash } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
@@ -43,6 +44,10 @@ export function StorylineTextCard({
   const setTexts = usePostEditStore((state) => state.setTexts);
   const postId = usePostEditStore((state) => state.post?.id);
   const [id, setId] = useState<number | null>(text?.id ?? null);
+  // Read by the editor's change handler, which can run several times before a re-render: render
+  // state there would let two quick keystrokes each start a create.
+  const idRef = useRef(id);
+  const createStarted = useRef(false);
   const [value, setValue] = useState(text?.content ?? '');
   const latest = useRef(value);
   const [heldMessage, setHeldMessage] = useState<string | null>(null);
@@ -68,12 +73,19 @@ export function StorylineTextCard({
   });
   const add = trpc.storyline.addText.useMutation({
     onSuccess: (created) => {
+      idRef.current = created.id;
       setId(created.id);
+      // The list must know this card owns the row before the store has it: the store's update
+      // renders at once, and a render with the row but not the owner places it as a second card
+      // and moves this one, remounting the editor mid-typing.
+      flushSync(() => onCreated?.(created));
       setTexts((texts) => [...texts, created]);
-      onCreated?.(created);
       save.mutate({ id: created.id, content: latest.current });
     },
-    onError: (error) => showErrorNotification({ title: 'Text not added', error }),
+    onError: (error) => {
+      createStarted.current = false;
+      showErrorNotification({ title: 'Text not added', error });
+    },
   });
   const remove = trpc.storyline.deleteText.useMutation({
     onSuccess: ({ id: removedId }) => {
@@ -91,9 +103,12 @@ export function StorylineTextCard({
   const handleChange = (html: string) => {
     setValue(html);
     latest.current = html;
+    const id = idRef.current;
     if (id === null) {
-      if (removeTags(html).trim().length > 0 && postId && !add.isPending && !add.isSuccess)
+      if (removeTags(html).trim().length > 0 && postId && !createStarted.current) {
+        createStarted.current = true;
         add.mutate({ postId, index: draftIndex });
+      }
       return;
     }
     if (save.isSuccess || save.isError) save.reset();

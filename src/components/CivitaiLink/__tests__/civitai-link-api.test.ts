@@ -3,18 +3,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // `civitai-link-api` reads `env.NEXT_PUBLIC_CIVITAI_LINK` at call time. Stub the
 // client env module before importing so we don't trip the zod schema check in
 // `~/env/client`.
-vi.mock('~/env/client', () => ({
-  env: {
-    NEXT_PUBLIC_CIVITAI_LINK: 'https://link.civitai.com',
-  },
+const env = vi.hoisted(() => ({
+  NEXT_PUBLIC_CIVITAI_LINK: 'https://link.civitai.com',
+  NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS: undefined as string | undefined,
 }));
+vi.mock('~/env/client', () => ({ env }));
 
 import { getCivitaiLinkBaseUrl } from '~/components/CivitaiLink/civitai-link-api';
 
 const setHostname = (hostname: string | undefined) => {
   // Emulate window/SharedWorker `globalThis.location.hostname`.
   Object.defineProperty(globalThis, 'location', {
-    value: hostname === undefined ? undefined : { hostname },
+    value: hostname === undefined ? undefined : { hostname, origin: `https://${hostname}` },
     configurable: true,
     writable: true,
   });
@@ -23,6 +23,7 @@ const setHostname = (hostname: string | undefined) => {
 describe('getCivitaiLinkBaseUrl', () => {
   afterEach(() => {
     setHostname(undefined);
+    env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS = undefined;
   });
 
   it('uses the .com Link host on civitai.com', () => {
@@ -58,6 +59,32 @@ describe('getCivitaiLinkBaseUrl', () => {
   it('does not treat a .com host containing "civitai.red" as a .red host', () => {
     setHostname('civitai.redirect.civitai.com');
     expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.com');
+  });
+
+  describe('NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS', () => {
+    it('uses the page origin on a listed host', () => {
+      env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS = 'civitai.com';
+      setHostname('civitai.com');
+      expect(getCivitaiLinkBaseUrl()).toBe('https://civitai.com');
+    });
+
+    it('keeps the Link host on a subdomain of a listed host', () => {
+      env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS = 'civitai.com';
+      setHostname('internal.civitai.com');
+      expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.com');
+    });
+
+    it('leaves an unlisted site on its Link host', () => {
+      env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS = 'civitai.com';
+      setHostname('civitai.red');
+      expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.red');
+    });
+
+    it('reads a list with spacing and mixed case', () => {
+      env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS = ' Civitai.com , civitai.red';
+      setHostname('civitai.red');
+      expect(getCivitaiLinkBaseUrl()).toBe('https://civitai.red');
+    });
   });
 
   it('falls back to the baked .com host when no location is available (SSR)', () => {
