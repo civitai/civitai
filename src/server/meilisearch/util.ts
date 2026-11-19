@@ -159,8 +159,11 @@ const onSearchIndexDocumentsCleanup = async ({
 
 /**
  * Deletes `ids` and waits for Meilisearch to finish the task. A task that fails, or that the wait
- * gives up on, puts the ids back on the index's Delete queue: once a caller has marked them handled
- * nothing else would retry them. Deleting an id twice is harmless.
+ * gives up on, puts the ids back on the index's queues: once a caller has marked them handled
+ * nothing else would retry them. Each goes back as a Delete AND an Update, the doubly-queued case
+ * the processor already resolves as delete-then-pull, so an id rebuilt later in the same run (for
+ * example unpublished then republished) is pulled again after the retried delete instead of being
+ * left deleted. Deleting an id twice is harmless.
  */
 const deleteDocumentsOrRequeue = async ({
   index,
@@ -190,7 +193,10 @@ const deleteDocumentsOrRequeue = async ({
   }
   const queued = await SearchIndexUpdate.queueUpdate({
     indexName,
-    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+    items: ids.flatMap((id) => [
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+      { id, action: SearchIndexUpdateQueueAction.Update },
+    ]),
   });
   console.error(
     `onSearchIndexDocumentsCleanup :: ${indexName} :: delete task ${taskUid} did not succeed (${error}); ${

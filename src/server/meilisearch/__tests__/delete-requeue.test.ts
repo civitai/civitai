@@ -7,6 +7,7 @@ const queued = vi.hoisted(() => ({
   deleteQueue: [] as number[],
   onQueue: (() => undefined) as () => unknown,
   commits: 0,
+  onCommit: (() => undefined) as () => unknown,
 }));
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
   SearchIndexUpdate: {
@@ -17,7 +18,10 @@ vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
     },
     getQueue: async () => ({
       content: queued.deleteQueue,
-      commit: async () => void (queued.commits += 1),
+      commit: async () => {
+        queued.commits += 1;
+        queued.onCommit();
+      },
     }),
   },
 }));
@@ -34,14 +38,19 @@ const clientWhoseDeleteEnds = (status: string | Error) =>
     },
   } as unknown as MeiliSearch);
 
-const requeuedDeletes = () =>
+const requeuedItems = () =>
   queued.calls.map((c) => (c as { items: { id: number; action: string }[] }).items);
+const requeuedDeletes = () =>
+  requeuedItems().map((items) =>
+    items.filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
+  );
 
 beforeEach(() => {
   queued.calls = [];
   queued.deleteQueue = [];
   queued.onQueue = () => undefined;
   queued.commits = 0;
+  queued.onCommit = () => undefined;
 });
 
 describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
@@ -133,5 +142,47 @@ describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
     await onSearchIndexDocumentsCleanup({ indexName: 'idx', ids: [1], client });
     expect(waits).toBe(2);
     expect(queued.calls).toEqual([]);
+  });
+
+  // An id rebuilt later in the same run must be pulled again after the retried delete, or the
+  // retry would delete a document that should exist.
+  it('re-queues each id as an Update too, so the pull decides after the retried delete', async () => {
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      ids: [8],
+      client: clientWhoseDeleteEnds('failed'),
+    });
+    expect(requeuedItems()).toEqual([
+      [
+        { id: 8, action: SearchIndexUpdateQueueAction.Delete },
+        { id: 8, action: SearchIndexUpdateQueueAction.Update },
+      ],
+    ]);
+  });
+
+  it('commits the drained Delete queue before re-queueing from it', async () => {
+    const order: string[] = [];
+    queued.deleteQueue = [5];
+    queued.onCommit = () => order.push('commit');
+    queued.onQueue = () => order.push('requeue');
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      client: clientWhoseDeleteEnds('failed'),
+    });
+    expect(order).toEqual(['commit', 'requeue']);
+  });
+
+  it.each([
+    ['no client', null],
+    ['no index', { getIndex: async () => null } as unknown as MeiliSearch],
+  ])('still commits the checkout it was given when there is %s', async (_case, client) => {
+    let commits = 0;
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      ids: [1],
+      client,
+      commit: async () => void (commits += 1),
+    });
+    expect(commits).toBe(1);
   });
 });
