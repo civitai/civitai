@@ -72,10 +72,15 @@ const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
-/** Blocked by an automated moderation rule whose action is Block. A Hold rule's keys stay on an image a
- *  moderator later removed (before moderator blocks dropped them), so the rule's action decides, not the
- *  key alone. Compared as text, so a malformed `ruleId` reads as no rule rather than failing. */
-const RULE_BLOCKED = sql<boolean>`EXISTS (SELECT 1 FROM "ModerationRule" mr WHERE mr.id::text = "Image"."metadata"->>'ruleId' AND mr.action = 'Block')`;
+/** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
+ *  never was a Block rule. A Hold rule's keys stay on an image a moderator later removed (before moderator
+ *  blocks dropped them); a rule since deleted, or edited away from Block, still counts as the blocker.
+ *  Compared as text, so a malformed `ruleId` matches no rule rather than failing. */
+const RULE_BLOCKED = sql<boolean>`(("Image"."metadata" -> 'ruleId') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM "ModerationRule" mr
+  WHERE mr.id::text = "Image"."metadata"->>'ruleId' AND mr.action <> 'Block'
+    AND NOT EXISTS (SELECT 1 FROM "ModerationRuleVersion" v WHERE v."ruleId" = mr.id AND v.action = 'Block')
+))`;
 
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
  *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
@@ -188,8 +193,9 @@ export class CsamReviewImageError extends Error {
 
 /** A verdict on a report refused to restore an image a moderator already removed. */
 export class ModeratorRemovedImageError extends Error {
-  /** `graceBlock`: blocked because its owner's account is being deleted, not by a moderator's ruling. */
-  constructor(readonly imageId: number, readonly graceBlock = false) {
+  /** `unpaid`: removed because of its owner's account (a deletion grace block, or a ban), not a
+   *  ruling on the report, so closing the report pays no reporter. */
+  constructor(readonly imageId: number, readonly unpaid = false) {
     super(`Image ${imageId} was already removed by a moderator`);
   }
 }
@@ -307,8 +313,8 @@ export async function acceptImage({
       const removed = await dbWrite
         .selectFrom('Image')
         .select(
-          sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL`.as(
-            'graceBlock'
+          sql<boolean>`(("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL OR EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."bannedAt" IS NOT NULL))`.as(
+            'unpaid'
           )
         )
         .where('id', '=', imageId)
@@ -316,7 +322,7 @@ export async function acceptImage({
           sql<boolean>`${REMOVED_BY_MODERATOR} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
         )
         .executeTakeFirst();
-      if (removed) throw new ModeratorRemovedImageError(imageId, removed.graceBlock);
+      if (removed) throw new ModeratorRemovedImageError(imageId, removed.unpaid);
     }
     throw new RemovedImageNotRestorableError(imageId);
   }
@@ -443,6 +449,8 @@ export async function blockImage({
   skipped?: true;
   /** `skipModeratorRemoved` left it as it was. */
   alreadyRemoved?: true;
+  /** Its owner is banned: the ban removed it, so closing its report pays no reporter. */
+  unpaid?: true;
 }> {
   const img = await dbRead
     .selectFrom('Image')
@@ -462,13 +470,17 @@ export async function blockImage({
   if (skipModeratorRemoved) {
     const removed = await dbWrite
       .selectFrom('Image')
-      .select('id')
+      .select(
+        sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."bannedAt" IS NOT NULL)`.as(
+          'unpaid'
+        )
+      )
       .where('id', '=', imageId)
       .where(
         sql<boolean>`${MODERATION_BLOCKED} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
       )
       .executeTakeFirst();
-    if (removed) return { alreadyRemoved: true };
+    if (removed) return { alreadyRemoved: true, ...(removed.unpaid && { unpaid: true as const }) };
   }
 
   if (!skipAppealCheck) {

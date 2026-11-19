@@ -56,6 +56,7 @@ CREATE TABLE "Image" (
   "userId" INTEGER NOT NULL DEFAULT 7
 );
 CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
+CREATE TABLE "ModerationRuleVersion" ("id" SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Report" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL DEFAULT 7, "reason" TEXT NOT NULL DEFAULT 'TOSViolation',

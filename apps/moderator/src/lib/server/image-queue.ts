@@ -292,12 +292,12 @@ export const imageQueueActions = {
       });
     } catch (e) {
       if (e instanceof ModeratorRemovedImageError && reportId) {
-        // A grace block is the owner's account deletion, not a ruling that upheld the report.
+        // A grace block or a ban removed it, not a ruling that upheld the report.
         await setReportStatus({
           id: reportId,
           status: ReportStatus.Actioned,
           userId: locals.user.id,
-          noReward: e.graceBlock,
+          noReward: e.unpaid,
         });
         return {
           success: true,
@@ -338,7 +338,7 @@ export const imageQueueActions = {
 
     // The block commits even when its CSAM blocklist entry fails; that is reported after the report.
     let csamBlocklistFailed = false;
-    const { held, skipped, alreadyRemoved } = await blockImage({
+    const { held, skipped, alreadyRemoved, unpaid } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
@@ -349,7 +349,7 @@ export const imageQueueActions = {
     }).catch((e: unknown) => {
       if (!(e instanceof CsamBlocklistWriteError)) throw e;
       csamBlocklistFailed = true;
-      return { held: undefined, skipped: e.skipped, alreadyRemoved: undefined };
+      return { held: undefined, skipped: e.skipped, alreadyRemoved: undefined, unpaid: undefined };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -358,6 +358,7 @@ export const imageQueueActions = {
         id: reportId,
         status: ReportStatus.Actioned,
         userId: locals.user.id,
+        noReward: !!(alreadyRemoved && unpaid),
       });
     if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
     if (alreadyRemoved && reportId)
@@ -527,7 +528,7 @@ export const imageQueueActions = {
     const refused: number[] = [];
     const removed: number[] = [];
     const underCsamReview: number[] = [];
-    const graceBlocked = new Set<number>();
+    const unpaidImages = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
@@ -540,7 +541,7 @@ export const imageQueueActions = {
         }).catch((e) => {
           if (e instanceof ModeratorRemovedImageError) {
             removed.push(imageId);
-            if (e.graceBlock) graceBlocked.add(imageId);
+            if (e.unpaid) unpaidImages.add(imageId);
             return undefined;
           }
           if (e instanceof CsamReviewImageError) {
@@ -556,7 +557,7 @@ export const imageQueueActions = {
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
     const reportsByImage = removed.length ? await reportIdsByImage(reportIds) : new Map();
     const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
-    const unpaid = new Set([...graceBlocked].flatMap((id) => reportsByImage.get(id) ?? []));
+    const unpaid = new Set([...unpaidImages].flatMap((id) => reportsByImage.get(id) ?? []));
     await Promise.all(
       closedReportIds.map((id) =>
         setReportStatus({
@@ -636,6 +637,12 @@ export const imageQueueActions = {
     const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
     // A held removal's reports stay open: the image is still up, and confirming the hold actions
     // them. A skipped block's reports stay open too.
+    // A ban removed these, not a ruling on their reports: those close unpaid.
+    const unpaidReports = new Set(
+      imageIds.flatMap((imageId, i) =>
+        results[i].alreadyRemoved && results[i].unpaid ? reportsByImage.get(imageId) ?? [] : []
+      )
+    );
     const heldReports = new Set([
       ...held.flatMap((h) => reportsByImage.get(h.imageId) ?? []),
       ...imageIds.flatMap((imageId, i) =>
@@ -645,7 +652,14 @@ export const imageQueueActions = {
     await Promise.all(
       reportIds
         .filter((id) => !heldReports.has(id))
-        .map((id) => setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id }))
+        .map((id) =>
+          setReportStatus({
+            id,
+            status: ReportStatus.Actioned,
+            userId: locals.user.id,
+            noReward: unpaidReports.has(id),
+          })
+        )
     );
     if (csamBlocklistFailed.length)
       return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageIds: csamBlocklistFailed });

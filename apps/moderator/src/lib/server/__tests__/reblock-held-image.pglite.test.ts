@@ -129,9 +129,12 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "bannedAt" TIMESTAMP(3));
 CREATE TABLE "ModerationRule" ("id" INTEGER PRIMARY KEY, "action" TEXT NOT NULL);
-INSERT INTO "ModerationRule" ("id", "action") VALUES (5, 'Block'), (6, 'Hold');
+CREATE TABLE "ModerationRuleVersion" ("id" SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, "action" TEXT NOT NULL);
+-- 7 was a Block rule, since edited to Hold; 5 blocks; 6 only ever held.
+INSERT INTO "ModerationRule" ("id", "action") VALUES (5, 'Block'), (6, 'Hold'), (7, 'Hold');
+INSERT INTO "ModerationRuleVersion" ("ruleId", "action") VALUES (6, 'Hold'), (7, 'Block'), (7, 'Hold');
 -- Rates a restored image as its tags would: an untagged one would go back to the scanner.
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
   UPDATE "Image" SET "nsfwLevel" = 1
@@ -547,6 +550,76 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       blockedFor: 'moderated',
     });
     expect(result).toMatchObject({ success: true, closedReportIds: [report(HELD_BY_RULE)] });
+    expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ noReward: false }));
+  });
+
+  it.each([
+    ['since deleted', 99],
+    ['since edited from Block to Hold', 7],
+  ])('Unaction restores an image a rule blocked, the rule %s', async (_, ruleId) => {
+    const RULE_GONE = 72;
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash", "metadata") VALUES
+        ($1, 7, NULL, 'moderated', 'Blocked', 32, 112, jsonb_build_object('ruleId', $2::int))`,
+      [RULE_GONE, ruleId]
+    );
+    await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+      RULE_GONE,
+      report(RULE_GONE),
+    ]);
+
+    await verdict('accept', RULE_GONE);
+
+    expect(await row(RULE_GONE)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(reportsMovedTo('Unactioned')).toEqual([report(RULE_GONE)]);
+  });
+
+  describe('an image removed because its owner is banned', () => {
+    const BANNED_OWNERS = 73;
+    beforeEach(async () => {
+      await db.query(
+        `INSERT INTO "User" ("id", "bannedAt") VALUES (8, now()) ON CONFLICT DO NOTHING`
+      );
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
+          ($1, 8, NULL, 'moderated', 'Blocked', 32, 113)`,
+        [BANNED_OWNERS]
+      );
+      await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+        BANNED_OWNERS,
+        report(BANNED_OWNERS),
+      ]);
+    });
+
+    it.each(['accept', 'block'] as const)(
+      '%s closes its report actioned and unpaid',
+      async (action) => {
+        await verdict(action, BANNED_OWNERS);
+
+        expect(await row(BANNED_OWNERS)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'moderated',
+        });
+        expect(setReportStatus).toHaveBeenCalledWith(
+          expect.objectContaining({ id: report(BANNED_OWNERS), status: 'Actioned', noReward: true })
+        );
+        expect(notifiedImages()).toEqual([]);
+      }
+    );
+
+    it('a bulk Remove closes its report unpaid and a moderator-removed one paid', async () => {
+      await imageQueueActions.bulkBlock(
+        event({
+          imageIds: [BANNED_OWNERS, MOD_REMOVED].join(','),
+          reportIds: [report(BANNED_OWNERS), report(MOD_REMOVED)].join(','),
+        })
+      );
+
+      const noReward = Object.fromEntries(
+        setReportStatus.mock.calls.map(([a]) => [a.id, (a as { noReward?: boolean }).noReward])
+      );
+      expect(noReward).toEqual({ [report(BANNED_OWNERS)]: true, [report(MOD_REMOVED)]: false });
+    });
   });
 
   describe('an image an automated moderation rule blocked', () => {
@@ -652,6 +725,7 @@ describe('a verdict on a report of an image a moderator already removed', () => 
 
     expect(await row(GRACE)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
     expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
+    expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ noReward: true }));
   });
 
   it('Accept with no report posted, as the review queues post it, still restores it (control)', async () => {
