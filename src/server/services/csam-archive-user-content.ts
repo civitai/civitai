@@ -143,6 +143,7 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
         db
           .selectFrom('TextScanHold')
           .select(['id', 'decidedAt', sql<string | null>`"meta"->>'decision'`.as('decision')])
+          .where('label', '=', 'csam')
           .where('entityType', '=', 'UserProfile')
           .where('entityId', '=', userId)
           .where('status', '=', 'Confirmed')
@@ -288,14 +289,13 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
  * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
  */
 async function* chatMessages(db: Db, userId: number, pageSize?: number) {
-  const chats = await db
+  const memberships = await db
     .selectFrom('ChatMember')
     .select('chatId')
-    .distinct()
     .where('userId', '=', userId)
     .orderBy('chatId', 'asc')
     .execute();
-  for (const { chatId } of chats) {
+  for (const chatId of new Set(memberships.map((m) => m.chatId))) {
     const rows = flattenPages(
       scanPagesById(({ afterId, take }) => {
         let q = db

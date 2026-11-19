@@ -177,9 +177,13 @@ beforeAll(async () => {
       .replace('"messageAddedAt" TEXT', '"messageAddedAt" TIMESTAMP(3)')}
     CREATE TABLE "TextScanHold" (
       id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+      label TEXT NOT NULL DEFAULT 'csam',
       status TEXT NOT NULL, "decidedAt" TIMESTAMP(3), meta JSONB
     );
-    CREATE TABLE "ChatMember" (id SERIAL PRIMARY KEY, "chatId" INTEGER NOT NULL, "userId" INTEGER NOT NULL);
+    CREATE TABLE "ChatMember" (
+      id SERIAL PRIMARY KEY, "chatId" INTEGER NOT NULL, "userId" INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Joined', "leftAt" TIMESTAMP(3)
+    );
     ${ddl('ChatMessage', [
       'id',
       'chatId',
@@ -315,13 +319,21 @@ describe('the archive text sections', () => {
            (42, 'UserProfile', $1, 'Dismissed', '2026-10-06 12:00', '{"decision":"dismiss"}'),
            (43, 'UserProfile', $2, 'Confirmed', '2026-10-07 12:00', '{"decision":"remove"}'),
            (44, 'Post', $1, 'Confirmed', '2026-10-08 12:00', '{"decision":"remove"}'),
-           (45, 'UserProfile', $1, 'Pending', NULL, NULL)`,
+           (45, 'UserProfile', $1, 'Pending', NULL, NULL),
+           (46, 'UserProfile', $1, 'Confirmed', NULL, '{}')`,
         [ME, OTHER]
+      );
+      // A confirmed hold of another kind does not clear the profile.
+      await pg.query(
+        `INSERT INTO "TextScanHold" (id, "entityType", "entityId", label, status, "decidedAt", meta)
+         VALUES (47, 'UserProfile', $1, 'other', 'Confirmed', '2026-10-09 12:00', '{"decision":"remove"}')`,
+        [ME]
       );
       const [row] = await read('profile', ME);
       expect(row.bio).toBeNull();
       expect(row.blankedReasons).toEqual([
         'blanked by decision remove_ban on hold 41 at 2026-10-05T12:00:00.000Z',
+        'blanked by decision unknown on hold 46 at an unknown time',
       ]);
     });
   });
@@ -331,26 +343,40 @@ describe('the archive text sections', () => {
       id: number,
       chatId: number,
       userId: number,
-      extra: { content?: string; at?: Date; referenceMessageId?: number } = {}
+      extra: {
+        content?: string;
+        createdAt?: Date;
+        editedAt?: Date;
+        deletedAt?: Date;
+        referenceMessageId?: number;
+      } = {}
     ) =>
       pg.query(
-        `INSERT INTO "ChatMessage" (id, "chatId", "userId", content, "editedAt", "deletedAt", "referenceMessageId", secret)
-         VALUES ($1, $2, $3, $4, $5, $5, $6, 'x')`,
+        `INSERT INTO "ChatMessage" (id, "chatId", "userId", content, "createdAt", "editedAt", "deletedAt", "referenceMessageId", secret)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'x')`,
         [
           id,
           chatId,
           userId,
           extra.content ?? `m${id}`,
-          extra.at ?? null,
+          extra.createdAt ?? null,
+          extra.editedAt ?? null,
+          extra.deletedAt ?? null,
           extra.referenceMessageId ?? null,
         ]
       );
 
     it("holds both sides of the user's chats and nothing from a chat they are not in", async () => {
-      await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES
-        (5, ${ME}), (5, ${OTHER}), (6, ${ME}), (6, ${OTHER}), (7, ${OTHER}), (7, 40), (8, ${OTHER})`);
+      // Memberships inserted out of chat order, with a duplicate row for chat 6. The user left
+      // chat 3 before its last message, which is still archived.
+      await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId", status, "leftAt") VALUES
+        (6, ${ME}, 'Joined', NULL), (6, ${ME}, 'Joined', NULL), (5, ${ME}, 'Joined', NULL),
+        (3, ${ME}, 'Left', '2026-10-02'), (5, ${OTHER}, 'Joined', NULL), (6, ${OTHER}, 'Joined', NULL),
+        (3, ${OTHER}, 'Joined', NULL), (7, ${OTHER}, 'Joined', NULL), (7, 40, 'Joined', NULL),
+        (8, ${OTHER}, 'Joined', NULL)`);
       // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear. Chat 8
       // holds a message from the user but no membership row of theirs, so it must not appear either.
+      await message(11, 3, OTHER, { createdAt: new Date(Date.UTC(2026, 9, 5)) });
       for (const [id, chat, from] of [
         [1, 5, ME],
         [2, 7, OTHER],
@@ -362,12 +388,14 @@ describe('the archive text sections', () => {
         [9, 8, ME],
       ])
         await message(id, chat, from);
+      const editedAt = new Date(Date.UTC(2026, 9, 2));
       const deletedAt = new Date(Date.UTC(2026, 9, 3));
-      await message(10, 5, ME, { content: '', at: deletedAt, referenceMessageId: 1 });
+      await message(10, 5, ME, { content: '', editedAt, deletedAt, referenceMessageId: 1 });
 
       const rows = await read('chatMessages', ME);
 
       expect(rows.map((r) => [r.chatId, r.id, r.isReportedUser])).toEqual([
+        [3, 11, false],
         [5, 1, true],
         [5, 3, false],
         [5, 5, true],
@@ -377,7 +405,7 @@ describe('the archive text sections', () => {
       ]);
       expect(rows.find((r) => r.id === 10)).toMatchObject({
         content: '',
-        editedAt: deletedAt,
+        editedAt,
         deletedAt,
         referenceMessageId: 1,
       });
