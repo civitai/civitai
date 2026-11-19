@@ -97,9 +97,10 @@ const byId = (id: number) => catalog[id - 1];
 const playFromList = vi.fn<(list: MusicList) => void>();
 
 const heading = (name: string) => page.getByRole('heading', { name, level: 2 });
+// Hidden ones included: a phone lays out only the first four Rising tiles.
 const titles = () =>
   page
-    .getByRole('button', { name: /^Play Song / })
+    .getByRole('button', { name: /^Play Song /, includeHidden: true })
     .elements()
     .map((el) => el.getAttribute('aria-label')?.replace('Play ', ''));
 
@@ -218,6 +219,23 @@ describe('Recently played', () => {
       tracks: [5, 2, 7].map((id) => songTrack(byId(id))),
       index: 1,
     });
+  });
+
+  test('keeps its order on screen when a card is played (the played song moves up next visit)', async () => {
+    useMusicPlayerStore.setState({ recentlyPlayed: [5, 2, 7] });
+    // As the player does: the started song moves to the front of recently played.
+    playFromList.mockImplementation(({ tracks, index }) => {
+      const id = tracks[index].id;
+      useMusicPlayerStore.setState((s) => ({
+        recentlyPlayed: [id, ...s.recentlyPlayed.filter((other) => other !== id)],
+      }));
+    });
+    await renderWithProviders(<RecentlyPlayedSection />);
+    await page.getByRole('button', { name: 'Play Song 2' }).click();
+
+    expect(useMusicPlayerStore.getState().recentlyPlayed).toEqual([2, 5, 7]);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(titles()).toEqual(['Song 5', 'Song 2', 'Song 7']);
   });
 });
 

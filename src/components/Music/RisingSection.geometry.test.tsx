@@ -63,8 +63,16 @@ function song(id: number) {
   } as unknown as ImagesInfiniteModel;
 }
 
-const tiles = () =>
+const allTiles = () =>
   [...document.querySelectorAll('a[href="#song"]')].map((link) => link.parentElement!);
+// The tiles laid out at this width (past the fourth, a phone shows none).
+const tiles = () => allTiles().filter((tile) => tile.getBoundingClientRect().width > 0);
+const titleOf = (tile: Element) =>
+  [...tile.querySelectorAll('span')].find((span) => span.textContent?.startsWith('Song '))!;
+const box = (el: Element) => {
+  const r = el.getBoundingClientRect();
+  return { w: Math.round(r.width), h: Math.round(r.height) };
+};
 
 /**
  * Every point of the grid lies in a tile or in a gap beside one: a missing tile leaves an area
@@ -91,8 +99,14 @@ function expectNoEmptyCells(gap: number) {
 }
 
 const DESKTOP = { width: 1440, height: 900 };
+// The 390 page's content width, as Pencil `hiEzh` (16px padding each side).
+const PhoneContent = () => (
+  <div style={{ width: 358 }}>
+    <RisingSection />
+  </div>
+);
 
-describe.each([1, 3, 7])('Rising this week with %i songs', (count) => {
+describe.each([1, 2, 3, 4, 5, 7])('Rising this week with %i songs', (count) => {
   test('fills the mosaic at 1440 with no empty cell', async () => {
     server.rising = Array.from({ length: count }, (_, i) => i + 1);
     await renderAtViewport(<RisingSection />, DESKTOP);
@@ -104,10 +118,49 @@ describe.each([1, 3, 7])('Rising this week with %i songs', (count) => {
 
   test('fills the grid at 390 with no empty cell', async () => {
     server.rising = Array.from({ length: count }, (_, i) => i + 1);
-    await renderAtViewport(<RisingSection />, PHONE_VIEWPORT);
-    await vi.waitFor(() => expect(tiles()).toHaveLength(count));
+    await renderAtViewport(<PhoneContent />, PHONE_VIEWPORT);
+    await vi.waitFor(() => expect(tiles()).toHaveLength(Math.min(count, 4)));
     expectNoEmptyCells(8);
+    // Square large tile, as Pencil `P5rvz`'s 176px one; nothing overflows into a scrollbar.
+    const large = box(tiles()[0]);
+    expect(large.w).toBe(large.h);
+    expect(large.w).toBeGreaterThanOrEqual(174);
+    expect(large.w).toBeLessThanOrEqual(178);
+    const grid = tiles()[0].parentElement!;
+    expect(grid.scrollWidth).toBeLessThanOrEqual(grid.clientWidth);
+    expect(grid.scrollHeight).toBeLessThanOrEqual(grid.clientHeight);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
   });
+});
+
+test('at 390 with 4 or more songs the mosaic follows Pencil `P5rvz`: large, two square smalls, a wide one under them', async () => {
+  server.rising = [1, 2, 3, 4, 5, 6, 7];
+  await renderAtViewport(<PhoneContent />, PHONE_VIEWPORT);
+  await vi.waitFor(() => expect(tiles()).toHaveLength(4));
+  const [large, a, b, wide] = tiles().map((tile) => tile.getBoundingClientRect());
+  for (const small of [a, b]) {
+    expect(Math.round(small.width)).toBe(Math.round(small.height));
+    expect(Math.round(small.height)).toBeGreaterThanOrEqual(83);
+    expect(Math.round(small.height)).toBeLessThanOrEqual(85);
+  }
+  expect(Math.round(a.top)).toBe(Math.round(b.top));
+  expect(Math.round(wide.left)).toBe(Math.round(a.left));
+  expect(Math.round(wide.right)).toBe(Math.round(b.right));
+  expect(Math.round(wide.bottom)).toBe(Math.round(large.bottom));
+  // Small tiles are cover only; the large one keeps its title at 15px; small discs are 40px.
+  const [largeTile, ...small] = tiles();
+  for (const tile of small) {
+    expect(titleOf(tile).getBoundingClientRect().height).toBe(0);
+    expect(box(tile.querySelector('button')!)).toEqual({ w: 40, h: 40 });
+  }
+  expect(getComputedStyle(titleOf(largeTile)).fontSize).toBe('15px');
+});
+
+test('a lone tile at 1440 is no wider than the large tile', async () => {
+  server.rising = [1];
+  await renderAtViewport(<RisingSection />, DESKTOP);
+  await vi.waitFor(() => expect(tiles()).toHaveLength(1));
+  expect(box(tiles()[0])).toEqual({ w: 440, h: 440 });
 });
 
 test('with 7 songs at 1440 the small tiles follow Pencil `CnGl0`: wide/narrow/mid over narrow/wide/mid', async () => {

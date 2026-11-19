@@ -1,7 +1,7 @@
 import { Title } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -96,7 +96,11 @@ function SongSection({
 /** The viewer's last songs started in this browser, newest first. */
 export function RecentlyPlayedSection() {
   const features = useFeatureFlags();
-  const ids = useMusicPlayerStore((s) => s.recentlyPlayed);
+  const live = useMusicPlayerStore((s) => s.recentlyPlayed);
+  // The order as the section first had it: a song played from here moves to the front of the
+  // live list, which would reorder the row under the pointer. New plays show on the next visit.
+  const [ids, setIds] = useState(live);
+  if (!ids.length && live.length) setIds(live);
   const { songs } = useSongsInOrder({ ids, max: ids.length, enabled: !!features.music });
   if (!songs.length) return null;
   return (
@@ -113,8 +117,8 @@ export function RecentlyPlayedSection() {
   );
 }
 
-// Pencil `CnGl0` (1440) and `hiEzh` (390): the large tile spans both rows. With fewer than six
-// small tiles the columns and spans change so no cell is left empty.
+// Pencil `CnGl0` (1440): the large tile spans both rows. With fewer than six small tiles the
+// columns and spans change so no cell is left empty.
 const RISING_DESKTOP_COLUMNS: Record<number, string> = {
   0: '1fr',
   1: '440fr 900fr',
@@ -126,21 +130,31 @@ const RISING_DESKTOP_COLUMNS: Record<number, string> = {
 };
 // By small-tile count, the wide (two-column) small tiles at desktop width.
 const RISING_DESKTOP_WIDE: Record<number, number[]> = { 3: [2], 5: [0, 3, 4], 6: [0, 4] };
+// Pencil `P5rvz` (390): the large tile, two square small tiles and a wide one under them.
+const RISING_PHONE_TILES = 4;
 
-/** Each tile's grid placement (phone, then `md:`) for `count` songs, filling every cell. */
+/**
+ * Each tile's grid placement (phone, then `md:`) for `count` songs, filling every cell. Phone: four
+ * square columns, the large tile on two of them; past the fourth, tiles show from `md` only.
+ */
 export function risingTilePlacement(count: number): string[] {
   const small = count - 1;
-  // Phone: two columns; a small tile left alone in the last row takes both.
-  const phoneWide = (i: number) => i >= 2 && i === small - 1 && small % 2 === 1;
+  const phoneSmall = Math.min(small, RISING_PHONE_TILES - 1);
   return Array.from({ length: count }, (_, index) => {
-    if (index === 0) return small === 0 ? 'col-span-2 row-span-2 md:col-span-1' : 'row-span-2';
+    if (index === 0)
+      return small === 0
+        ? 'row-span-2 w-[calc(50cqw-4px)] md:w-[440px]'
+        : 'col-span-2 row-span-2 md:col-span-1';
     const i = index - 1;
     const desktopWide = RISING_DESKTOP_WIDE[small]?.includes(i) ?? false;
+    // One small tile takes the right half; two stack as wide tiles; three put the wide one last.
+    const phoneWide = phoneSmall < 3 || i === 2;
     return clsx(
+      i >= phoneSmall && 'max-md:hidden',
       small === 1 && 'row-span-2',
-      phoneWide(i) && 'col-span-2',
+      phoneWide && 'col-span-2',
       desktopWide && 'md:col-span-2',
-      phoneWide(i) && !desktopWide && 'md:col-span-1'
+      phoneWide && !desktopWide && 'md:col-span-1'
     );
   });
 }
@@ -158,15 +172,27 @@ export function RisingSection({ tags }: { tags?: number[] }) {
   const { songs } = useSongsInOrder({ ids, tags, max: RISING_TILES, enabled: !!features.music });
   const placement = risingTilePlacement(songs.length);
   if (!songs.length) return null;
+  const lone = songs.length === 1;
   return (
     <SongSection title="Rising this week" songs={songs}>
-      <div
-        className="grid auto-rows-[84px] grid-cols-2 gap-2 md:grid-rows-[210px_210px] md:gap-5 md:[grid-template-columns:var(--rising-columns)]"
-        style={{ '--rising-columns': RISING_DESKTOP_COLUMNS[songs.length - 1] } as CSSProperties}
-      >
-        {songs.map((song, index) => (
-          <RisingTile key={song.id} song={song} large={index === 0} className={placement[index]} />
-        ))}
+      {/* The phone rows are as tall as a column is wide (`cqw` reads this wrapper's width). */}
+      <div className="[container-type:inline-size]">
+        <div
+          className={clsx(
+            'grid auto-rows-[calc(25cqw-6px)] gap-2 md:grid-rows-[210px_210px] md:gap-5 md:[grid-template-columns:var(--rising-columns)]',
+            lone ? 'w-fit grid-cols-1' : 'grid-cols-4'
+          )}
+          style={{ '--rising-columns': RISING_DESKTOP_COLUMNS[songs.length - 1] } as CSSProperties}
+        >
+          {songs.map((song, index) => (
+            <RisingTile
+              key={song.id}
+              song={song}
+              large={index === 0}
+              className={placement[index]}
+            />
+          ))}
+        </div>
       </div>
     </SongSection>
   );
@@ -215,6 +241,8 @@ function RisingTile({
       <div
         className={clsx(
           'pointer-events-none absolute flex min-w-0 flex-col',
+          // Pencil `P5rvz`: small phone tiles are cover only.
+          !large && 'max-md:hidden',
           large
             ? 'inset-x-2.5 bottom-2.5 md:inset-x-6 md:bottom-7 md:gap-2'
             : 'inset-x-2.5 bottom-2.5 gap-0.5 md:inset-x-3.5 md:bottom-[21px]'
@@ -223,7 +251,9 @@ function RisingTile({
         <span
           className={clsx(
             'truncate font-bold text-white',
-            large ? 'text-[17px] leading-5 md:text-4xl md:leading-[43px]' : 'text-[17px] leading-5'
+            large
+              ? 'text-[15px] leading-[18px] md:text-4xl md:leading-[43px]'
+              : 'text-[17px] leading-5'
           )}
         >
           {title}
@@ -247,7 +277,9 @@ function RisingTile({
         iconSize={22}
         variant="disc"
         className={clsx(
-          'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hover:scale-105 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
+          'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hover:scale-105 focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100',
+          // Always shown on touch, so smaller on a phone's small tiles (inline size: `!`).
+          !large && 'max-md:!size-10 max-md:[&_svg]:size-4',
           playing ? 'opacity-100' : 'opacity-0'
         )}
       />
