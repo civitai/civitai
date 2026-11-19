@@ -1,3 +1,4 @@
+import { IconHeadphones } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { memo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -6,8 +7,9 @@ import {
   FeedSongMenuItems,
   FeedSongPlayButton,
   useFeedSongCover,
+  useFeedSongPlays,
 } from '~/components/Music/FeedSongList';
-import { UNTITLED_SONG } from '~/components/Music/SongCard';
+import { SongStat, UNTITLED_SONG } from '~/components/Music/SongCard';
 import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
 import { Equalizer, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
@@ -31,6 +33,7 @@ export const SongRow = memo(function SongRow({
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
   const cover = useFeedSongCover(data.id);
+  const plays = useFeedSongPlays(data.id);
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === data.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === data.id && s.playing);
   return (
@@ -71,7 +74,13 @@ export const SongRow = memo(function SongRow({
           {genre && ` · ${genre}`}
         </span>
       </div>
-      <span className={clsx('shrink-0 text-xs tabular-nums', songTextDimmed)}>
+      {/* The row's own gap between plays and duration. */}
+      <span
+        className={clsx('flex shrink-0 items-center gap-3.5 text-xs tabular-nums', songTextDimmed)}
+      >
+        {plays !== undefined && (
+          <SongStat icon={<IconHeadphones size={14} />} count={plays} label="plays" />
+        )}
         {formatPlaybackTime(track.durationSec)}
       </span>
       <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />

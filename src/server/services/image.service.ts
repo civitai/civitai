@@ -76,6 +76,7 @@ import {
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
+  getImageIdsVisibleToViewer,
   imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -3884,6 +3885,8 @@ type ImageMetricsObject = Record<
     comment: number | null;
     collection: number | null;
     buzz: number | null;
+    /** Undefined when the source predates plays (a hash cached before `Play` was read). */
+    play: number | null | undefined;
   }
 >;
 
@@ -3924,6 +3927,8 @@ const shapeCachedMetricHash = (
     commentCount: count(hash.commentCount),
     Collection: count(hash.Collection),
     tippedAmount: count(hash.tippedAmount),
+    // Absent (not 0) when the hash was cached before `Play` was read; a `notFound` hash is a known 0.
+    Play: hash.Play === undefined && hash.notFound === undefined ? undefined : count(hash.Play),
   });
 };
 
@@ -4084,6 +4089,7 @@ const shapeImageMetrics = (
   comment: m?.commentCount || null,
   collection: m?.Collection || null,
   buzz: m?.tippedAmount || null,
+  play: m && m.Play === undefined ? undefined : m?.Play || null,
 });
 
 /**
@@ -4209,6 +4215,31 @@ export const getImageMetricsObjectDirect = async (
     return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
+
+/** Play counts by song id, for the songs the viewer can open; an id the reader could not answer is left out. */
+export async function getSongPlayCounts({
+  ids,
+  features,
+  user,
+}: {
+  ids: number[];
+  features: { music?: boolean };
+  user?: { id: number; isModerator?: boolean | null };
+}): Promise<Record<number, number>> {
+  if (!features.music || !ids.length) return {};
+  const visible = await getImageIdsVisibleToViewer({
+    ids: [...new Set(ids)],
+    userId: user?.id,
+    isModerator: user?.isModerator ?? undefined,
+  });
+  if (!visible.size) return {};
+  const metrics = await getImageMetricsObject([...visible].map((id) => ({ id })));
+  return Object.fromEntries(
+    Object.values(metrics).flatMap((entry) =>
+      entry.play === undefined ? [] : [[entry.imageId, entry.play ?? 0]]
+    )
+  );
+}
 
 export async function getTagNamesForImages(imageIds: number[]) {
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);

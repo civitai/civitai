@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MusicTrack } from '~/store/music-player.store';
-import {
-  createMusicPlayerStore,
-  MUSIC_PLAYER_PREFERENCES_KEY,
-} from '~/store/music-player.store';
+import { createMusicPlayerStore, MUSIC_PLAYER_PREFERENCES_KEY } from '~/store/music-player.store';
 
 const track = (id: number, durationSec = 200): MusicTrack => ({
   id,
@@ -546,6 +543,7 @@ describe('timed comments on the waveform', () => {
     expect(first.getState().showTimedComments).toBe(false);
     expect(JSON.parse(storage.map.get(MUSIC_PLAYER_PREFERENCES_KEY)!).state).toEqual({
       showTimedComments: false,
+      recentlyPlayed: [],
     });
 
     const next = createMusicPlayerStore({ storage });
@@ -591,8 +589,9 @@ describe('timed comments on the waveform', () => {
     store.getState().toggleTimedComments();
     expect(store.getState().showTimedComments).toBe(false);
     expect(
-      createMusicPlayerStore({ storage: memory({ [MUSIC_PLAYER_PREFERENCES_KEY]: 'maybe' }) }).getState()
-        .showTimedComments
+      createMusicPlayerStore({
+        storage: memory({ [MUSIC_PLAYER_PREFERENCES_KEY]: 'maybe' }),
+      }).getState().showTimedComments
     ).toBe(true);
   });
 
@@ -601,6 +600,60 @@ describe('timed comments on the waveform', () => {
     store.getState().toggleTimedComments();
     store.getState().playTrack(a);
     store.getState().close();
+    expect(store.getState().showTimedComments).toBe(false);
+  });
+});
+
+describe('recently played', () => {
+  const memory = () => {
+    const map = new Map<string, string>();
+    return {
+      map,
+      getItem: (key: string) => map.get(key) ?? null,
+      setItem: (key: string, value: string) => void map.set(key, value),
+      removeItem: (key: string) => void map.delete(key),
+    };
+  };
+
+  it('lists the songs started, newest first, each once, at most 12, and keeps them for the next visit', () => {
+    const storage = memory();
+    const store = createMusicPlayerStore({ storage });
+    const songs = Array.from({ length: 14 }, (_, i) => track(i + 1));
+    store.getState().playFromList({ name: 'All music', tracks: songs, index: 0 });
+    for (let i = 1; i < 14; i++) store.getState().next();
+    store.getState().playTrack(songs[5]);
+
+    const expected = [6, 14, 13, 12, 11, 10, 9, 8, 7, 5, 4, 3];
+    expect(store.getState().recentlyPlayed).toEqual(expected);
+    expect(createMusicPlayerStore({ storage }).getState().recentlyPlayed).toEqual(expected);
+  });
+
+  it('counts a song only once it starts, and survives closing the player', () => {
+    const store = createMusicPlayerStore({ storage: memory() });
+    store.getState().addToUpNext(a);
+    expect(store.getState().recentlyPlayed).toEqual([]);
+    store.getState().playTrack(b);
+    store.getState().close();
+    expect(store.getState().recentlyPlayed).toEqual([2]);
+  });
+  it.each([
+    ['garbage entries', [3, '7', -1, 0, 2.5, 3, null, 8, 'x', { id: 1 }, 9], [3, 8, 9]],
+    [
+      'too many',
+      Array.from({ length: 20 }, (_, i) => i + 1),
+      Array.from({ length: 12 }, (_, i) => i + 1),
+    ],
+    ['not a list', 'oops', []],
+    ['an object', { 0: 4 }, []],
+  ])('keeps only valid song ids from storage holding %s', (_, stored, expected) => {
+    const storage = memory();
+    storage.setItem(
+      MUSIC_PLAYER_PREFERENCES_KEY,
+      JSON.stringify({ state: { showTimedComments: false, recentlyPlayed: stored }, version: 1 })
+    );
+    const store = createMusicPlayerStore({ storage });
+    expect(store.getState().recentlyPlayed).toEqual(expected);
+    // The rest of the stored preferences still load.
     expect(store.getState().showTimedComments).toBe(false);
   });
 });

@@ -30,7 +30,7 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MASONRY_GAP } from '~/components/MasonryColumns/masonry.utils';
 import { VirtualList } from '~/components/MasonryColumns/VirtualList';
 import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
-import { FeedSongCoversProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
+import { FeedSongsProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
@@ -420,7 +420,7 @@ function ImagesFeed({
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <SongListNameProvider name={songListName}>
-            <FeedSongCoversProvider images={features.music ? images : NO_IMAGES}>
+            <FeedSongsProvider images={features.music ? images : NO_IMAGES}>
               <ImagesProvider images={images} {...imageProviderProps}>
                 {listItem ? (
                   <VirtualList
@@ -435,7 +435,7 @@ function ImagesFeed({
                   masonry(0)
                 )}
               </ImagesProvider>
-            </FeedSongCoversProvider>
+            </FeedSongsProvider>
           </SongListNameProvider>
           {isRetrying ? (
             retryBanner

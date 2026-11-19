@@ -19,6 +19,7 @@ import {
   getImageGenerationData,
   getImagesByUserIdForModeration,
   getMyImages,
+  getSongPlayCounts,
   ingestImageById,
   removeImageResource,
   removeImageTechniques,
@@ -31,6 +32,7 @@ import {
 } from '~/server/services/image.service';
 import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.service';
 import { getSongGenreTagIds } from '~/server/services/song-genre.service';
+import { getRisingSongIds } from '~/server/services/song-rising.service';
 import { getSongLyrics } from '~/server/services/track-lyrics.service';
 import {
   middleware,
@@ -265,6 +267,19 @@ export const imageRouter = router({
     // Chunks of 100 ids: one read per chunk plus one per player song.
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getSongPlays: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSongCoversSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) =>
+      getSongPlayCounts({ ids: input.ids, features: ctx.features, user: ctx.user })
+    ),
+  // Per viewer (visibility and the music flag), so no edgeCacheIt.
+  getRisingSongs: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ ctx }) => getRisingSongIds({ features: ctx.features, user: ctx.user })),
   // Per viewer (the music flag), so no `edgeCacheIt`.
   getSongGenreTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

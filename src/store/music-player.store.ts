@@ -80,6 +80,8 @@ type PlayerData = {
   playback: MusicPlayback | null;
   /** Timed comments on the bar's waveform; the listener's choice, kept per browser. */
   showTimedComments: boolean;
+  /** Ids of the last songs started, newest first, each once; kept per browser. */
+  recentlyPlayed: number[];
 };
 
 type PlayerActions = {
@@ -130,6 +132,7 @@ type PlayerActions = {
 export type MusicPlayerState = PlayerData & PlayerActions;
 
 const RESTART_THRESHOLD_SEC = 3;
+const RECENTLY_PLAYED_MAX = 12;
 const REPEAT_CYCLE: Record<MusicRepeatMode, MusicRepeatMode> = {
   off: 'all',
   all: 'one',
@@ -284,8 +287,15 @@ export function createMusicPlayerStore({
             playing: true,
             error: false,
             playback: newPlayback(track, startAtSec),
+            recentlyPlayed: playedNow(track),
           });
         };
+
+        const playedNow = (track: MusicTrack) =>
+          [track.id, ...get().recentlyPlayed.filter((id) => id !== track.id)].slice(
+            0,
+            RECENTLY_PLAYED_MAX
+          );
 
         const restart = (playing: boolean) => {
           const { current } = get();
@@ -311,6 +321,7 @@ export function createMusicPlayerStore({
               playing: true,
               error: false,
               playback: newPlayback(sequence[0]),
+              recentlyPlayed: playedNow(sequence[0]),
             });
             return;
           }
@@ -367,6 +378,7 @@ export function createMusicPlayerStore({
           shuffle: false,
           repeat: 'off',
           showTimedComments: takeLegacyShowTimedComments(storage),
+          recentlyPlayed: [],
 
           playTrack: (track, options) => {
             if (!options?.list) return startFrom(track, null);
@@ -422,6 +434,7 @@ export function createMusicPlayerStore({
               playing: true,
               error: false,
               playback: newPlayback(before.track),
+              recentlyPlayed: playedNow(before.track),
             });
           },
 
@@ -527,12 +540,35 @@ export function createMusicPlayerStore({
       {
         name: MUSIC_PLAYER_PREFERENCES_KEY,
         storage: preferenceStorage(storage),
-        // Preferences only: the session (song, list, playback) is the resume module's.
-        partialize: (s) => ({ showTimedComments: s.showTimedComments }),
+        // Preferences and recently played only: the session (song, list, playback) is the resume
+        // module's.
+        partialize: (s) => ({
+          showTimedComments: s.showTimedComments,
+          recentlyPlayed: s.recentlyPlayed,
+        }),
         version: PREFERENCES_VERSION,
+        // Storage is the browser's to edit: take only the persisted keys, and of recently played
+        // only distinct positive integer ids.
+        merge: (persisted, current) => {
+          const saved = (persisted ?? {}) as Partial<PlayerData>;
+          return {
+            ...current,
+            showTimedComments:
+              typeof saved.showTimedComments === 'boolean'
+                ? saved.showTimedComments
+                : current.showTimedComments,
+            recentlyPlayed: storedSongIds(saved.recentlyPlayed),
+          };
+        },
       }
     )
   );
+}
+
+function storedSongIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value.filter((id): id is number => Number.isInteger(id) && id > 0);
+  return [...new Set(ids)].slice(0, RECENTLY_PLAYED_MAX);
 }
 
 /** The global player's state. Exactly one `<audio>` element plays it: `MusicPlayerAudio`. */

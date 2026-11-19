@@ -108,8 +108,10 @@ of the song was considered and rejected: it makes long songs need minutes of lis
   most one play, the same listener's plays of a song are at least the song's length (and at least 30 s) apart, each
   listener is rate-limited, and when Redis is unavailable nothing is counted. A play whose event
   fails to emit is lost, never retried.
-- **Not read anywhere yet.** `MetricService` sums only the names in `ENTITY_METRIC_TYPES.Image`
-  (`event-engine-common`), which does not list `Play`.
+- **Read** by `MetricService` (`Play` is in `ENTITY_METRIC_TYPES.Image`, `event-engine-common`) for
+  the play count on Song Cards and Song Rows (`image.getSongPlays`), and from the day rows of
+  `entityMetricDailyAgg_v2_prev` for "Rising this week" on `/music` (plays over today and the 6 days
+  before). Not part of `image.getInfinite`'s stats.
 - `Play` is a value of the Postgres enum `EntityMetric_MetricType_Type` because the tracker is typed
   on it. Deploy the regenerated client before applying its migration
   (`20270106120000_entity_metric_play`); no code writes the value to Postgres.

@@ -25,6 +25,9 @@ vi.mock('~/components/MusicPlayer/useMusicPlayerCover', () => ({
   useMusicPlayerCovers: () => new Map(),
   useSongListCovers: () => new Map(),
 }));
+vi.mock('~/components/Music/useSongPlays', () => ({
+  useSongListPlays: () => ({ 1: 9700 }),
+}));
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
 }));
