@@ -117,8 +117,10 @@ Phase 6's teardown:
 - **`legacyV1Id` resolution** of old model-comment links and notifications, which reads CommentV3.
 - **The `comment-v3-mirror.sql.behavior` test** and the fixture it loads, which go with the mirror's
   functions.
-- **Moderator DB:** `ModerationQueueMetrics.Comment`/`CommentV2` columns belong to the external job
-  that writes them; their hand-off stays with that job's owner.
+
+The moderator DB's `ModerationQueueMetrics.Comment`/`CommentV2` columns are not part of this list:
+Phase 6 does not touch that database, and nothing writes them (newest row 2024-09-07, read
+2026-11-17).
 
 ## Deferred after this PR (Group B)
 
@@ -127,8 +129,8 @@ None blocks Phase 6.
 
 - **`mode.ts`'s CommentV3 → CommentV2 rollout fallback** is removed in Phase 5.5, after CommentV3
   was given its own rollout on 2026-11-10 (removing it first would have stopped comment scanning).
-  CommentV3 now reads only its own field, so a `null` write turns comment scanning off. Left:
-  delete the stale `Comment` and `CommentV2` fields of `system:text-scan:modes` once it deploys.
+  CommentV3 now reads only its own field, so a `null` write turns comment scanning off. The
+  stale `Comment` and `CommentV2` fields of `system:text-scan:modes` were deleted on prod 2026-11-17.
 - **Kept as permanent labels** (decided 2026-11-10), because each names stored history elsewhere:
   ClickHouse `CommentV2_*` events, event points' `CommentV2:` source keys, and the Buzz entity
   type `'CommentV2'`.

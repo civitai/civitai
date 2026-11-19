@@ -269,11 +269,17 @@ environment, and they must never switch the reader on. Without a reader the miss
 - Every requested image is answered, as fetch's zero fill answers it: its summed counts, every other
   count 0, `statsUnknown: false`. A count this service cannot hold exactly (fractional, past 2^53)
   fails the lookup instead.
-- The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on as
-  Node's fetch waits (the hash re-read every 200 ms, up to 15 times), never queried again. One that
-  never lands falls back (`metrics-miss-failed`): fetch answers it zeros only after 15 × 200 ms of
-  sleeps, all of its caller's 3 s budget, so the caller always times out first and Node answers it
-  `statsUnknown`. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
+- The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on,
+  never queried again, for at most `FEED_GO_METRICS_LOCK_WAIT_MS` (default 500; unset, zero, negative
+  or junk is the default), the hash re-read every 100 ms with the last read at the bound. One that has
+  not landed by then falls back (`metrics-miss-failed`; the `metrics lock wait` span's outcome
+  `exhausted`). Node's fetch waits longer (every 200 ms, up to 15 times) and answers it zeros only
+  after 15 × 200 ms of sleeps, all of its caller's 3 s budget, so the caller always times out first
+  and Node answers it `statsUnknown`: feed-go gives up sooner rather than hold the page for up to its
+  whole lookup bound on another process's populate. The 100 ms cadence (half Node's) puts five reads
+  inside the default bound where 200 ms would put two, and one wait still reads fewer times than
+  Node's 15. The bound covers only that wait, which starts after this lookup's own populate of the
+  ids it was free to query; that read keeps the lookup bound below. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
   5 s while the populate runs and released after (left to expire after a server timeout, whose
   capped lookup also marks its ids `metrics:timeout`, 12 h); with it off it is only read (`EXISTS`).
 - Write-back on: each hash is written with `hReplaceStampedEx`, the Lua script Node evaluates (same
@@ -282,7 +288,9 @@ environment, and they must never switch the reader on. Without a reader the miss
   request, as Node's un-aborted read: when the request's bound ends first the request falls back and
   the populate still fills the cache.
 - Bounds: one page's lookup is bounded by `FEED_GO_CLICKHOUSE_TIMEOUT_MS` (default 2000, at most half
-  the request budget, and never more than 2500 whatever either is set to). Node's whole read is
+  the request budget, and never more than 2500 whatever either is set to); inside it, the wait on
+  another process's populate lock by `FEED_GO_METRICS_LOCK_WAIT_MS` (above), and the lookup bound
+  still ends that wait first when it is shorter. Node's whole read is
   bounded by `CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS` (3000) and answers `statsUnknown` past it; this
   lookup starts after feed-go's own cache read, so 2500 leaves room for what Node's budget spends
   before its populate, and a lookup Node would not have finished is never answered here. A pod sends at most
@@ -1253,7 +1261,7 @@ configuration drives both and a trace continues browser → feed-go → Node on 
   under the request that runs it), from reaching the flight to its answer, with `feed_go.miss.cache`
   and `feed_go.miss.shared=true` (an answer kept in the few-second in-process memo is a map read and
   gets none), and `metrics lock wait`, the metrics lookup's whole wait on a populate lock another
-  process holds (up to 15 Redis reads 200 ms apart), with `feed_go.metrics.wait.ids` (a count),
+  process holds (a Redis read every 100 ms up to `FEED_GO_METRICS_LOCK_WAIT_MS`, five by default), with `feed_go.metrics.wait.ids` (a count),
   `.polls` and `.outcome` (`filled`, `exhausted`, `ctx_done`, `read_error`; all but `filled` are the
   error status), never an id, a key or SQL; and
   the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the

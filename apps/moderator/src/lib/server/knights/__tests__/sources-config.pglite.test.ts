@@ -187,7 +187,7 @@ describe('saveSourcesConfig', () => {
     });
   });
 
-  it('keeps a stored maxOpen, which the page does not edit', async () => {
+  it('keeps a stored maxOpen when the form leaves it out', async () => {
     redisStore.set(
       KEY,
       JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 1200 })
@@ -201,6 +201,31 @@ describe('saveSourcesConfig', () => {
       nsfwRate: 0.2,
       maxOpen: 1200,
     });
+  });
+
+  it('stores the open-item cap the form sends, and keeps the stored one when it sends none', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 0.5, nsfwRate: 0.25, maxOpen: 18300 })
+    );
+
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 60000 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toMatchObject({ maxOpen: 60000 });
+
+    await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.5 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toMatchObject({ nsfwRate: 0.5, maxOpen: 60000 });
+  });
+
+  it.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['over the limit', 1_000_001],
+    ['text', '60000'],
+  ])('refuses an open-item cap that is %s and changes nothing', async (_label, maxOpen) => {
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen }, MOD)
+    ).toEqual({ ok: false, error: expect.stringContaining('open-item cap') });
+    expect(redisStore.has(KEY)).toBe(false);
   });
 
   it('stores a yes/no share, 0 included, in the shape Knights reads', async () => {

@@ -89,6 +89,14 @@ type MissCompute struct {
 	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
 	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
 	MetricsTimeout time.Duration
+	// MetricsLockWait bounds the metrics lookup's wait on a populate lock another process holds
+	// (FEED_GO_METRICS_LOCK_WAIT_MS; not positive: defaultMetricsLockWait, 500 ms). Past it the page
+	// falls back (`metrics-miss-failed`). It bounds only that wait, never this lookup's own ClickHouse
+	// read (MetricsTimeout's); a MetricsTimeout that ends first still ends the wait.
+	MetricsLockWait time.Duration
+	// waitSleep, when set (tests), replaces the timer between lock-wait reads (sleepLockWait): called
+	// with the delay, it returns nil to read next or an error to end the wait.
+	waitSleep func(ctx context.Context, d time.Duration) error
 	// Tracer spans the waits on work this computation did not start (spans.go): a lookup that joins
 	// another caller's in-flight one, and the metrics lookup's wait on another process's populate
 	// lock. nil (tracing off) spans nothing; with it set, only under a recording span.

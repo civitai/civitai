@@ -160,7 +160,11 @@ describe('addSimpleImagePostHandler', () => {
     );
     expect(mocks.bulkSaveItems).not.toHaveBeenCalled();
     expect(mocks.deletePost).toHaveBeenCalledTimes(1);
-    expect(mocks.deletePost).toHaveBeenCalledWith({ id: NEW_POST_ID, isModerator: false });
+    expect(mocks.deletePost).toHaveBeenCalledWith({
+      id: NEW_POST_ID,
+      isModerator: false,
+      actor: { system: 'add-simple-image-post-rollback' },
+    });
   });
 
   it('deletes with moderator context when a moderator is refused', async () => {
@@ -172,7 +176,11 @@ describe('addSimpleImagePostHandler', () => {
 
     await expect(addSimpleImagePostHandler({ input, ctx: modCtx })).rejects.toThrow('no');
 
-    expect(mocks.deletePost).toHaveBeenCalledWith({ id: NEW_POST_ID, isModerator: true });
+    expect(mocks.deletePost).toHaveBeenCalledWith({
+      id: NEW_POST_ID,
+      isModerator: true,
+      actor: { system: 'add-simple-image-post-rollback' },
+    });
   });
 
   it('still surfaces the original refusal when the rollback fails', async () => {

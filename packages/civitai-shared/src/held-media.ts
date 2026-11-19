@@ -104,6 +104,32 @@ export function suspectImageSql(image: string): string {
   )`;
 }
 
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/** A signed 64-bit integer as SQL literal text; throws on anything else, since the text is spliced. */
+function int64Literal(value: bigint | string): string {
+  const text = String(value);
+  if (!/^-?\d{1,19}$/.test(text)) throw new Error('Bad int64');
+  const n = BigInt(text);
+  if (n < INT64_MIN || n > INT64_MAX) throw new Error('Bad int64');
+  return n.toString();
+}
+
+/**
+ * Copies blocklist CSAM entries into "BlockedImage", the table `suspectImageSql` reads; a row of
+ * another reason becomes CSAM. Never deletes: no unblock ends a live CSAM entry, and a stale row only
+ * sends an image to the CSAM review tier. `null` for no hashes. Starts with @civitai/db's REDACT_LOG_MARKER
+ * marker, so the slow-query log never records the hashes.
+ */
+export function mirrorBlockedHashesSql(hashes: (bigint | string)[]): string | null {
+  const values = [...new Set(hashes.map(int64Literal))];
+  if (!values.length) return null;
+  return `/* log:redact */ INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
+    .map((hash) => `(${hash}, 'CSAM')`)
+    .join(', ')} ON CONFLICT (hash) DO UPDATE SET reason = EXCLUDED.reason`;
+}
+
 /** Whether the scan of the "Image" row aliased `image` has not finished, so its signals cannot be
  *  read. A Blocked image finished its scan. */
 export function unreadableImageSql(image: string): string {

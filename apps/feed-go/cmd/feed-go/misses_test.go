@@ -176,7 +176,7 @@ func loadConfig(t *testing.T, env map[string]string) *config.Config {
 		t.Setenv(k, "x://"+k)
 	}
 	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_CLICKHOUSE_TIMEOUT_MS",
-		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
+		"FEED_GO_METRICS_LOCK_WAIT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
 		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
 		t.Setenv(k, env[k])
 	}
@@ -238,7 +238,8 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 
 	env := map[string]string{"FEED_GO_CLICKHOUSE_HOST": ownSrv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader",
-		"FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw", "FEED_GO_CLICKHOUSE_TIMEOUT_MS": "10000", "FEED_GO_REQUEST_BUDGET_MS": "60000"}
+		"FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw", "FEED_GO_CLICKHOUSE_TIMEOUT_MS": "10000", "FEED_GO_REQUEST_BUDGET_MS": "60000",
+		"FEED_GO_METRICS_LOCK_WAIT_MS": "750"}
 	for k, v := range app {
 		env[k] = v
 	}
@@ -249,6 +250,10 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 	if c.MetricsTimeout != 10*time.Second {
 		t.Fatalf("MetricsTimeout %v, want FEED_GO_CLICKHOUSE_TIMEOUT_MS (10s; the lookup holds it under Node's budget)", c.MetricsTimeout)
+	}
+	// Fails on: the lock-wait bound not handed over (0, the hydrate default) or handed the lookup's.
+	if c.MetricsLockWait != 750*time.Millisecond {
+		t.Fatalf("MetricsLockWait %v, want FEED_GO_METRICS_LOCK_WAIT_MS (750ms)", c.MetricsLockWait)
 	}
 	if _, err := c.ClickHouse.Query(context.Background(), "SELECT 1", nil); err != nil {
 		t.Fatal(err)
