@@ -38,7 +38,7 @@ func TestRunRefusesABadDatabaseURL(t *testing.T) {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestServeRunsBothListenersUntilCancelled(t *testing.T) {
 // A listener that cannot start (its address is taken) ends the run with that error and shuts the
 // other listener down: the service never runs with one of the two missing.
 func TestServeStopsWhenOneListenerFails(t *testing.T) {
-	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	taken, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
