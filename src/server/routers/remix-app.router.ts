@@ -39,16 +39,26 @@ import {
   remixAppSlugSchema,
   remixAppSubmitSchema,
   REMIX_REJECT_REASONS,
+  USER_REMIX_SLUG,
 } from '~/shared/remix-apps/row.schema';
+import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
 const userCodeReviewProcedure = remixAppAdminProcedure.use(isFlagProtected('remixAppsUserCode'));
-const remixAppBuilderProcedure = remixAppProcedure
+// Guarded: a submit publishes code and listing text, so muted or unverified accounts may not.
+const remixAppBuilderProcedure = guardedProcedure
+  .use(isFlagProtected('remixApps'))
   .use(isFlagProtected('remixAppsUserCode'))
   .use(isFlagProtected('remixAppBuilder'));
+
+/** A user app's row is only acted on with its flag, like its review. */
+function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
+  if (USER_REMIX_SLUG.test(slug) && !features.remixAppsUserCode)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'User remix apps are not enabled for you' });
+}
 
 const imageId = z.number().int().positive();
 
@@ -103,10 +113,16 @@ const remixAppAdminRouter = router({
     .mutation(({ input }) => saveRemixApp(input)),
   setEnabled: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
-    .mutation(({ ctx, input }) => setRemixAppEnabled({ ...input, moderatorId: ctx.user.id })),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return setRemixAppEnabled({ ...input, moderatorId: ctx.user.id });
+    }),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ input }) => deleteRemixApp(input)),
+    .mutation(({ ctx, input }) => {
+      assertUserCodeAccess(input.slug, ctx.features);
+      return deleteRemixApp(input);
+    }),
   /** Approves or rejects the source whose hash the mod read. */
   review: userCodeReviewProcedure
     .input(

@@ -7,6 +7,7 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
@@ -63,6 +64,8 @@ export type RegisteredRemixApp = {
   spec: RemixStoredSpec;
   /** Set on a user app: its code is the author's. */
   author?: { userId: number };
+  /** Set on a user app: where its review stands. */
+  review?: RemixManifest['review'];
   /** Its listing and engine. A user app's `run` is never called in-process. */
   app: RemixApp;
   /** What `start` and `advance` replay. */
@@ -78,12 +81,25 @@ const unavailable = async (): Promise<never> => {
   throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
 };
 
-/** The apps `caller` may see: user apps only behind their flag. */
-export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author'>>(
+/**
+ * The apps `caller` may see: user apps only behind their flag, and until approved only to their
+ * author and moderators, since nobody has reviewed their listing text yet.
+ */
+export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | 'review'>>(
   apps: T[],
-  caller: { features: Pick<FeatureAccess, 'remixAppsUserCode'> }
+  caller: {
+    features: Pick<FeatureAccess, 'remixAppsUserCode'>;
+    user?: { id: number; isModerator?: boolean };
+  }
 ) {
-  return caller.features.remixAppsUserCode ? apps : apps.filter((entry) => !entry.author);
+  if (!caller.features.remixAppsUserCode) return apps.filter((entry) => !entry.author);
+  return apps.filter(
+    (entry) =>
+      !entry.author ||
+      entry.review === 'approved' ||
+      !!caller.user?.isModerator ||
+      entry.author.userId === caller.user?.id
+  );
 }
 
 export const remixAppRowSelect = {
@@ -185,7 +201,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
     order: row.featuredOrder ?? Number.MAX_SAFE_INTEGER,
     spec: manifest.remix,
     version: runVersionOf(manifest),
-    ...(manifest.author ? { author: manifest.author } : {}),
+    ...(manifest.author ? { author: manifest.author, review: manifest.review } : {}),
   });
 }
 
@@ -429,7 +445,21 @@ export const remixReviewHash = (manifest: {
  * Creates or replaces the author's app `u<authorId>-<name>`. Every submit, an edit of an approved
  * app included, takes it out of menus until a mod approves the new source.
  */
-export async function submitUserRemixApp({
+export async function submitUserRemixApp(input: RemixAppSubmitInput & { authorId: number }) {
+  // One author's saves run one at a time, so the per-author cap holds against concurrent creates.
+  const result = await withDistributedLock(
+    { key: `remix-user-apps:${input.authorId}`, ttl: 30 },
+    () => submitUserRemixAppLocked(input)
+  );
+  if (!result)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'Another save of your apps is in progress. Try again.',
+    });
+  return result;
+}
+
+async function submitUserRemixAppLocked({
   authorId,
   name,
   title,
@@ -464,6 +494,12 @@ export async function submitUserRemixApp({
       });
   }
   const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
+  // Its log and mark could not be carried over, so the author may not overwrite it.
+  if (previous && !previous.success)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'This app needs a moderator before it can be edited',
+    });
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);
   const listing = {
@@ -486,13 +522,11 @@ export async function submitUserRemixApp({
     { by: authorId, action: 'submitted', sha256 }
   );
   const fields = { manifest, version: manifest.version, contentRating: contentRatingOf(spec) };
-  if (existing)
-    await dbWrite.appBlock.update({
-      where: { blockId },
-      data: { ...fields, status: REMIX_STATUS.disabled },
-    });
-  else await createRemixAppRow(slug, fields);
-  await bumpRemixAppRegistry();
+  if (existing) await writeUserRemixApp(existing, { ...fields, status: REMIX_STATUS.disabled });
+  else {
+    await createRemixAppRow(slug, fields);
+    await bumpRemixAppRegistry();
+  }
   return { slug, version: runVersion, sha256 };
 }
 
@@ -562,12 +596,15 @@ export async function reviewUserRemixApp({
   note?: string;
   moderatorId: number;
 }) {
-  if (decision === 'rejected' && !reason)
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Give a reason for the rejection' });
+  if ((decision === 'rejected') !== !!reason)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'A rejection takes a reason, and only a rejection does',
+    });
   const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
   if (remixReviewHash({ ...stored, remix }) !== sha256) throw userAppChanged();
   const withMature = decision === 'approved' && mature;
-  if (withMature && stored.minorThemed)
+  if (withMature && (await authorHasMinorThemedApp(stored.author?.userId ?? 0)))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This app was rejected as minor-themed, so it can only be approved for safe sources',
@@ -605,6 +642,22 @@ export async function reviewUserRemixApp({
   });
   return { slug, review: decision, version: runVersion };
 }
+
+/** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */
+async function authorHasMinorThemedApp(authorId: number) {
+  // primary: a mark set a moment ago must already count.
+  const rows = await dbWrite.appBlock.findMany({
+    where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
+    select: { manifest: true },
+  });
+  return rows.some((row) => hasMinorThemedMark(row.manifest));
+}
+
+/** Read off the raw manifest, so a mark on a row that no longer validates still counts. */
+const hasMinorThemedMark = (manifest: unknown) =>
+  typeof manifest === 'object' &&
+  manifest !== null &&
+  !!(manifest as { minorThemed?: unknown }).minorThemed;
 
 /** Lifts a minor-themed marker. A second moderator must do it: never the one who set it. */
 export async function clearRemixMinorThemed({
@@ -660,6 +713,12 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Built-in default apps cannot be deleted' });
   if (row.status !== REMIX_STATUS.disabled)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
+  // Deleting would drop the mark with the row; lifting it takes a second moderator.
+  if (hasMinorThemedMark(row.manifest))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This app is marked minor-themed; a second moderator must clear the mark first',
+    });
 
   // The only record of what was deleted.
   logToAxiom({

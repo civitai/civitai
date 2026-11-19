@@ -21,7 +21,7 @@ const h = vi.hoisted(() => ({
   start: vi.fn(),
 }));
 // Kept out of `h`: the first test expects exactly one call of every `h` mock.
-const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn() }));
+const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn(), clear: vi.fn() }));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Registry>()),
@@ -32,6 +32,7 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   listRemixAppsForAdmin: h.list,
   submitUserRemixApp: u.submit,
   reviewUserRemixApp: u.review,
+  clearRemixMinorThemed: u.clear,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RunService>()),
@@ -213,8 +214,38 @@ describe('user app code: submit and review', () => {
     await expect(as(user, on).review(decision())).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(u.review).not.toHaveBeenCalled();
 
-    // POSITIVE CONTROL: a moderator with the flag reaches the service.
+    // POSITIVE CONTROL: a moderator with the flag reaches the service, named as the reviewer.
     await as(moderator, on).review(decision());
-    expect(u.review).toHaveBeenCalledTimes(1);
+    expect(u.review).toHaveBeenCalledWith(expect.objectContaining({ moderatorId: moderator.id }));
+  });
+
+  it('clears a minor-themed mark only as a moderator with remixAppsUserCode on', async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).clearMinorThemed({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).clearMinorThemed({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.clear).not.toHaveBeenCalled();
+    await as(moderator, on).clearMinorThemed({ slug: 'u88-probe' });
+    expect(u.clear).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
+  });
+
+  it("toggles or deletes a user app's row only with remixAppsUserCode on, as a named moderator", async () => {
+    await expect(
+      as(moderator).setEnabled({ slug: 'u88-probe', enabled: false })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(as(moderator).delete({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(h.setEnabled).not.toHaveBeenCalled();
+    expect(h.remove).not.toHaveBeenCalled();
+
+    const on = flags({ remixAppsUserCode: true });
+    await as(moderator, on).setEnabled({ slug: 'u88-probe', enabled: false });
+    expect(h.setEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'u88-probe', moderatorId: moderator.id })
+    );
   });
 });
