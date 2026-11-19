@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
+import { upsertCollection as upsertCollectionService } from '~/server/services/collection.service';
 
 /**
  * The collections feed shows a collection's own cover only when the viewer may see it; otherwise
@@ -181,7 +182,7 @@ describe('collection reads on a scoped key or app token', () => {
     expect(mockPermissions).toHaveBeenCalledWith(expect.objectContaining({ isModerator: full }));
     expect(mockGetCollectionById).toHaveBeenCalledWith({
       input: { id: 1 },
-      viewer: full ? MOD : undefined,
+      viewer: full ? MOD : {},
     });
   });
 
@@ -196,4 +197,15 @@ describe('collection reads on a scoped key or app token', () => {
       expect(mockServableCovers).toHaveBeenCalledWith(expect.any(Array), full ? MOD : undefined);
     }
   );
+
+  it.each(CASES)('keeps a hidden cover through an edit on %s', async (_l, cred, full) => {
+    mockServableIds.mockResolvedValue(new Set());
+    await upsertCollectionHandler({
+      input: { id: 1, name: 'c', image: null } as never,
+      ctx: ctxOf(cred),
+    });
+    expect(vi.mocked(upsertCollectionService).mock.calls.at(-1)?.[0].coverViewer).toEqual(
+      full ? undefined : {}
+    );
+  });
 });

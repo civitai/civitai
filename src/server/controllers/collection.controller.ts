@@ -457,6 +457,8 @@ export const upsertCollectionHandler = async ({
         isModerator: user.isModerator,
         isMember: !!user.tier && user.tier !== 'free',
       },
+      // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
+      coverViewer: credentialViews(ctx).asOwner ? undefined : {},
     });
 
     const [itemId] = [

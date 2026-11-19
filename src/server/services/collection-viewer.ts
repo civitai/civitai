@@ -24,9 +24,11 @@ export async function readCollectionForViewer(ctx: ViewerCtx, id: number) {
     isModerator: views.asModerator,
   });
   if (!canSeeCollectionDetails(permissions)) return { permissions, collection: null };
+  // A signed-in caller without the owner's view sees covers as a stranger does, but is still told a
+  // hidden one is there, so an edit leaves it in place.
   const collection = await getCollectionById({
     input: { id },
-    viewer: views.asOwner ? ctx.user : undefined,
+    viewer: views.asOwner ? ctx.user : ctx.user ? {} : undefined,
   });
   return { permissions, collection };
 }
