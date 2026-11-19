@@ -1431,10 +1431,12 @@ export async function settlePreviewScans() {
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
           -- Blocked rates above every level a deal can have.
           AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > ${NsfwLevel.XXX}::int)))`;
-  // Only the rating is above the deal's level: the seller is told that, and nothing else.
+  // Only the rating is above the deal's level: the seller is told that, and nothing else. Not a
+  // verdict on the content, so the scan Passed: its copy is not kept as evidence and the file purges
+  // once removed. Every reader that serves a preview also needs status Processing or Ready.
   const overLevel = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
-    SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
+    SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Passed'::"ServiceDealFileScanStatus",
       "failReason" = ${SERVICE_PREVIEW_OVER_LEVEL_REASON}
     FROM "Image" i, "ServiceDeal" d
     WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}

@@ -1331,15 +1331,88 @@ describe('preview pipeline', () => {
       await files.startPreviewScans();
       await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
       await files.settlePreviewScans();
+      // A rating mismatch, not a verdict on the content: the scan Passed, the file did not.
       expect(await fileRow(fileId)).toMatchObject({
         status: 'Failed',
-        scanStatus: 'Failed',
+        scanStatus: 'Passed',
         failReason: SERVICE_PREVIEW_OVER_LEVEL_REASON,
       });
       expect(await files.publishPreviews()).toBe(0);
       expect(preview.build).not.toHaveBeenCalled();
     }
   );
+
+  describe('a preview refused only for its rating is not kept as evidence; a rejected one is', () => {
+    const settled = async (rejected: boolean) => {
+      const { dealId, fileId } = await waiting();
+      await files.startPreviewScans();
+      await q(
+        `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4${
+          rejected ? ', minor = true' : ''
+        }`
+      );
+      await files.settlePreviewScans();
+      await files.deleteScanCopies();
+      return { dealId, fileId };
+    };
+    const removals: [string, (fileId: number) => Promise<unknown>][] = [
+      [
+        'the seller deletes it',
+        (fileId) => files.deleteServiceDealFile({ fileId, userId: SELLER }),
+      ],
+      [
+        'the seller deletes their account',
+        async () => {
+          await closeDeal();
+          const retention = await import('~/server/services/creator-service-deal-file-retention');
+          return dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+        },
+      ],
+      [
+        "the deal's retention window ends",
+        async () => {
+          await closeDeal();
+          const retention = await import('~/server/services/creator-service-deal-file-retention');
+          return retention.markExpiredDealFiles({ effectiveAt: new Date(0) });
+        },
+      ],
+    ];
+    /** Cancelled and settled long enough ago that retention has run out. */
+    const closeDeal = () =>
+      q(
+        `UPDATE "ServiceDeal" SET status = 'Cancelled', "closedAt" = now() - interval '40 days',
+           "settledAt" = now() - interval '40 days'`
+      );
+
+    it('deletes its scan copy and never serves it to a party', async () => {
+      const { dealId, fileId } = await settled(false);
+      expect((await fileRow(fileId)).imageId).toBeNull();
+      expect(images.deleteImages).toHaveBeenCalledOnce();
+      for (const userId of [SELLER, BUYER]) {
+        const previews = (await list(dealId, userId)).filter((f) => f.kind === 'Preview');
+        expect(previews.every((f) => f.previewUrl === null)).toBe(true);
+      }
+    });
+
+    it.each(removals)('purges it once %s', async (_n, remove) => {
+      const { fileId } = await settled(false);
+      await remove(fileId);
+      expect((await fileRow(fileId)).removedAt).not.toBeNull();
+      await agedPurge();
+      expect(await fileRow(fileId)).toBeUndefined();
+    });
+
+    it.each(removals)('keeps a rejected one, and its scan copy, once %s', async (_n, remove) => {
+      const { fileId } = await settled(true);
+      expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Failed' });
+      expect((await fileRow(fileId)).imageId).not.toBeNull();
+      await remove(fileId);
+      expect((await fileRow(fileId)).removedAt).not.toBeNull();
+      await agedPurge();
+      expect(await fileRow(fileId)).toBeDefined();
+      expect(images.deleteImages).not.toHaveBeenCalled();
+    });
+  });
 
   it("passes a preview up to its deal's own level", async () => {
     for (const [dealLevel, level] of [
