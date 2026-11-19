@@ -31,7 +31,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "deletedAt" timestamp, image text,
       "profilePictureId" int);
     CREATE TABLE "Image" (id int PRIMARY KEY, ingestion text, "needsReview" text, "postId" int,
-      "nsfwLevel" int NOT NULL DEFAULT 1);
+      "nsfwLevel" int NOT NULL DEFAULT 1, url text, "blockedFor" text);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, mode text, minor boolean NOT NULL DEFAULT false,

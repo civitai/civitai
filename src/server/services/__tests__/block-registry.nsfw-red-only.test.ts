@@ -40,7 +40,10 @@ vi.mock('@prisma/client', () => {
     }
     return { __sql: out, sql: out, toString: () => out } as unknown as { sql: string };
   }
-  return { Prisma: { sql } };
+  function raw(text: string) {
+    return { __sql: text, sql: text, toString: () => text } as unknown as { sql: string };
+  }
+  return { Prisma: { sql, raw } };
 });
 
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));

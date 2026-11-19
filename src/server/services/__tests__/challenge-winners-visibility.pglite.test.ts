@@ -47,12 +47,11 @@ beforeAll(async () => {
     CREATE TYPE "ChallengeIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked');
     CREATE TYPE "CommentEntityType" AS ENUM ('challenge', 'review');
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text, "deletedAt" timestamp);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text, "deletedAt" timestamp, "profilePictureId" int);
     CREATE TABLE "ChallengeJudge" (id int PRIMARY KEY, name text, bio text, "userId" int);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, poi boolean DEFAULT false, ingestion "ImageIngestionStatus",
-      "nsfwLevel" int DEFAULT 1
-    );
+      "nsfwLevel" int DEFAULT 1, url text, "needsReview" text, "blockedFor" text);
     CREATE TABLE "Challenge" (
       id int PRIMARY KEY, title text, theme text, invitation text, "coverImageId" int,
       "startsAt" timestamp DEFAULT now(), "endsAt" timestamp DEFAULT now(),

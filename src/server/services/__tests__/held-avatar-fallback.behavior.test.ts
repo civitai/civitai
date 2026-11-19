@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { anyImageHeldOrBlocked, clearHeldUserImages } from '~/server/services/held-image-keys';
-import { fallbackUserImageColumn } from '~/server/services/profile-picture.sql';
+import {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+} from '~/server/services/profile-picture.sql';
 
 let pg: PGlite;
 const db = {
@@ -41,6 +44,29 @@ describe('fallbackUserImageColumn', () => {
   it('nulls a User.image naming its held profile picture, and keeps every other', async () => {
     const { rows } = await pg.query<{ id: number; image: string | null }>(
       `SELECT u.id, ${fallbackUserImageColumn} AS image FROM "User" u ORDER BY u.id`
+    );
+    expect(rows.map((row) => row.image)).toEqual([
+      null,
+      null,
+      'legacy',
+      'key-poi',
+      'key-ok',
+      'key-csam',
+      null,
+    ]);
+  });
+});
+
+describe('fallbackUserImageColumnOf', () => {
+  it('is the same column over the default alias', () => {
+    expect(fallbackUserImageColumnOf('u')).toBe(fallbackUserImageColumn);
+  });
+
+  it('applies the rule over another alias for User', async () => {
+    const { rows } = await pg.query<{ image: string | null }>(
+      `SELECT ${fallbackUserImageColumnOf(
+        'ju'
+      )} AS image FROM "User" ju WHERE ju.id <= 7 ORDER BY ju.id`
     );
     expect(rows.map((row) => row.image)).toEqual([
       null,

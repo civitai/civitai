@@ -1,3 +1,7 @@
+import {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+} from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
@@ -350,14 +354,14 @@ const challengeCardQuery = Prisma.sql`
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
@@ -519,8 +523,12 @@ export async function getMyChallenges({
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
-           u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
-           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
+           u.username AS "creatorUsername", ${Prisma.raw(
+             fallbackUserImageColumn
+           )} AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
+           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ${Prisma.raw(
+             fallbackUserImageColumnOf('ju')
+           )} AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
            cw."place" AS "myPlace",
            (c."createdById" = ${userId} AND c.source = ${
     ChallengeSource.User
@@ -1028,7 +1036,9 @@ async function buildChallengeDetail(
         | undefined
       ]
     >`
-      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, u.image, u."deletedAt"
+      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, ${Prisma.raw(
+        fallbackUserImageColumn
+      )} AS image, u."deletedAt"
       FROM "ChallengeJudge" cj
       JOIN "User" u ON u.id = cj."userId"
       WHERE cj.id = ${challenge.judgeId}
@@ -4337,14 +4347,14 @@ export async function getCompletedChallengesWithWinners(
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt",
       c.metadata,
       c."judgingCategories"

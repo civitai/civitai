@@ -64,7 +64,11 @@ const dialect = (pg: PGlite): Dialect => {
 const at = (minute: number) =>
   `'2025-01-01 00:00:00+00'::timestamptz + interval '${minute} minutes'`;
 const SETUP = `
-ALTER TABLE "User" ADD COLUMN username text, ADD COLUMN "deletedAt" timestamp, ADD COLUMN image text;
+ALTER TABLE "User" ADD COLUMN username text, ADD COLUMN "deletedAt" timestamp, ADD COLUMN image text,
+  ADD COLUMN "profilePictureId" int;
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text, ADD COLUMN IF NOT EXISTS "needsReview" text,
+  ADD COLUMN IF NOT EXISTS ingestion text, ADD COLUMN IF NOT EXISTS "nsfwLevel" int,
+  ADD COLUMN IF NOT EXISTS "blockedFor" text;
 UPDATE "User" SET username = 'u' || id;
 INSERT INTO "Article" VALUES (10);
 INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 10);
@@ -430,6 +434,39 @@ describe('getCommentLock', () => {
       expect(await getCommentLock(db, ARTICLE)).toEqual({ locked: true });
     } finally {
       await pg.exec(`UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'article'`);
+    }
+  });
+});
+
+describe("a comment author's image", () => {
+  const authorImage = async () => {
+    const page = await getCommentSection(db, { entityType: 'article', entityId: 11 }, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 10,
+    });
+    return page.comments.find((comment) => comment.id === 900)?.user?.image;
+  };
+
+  it('is left out when it names the author’s held or blocked profile picture, and kept otherwise', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "needsReview", "blockedFor") VALUES
+        (9001, 'key-held', 'minor', NULL), (9002, 'key-blocked', NULL, 'moderated'), (9003, 'key-ok', NULL, NULL);
+    `);
+    try {
+      for (const [pictureId, image, expected] of [
+        [9001, 'https://cdn.example/key-held/width=96', null],
+        [9002, 'key-blocked', null],
+        [9003, 'key-ok', 'key-ok'],
+        [9001, 'an-older-upload', 'an-older-upload'],
+      ] as const) {
+        await pg.query(`UPDATE "User" SET "profilePictureId" = $1, image = $2 WHERE id = 4`, [
+          pictureId,
+          image,
+        ]);
+        expect(await authorImage()).toBe(expected);
+      }
+    } finally {
+      await pg.exec(`UPDATE "User" SET "profilePictureId" = NULL, image = NULL WHERE id = 4`);
     }
   });
 });

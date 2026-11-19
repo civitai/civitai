@@ -133,17 +133,19 @@ type Picture = {
   ingestion?: string;
   tosViolation?: boolean;
   needsReview?: string;
+  blockedFor?: string;
 };
 async function setPicture(userId: number, url: string, picture: Picture) {
   const { rows } = await q(
-    `INSERT INTO "Image" (url, type, "nsfwLevel", ingestion, "tosViolation", "needsReview")
-     VALUES ($1, 'image', $2, $3, $4, $5) RETURNING id`,
+    `INSERT INTO "Image" (url, type, "nsfwLevel", ingestion, "tosViolation", "needsReview", "blockedFor")
+     VALUES ($1, 'image', $2, $3, $4, $5, $6) RETURNING id`,
     [
       url,
       picture.nsfwLevel,
       picture.ingestion ?? 'Scanned',
       !!picture.tosViolation,
       picture.needsReview ?? null,
+      picture.blockedFor ?? null,
     ]
   );
   await q(`UPDATE "User" SET "profilePictureId" = $1 WHERE id = $2`, [
@@ -170,7 +172,7 @@ beforeAll(async () => {
     CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL,
       "equippedAt" timestamp(3), "equippedToId" int);
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, type text, "nsfwLevel" int,
-      ingestion text, "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text);
+      ingestion text, "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
       "expiresAt" timestamp(3) NOT NULL, points int NOT NULL DEFAULT 1);
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
@@ -361,6 +363,9 @@ describe('share card avatar', () => {
     ['not yet scanned', { nsfwLevel: 1, ingestion: 'Pending' }],
     ['a ToS violation', { nsfwLevel: 1, tosViolation: true }],
     ['awaiting review', { nsfwLevel: 1, needsReview: 'minor' }],
+    // A rescan moves ingestion back to Scanned but leaves the block reason.
+    ['scanned again with its block reason left', { nsfwLevel: 1, blockedFor: 'moderated' }],
+    ['at the Blocked level', { nsfwLevel: 32 }],
   ])('shows no avatar for a picture that is %s', async (_, picture) => {
     expect(await avatarFor(picture)).toBeNull();
   });
