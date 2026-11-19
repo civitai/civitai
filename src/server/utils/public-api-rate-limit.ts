@@ -58,7 +58,12 @@ export const PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS = 60;
 // limiter's keys.
 const KEY_PREFIX = 'public-api:rate-limit';
 
-export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts';
+export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts' | 'verify';
+
+// /api/v1/verify parses an uploaded file of up to 10 MiB in-process, so it gets a tighter budget.
+const FAMILY_MAX: Partial<Record<PublicApiRateLimitFamily, { unauth: number; auth: number }>> = {
+  verify: { unauth: 10, auth: 30 },
+};
 
 export type PublicApiRateLimitResult =
   | { allowed: true }
@@ -118,7 +123,10 @@ export async function checkPublicApiRateLimit({
   userId?: number;
 }): Promise<PublicApiRateLimitResult> {
   const authed = typeof userId === 'number';
-  const max = authed ? PUBLIC_API_RATE_LIMIT_AUTH_MAX : PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
+  const limits = FAMILY_MAX[family];
+  const max = authed
+    ? limits?.auth ?? PUBLIC_API_RATE_LIMIT_AUTH_MAX
+    : limits?.unauth ?? PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
   const bucket = authed ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
   // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
   // environment namespace from the key table — apply it explicitly. Without this a non-production
