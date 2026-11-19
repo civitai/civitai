@@ -699,6 +699,7 @@ describe('resolution', () => {
       resolvedValue: null,
       questionKey: Q,
       escalationReason: 'pushed-down',
+      meta: { escalatedFromLevel: 16 },
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -1594,8 +1595,13 @@ describe('closeModeratorRuledItems', () => {
     await vote(2, id, '8');
     await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
     const before = { right: await exp(1), wrong: await exp(2) };
+    const moved = vi.fn();
 
-    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Knight' }]);
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-ruled',
@@ -1645,6 +1651,69 @@ describe('closeModeratorRuledItems', () => {
 
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
     expect(await snapshot()).toEqual(before);
+  });
+
+  it('closes an item waiting on the Inquisitors when a moderator rules on its image elsewhere, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      escalationReason: 'pushed-down',
+    });
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = await exp(1);
+    const moved = vi.fn();
+
+    // Players were never served it, so the live queue must not be told an Open item left.
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Inquisitor', minRank: 'Inquisitor' }]);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '1',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+      'correct',
+      'correct',
+      'correct',
+      'correct',
+    ]);
+    expect(await settled(id)).toEqual([true, true, true, true]);
+    expect(await exp(1)).toBe(before + PROGRESSION.correctXp);
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves a Blocked consensus waiting on the Inquisitors even when the image carries a moderator lock', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 2 });
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
+  });
+
+  it('leaves an Inquisitor item alone while a moderator is ruling on it', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Ruling', "resolvedBy"=7 WHERE id=$1`, [
+      id,
+    ]);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
   });
 });
 

@@ -3,7 +3,8 @@
 -- 🔴 MANUAL. Apply by hand BEFORE the release that writes it. Every row carries the key, so an
 -- app live before the column exists fails whole batches (see 2026-11-08-user-activities-source.sql).
 --
--- Values: served | narrowed | refused_query | refused_correction | refused_own_images.
+-- Values: served | narrowed | refused_query | refused_correction | refused_own_images |
+-- refused_upload_level.
 -- Empty on rows written before this column.
 --
 -- Verify, AFTER applying:

@@ -23,7 +23,9 @@ and the page reads its data again after each vote.
 - The vote action reads the item's stage before the vote and announces after it. The tick announces items that lapsed
   (`escalateExpired`) or that a moderator ruled (`closeModeratorRuledItems`).
 - /play joins the topic of every stage the player judges. A drop removes the item from the buffer, unless it moved to a stage
-  the player also judges. The item on screen is swapped for the next ready one, with a short notice.
+  the player also judges. The item on screen stays up under a "Settled by the Order" card (`SettledCard.svelte`): the answers,
+  Skip and the answer keys are locked, and "Next image" (or Enter, Space or Esc) moves on the way Skip does, only after 600 ms
+  (`SETTLED_GUARD_MS`) so a press already on its way cannot dismiss it or land on the next image.
 
 ## Stats
 
@@ -35,5 +37,7 @@ and the page reads its data again after each vote.
 
 ## Failure
 
-Every send is best effort with a 3-second timeout and is logged, never thrown into a vote or the tick. A missed drop means the
+Every send is best effort with a 3-second timeout, never thrown into a vote or the tick. A failure logs an Axiom event
+(`knights-live-update-failed` for a send, `knights-live-token-failed` for an access token the service would not mint,
+`knights-live-announce-failed` when the moved items could not be read). A missed drop means the
 vote is refused as before; a missed stats signal means the stats move on the next page read.
