@@ -43,6 +43,8 @@ CREATE TABLE "Image" (
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
   "blockedFor" TEXT,
   "needsReview" TEXT,
+  "scanJobs" JSONB,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
