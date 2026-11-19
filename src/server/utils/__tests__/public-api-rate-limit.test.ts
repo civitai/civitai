@@ -115,7 +115,6 @@ describe('checkPublicApiRateLimit', () => {
     expect(res).toEqual({ allowed: false, retryAfterSeconds: 9 });
   });
 
-  // /api/v1/verify parses uploads in-process; Site Maintenance asked for a tight per-IP budget.
   it('verify refuses an anonymous caller at its 11th request a minute, where articles still allows', async () => {
     mockRedis.incrBy.mockResolvedValue(11);
     mockRedis.ttl.mockResolvedValue(9);
@@ -125,6 +124,16 @@ describe('checkPublicApiRateLimit', () => {
       retryAfterSeconds: 9,
     });
     expect(await checkPublicApiRateLimit({ req, family: 'articles' })).toEqual({ allowed: true });
+  });
+
+  it('a caller that asks to fail closed is refused when redis errors', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    const req = reqWith({ 'cf-connecting-ip': '203.0.113.7' });
+    expect(await checkPublicApiRateLimit({ req, family: 'verify', failOpen: false })).toMatchObject(
+      {
+        allowed: false,
+      }
+    );
   });
 
   it('authed callers get the higher ceiling (still allowed at the unauth max + 1)', async () => {

@@ -4,7 +4,14 @@ import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import type { ContentCredentialsResult } from '~/server/services/content-credentials.service';
 
-const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic'];
+// Extensions too: browsers often report HEIC files with an empty MIME type.
+const ACCEPT = {
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
+  'image/avif': ['.avif'],
+  'image/heic': ['.heic', '.heif'],
+};
 const MAX_BYTES = 10 * 1024 * 1024;
 
 type State =
