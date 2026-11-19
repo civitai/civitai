@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 import type * as PaidAccessService from '~/server/services/paid-access.service';
 import { inheritedMetricPrivacy } from '~/components/Resource/Forms/metric-privacy-hints';
@@ -79,10 +81,10 @@ function project(row: unknown, select: Record<string, unknown>): unknown {
   return out;
 }
 
-const load = (user: { id: number; isModerator?: boolean } | null) =>
+const load = (user: { id: number; isModerator?: boolean } | null, credential = {}) =>
   getModelVersionHandler({
     input: { id: versionRow.id },
-    ctx: { user, features: {}, domain: 'blue' },
+    ctx: { user, features: {}, domain: 'blue', ...credential },
   } as never);
 
 beforeEach(() => {
@@ -109,6 +111,16 @@ describe('modelVersion.getById: the model-level metric privacy the version edito
   it('serves the owner only the metric settings, not the rest of the model meta', async () => {
     const { model } = await load({ id: OWNER_ID });
     expect(model.meta).toEqual({ metricVisibility: { buzz: 'hide' } });
+  });
+
+  it('serves the owner on a scoped key no model meta', async () => {
+    const scopedKey = {
+      apiKeyId: 1,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: TokenScope.ModelsRead,
+    };
+    expect((await load({ id: OWNER_ID }, scopedKey)).model.meta).toBeNull();
   });
 
   it('serves no model meta to anyone else', async () => {
