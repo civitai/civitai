@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../../test/component-setup';
+import { useRouter } from 'next/router';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
@@ -263,5 +264,35 @@ describe('ModelUpsertForm moderator locks', () => {
     await userEvent.keyboard('{Escape}');
 
     expect(await savedLocks()).toEqual(['category']);
+  });
+});
+
+// The wizard keeps ?templateId= in the URL; a save of an existing model must not forward it.
+describe('ModelUpsertForm from a template', () => {
+  const router = useRouter();
+  beforeEach(() => {
+    router.query = { templateId: '2237711' };
+    return () => {
+      router.query = {};
+    };
+  });
+
+  test('a saved model is edited in place, not re-created from its template', async () => {
+    renderForm();
+    await page.getByLabelText(/Name/).first().fill('Renamed');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await vi.waitFor(() => expect(mutate).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(mutate.mock.calls[0][0]).toMatchObject({ id: 1, name: 'Renamed' });
+    expect(mutate.mock.calls[0][0].templateId).toBeUndefined();
+  });
+
+  test('the first save still creates the model from its template', async () => {
+    renderForm({ id: undefined } as unknown as Partial<typeof baseModel>);
+    await page.getByLabelText(/Name/).first().fill('From template');
+    // A new model asks for the content acknowledgement before it saves.
+    await page.getByRole('checkbox', { name: /I acknowledge that I have reviewed/ }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await vi.waitFor(() => expect(mutate).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(mutate.mock.calls[0][0].templateId).toBe(2237711);
   });
 });
