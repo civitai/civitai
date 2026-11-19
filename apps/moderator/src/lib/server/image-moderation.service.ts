@@ -555,7 +555,8 @@ export async function blockImage({
           throw e;
         }
       );
-    if (state?.held) return { skipped: true };
+    // From the reports queue an image under the review flag, even dismissed, keeps its reports open.
+    if (state?.held || (skipModeratorRemoved && state?.underReview)) return { skipped: true };
     return skipModeratorRemoved ? { alreadyRemoved: true } : {};
   }
   const blocked = state!;

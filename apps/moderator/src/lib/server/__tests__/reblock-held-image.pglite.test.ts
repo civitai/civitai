@@ -235,15 +235,18 @@ describe('blocking an image removed with only the review flag left', () => {
     expect(rows).toEqual([{ imageId: FLAG_ONLY, notifyOwner: false }]);
   });
 
-  it('once dismissed from the review queue, actions its report, as before', async () => {
+  // From the reports queue a CSAM-flagged image keeps its report Pending even once dismissed: that
+  // queue's staff decide it. A block without a report still blocks as before.
+  it('once dismissed from the review queue, leaves its report open when Removed from a report', async () => {
     await db.query(
       `INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES ($1, 7, 'Dismissed', 2)`,
       [FLAG_ONLY]
     );
-    await block(FLAG_ONLY);
+    const result = await block(FLAG_ONLY);
 
     expect(notifiedImages()).toEqual([]);
-    expect(actionedReports()).toEqual([report(FLAG_ONLY)]);
+    expect(setReportStatus).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('alreadyRemoved');
   });
 });
 
