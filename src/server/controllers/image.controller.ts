@@ -24,7 +24,7 @@ import {
 import {
   addBlockedImage,
   bulkRemoveBlockedImages,
-  deleteImageById,
+  deleteImages,
   getAllImagesIndex,
   getImagesForModelVersionCache,
   getPostDetailByImageId,
@@ -195,11 +195,7 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({
-      ...input,
-      deletedById: ctx.user.id,
-      moderatorDelete: !!ctx.user.isModerator,
-    });
+    const [image] = await deleteImages([input.id], { actor: ctx.user });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -219,7 +215,8 @@ export const deleteImageHandler = async ({
       ]);
     }
 
-    return image;
+    // The id only: the deleted row also carries its moderation state, which is not the caller's to see.
+    return image ? { id: image.id } : null;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

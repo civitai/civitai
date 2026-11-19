@@ -32,6 +32,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'ServiceOffering',
   'PostText',
   'ModelRules',
+  'AppDoc',
 ] as const satisfies readonly TextScanEntityType[];
 
 /**

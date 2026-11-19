@@ -219,13 +219,14 @@ func (s *Sources) fillMetrics(ctx context.Context, miss []int, out map[int]Metri
 // lookupImageMetrics is MetricService.fetch over ids that all missed: per id, the counts as fetch
 // returns them before its zero fill (a record of metricType → count; empty for an image with none).
 //
-//   - With write-back off this service writes nothing: it only reads the populate lock, so an id
-//     another process is populating is waited on, never queried again.
+//   - With the metric hashes not written back (MissMetrics not in WriteBack) this service writes
+//     nothing: it only reads the populate lock, so an id another process is populating is waited
+//     on, never queried again.
 //   - A write-back populate outlives its request: when the request's bound ends first the lookup
 //     fails (the request falls back) and the populate still fills the cache, as Node's read does.
 func (s *Sources) lookupImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 	c := s.Compute
-	writeBack := c.WriteBack
+	writeBack := c.writes(MissMetrics)
 	locked, others, err := s.metricLocks(ctx, ids, writeBack)
 	if err != nil {
 		return nil, err
@@ -441,7 +442,9 @@ func metricRow(row map[string]any) (int, string, int, error) {
 
 // writeMetricHashes is populate's write: per id, hReplaceStampedEx of its counts (a `notFound: '1'`
 // hash for an image with none, 5 min; else 12 h), stamped now, or aged to refresh soon when the
-// event engine marked a recent event on it. A failed write fails the populate, as Node's does.
+// event engine marked a recent event on it. A failed write fails the populate, as Node's does. Each
+// id's write is counted and logged with its result (recordWrite): error when its command failed,
+// written otherwise (the script replaces the hash, so there is no nx_lost).
 func (s *Sources) writeMetricHashes(ctx context.Context, ids []int, counts map[int]jspack.Obj) error {
 	now := s.Compute.now().Unix()
 	stamp, ifMarker := strconv.FormatInt(now, 10), strconv.FormatInt(now-metricRefreshAfter+metricRecentEventTTL, 10)
@@ -463,12 +466,18 @@ func (s *Sources) writeMetricHashes(ctx context.Context, ids []int, counts map[i
 		}
 		return nil
 	})
-	for _, cmd := range cmds {
+	var first error
+	for i, cmd := range cmds {
+		result := WriteWritten
 		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("metrics write: %w", err)
+			result = WriteError
+			if first == nil {
+				first = fmt.Errorf("metrics write: %w", err)
+			}
 		}
+		s.Compute.recordWrite(ctx, MissMetrics, metricHashKey(ids[i]), ids[i], result)
 	}
-	return nil
+	return first
 }
 
 // markMetricLookupTimedOut is markLookupTimedOut: the next lookup naming these ids runs uncapped.

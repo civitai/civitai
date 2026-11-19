@@ -39,7 +39,6 @@ const {
   mockUpdateUserById,
   mockGetUserById,
   mockIngestImageById,
-  mockDeleteImageById,
   mockGetUserSettings,
   mockPatchUserSettings,
 } = vi.hoisted(() => ({
@@ -48,7 +47,6 @@ const {
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
   mockIngestImageById: vi.fn(),
-  mockDeleteImageById: vi.fn(),
   mockGetUserSettings: vi.fn(),
   mockPatchUserSettings: vi.fn(),
 }));
@@ -80,7 +78,6 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImageById: mockIngestImageById,
-  deleteImageById: mockDeleteImageById,
 }));
 vi.mock('~/server/search-index', () => ({
   usersSearchIndex: { queueUpdate: vi.fn().mockResolvedValue(undefined) },
@@ -127,7 +124,6 @@ beforeEach(() => {
   mockGetUserById.mockResolvedValue({ profilePictureId: 42 });
   mockUpdateUserById.mockResolvedValue({ id: USER_ID, profilePictureId: 99 });
   mockIngestImageById.mockResolvedValue(undefined);
-  mockDeleteImageById.mockResolvedValue(undefined);
   mockGetUserSettings.mockResolvedValue({});
   mockPatchUserSettings.mockResolvedValue({});
 

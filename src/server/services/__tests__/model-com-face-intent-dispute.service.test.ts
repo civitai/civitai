@@ -61,6 +61,7 @@ describe('processComFaceIntentDisputes', () => {
 
     expect(await processComFaceIntentDisputes()).toMatchObject({ overturned: 1 });
     expect(mocks.verdict).toHaveBeenCalledWith(expect.objectContaining({ thinking: true }));
+    expect(mocks.resolve).toHaveBeenCalledTimes(1);
     expect(mocks.resolve).toHaveBeenCalledWith(
       expect.objectContaining({
         appealId: 1,

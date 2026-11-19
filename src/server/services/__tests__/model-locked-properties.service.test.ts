@@ -1367,6 +1367,33 @@ describe('upsertModel — content flags the row ends up with', () => {
         expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
       });
 
+      it("reads the ruling on the locked row through the save's own transaction", async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        // Its own modActivity, so a ruling read sent to dbWrite cannot pass for the one on the locked row.
+        const txActivity = { findFirst: vi.fn().mockResolvedValue({ id: 1 }) };
+        const tx = new Proxy(mockDbWrite, {
+          get: (target, key) => (key === 'modActivity' ? txActivity : Reflect.get(target, key)),
+        });
+        mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+          typeof arg === 'function' ? arg(tx) : Promise.all(arg as unknown[])) as never);
+        // The guard before the transaction sees the ruling too; the locked-row read must find it on tx.
+        mockDbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+        try {
+          await upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+          });
+        } finally {
+          mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+            typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
+        }
+        expect(txActivity.findFirst).toHaveBeenCalledTimes(1);
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
       it('keeps an xguard rating through the owner untick, as it is locked', async () => {
         mockStored({
           nsfw: true,
@@ -1374,7 +1401,8 @@ describe('upsertModel — content flags the row ends up with', () => {
           meta: { systemNsfwLock: { source: 'xguard-text-moderation', at: scanLock.at } },
         });
         await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
-        expect(updateData().nsfw).not.toBe(false);
+        // Left out of the write (the stored true stands) or written as true; never cleared.
+        expect([undefined, true]).toContain(updateData().nsfw);
       });
 
       it('never blocks on a marker no clean read can release (an older xguard rating)', async () => {

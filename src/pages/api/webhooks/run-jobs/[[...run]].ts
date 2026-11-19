@@ -168,6 +168,7 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
@@ -183,7 +184,8 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
-import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
+import { imageDeletes } from '~/server/jobs/image-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -231,7 +233,8 @@ export const jobs: Job[] = [
   missedNotificationDigest,
   removeReplacedImages,
   purgeFeedbackCaptures,
-  retryImageStorageDeletes,
+  imageStorageDeletes,
+  imageDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
@@ -355,6 +358,7 @@ export const jobs: Job[] = [
   creatorBoxPayoutSweepJob,
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
+  appDocRaterJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,

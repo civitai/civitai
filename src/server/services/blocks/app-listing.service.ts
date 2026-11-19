@@ -1150,15 +1150,20 @@ export function listingSortKeyExpr(
  * red-capable host, and on one whichever the viewer's browsing level leaves out
  * (`matureRatingsAllowed`). Mirrors the AppBlock `matureHostSqlFilter`. Fail-closed: a
  * null/unknown rating is treated as SFW (kept); the direction is fail-closed for the MATURE
- * rows we must hide. G / PG / PG-13 are never filtered here.
+ * rows we must hide. G / PG / PG-13 are never filtered here. An app is never rated above `x`.
  */
 export function listingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
   return matureFilterFor(Prisma.sql`al.content_rating`, allowed);
 }
 
-/** {@link listingMatureFilter} for the sub-listing alias `s`. */
+/**
+ * {@link listingMatureFilter} for the sub-listing alias `s`, with the third mature rating only an
+ * item card carries: `xxx` (content levels), hidden unless the viewer's level includes XXX.
+ */
 export function subListingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
-  return matureFilterFor(Prisma.sql`s.content_rating`, allowed);
+  const rx = matureFilterFor(Prisma.sql`s.content_rating`, allowed);
+  if (allowed.xxx) return rx;
+  return Prisma.sql`(${rx}) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'`;
 }
 
 function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Prisma.Sql {
@@ -1432,7 +1437,10 @@ function catalogPageCache(
     dbRead,
     `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}:${
       withSubListings ? 'sl' : 'nosl'
-    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}`,
+    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}${
+      // XXX decides rows only through the item cards (`subListingMatureFilter`).
+      withSubListings ? (mature.xxx ? 'X' : '-') : ''
+    }`,
     'v1'
   );
 }
