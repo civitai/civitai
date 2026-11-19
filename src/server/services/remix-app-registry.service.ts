@@ -722,8 +722,8 @@ async function holdAuthorMatureApps(authorId: number, moderatorId: number, revie
     where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
     select: remixAppRowSelect,
   });
-  // The reviewed row was just written without the mature engine; its stale read here would conflict.
   const failed: string[] = [];
+  // The reviewed row was just written without the mature engine.
   for (const first of rows.filter((r) => r.id !== reviewedId))
     await holdMatureApp(first, moderatorId).catch((error) => {
       failed.push(first.blockId);
@@ -813,6 +813,13 @@ export async function clearRemixMinorThemed({
   const { minorThemed: _, ...rest } = stored;
   await writeUserRemixApp(row, {
     manifest: withReviewLog(rest, { by: moderatorId, action: 'cleared-minor-themed' }),
+  });
+  // Lifts a safety bar; the review log keeps only its latest entries.
+  logToAxiom({
+    name: 'remix-app-registry',
+    type: 'info',
+    message: 'Cleared a minor-themed mark',
+    payload: { slug, moderatorId, setBy: stored.minorThemed.by },
   });
 }
 

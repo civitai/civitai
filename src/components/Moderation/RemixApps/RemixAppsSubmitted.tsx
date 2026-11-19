@@ -64,12 +64,13 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
     showErrorNotification({ title: 'Not saved', error: new Error(error.message) });
   const onSuccess = () => utils.remixApp.admin.list.invalidate();
   const review = trpc.remixApp.admin.review.useMutation({
-    // The mod's own decision is what they saw next; a failure may still have saved one.
+    // Without this the mod's own decision reads as another mod's, and their next one is refused.
     onSuccess: (result) => {
       setSeen((s) => ({ ...s, review: result.review }));
       return onSuccess();
     },
     onError: (error) => {
+      // A reject can be saved even when its sweep fails; refetch so the tab shows it.
       onError(error);
       return onSuccess();
     },
