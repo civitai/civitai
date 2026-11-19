@@ -218,6 +218,13 @@ describe('readVideoLengths, on what a player could show and it would not measure
     ],
     ['no video track', () => movie([trak(10, { handler: 'soun' })])],
     ['a top-level meta box', () => Buffer.concat([movie([trak(10)]), B('meta', w(0))])],
+    [
+      'a composition table that misses samples',
+      () =>
+        movie([
+          trak(10, { stbl: [B('stts', w(0, 1, 300, 33)), B('ctts', w(0, 1, 1, 0))], samples: 300 }),
+        ]),
+    ],
     ['a second moov', () => Buffer.concat([movie([trak(10)]), B('moov')])],
   ])('refuses an mp4 with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
@@ -233,6 +240,7 @@ describe('readVideoLengths, on what a player could show and it would not measure
             samples: 300,
           }),
         ]),
+      14.9,
     ],
     [
       'one long frame and an offset far past the end',
@@ -243,16 +251,18 @@ describe('readVideoLengths, on what a player could show and it would not measure
             samples: 51,
           }),
         ]),
+      50,
     ],
     [
       'a composition offset of many frames back',
       () =>
         movie([
           trak(10, {
-            stbl: [B('stts', w(0, 1, 300, 33)), B('ctts', w(1, 1, 1, -5000 >>> 0))],
+            stbl: [B('stts', w(0, 1, 300, 33)), B('ctts', w(1, 2, 1, -5000 >>> 0, 299, 0))],
             samples: 300,
           }),
         ]),
+      14.9,
     ],
     [
       'six 8 s frames, the last shown 70 s late',
@@ -263,10 +273,10 @@ describe('readVideoLengths, on what a player could show and it would not measure
             samples: 6,
           }),
         ]),
+      118,
     ],
-  ])('measures the span shown, not the timing table, for %s', (_n, bytes) => {
-    const lengths = readVideoLengths(bytes())!;
-    expect(Math.max(...lengths) - Math.min(...lengths)).toBeGreaterThan(1);
+  ])('measures the span shown, not the timing table, for %s', (_n, bytes, span) => {
+    expect(readVideoLengths(bytes())!.at(-1)).toBeCloseTo(span, 3);
   });
 
   const head = ebml(0x1a45dfa3, ebml(0x4282, Buffer.from('webm')));
@@ -595,7 +605,12 @@ describe('readVideoLengths, on bytes no player shows', () => {
     ],
     [
       'a megabyte of mdat no sample uses',
-      () => Buffer.concat([ftyp, moov, B('mdat', Buffer.alloc(4 + MB.length))]),
+      () =>
+        Buffer.concat([
+          ftyp,
+          moov,
+          B('mdat', Buffer.concat([Buffer.alloc(4), Buffer.alloc(MB.length, 7)])),
+        ]),
     ],
     ['samples larger than the mdat', () => Buffer.concat([ftyp, moov, B('mdat', Buffer.alloc(2))])],
   ])('refuses an mp4 with %s', (_n, bytes) => {
@@ -777,6 +792,22 @@ describe('readVideoLengths, on bytes hidden inside the structures it reads', () 
     return file;
   };
 
+  /** Two tracks with a megabyte of `fill` between their samples in the mdat. */
+  const spaced = (fill: number) => {
+    const file = movie({ second: true });
+    const mdatAt = file.indexOf('mdat') - 4;
+    const gap = Buffer.alloc(1024 * 1024, fill);
+    const out = Buffer.concat([file.subarray(0, mdatAt + 12), gap, file.subarray(mdatAt + 12)]);
+    out.writeUInt32BE(out.readUInt32BE(mdatAt) + gap.length, mdatAt);
+    const second = out.indexOf('stco', out.indexOf('stco') + 4);
+    out.writeUInt32BE(out.readUInt32BE(second + 12) + gap.length, second + 12);
+    return out;
+  };
+
+  it("takes zeros an encoder left between two tracks' samples", () => {
+    expect(readVideoLengths(spaced(0))).toContain(10);
+  });
+
   it('takes the movie as built, with a second (sound) track (the control for the cases below)', () => {
     expect(readVideoLengths(movie())).toContain(10);
     expect(readVideoLengths(movie({ second: true }))).toContain(10);
@@ -790,6 +821,7 @@ describe('readVideoLengths, on bytes hidden inside the structures it reads', () 
     ['a megabyte of handler name', () => movie({ handlerName: MB })],
     ['a megabyte in its sample description', () => movie({ entryExtra: B('uuid', MB) })],
     ['two tracks whose samples share bytes', overlapping],
+    ["a megabyte of non-zero bytes between two tracks' samples", () => spaced(7)],
     ['samples outside the mdat', outside],
   ])('refuses an mp4 with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
@@ -847,5 +879,66 @@ describe('readVideoLengths, on bytes hidden inside the structures it reads', () 
     ['a megabyte in the EBML header', () => webm({ h: head(ebml(0xc0, MB)) })],
   ])('refuses a webm with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
+  });
+});
+
+describe('readVideoLengths, at the edges of its accounting', () => {
+  const B = mp4Box;
+  const clip = mp4Clip({ seconds: 10 });
+  const moovAt = clip.indexOf('moov') - 4;
+  const ftyp = clip.subarray(0, moovAt);
+  const moov = clip.subarray(moovAt, moovAt + clip.readUInt32BE(moovAt));
+  /** The clip with `extra` appended at the end of the first `type` box, every enclosing size fixed up. */
+  const inside = (type: string, extra: Buffer) => {
+    const at = clip.indexOf(type) - 4;
+    const end = at + clip.readUInt32BE(at);
+    const grown = Buffer.concat([clip.subarray(0, end), extra, clip.subarray(end)]);
+    for (const box of [type, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd']) {
+      const p = clip.indexOf(box) - 4;
+      if (p >= 0 && p <= at && p + clip.readUInt32BE(p) >= end)
+        grown.writeUInt32BE(clip.readUInt32BE(p) + extra.length, p);
+    }
+    return tileMp4(grown);
+  };
+  const MB = Buffer.alloc(1024 * 1024, 7);
+
+  it('takes a box grown by a few bytes (the control for the cases below)', () => {
+    expect(readVideoLengths(inside('trak', B('uuid', Buffer.alloc(16, 7))))).toContain(10);
+  });
+
+  it.each(['trak', 'mdia', 'minf', 'stbl'])(
+    'counts a megabyte in an unknown child of %s',
+    (type) => {
+      expect(readVideoLengths(inside(type, B('uuid', MB)))).toBeNull();
+    }
+  );
+
+  it.each(['mvhd', 'tkhd', 'mdhd', 'stts', 'stsz', 'stsc', 'stco', 'ftyp'])(
+    'counts a megabyte past the fields of %s',
+    (type) => {
+      expect(readVideoLengths(inside(type, MB))).toBeNull();
+    }
+  );
+
+  it('refuses reserved zeros past 16 MiB, and takes zeros between samples', () => {
+    expect(
+      readVideoLengths(Buffer.concat([clip, B('free', Buffer.alloc(16 * 1024 * 1024 + 1))]))
+    ).toBeNull();
+    expect(
+      readVideoLengths(Buffer.concat([ftyp, moov, B('mdat', Buffer.alloc(4 + 1024 * 1024))]))
+    ).toContain(10);
+  });
+
+  it('refuses a second view carried in the video track', () => {
+    expect(readVideoLengths(inside('avc1', B('mvcC', Buffer.alloc(8))))).toBeNull();
+  });
+
+  it('refuses many mdats in good time', () => {
+    const many = Buffer.concat(Array(200_000).fill(B('mdat')));
+    const started = Date.now();
+    expect(
+      readVideoLengths(Buffer.concat([ftyp, moov, many, B('mdat', Buffer.alloc(4))]))
+    ).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1_500);
   });
 });

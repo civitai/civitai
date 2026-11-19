@@ -246,6 +246,7 @@ function shownSpan(
       left -= step;
     }
   }
+  if (run + 1 < timing.count || left !== 0) throw new Malformed();
   return last - first;
 }
 
@@ -259,7 +260,9 @@ function mp4Lengths(b: Uint8Array): number[] | null {
   // Every byte is a sample, a field read here, reserved zeros, or counted as padding.
   unread(b, top, ['ftyp', 'moov', 'mdat']);
   tail(ftyp, 64);
-  const mdats = top.all('mdat');
+  // One mdat: a player reads samples wherever the chunk table points, and many mdats only hide bytes.
+  const mdat = top.one('mdat');
+  if (!mdat) return null;
   // Cover art is a picture a player shows that the scan never sees.
   if (Buffer.from(b.subarray(moovBox.body, moovBox.end)).includes('covr')) return null;
   const moov = children(b, moovBox);
@@ -328,12 +331,15 @@ function mp4Lengths(b: Uint8Array): number[] | null {
     const minf = children(b, mdia.one('minf'));
     unread(b, minf, ['stbl']);
     const stbl = children(b, minf.one('stbl'));
-    unread(b, stbl, ['stsd', 'stts', 'stsz', 'ctts', 'stsc', 'stco', 'co64']);
+    unread(b, stbl, ['stsd', 'stts', 'stsz', 'ctts', 'stsc', 'stco', 'co64', 'stss', 'sdtp']);
     // One sample format, and a sound track's must be a sound codec: a player decodes by format.
     const stsd = stbl.one('stsd');
     if (!stsd || stsd.body + 16 > stsd.end || u32(b, stsd.body + 4) !== 1) return null;
     tail(stsd, SAMPLE_ENTRY_BYTES);
     if (handler === 'soun' && !SOUND_FORMATS.has(fourcc(b, stsd.body + 12))) return null;
+    // A second view (MVC, MV-HEVC) rides inside the one video track, where a base-view scan misses it.
+    const entry = Buffer.from(b.subarray(stsd.body, stsd.end));
+    if (['mvcC', 'lhvC', 'lhvc'].some((tag) => entry.includes(tag))) return null;
     const stts = stbl.one('stts');
     const stsz = stbl.one('stsz');
     if (!stts || !stsz) return null;
@@ -351,6 +357,15 @@ function mp4Lengths(b: Uint8Array): number[] | null {
     }
     // Samples the timing table does not cover would still be played.
     if (stsz.body + 12 > stsz.end || samples !== u32(b, stsz.body + 8)) return null;
+    // Sync-sample and dependency tables: one entry per sample at most.
+    const stss = stbl.one('stss');
+    if (stss) {
+      const syncs = table(b, stss, stss.body + 4, 4);
+      if (syncs.count > samples) return null;
+      tail(stss, 8 + syncs.count * 4);
+    }
+    const sdtp = stbl.one('sdtp');
+    if (sdtp) tail(sdtp, 4 + samples);
     chunkRanges(b, stbl, stsz, samples, !unshown, ranges);
     lengths.push(ticks / media.timescale);
     // A composition offset can show a sample outside the timing table's span.
@@ -364,18 +379,18 @@ function mp4Lengths(b: Uint8Array): number[] | null {
   // Which of two video tracks a player or the scan picks is not this code's to decide.
   if (videoTracks !== 1) return null;
 
-  // Samples must lie inside an mdat without overlapping; what they leave of it is unshown.
+  // Samples must lie inside the mdat without overlapping; what they leave of it is unshown, unless
+  // it is zeros (alignment an encoder left).
   ranges.sort((x, y) => x.start - y.start);
-  let previousEnd = -1;
-  let used = 0;
+  let previousEnd = mdat.body;
   for (const range of ranges) {
-    if (range.start < previousEnd) return null;
-    if (!mdats.some((m) => range.start >= m.body && range.end <= m.end)) return null;
-    previousEnd = range.end;
-    used += range.end - range.start;
+    visit();
+    if (range.start < previousEnd || range.end > mdat.end) return null;
+    if (!reservedSpace(b, previousEnd, range.start)) pad(range.start - previousEnd);
     if (!range.shown) pad(range.end - range.start);
+    previousEnd = range.end;
   }
-  pad(mdats.reduce((sum, m) => sum + (m.end - m.body), 0) - used);
+  if (!reservedSpace(b, previousEnd, mdat.end)) pad(mdat.end - previousEnd);
   return lengths;
 }
 // #endregion

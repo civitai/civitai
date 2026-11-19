@@ -320,7 +320,7 @@ async function unpackImage(file: ClaimedFinal) {
 }
 
 const VIDEO_UNREADABLE =
-  "This video could not be read, or carries extra tracks or data that can't be checked (subtitles, cover art, chapters, a second video). Export it again as a plain MP4 or WebM with one video track.";
+  "This video could not be read, or carries extra tracks or data that can't be checked (subtitles, cover art, chapters, transparency, embedded metadata, a second video). Export it again as a plain MP4 or WebM with one video track, without transparency or metadata.";
 /** Header, samples and probe may differ by about a frame; more is a file claiming one length and holding another. */
 const VIDEO_LENGTH_TOLERANCE_SECONDS = 1;
 
