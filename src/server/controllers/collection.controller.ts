@@ -87,6 +87,7 @@ import {
   getRequestImageFilter,
   isCoverShownByBrowsingRules,
 } from '~/server/services/blocked-browsing-tags.service';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -131,13 +132,15 @@ export const getAllCollectionsInfiniteHandler = async ({
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
     const showsImage = await getRequestImageFilter(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
-    const items = (await withServableCovers(rows, ctx.user)).map((row) =>
-      row.image &&
-      (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
-        !showsImage({ ...row.image, tags: row.image.tags.map((t) => t.tag) }))
+    const items = (await withServableCovers(rows, ctx.user)).map((row) => {
+      if (!row.image) return row;
+      const tags = row.image.tags.map((t) => t.tag.id);
+      return !isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
+        isTaggedMatureImage({ nsfwLevel: row.image.nsfwLevel, tags }) ||
+        !showsImage({ ...row.image, tags })
         ? { ...row, image: null }
-        : row
-    );
+        : row;
+    });
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {

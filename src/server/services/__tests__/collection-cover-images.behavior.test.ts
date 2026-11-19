@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as RedisCaches from '~/server/redis/caches';
@@ -483,6 +484,43 @@ describe('getCollectionCoverImages', () => {
 
   it('skips a ToS-violating cover at every level', async () => {
     expect(await coversFor(TOS_VIOLATION_IMAGE_ITEM)).toEqual([]);
+  });
+
+  describe('child-tagged covers, with no browsing filter at all', () => {
+    const CHILD_TAG = childBrowsingTagIds[0];
+    const OTHER_TAG = 777;
+    const CHILD_R = 8101;
+    const CHILD_PG13 = 8102;
+    const OTHER_R = 8103;
+    const CHILD_DISABLED_R = 8104;
+
+    beforeAll(async () => {
+      await holder.db.exec(`
+        INSERT INTO "Image" ("id", "url", "nsfwLevel") VALUES
+          (2101, 'child-r', 4), (2102, 'child-pg13', 2), (2103, 'other-r', 4),
+          (2104, 'child-disabled-r', 4);
+        INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", "source", "disabled") VALUES
+          (2101, ${CHILD_TAG}, 'WD14', false), (2102, ${CHILD_TAG}, 'WD14', false),
+          (2103, ${OTHER_TAG}, 'WD14', false), (2104, ${CHILD_TAG}, 'WD14', true);
+        INSERT INTO "CollectionItem" ("id", "collectionId", "imageId") VALUES
+          (2201, ${CHILD_R}, 2101), (2202, ${CHILD_PG13}, 2102), (2203, ${OTHER_R}, 2103),
+          (2204, ${CHILD_DISABLED_R}, 2104);
+        INSERT INTO "Collection" ("id", "userId") VALUES
+          (${CHILD_R}, 1), (${CHILD_PG13}, 1), (${OTHER_R}, 1), (${CHILD_DISABLED_R}, 1);
+      `);
+    });
+
+    it('drops an R cover carrying a child tag', async () => {
+      expect(await coversFor(CHILD_R)).toEqual([]);
+    });
+
+    it.each([
+      ['a PG-13 cover carrying a child tag', CHILD_PG13, 2102],
+      ['an R cover carrying another tag', OTHER_R, 2103],
+      ['an R cover whose child tag is disabled', CHILD_DISABLED_R, 2104],
+    ])('keeps %s', async (_, collectionId, imageId) => {
+      expect(await coversFor(collectionId)).toEqual([{ imageId, src: null }]);
+    });
   });
 
   it.each([

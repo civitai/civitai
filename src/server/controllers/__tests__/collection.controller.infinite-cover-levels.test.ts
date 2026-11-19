@@ -243,11 +243,11 @@ describe('getAllCollectionsInfiniteHandler browsing-tag rules', () => {
     ]);
   });
 
-  it('serves a moderator every image', async () => {
+  it('drops a child-tagged image above PG-13 even for a moderator, who skips the addon rules', async () => {
     expect(await feed(MOD_VIEWER)).toEqual([
-      { id: 1, own: 101, items: [] },
+      { id: 1, own: null, items: [400] },
       { id: 2, own: 102, items: [] },
-      { id: 3, own: null, items: [300, 301] },
+      { id: 3, own: null, items: [301] },
     ]);
   });
 
