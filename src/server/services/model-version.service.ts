@@ -253,21 +253,6 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   return result;
 };
 
-/** The ids in `ids` the viewer may see (`canViewModelVersionRow`); a missing id is left out. */
-export const getViewableModelVersionIds = async (
-  ids: number[],
-  viewer: Parameters<typeof canViewModelVersionRow>[1]
-) => {
-  if (ids.length === 0) return new Set<number>();
-  // One id reads as its owner's own read does, so a version just saved is not missing.
-  const db = ids.length === 1 ? await getDbWithoutLag('modelVersion', ids[0]) : dbRead;
-  const rows = await db.modelVersion.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, ...modelVersionViewSelect },
-  });
-  return new Set(rows.filter((row) => canViewModelVersionRow(row, viewer)).map((row) => row.id));
-};
-
 export const getVersionsByIds = async ({
   ids,
   browsingLevel,

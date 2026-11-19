@@ -179,6 +179,7 @@ async function handler(
         ${
           status
             ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"
+              AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
               AND EXISTS (
                 SELECT 1 FROM "Model" m WHERE m.id = mv."modelId" AND m.status = ${status}::"ModelStatus"
               )`

@@ -213,6 +213,20 @@ describe('GET /api/v1/model-versions/{id} — a published version of a model tha
     ).toBe(404);
   });
 
+  it('a version published for a later time is not found by a signed-out visitor', async () => {
+    await db.query(
+      `UPDATE "ModelVersion" SET "publishedAt" = now() + interval '1 day' WHERE id = ${VERSION_ID}`
+    );
+    try {
+      expect((await getVersion()).statusCode).toBe(404);
+      expect(
+        (await getVersion(MODERATOR, { ...KEY, tokenScope: TokenScope.Full })).statusCode
+      ).toBe(200);
+    } finally {
+      await db.query(`UPDATE "ModelVersion" SET "publishedAt" = now() WHERE id = ${VERSION_ID}`);
+    }
+  });
+
   it('control: is served to a signed-out visitor once the model is published', async () => {
     expect((await getVersion()).statusCode).toBe(200);
   });

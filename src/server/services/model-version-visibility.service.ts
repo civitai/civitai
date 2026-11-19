@@ -1,5 +1,11 @@
 import type { Prisma } from '@prisma/client';
-import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import {
+  canViewModelVersionRow,
+  canViewModelVersionStatus,
+  modelVersionViewSelect,
+} from '~/server/common/model-version-visibility';
+import { dbRead } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { Availability } from '~/shared/utils/prisma/enums';
 import type { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -76,3 +82,18 @@ export async function filterViewableModelVersions<T extends VisibilityRow>(
 export async function canViewModelVersion(version: VisibilityRow, viewer: Viewer) {
   return (await filterViewableModelVersions([version], viewer)).length > 0;
 }
+
+/** The ids in `ids` the viewer may see (`canViewModelVersionRow`); a missing id is left out. */
+export const getViewableModelVersionIds = async (
+  ids: number[],
+  viewer: Parameters<typeof canViewModelVersionRow>[1]
+) => {
+  if (ids.length === 0) return new Set<number>();
+  // One id reads as its owner's own read does, so a version just saved is not missing.
+  const db = ids.length === 1 ? await getDbWithoutLag('modelVersion', ids[0]) : dbRead;
+  const rows = await db.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...modelVersionViewSelect },
+  });
+  return new Set(rows.filter((row) => canViewModelVersionRow(row, viewer)).map((row) => row.id));
+};

@@ -70,7 +70,6 @@ import {
   earlyAccessPurchase,
   getModelVersionRunStrategies,
   getExplorationPromptsById,
-  getViewableModelVersionIds,
   getVersionById,
   getVersionsByIds,
   getWorkflowIdFromModelVersion,
@@ -106,6 +105,7 @@ import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
+import { getViewableModelVersionIds } from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -1311,8 +1311,16 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
 };
 
 // Only available for SD 1.5 and SDXL 1.0 models for now
-export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
+export async function getVersionLicenseHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No version with id ${input.id}`);
     const version = await getVersionById({
       id: input.id,
       select: {
@@ -1397,14 +1405,17 @@ export const modelVersionDonationGoalHandler = async ({
   ctx: Context;
 }) => {
   try {
+    if (!(await canViewVersion(input.id, ctx)))
+      throw throwNotFoundError(`No model version with id ${input.id}`);
+    const viewer = ownerOrModeratorViewer(ctx);
     // `await` is load-bearing: without it the rejected promise escapes this
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
     return await modelVersionDonationGoal({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
