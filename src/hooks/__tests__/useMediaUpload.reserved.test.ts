@@ -1,0 +1,151 @@
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import { createRoot } from 'react-dom/client';
+
+const act = (React as unknown as { act: (cb: () => unknown) => Promise<void> }).act;
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+const { tracked } = vi.hoisted(() => ({
+  tracked: [] as { file: File; status: string; abort: () => void }[],
+}));
+vi.mock('~/components/FileUpload/FileUploadProvider', () => ({
+  useFileUploadContext: () => [
+    tracked,
+    (update: (prev: typeof tracked) => typeof tracked) => {
+      const next = update(tracked);
+      tracked.splice(0, tracked.length, ...next);
+    },
+  ],
+}));
+vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
+  useMediaUploadSettingsContext: () => ({
+    maxItems: 20,
+    maxVideoDuration: 600,
+    maxVideoDimensions: 4096,
+  }),
+}));
+const { uploadToS3, releaseUploads, failUploads } = vi.hoisted(() => {
+  const pending: { resolve: () => void; reject: (e: Error) => void }[] = [];
+  return {
+    uploadToS3: vi.fn(
+      () =>
+        new Promise<{ key: string; url: string }>((resolve, reject) =>
+          pending.push({
+            resolve: () => resolve({ key: 'uploaded-key', url: 'https://uploaded' }),
+            reject,
+          })
+        )
+    ),
+    releaseUploads: () => pending.splice(0).forEach((p) => p.resolve()),
+    failUploads: () => pending.splice(0).forEach((p) => p.reject(new Error('network'))),
+  };
+});
+vi.mock('~/hooks/useS3Upload', () => ({
+  useS3Upload: () => ({ files: [], uploadToS3, resetFiles: vi.fn(), removeFile: vi.fn() }),
+}));
+vi.mock('~/utils/media-preprocessors', () => ({
+  preprocessFile: vi.fn(async (file: File) => {
+    if (file.name.startsWith('bad')) throw new Error('unreadable');
+    return {
+      type: 'image',
+      objectUrl: `blob:${file.name}`,
+      metadata: { width: 1, height: 1, hash: 'h' },
+    };
+  }),
+}));
+vi.mock('~/utils/metadata/audit', () => ({ auditPostImageMeta: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showErrorNotification: vi.fn(),
+}));
+
+import type * as Notifications from '~/utils/notifications';
+import { useMediaUpload } from '~/hooks/useMediaUpload';
+
+const named = (prefix: string, n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    file: new File(['x'], `${prefix}${i}.jpg`, { type: 'image/jpeg' }),
+  }));
+
+/** `count` stays 0 on purpose: it is what the editor holds, and a slow upload has not reached it. */
+async function mount() {
+  let hook!: ReturnType<typeof useMediaUpload>;
+  const completed: string[] = [];
+  function Harness() {
+    hook = useMediaUpload({
+      count: 0,
+      onComplete: (props) => completed.push(`${props.status}:${props.objectUrl}`),
+    });
+    return null;
+  }
+  const root = createRoot(document.createElement('div'));
+  await act(async () => root.render(React.createElement(Harness)));
+  return {
+    pick: (data: ReturnType<typeof named>) => act(async () => hook.upload(data)),
+    pickTogether: (...picks: ReturnType<typeof named>[]) =>
+      act(async () => {
+        await Promise.all(picks.map((data) => hook.upload(data)));
+      }),
+    finish: () => act(async () => releaseUploads()),
+    fail: () => act(async () => failUploads()),
+    remaining: () => hook.remaining,
+    completed,
+    unmount: () => act(async () => root.unmount()),
+  };
+}
+
+describe('useMediaUpload in-flight reservation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    releaseUploads();
+    tracked.length = 0;
+  });
+
+  it('lets a second pick fill only what the first left of the limit while it is still uploading', async () => {
+    const editor = await mount();
+    await editor.pick(named('a', 15));
+    await editor.pick(named('b', 15));
+    expect(editor.remaining()).toBe(0);
+    for (let i = 0; i < 25; i++) await editor.finish();
+    expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(20);
+    await editor.unmount();
+  });
+
+  it('counts a pick made in the same tick as an earlier one, before the hook re-renders', async () => {
+    const editor = await mount();
+    await editor.pickTogether(named('a', 15), named('b', 15));
+    for (let i = 0; i < 25; i++) await editor.finish();
+    expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(20);
+    await editor.unmount();
+  });
+
+  it('returns the reservation of a queued file that is removed before it uploads', async () => {
+    const editor = await mount();
+    await editor.pick(named('a', 20));
+    const queued = tracked[tracked.length - 1];
+    await act(async () => queued.abort());
+    for (let i = 0; i < 25; i++) await editor.finish();
+    expect(editor.completed.filter((x) => x.startsWith('added'))).toHaveLength(19);
+    expect(editor.remaining()).toBe(20);
+    await editor.unmount();
+  });
+
+  it('returns the reservation when uploads fail', async () => {
+    const editor = await mount();
+    await editor.pick(named('a', 20));
+    expect(editor.remaining()).toBe(0);
+    for (let i = 0; i < 25; i++) await editor.fail();
+    expect(editor.completed.filter((x) => x.startsWith('error'))).toHaveLength(20);
+    expect(editor.remaining()).toBe(20);
+    await editor.unmount();
+  });
+
+  it('returns the reservation for files that cannot be read', async () => {
+    const editor = await mount();
+    await editor.pick(named('bad', 20));
+    expect(editor.remaining()).toBe(20);
+    await editor.unmount();
+  });
+});

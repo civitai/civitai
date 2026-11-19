@@ -39,7 +39,7 @@ func (l *countingLookup) lookup(_ context.Context, ids []int) (map[int]jspack.Ob
 // where nothing is kept between requests: the coalescing alone answers them.
 func TestConcurrentLookupsShareOne(t *testing.T) {
 	const n = 8
-	c := &MissCompute{WriteBack: true}
+	c := &MissCompute{WriteBack: AllWrites()}
 	var entered atomic.Int32
 	c.beforeFlight = func() { entered.Add(1) }
 	l := &countingLookup{gate: func() {
@@ -83,7 +83,7 @@ func TestConcurrentLookupsShareOne(t *testing.T) {
 func TestRecentLookupsExpire(t *testing.T) {
 	now := pageNow
 	for _, writeBack := range []bool{false, true} {
-		c := &MissCompute{WriteBack: writeBack, Now: func() time.Time { return now }}
+		c := &MissCompute{WriteBack: writeSet(writeBack), Now: func() time.Time { return now }}
 		l := &countingLookup{}
 		ctx := context.Background()
 		now = pageNow
