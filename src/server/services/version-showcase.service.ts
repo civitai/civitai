@@ -193,8 +193,7 @@ export async function getVersionShowcases(modelVersionIds: number[]) {
 /**
  * Whether any of these versions is curated on either site. A curated showcase's images are not
  * reflected in the version's level, so a response carrying one must not be shared-cached. A failed
- * read is not curated: the response then falls back to the default list, as `withCuratedShowcases`
- * does on the same read.
+ * read counts as curated: the response's own read may still have served the curated list.
  */
 export async function hasCuratedShowcase(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return false;
@@ -203,7 +202,7 @@ export async function hasCuratedShowcase(modelVersionIds: number[]) {
     return modelVersionIds.some((id) => !!showcases[id]?.rows.length);
   } catch (error) {
     logShowcaseError('version-showcase-read-failed', error);
-    return false;
+    return true;
   }
 }
 
@@ -598,8 +597,18 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
 async function heldOnlyByImageState(covers: { modelId: number; imageId: number; site: string }[]) {
   const held = new Set<string>();
   if (!covers.length) return held;
-  const rows = await dbWrite.$queryRaw<{ modelId: number; imageId: number; site: string }[]>`
-    SELECT DISTINCT mv."modelId", s."imageId", s.site
+  // primary: judges a cover clear against the current state, like the validation beside it.
+  const rows = await dbWrite.$queryRaw<
+    {
+      modelId: number;
+      modelVersionId: number;
+      imageId: number;
+      site: string;
+      userId: number;
+      nsfwLevel: number;
+    }[]
+  >`
+    SELECT DISTINCT mv."modelId", s."modelVersionId", s."imageId", s.site, i."userId", i."nsfwLevel"
     FROM "ModelVersionShowcaseItem" s
     JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
@@ -616,16 +625,28 @@ async function heldOnlyByImageState(covers: { modelId: number; imageId: number; 
       AND ${Prisma.join(imageBlockedForConditions({}), ' AND ')}
       AND i."acceptableMinor" = FALSE
       AND i.ingestion NOT IN ('Blocked', 'NotFound')
+      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
       AND ${Prisma.join(communityImageConditions(), ' AND ')}
   `;
-  for (const row of rows) held.add(`${row.modelId}:${row.imageId}:${row.site}`);
+  if (!rows.length) return held;
+  // The model's own gallery rules are lasting too. An image not rated yet (level 0) is judged on
+  // them without the held level, which it can't be checked against until it is rated.
+  const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
+  const modelIds = [...new Set(rows.map((row) => row.modelId))];
+  const settings = new Map(
+    await Promise.all(
+      modelIds.map(async (id) => [id, await getGallerySettingsByModelId({ id })] as const)
+    )
+  );
+  for (const row of rows) {
+    const gallery = settings.get(row.modelId);
+    const rules = row.nsfwLevel ? gallery : gallery && { ...gallery, sfwHeld: false };
+    if (passesGalleryRules(rules, { ...row, id: row.imageId }))
+      held.add(`${row.modelId}:${row.imageId}:${row.site}`);
+  }
   return held;
 }
 
-/**
- * After showcase rows change: refreshes the versions' showcases, drops the public model responses
- * that carry them, and clears covers that no longer qualify.
- */
 async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]) {
   await refreshVersionShowcases(modelVersionIds);
   const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
@@ -633,10 +654,18 @@ async function afterShowcaseChange(modelVersionIds: number[], modelIds: number[]
   await dropInvalidCommunityCovers(modelIds);
 }
 
-/** Best effort: the showcase write already committed, so its caller still succeeds. */
+/**
+ * After a save or removal. A failed refresh throws, so the caller can retry rather than leave the
+ * old showcase served for the cache's hour; the rest is best effort, as the write already committed.
+ */
 async function afterShowcaseWrite(modelVersionId: number, modelId: number) {
+  await refreshVersionShowcases([modelVersionId]);
   try {
-    await afterShowcaseChange([modelVersionId], [modelId]);
+    const { bustPublicModelResponseCache } = await import(
+      '~/server/services/model-version.service'
+    );
+    await bustPublicModelResponseCache([modelId]);
+    await dropInvalidCommunityCovers([modelId]);
   } catch (error) {
     logShowcaseError('version-showcase-cover-drop-failed', error, { modelId });
   }
@@ -1133,6 +1162,12 @@ export async function getVersionShowcaseEditor({
     imagesForModelVersionsCache.fetch([modelVersionId]),
     getVersionShowcases([modelVersionId]),
   ]);
+  // primary: the editor reloads right after a save and must show it.
+  const comCover = await dbWrite.image.findUnique({
+    where: { id: model?.sfwCoverImageId ?? -1 },
+    select: { userId: true },
+  });
+  const comCoverIsOwn = !!comCover && comCover.userId === version.model.userId;
   const shown = <I extends { nsfwLevel: number }>(images: I[]) =>
     safeOnly ? images.filter((image) => isComSafeLevel(image.nsfwLevel)) : images;
   return {
@@ -1140,7 +1175,7 @@ export async function getVersionShowcaseEditor({
     modelVersionId,
     isLatestPublished: model?.modelVersions[0]?.id === modelVersionId,
     // A mature model is listed on civitai.com through its civitai.com title and its own cover there.
-    listedOnComByOwnCover: !!model?.nsfw && model.sfwName != null,
+    listedOnComByOwnCover: !!model?.nsfw && model.sfwName != null && comCoverIsOwn,
     covers: { com: model?.sfwCoverImageId ?? null, red: model?.coverImageId ?? null },
     ownerImages: shown(owner[modelVersionId]?.images ?? []),
     rows: showcase[modelVersionId]?.rows ?? [],

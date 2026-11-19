@@ -77,6 +77,7 @@ const {
   withCuratedShowcases,
   removeMyImageFromVersionShowcase,
   bustVersionShowcasesForImages,
+  getMyImageShowcaseFeatures,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
 
@@ -99,7 +100,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int,
-      nsfw boolean NOT NULL DEFAULT false
+      nsfw boolean NOT NULL DEFAULT false, name text NOT NULL DEFAULT 'M'
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
@@ -340,6 +341,18 @@ describe('when a featured image stops qualifying', () => {
     expect(saveModelCovers).not.toHaveBeenCalled();
   });
 
+  it("clears a cover whose author the creator hid from the model's gallery", async () => {
+    const hidden = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [hidden, MODEL]);
+    gallery.settings = { hiddenUsers: [{ id: hidden }] };
+
+    await dropInvalidCommunityCovers([MODEL]);
+
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
+  });
+
   it('clears a cover whose image was removed for a ToS violation', async () => {
     const removed = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [removed, MODEL]);
@@ -433,8 +446,10 @@ describe('when a featured image stops qualifying', () => {
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [id, MODEL]);
     await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
 
+    bustPublicModelResponseCache.mockClear();
     await bustVersionShowcasesForImages([id]);
 
+    expect(bustPublicModelResponseCache).toHaveBeenCalledWith([MODEL]);
     expect(saveModelCovers).toHaveBeenCalledTimes(1);
     expect(saveModelCovers).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
@@ -445,6 +460,18 @@ describe('when a featured image stops qualifying', () => {
     const id = await featured();
     const covers = await getShowcaseCommunityCovers([{ modelId: MODEL + 1, imageId: id }]);
     expect(covers.size).toBe(0);
+  });
+});
+
+describe('the showcases an image is featured in, for the remove action', () => {
+  it("lists them for the image's author and for a moderator, not for anyone else", async () => {
+    const id = await featured();
+    const list = (userId: number, isModerator: boolean) =>
+      getMyImageShowcaseFeatures({ imageId: id, userId, isModerator });
+
+    expect((await list(id, false)).map((row) => row.modelVersionId)).toEqual([VERSION]);
+    expect((await list(CREATOR, true)).map((row) => row.modelVersionId)).toEqual([VERSION]);
+    expect(await list(CREATOR, false)).toEqual([]);
   });
 });
 
@@ -478,6 +505,7 @@ describe("an author's removal", () => {
     expect(inserted.affectedRows).toBe(0);
     expect(await served('com')).not.toContain(id);
     // The public model response carries the showcase, so it is dropped too.
+    expect(bustPublicModelResponseCache).toHaveBeenCalledTimes(1);
     expect(bustPublicModelResponseCache).toHaveBeenCalledWith([MODEL]);
   });
 });

@@ -13,6 +13,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mocks = vi.hoisted(() => ({
   entry: undefined as unknown,
   fetchError: null as Error | null,
+  refreshError: null as Error | null,
   communityCovers: new Map<number, { image: { nsfwLevel: number }; sites: Set<string> }>(),
   queueComFaceRecheck: vi.fn(async () => undefined),
   updateModelNsfwLevels: vi.fn(async () => undefined),
@@ -29,7 +30,9 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
       if (mocks.fetchError) throw mocks.fetchError;
       return Object.fromEntries(ids.map((id) => [id, mocks.entry]));
     },
-    refresh: async () => undefined,
+    refresh: async () => {
+      if (mocks.refreshError) throw mocks.refreshError;
+    },
   }),
 }));
 const notify = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
@@ -99,6 +102,7 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
   mocks.entry = undefined;
   mocks.fetchError = null;
+  mocks.refreshError = null;
   mocks.communityCovers = new Map();
 });
 
@@ -588,6 +592,16 @@ describe('removeMyImageFromVersionShowcase', () => {
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
   });
 
+  it('fails when the showcase can’t be refreshed, so the removal can be retried', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
+    publishedVersion();
+    mocks.refreshError = new Error('redis down');
+    await expect(
+      showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
+    ).rejects.toThrow(/redis down/);
+  });
+
   it('says so when the image isn’t featured there', async () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
@@ -634,9 +648,62 @@ describe('getVersionShowcaseEditor: what the editor is sent', () => {
     expect(data.community.map((image) => image.id)).toEqual([3]);
   });
 
+  it.each([
+    ['its own civitai.com cover', 5, true],
+    ['a featured civitai.com cover', 6, false],
+  ])(
+    'warns about the civitai.com listing of a mature model with a civitai.com title and %s',
+    async (_label, coverUserId, warns) => {
+      dbMock.dbWrite.model.findUnique.mockResolvedValue({
+        nsfw: true,
+        sfwName: 'Safe title',
+        coverImageId: null,
+        sfwCoverImageId: 50,
+        modelVersions: [{ id: VERSION }],
+      } as never);
+      dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: coverUserId } as never);
+      expect((await editor(false)).listedOnComByOwnCover).toBe(warns);
+    }
+  );
+
   it('sends every image to a viewer who can', async () => {
     const data = await editor(false);
     expect(data.ownerImages.map((image) => image.id)).toEqual([1, 2]);
     expect(data.community.map((image) => image.id)).toEqual([3, 4]);
+  });
+});
+
+describe('setVersionShowcaseCover: what it refuses', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      userId: 5,
+      modelVersions: [{ id: VERSION }],
+    } as never);
+  });
+  const setCover = (userId = 5) =>
+    showcase.setVersionShowcaseCover({
+      modelId: 1,
+      site: 'com',
+      imageId: 77,
+      userId,
+      isModerator: false,
+    });
+
+  it('refuses anyone but the creator', async () => {
+    await expect(setCover(9)).rejects.toBeInstanceOf(TRPCError);
+    expect(mocks.updateModelNsfwLevels).not.toHaveBeenCalled();
+  });
+
+  it('refuses a community image not featured in the latest version on that site', async () => {
+    dbMock.dbWrite.modelVersionShowcaseItem.findUnique.mockResolvedValue(null);
+    await expect(setCover()).rejects.toThrow(/Feature this image/);
+  });
+
+  it('refuses a community image its author or a moderator removed', async () => {
+    dbMock.dbWrite.modelVersionShowcaseItem.findUnique.mockResolvedValue({
+      source: 'Community',
+      removed: true,
+    } as never);
+    await expect(setCover()).rejects.toThrow(/Feature this image/);
   });
 });
