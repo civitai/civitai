@@ -106,8 +106,6 @@ function rowsFor(opts, session) {
   return kept;
 }
 
-// --- HTTP ------------------------------------------------------------------------------------------
-
 const agents = {
   'http:': new http.Agent({ keepAlive: true, maxSockets: Infinity }),
   'https:': new https.Agent({ keepAlive: true, maxSockets: Infinity }),
@@ -173,8 +171,6 @@ async function getJson(url) {
       .on('error', reject);
   });
 }
-
-// --- capture ---------------------------------------------------------------------------------------
 
 /**
  * The api-heavy (Next) pods only: the in-situ latency is compared with the `next` arm, which is
@@ -254,8 +250,6 @@ async function capture(opts) {
   );
 }
 
-// --- Prometheus (container CPU) --------------------------------------------------------------------
-
 async function cpuSeconds(prom, selector, startSec, endSec) {
   const dur = Math.max(1, Math.round(endSec - startSec));
   const q = `sum(increase(container_cpu_usage_seconds_total{${selector}}[${dur}s]))`;
@@ -268,8 +262,6 @@ async function cpuSeconds(prom, selector, startSec, endSec) {
   const v = json.data && json.data.result && json.data.result[0];
   return v ? Number(v.value[1]) : NaN;
 }
-
-// --- run -------------------------------------------------------------------------------------------
 
 async function replay(base, items, { rps, maxInFlight, timeoutMs, session }) {
   return lib.runOpenLoop({
@@ -422,8 +414,6 @@ async function run(opts) {
   console.log(JSON.stringify(summary));
   if (problems.length) throw new Error(`run is not a result: ${problems.join('; ')}`);
 }
-
-// --- parity ----------------------------------------------------------------------------------------
 
 async function parity(opts) {
   const targets = pairs(opts.target, 'target');
