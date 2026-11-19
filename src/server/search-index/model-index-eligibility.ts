@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { Availability, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * The ONE definition of "this model belongs in the models search index".
@@ -21,9 +21,12 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 export const MODEL_SEARCH_INDEX_ELIGIBILITY = {
   status: ModelStatus.Published,
   availability: { not: Availability.Unsearchable },
+  // A taken-down model is never searchable. Spelled with the NULL arm: `not` alone drops NULL.
+  OR: [{ mode: null }, { mode: { not: ModelModifier.TakenDown } }],
 } as const satisfies Prisma.ModelWhereInput;
 
 export const modelSearchIndexEligibilitySql = () => Prisma.sql`
   m.status = ${MODEL_SEARCH_INDEX_ELIGIBILITY.status}::"ModelStatus"
   AND m.availability != ${MODEL_SEARCH_INDEX_ELIGIBILITY.availability.not}::"Availability"
+  AND (m.mode IS NULL OR m.mode != ${MODEL_SEARCH_INDEX_ELIGIBILITY.OR[1].mode.not}::"ModelModifier")
 `;

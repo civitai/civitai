@@ -137,10 +137,12 @@ const enqueued = () =>
   enqueueCollectionRebuild.mock.calls.flatMap(([arg]) => arg.collectionIds).sort((a, b) => a - b);
 
 describe('/api/admin/temp/queue-takendown-models-reindex', () => {
-  it('queues every indexed taken-down model, and no other, and no collection', async () => {
+  // A taken-down model is no longer index-eligible, so there is no document to rewrite: the
+  // nightly cleanup deletes it instead (model-index-eligibility.test.ts).
+  it('queues no model, and no collection', async () => {
     expect(await call({ dryRun: 'false' })).toBe(200);
     const [ids] = queueModelsReindex.mock.calls.at(-1) as unknown as [number[]];
-    expect([...ids].sort()).toEqual([1, 2]);
+    expect([...ids]).toEqual([]);
     expect(collectionsOf).not.toHaveBeenCalled();
   });
 

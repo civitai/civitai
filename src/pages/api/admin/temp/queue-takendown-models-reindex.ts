@@ -15,8 +15,9 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 
 /**
- * Queue every indexed taken-down model for a models-index rewrite (`target=models`, the default),
- * or the collections showing taken-down models' images for a collections-index rewrite
+ * Queue every indexed taken-down model for a models-index rewrite (`target=models`, the default;
+ * now none, since a taken-down model is not index-eligible and the nightly cleanup deletes its
+ * document), or the collections showing taken-down models' images for a collections-index rewrite
  * (`target=collections`).
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
