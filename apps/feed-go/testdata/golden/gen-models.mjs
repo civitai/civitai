@@ -494,7 +494,8 @@ function coldLookup(prefix, id) {
   const m = MODELS[id];
   switch (prefix) {
     case K.data: {
-      for (const v of byIndex(m?.versions ?? [])) T.db.modelVersionRows.push(mark({ modelId: id, ...v }));
+      for (const v of byIndex(m?.versions ?? []))
+        T.db.modelVersionRows.push(mark({ modelId: id, ...v }));
       for (const hash of m?.hashes ?? []) T.db.modelHashes.push({ modelId: id, hash });
       if (!m?.versions.length) return undefined;
       const result = {
@@ -1349,11 +1350,11 @@ const SPECS = [
   {
     name: 'creator-page-other-viewer',
     description:
-      'The same creator for another viewer: the SFW-only model is held to its gallery level, the hidden downloads of a member are null, the taken-down model shows only its cover.',
+      'The same creator for another viewer: the SFW-only model is held to its gallery level, the hidden downloads of a member are null, and the taken-down model is not listed (the page query leaves it out for anyone but its owner and moderators).',
     host: HOST.blue,
     viewer: 1003,
     input: { sort: 'Newest', limit: 4, browsingLevel: 31, username: 'artist_one' },
-    pages: [{ cursor: null, ids: [5001, 5004, 5006, 5008] }],
+    pages: [{ cursor: null, ids: [5001, 5004, 5006] }],
   },
   {
     name: 'sfw-face-green-signed-in',

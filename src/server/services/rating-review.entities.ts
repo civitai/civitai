@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import {
   collectionRatingLevel,
   modelRatingLevel,
@@ -58,13 +59,16 @@ export const MODERATOR_NSFW_LOCK_ACTIVITIES = [
 ];
 
 /** Whether a moderator ruled on the model's nsfw flag after `at`; the primary, as a fresh ruling
- *  may not have reached the replica. */
+ *  may not have reached the replica. Pass `db` inside a transaction so it reads on that connection. */
 export async function moderatorRuledNsfwSince(
   modelId: number,
   at: Date,
-  { alsoRejections = false }: { alsoRejections?: boolean } = {}
+  {
+    alsoRejections = false,
+    db = dbWrite,
+  }: { alsoRejections?: boolean; db?: Pick<Prisma.TransactionClient, 'modActivity'> } = {}
 ) {
-  const ruling = await dbWrite.modActivity.findFirst({
+  const ruling = await db.modActivity.findFirst({
     where: {
       entityType: 'model',
       entityId: modelId,

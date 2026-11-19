@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ModelType } from '~/shared/utils/prisma/enums';
 import {
+  editorFileName,
   GENERIC_FILE_BASENAMES,
   isGenericFileName,
   MAX_OVERRIDE_NAME_BYTES,
@@ -599,5 +600,39 @@ describe('sanitizeOverrideName', () => {
     expect(sanitizeOverrideName('  ...  ', stored)).toBeNull();
     expect(sanitizeOverrideName('', stored)).toBeNull();
     expect(sanitizeOverrideName(null, stored)).toBeNull();
+  });
+});
+
+describe('editorFileName', () => {
+  const version = { name: 'v1' };
+  const downloadNameOf = (file: { id: number; name: string; type: string }) =>
+    resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] });
+
+  it('shows a trainer publish under the name its download uses, not the blob id', () => {
+    const file = { id: 1, name: jobIdName, type: 'Model' };
+    const shown = editorFileName({ ...file, downloadName: downloadNameOf(file) });
+    expect(shown).toBe('bbBunny_v1.safetensors');
+  });
+
+  it('shows the rename over the download name', () => {
+    const file = { id: 1, name: jobIdName, type: 'Model' };
+    expect(
+      editorFileName({
+        ...file,
+        overrideName: 'mine.safetensors',
+        downloadName: downloadNameOf(file),
+      })
+    ).toBe('mine.safetensors');
+  });
+
+  it('falls back to the stored name when no download name came with it', () => {
+    expect(editorFileName({ name: jobIdName })).toBe(jobIdName);
+    expect(editorFileName({ name: jobIdName, downloadName: null })).toBe(jobIdName);
+  });
+
+  it('keeps a name the creator uploaded', () => {
+    expect(
+      editorFileName({ name: 'model.safetensors', downloadName: 'realisticVision_v1.safetensors' })
+    ).toBe('model.safetensors');
   });
 });

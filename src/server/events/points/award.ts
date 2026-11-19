@@ -8,7 +8,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   COUNT_BASE_MARK,
@@ -127,8 +127,14 @@ export function streamIdBefore(a: string, b: string) {
   return am < bm || (am === bm && as < bs);
 }
 
+/** The Hat Turf map's reads (turf-map.ts): the stream and hash `loadTurf` / `followTurf` follow. */
+export type EventPointsTurfRedis = Pick<typeof redis, 'hGetAll' | 'hmGet' | 'xRange' | 'xRevRange'>;
+
 export type EventPointsDeps = {
   redis: EventPointsRedis;
+  // The Hat Turf map's client: the cache cluster in production (turfKeys are cluster keys). Unset,
+  // `redis` answers, for a test that keeps one store.
+  turfRedis?: EventPointsTurfRedis;
   insertLedger: (rows: EventPointLedgerRow[]) => Promise<void>;
   // Scored events whose points are live now: from preview start to the end of finalization.
   loadScoredEvents: (now: Date) => Promise<ScoredEventDef[]>;
@@ -250,10 +256,11 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   }
 
   // The turf map, loaded and followed exactly as the hat map is (see loadHats and followHats).
+  const turfRedis = deps.turfRedis ?? (deps.redis as unknown as EventPointsTurfRedis);
   async function loadTurf(event: string): Promise<TurfState> {
     const keys = turfKeys(event);
-    const [last] = (await deps.redis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
-    const raw = await deps.redis.hGetAll(keys.map);
+    const [last] = (await turfRedis.xRevRange(keys.log, '+', '-', { COUNT: 1 })) ?? [];
+    const raw = await turfRedis.hGetAll(keys.map);
     const entries = new Map<string, TurfEntry>();
     for (const [key, value] of Object.entries(raw ?? {})) {
       const entry = decodeTurfEntry(value);
@@ -264,13 +271,13 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
 
   async function followTurf(event: string, prev: TurfState): Promise<TurfState> {
     const keys = turfKeys(event);
-    const entries = (await deps.redis.xRange(keys.log, `(${prev.cursor}`, '+')) ?? [];
+    const entries = (await turfRedis.xRange(keys.log, `(${prev.cursor}`, '+')) ?? [];
     if (!entries.length) return prev;
     if (prev.cursor === '0-0') return loadTurf(event);
-    const [first] = (await deps.redis.xRange(keys.log, '-', '+', { COUNT: 1 })) ?? [];
+    const [first] = (await turfRedis.xRange(keys.log, '-', '+', { COUNT: 1 })) ?? [];
     if (first && streamIdBefore(prev.cursor, first.id)) return loadTurf(event);
     const changed = [...new Set(entries.map(({ message }) => message.k))];
-    const values = await deps.redis.hmGet(keys.map, changed);
+    const values = await turfRedis.hmGet(keys.map, changed);
     changed.forEach((key, i) => {
       const entry = values[i] ? decodeTurfEntry(values[i]!) : undefined;
       if (entry) prev.entries.set(key, entry);
@@ -822,6 +829,7 @@ let engine: ReturnType<typeof createEventPointsEngine> | undefined;
 function getEngine() {
   engine ??= createEventPointsEngine({
     redis: sysRedis,
+    turfRedis: redis,
     insertLedger: async (rows) => {
       if (!clickhouse) return;
       await clickhouse.insert({

@@ -34,6 +34,8 @@ type Metrics struct {
 	RevocationReadErrors prometheus.Counter
 	JWKSRefresh          *prometheus.CounterVec
 	JWKSStale            prometheus.Counter
+	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
+	SessionCookieSlot *prometheus.CounterVec
 }
 
 // NewMetrics registers the series on reg and seeds every fixed label combination at 0, so "none"
@@ -76,9 +78,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "beacon_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped for staleness (sessions verify as signed out until a fetch succeeds).",
 		}),
+		SessionCookieSlot: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "beacon_go_session_cookie_slot_total",
+			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
+		}, []string{"slot"}),
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.ShadowCompare, m.ShadowDiffs, m.TrackerWrites, m.Panics,
-		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale)
+		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale, m.SessionCookieSlot)
+	for _, s := range []string{"host", "shared"} {
+		m.SessionCookieSlot.WithLabelValues(s)
+	}
 	for _, e := range Endpoints {
 		for _, o := range []string{"served", "fallback", "error"} {
 			m.Requests.WithLabelValues(e, o)

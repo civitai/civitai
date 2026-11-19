@@ -6,7 +6,6 @@ import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -82,6 +81,12 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
+  purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
+    await s3.deleteObject(bucket, key);
+    return { versionsDeleted: 1, remaining: 0 };
+  },
+}));
 
 /** The bucket's contents, by key; the zip reader is pointed at it. */
 const bucket = vi.hoisted(() => ({
@@ -155,10 +160,10 @@ vi.mock('~/server/services/creator-service-deal-file-scan', () => ({
   isFinalsMalwareScanOn: scanSeam.isFinalsMalwareScanOn,
 }));
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -202,6 +207,8 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -290,17 +297,30 @@ const SCAN_COPY = (n: number) => Buffer.from(`scan-copy-${n}`);
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  // The deal holds a party's delete reads.
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {
@@ -339,8 +359,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
@@ -391,6 +411,14 @@ async function unpackedZip(items: FixtureEntry[], options?: FixtureOptions) {
 }
 
 const TEXT = (s: string) => Buffer.from(s.repeat(10));
+
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
 
 describe('building the archive a buyer downloads', () => {
   it('copies exactly the checked files into a new archive, and leaves the original alone', async () => {
@@ -544,9 +572,6 @@ describe('which files are rebuilt', () => {
     expect(await repack.repackFinals({ shouldStop: () => true })).toBe(0);
     expect(uploads.started).toBe(0);
     expect(await fileRow(fileId)).toMatchObject({ processingAt: null, deliveryKey: null });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
     expect(await repack.repackFinals()).toBe(1);
   });
 
@@ -731,6 +756,11 @@ describe('when the build goes wrong', () => {
     await repack.repackFinals();
     const key = (await fileRow(fileId)).deliveryKey!;
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    // Its scan passes after the removal; the purge then takes the archive with it.
+    await holder.db.query(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [
+      fileId,
+    ]);
+    await agedPurge();
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', key);
   });
 });

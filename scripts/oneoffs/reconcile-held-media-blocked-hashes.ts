@@ -16,18 +16,12 @@
  * stale and left: it only routes an image to the CSAM review tier.
  */
 import { PrismaClient } from '@prisma/client';
-import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { LIVE_CSAM_SQL, mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+
+export { LIVE_CSAM_SQL };
 
 /** Pinned against this file's own name by a test; see the entrypoint guard at the end. */
 export const SCRIPT_BASENAME = 'reconcile-held-media-blocked-hashes';
-
-/** Hashes whose newest row is a live CSAM entry: the app's own argMax and tie-break. */
-export const LIVE_CSAM_SQL = `SELECT toString(hash) AS hash FROM (
-  SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
-  FROM blocked_images
-  WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM')
-  GROUP BY hash
-) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`;
 
 export const PG_CSAM_SQL = `SELECT hash::text AS hash FROM "BlockedImage" WHERE reason = 'CSAM'`;
 /** How many of the hashes in $1 (text) are CSAM rows. */

@@ -323,6 +323,19 @@ describe('a judgment on an item that settled while it waited in the buffer', () 
     expect(await dayRow(1, D1)).toBeUndefined();
   });
 
+  it('refuses an image the player posted', async () => {
+    await seedPlayer(pg, 1);
+    const itemId = await settledItem(NOON(D1));
+    await pg.query(
+      `UPDATE "Image" SET "userId"=1 WHERE id=(SELECT "imageId" FROM "KnightsQueueItem" WHERE id=$1)`,
+      [itemId]
+    );
+
+    expect(await late(itemId, NOON(D1))).toBe(false);
+    expect(await ledger(itemId)).toEqual([]);
+    expect(await dayRow(1, D1)).toBeUndefined();
+  });
+
   it('refuses an item whose write-back is still pending, which a reroute could regrade', async () => {
     await seedPlayer(pg, 1);
     const itemId = await settledItem(NOON(D1));

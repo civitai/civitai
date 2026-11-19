@@ -23,6 +23,7 @@ import { uniqBy } from 'lodash-es';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import {
   collectionIndexImageSql,
   type CollectionIndexImage,
@@ -246,7 +247,7 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image,
+        'image', ${Prisma.raw(fallbackUserImageColumn)},
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u

@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import type { Transaction } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
@@ -222,10 +222,14 @@ const reblock = () =>
 
 loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
 
-beforeEach(async () => {
-  vi.clearAllMocks();
+beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
+});
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  await db.exec(`TRUNCATE "File", "ModActivity" RESTART IDENTITY`);
   current = null;
   beforeFileWrite = null;
   fileWrites = [];
@@ -251,7 +255,7 @@ beforeEach(async () => {
   }) as never);
 });
 
-afterEach(async () => {
+afterAll(async () => {
   await db.close();
 });
 

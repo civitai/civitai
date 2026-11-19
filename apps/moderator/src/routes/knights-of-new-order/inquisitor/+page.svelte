@@ -20,12 +20,11 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const SELECTION = 'selected';
-  // Five segments share the 400px list column, so each tab gets one word; hover shows the full name.
+  // Four segments share the 400px list column, so each tab gets one word; hover shows the full name.
   const TAB_LABELS: Record<InquisitorFilter, string> = {
     all: 'All',
     blocked: 'Blocked',
     'pushed-down': 'Pushed',
-    'no-consensus': 'Split',
     'write-back': 'Conflict',
   };
   const tabs = INQUISITOR_FILTERS.map((value) => ({

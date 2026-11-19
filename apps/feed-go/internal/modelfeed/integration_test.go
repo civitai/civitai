@@ -245,6 +245,15 @@ func TestIntegrationModelPageFilters(t *testing.T) {
 	integWant(t, "poi owner", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisablePoi: true, ViewerID: 3101901})),
 		[]int{3101001, 3101002})
 	integWant(t, "minor", integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, DisableMinor: true})), []int{3101002})
+	// A taken-down model is its owner's and moderators' alone (modelNotWithheldSql).
+	integtest.Exec(t, pool, `UPDATE "ModelMetric" SET mode = 'TakenDown' WHERE "modelId" = 3101002`)
+	takenDown := func(viewer int, mod bool) []int {
+		return integIDs(integPage(t, pool, PageQuery{Take: 10, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: viewer, IsModerator: mod}))
+	}
+	integWant(t, "taken down, signed out", takenDown(0, false), []int{3101001})
+	integWant(t, "taken down, another viewer", takenDown(3101901, false), []int{3101001})
+	integWant(t, "taken down, its owner", takenDown(3101902, false), []int{3101001, 3101002})
+	integWant(t, "taken down, a moderator", takenDown(3101903, true), []int{3101001, 3101002, 3101004})
 }
 
 // The lookups next to the page query: paid-access gates, a tag by name (citext).

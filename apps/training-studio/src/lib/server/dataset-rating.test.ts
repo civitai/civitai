@@ -8,33 +8,54 @@ const invokeScan = vi.hoisted(() => vi.fn());
 const refresh = vi.hoisted(() => vi.fn());
 const scan = vi.hoisted(() => vi.fn());
 
+// One map behind both fakes; the two key tables give every key a prefix naming its store.
 vi.mock('@civitai/redis', () => ({
+  REDIS_KEYS: {
+    TRAINING: { STUDIO_DATASET_RATING: 'rating', STUDIO_DATASET_RATING_DAILY: 'daily' },
+  },
   REDIS_SYS_KEYS: {
-    TRAINING: {
-      STUDIO_DATASET_RATING: 'rating',
-      STUDIO_DATASET_RATING_DAILY: 'daily',
-      STUDIO_DATASET_RATING_SENT: 'sent',
-    },
+    TRAINING: { STUDIO_DATASET_RATING: 'sysrating', STUDIO_DATASET_RATING_SENT: 'sent' },
   },
 }));
-vi.mock('./redis', () => ({
-  getSysRedis: () => ({
+vi.mock('./redis', () => {
+  const add = (k: string, n: number) => {
+    const v = ((store.get(k) as number) ?? 0) + n;
+    store.set(k, v);
+    return v;
+  };
+  // The cache cluster: ratings and the daily allowances.
+  const cache = {
     packed: {
       mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null),
       set: async (k: string, v: unknown) => void store.set(k, v),
     },
-    incrBy: async (k: string, n: number) => {
-      if (redisDown.value) throw new Error('redis down');
-      const v = ((store.get(k) as number) ?? 0) + n;
-      store.set(k, v);
-      return v;
+    multi: () => {
+      const queued: (() => unknown)[] = [];
+      const chain = {
+        set: (k: string, v: unknown, opts?: { NX?: boolean }) => {
+          queued.push(() => {
+            if (opts?.NX && store.has(k)) return null;
+            store.set(k, v === '0' ? 0 : v);
+            return 'OK';
+          });
+          return chain;
+        },
+        incrBy: (k: string, n: number) => {
+          queued.push(() => add(k, n));
+          return chain;
+        },
+        exec: async () => {
+          if (redisDown.value) throw new Error('redis down');
+          return queued.map((run) => run());
+        },
+      };
+      return chain;
     },
-    decrBy: async (k: string, n: number) => {
-      const v = ((store.get(k) as number) ?? 0) - n;
-      store.set(k, v);
-      return v;
-    },
-    expire: async () => true,
+    incrBy: async (k: string, n: number) => add(k, n),
+  };
+  // System Redis: the sent markers, and ratings written before they moved (the read fallback).
+  const sys = {
+    packed: { mGet: async (keys: string[]) => keys.map((k) => store.get(k) ?? null) },
     set: async (k: string, v: unknown, opts?: { NX?: boolean }) => {
       if (opts?.NX && store.has(k)) return null;
       store.set(k, v);
@@ -42,8 +63,9 @@ vi.mock('./redis', () => ({
     },
     del: async (k: string) => Number(store.delete(k)),
     mGet: async (keys: string[]) => keys.map((k) => (store.get(k) as string | undefined) ?? null),
-  }),
-}));
+  };
+  return { getCacheRedis: () => cache, getSysRedis: () => sys };
+});
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
 vi.mock('./flipt', () => ({ flagVariant }));
 vi.mock('./axiom', () => ({ logToAxiom: async () => undefined, safeError: (e: unknown) => e }));
@@ -67,9 +89,11 @@ vi.stubGlobal('fetch', fetchMock);
 
 const {
   claimDaily,
+  claimDailyReturnable,
   DATASET_RATING_DAILY_CALLS,
   datasetRatingFor,
   rateImage,
+  DATASET_RATING_SYS_FALLBACK_UNTIL,
   runRatingJob,
   warmDatasetRating,
 } = await import('./dataset-rating');
@@ -120,6 +144,35 @@ describe('the flag', () => {
       expect([...read.keys()]).toEqual(['good']);
     }
   );
+});
+
+describe('ratings written before the move to the cache cluster', () => {
+  it('pins the end of the system Redis fallback', () => {
+    expect(DATASET_RATING_SYS_FALLBACK_UNTIL.toISOString()).toBe('2027-01-15T00:00:00.000Z');
+  });
+
+  it('🔴 a rating only system Redis holds is still read; the cluster copy wins when both do', async () => {
+    flag.variant = 'S2';
+    store.set('sysrating:radio-alpha:m2:old', { mature: true });
+    store.set('sysrating:radio-alpha:m2:both', { mature: true });
+    store.set('rating:radio-alpha:m2:both', { mature: false });
+    store.set('rating:radio-alpha:m2:new', { mature: false });
+    // Another level's verdict is not read through the fallback either.
+    store.set('sysrating:radio-alpha:m3:other', { mature: true });
+    const read = await (await datasetRatingFor(user))!.read(['old', 'both', 'new', 'other']);
+    expect(Object.fromEntries(read)).toEqual({
+      old: { mature: true },
+      both: { mature: false },
+      new: { mature: false },
+    });
+  });
+
+  it('🔴 a new rating is written to the cache cluster only', async () => {
+    const rate = vi.fn(async () => ({ rating: { mature: false } }));
+    await runRatingJob(client, ['a.png'], rate);
+    expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false });
+    expect(store.has('sysrating:radio-alpha:m1:a.png')).toBe(false);
+  });
 });
 
 describe('one rating call', () => {
@@ -375,6 +428,15 @@ describe('the daily allowance', () => {
   it('grants nothing when Redis is down', async () => {
     redisDown.value = true;
     expect(await claimDaily('lookups', 3, 1)).toBe(0);
+  });
+
+  it('a give-back that lands after the count was evicted leaves it at zero, never below', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const { granted, giveBack } = await claimDailyReturnable('lookups', 5, 4);
+    expect(granted).toBe(4);
+    store.delete(`daily:lookups:5:${day}`);
+    await giveBack(3);
+    expect(store.get(`daily:lookups:5:${day}`)).toBe(0);
   });
 
   it('claims allowance only for the images in a dataset', async () => {

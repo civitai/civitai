@@ -75,8 +75,10 @@ const PACKAGE_EXPORTS = {
   './evidence-hold': './src/evidence-hold.db.ts',
   './csam-queue': './src/csam-queue.db.ts',
   './evidence-archive-queue': './src/evidence-archive-queue.db.ts',
+  './content-deletion': './src/content-deletion.db.ts',
   './profile-picture-clear': './src/profile-picture-clear.db.ts',
   './test-harness': './src/test/compile-harness.ts',
+  './test/image-uses': './src/test/image-uses.ts',
 };
 
 // Every first-party file reachable from `./src/test/compile-harness.ts`, repo-root-relative.
