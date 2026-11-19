@@ -491,4 +491,12 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
     expect(mockModelsQueueUpdate).not.toHaveBeenCalled();
     expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
+
+  it('keeps the model Private when the side effects fail', async () => {
+    mockModelsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    await makePrivate(false);
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Draft' }) })
+    );
+  });
 });

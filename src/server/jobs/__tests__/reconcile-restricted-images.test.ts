@@ -54,6 +54,9 @@ let chunkPostIds: number[][] = [];
 let chunkImageIds: number[][] = [];
 let collectionsShowing: number[] = [];
 let collectionLookups: unknown[][] = [];
+// Fixture image ids start here; the lookup's other numeric parameter (its cap) is far above them.
+const FIRST_IMAGE_ID = 501;
+const CAP_PARAM = 5000;
 
 const run = () =>
   reconcileRestrictedImages.run({}).result as Promise<{
@@ -83,7 +86,9 @@ beforeEach(() => {
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
     if (sqlOf(call).includes('pg_index')) return Promise.resolve([{ present: true }]);
     if (sqlOf(call).includes('"CollectionItem"')) {
-      collectionLookups.push(valuesOf(call).filter((v) => typeof v === 'number' && v > 500 && v < 5000));
+      collectionLookups.push(
+        valuesOf(call).filter((v) => typeof v === 'number' && v >= FIRST_IMAGE_ID && v < CAP_PARAM)
+      );
       return Promise.resolve(collectionsShowing.map((collectionId) => ({ collectionId })));
     }
     if (isVersionQuery(call)) return Promise.resolve(versionIds.map((id) => ({ id })));
@@ -240,6 +245,22 @@ describe('reconcile-restricted-images', () => {
 });
 
 describe('reconcile-restricted-images search reindex', () => {
+  // The image Delete path refreshes the cached thumbnails; that read is how the batch shows up here.
+  const thumbnailRefreshes = () =>
+    queryRaw.mock.calls
+      .filter((call) => sqlOf(call).includes("'parentId'"))
+      .map((call) => valuesOf(call).filter((v) => typeof v === 'number'));
+
+  it('takes each newly restricted image out of the image queues as a Delete', async () => {
+    versionIds = Array.from({ length: 250 }, (_, i) => i + 1);
+    executeRaw.mockResolvedValue(1);
+    chunkImageIds = [[501, 502], [], [503]];
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501, 502], [503]]);
+  });
+
   const collectionUpdates = () =>
     addToQueue.mock.calls
       .filter(([key]) => key.startsWith('collections') && key.endsWith(':Update'))
@@ -273,15 +294,21 @@ describe('reconcile-restricted-images search reindex', () => {
 
   it('logs counts, not ids, when the reindex fails, and still finishes the run', async () => {
     chunkImageIds = [[501, 502]];
-    collectionsShowing = [77];
     executeRaw.mockResolvedValue(2);
-    addToQueue.mockRejectedValueOnce(new Error('redis down'));
+    const flag = queryRaw.getMockImplementation()!;
+    queryRaw.mockImplementation((...call: unknown[]) =>
+      sqlOf(call).includes("'parentId'") ? Promise.reject(new Error('db down')) : flag(...call)
+    );
 
     const result = await run();
 
     expect(result.flagged).toBe(2);
     expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
-    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
-    expect(logged).not.toContain('501');
+    const failure = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .find((entry) => entry.message === 'Search reindex failed');
+    expect(failure).toMatchObject({ images: 0, collections: 0, pending: 2 });
+    expect(JSON.stringify(failure)).not.toContain('501');
   });
 });
