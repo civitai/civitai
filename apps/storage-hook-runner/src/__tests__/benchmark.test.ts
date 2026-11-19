@@ -5,7 +5,14 @@ import { SIG_HEADER } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
 import { QuickJSInstance, compileQuickJS, evaluateHookOn, instantiate } from '../sandbox.ts';
-import { SECRET, checkBody, hmac, hookInputJson } from '../test-support/fixtures.ts';
+import {
+  PICK_OF_FOUR,
+  SECRET,
+  checkBody,
+  hmac,
+  hookInputJson,
+  sha256,
+} from '../test-support/fixtures.ts';
 
 /**
  * Per-call cost, printed as `BENCH ...` lines for the PR record. It asserts only that every
@@ -117,5 +124,40 @@ describe.skipIf(process.env.RUNNER_BENCH !== '1')('benchmark (opt-in: RUNNER_BEN
         report(`http end-to-end ${name}`, samples);
       });
     }
+
+    it('POST /v1/remix/replay, Pick of four, 13 replays per call', async () => {
+      const take = (n: number) => ({ url: `https://blobs.example/take-${n}.png` });
+      const base = [
+        { type: 'workflow', result: { workflowId: 'wf', images: [0, 1, 2, 3].map(take) } },
+        { type: 'ask', answer: 1 },
+      ];
+      const branches = Array.from({ length: 12 }, (_, i) => [
+        { type: 'ask', answer: i % 2 ? 'keep' : 'upscale' },
+      ]);
+      const samples: number[] = [];
+      for (let i = 0; i < N; i++) {
+        const body = JSON.stringify({
+          ts: Math.floor(Date.now() / 1000),
+          appId: 'remix-u5-pick',
+          sha256: sha256(PICK_OF_FOUR),
+          source: PICK_OF_FOUR,
+          input: {
+            source: { imageId: 7, url: 'https://image.example/s.png', width: 1200, height: 800 },
+            base,
+            branches,
+          },
+        });
+        const t = performance.now();
+        const res = await app.inject({
+          method: 'POST',
+          url: '/v1/remix/replay',
+          headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+          payload: body,
+        });
+        samples.push(performance.now() - t);
+        expect(res.json().results).toHaveLength(13);
+      }
+      report('http remix replay pick-of-four x13', samples);
+    });
   });
 });

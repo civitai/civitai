@@ -1,13 +1,21 @@
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { CheckRequest, clampTimeout } from './contract.ts';
+import type { z } from 'zod';
+import { CheckRequest, RemixReplayRequest, clampTimeout } from './contract.ts';
 import type { RefusalCode } from './contract.ts';
-import { MAX_BODY_BYTES, MAX_SOURCE_BYTES, SIG_HEADER } from './limits.ts';
+import {
+  MAX_BODY_BYTES,
+  MAX_REMIX_SOURCE_BYTES,
+  MAX_SOURCE_BYTES,
+  REMIX_REPLAY_TIMEOUT_MS,
+  SIG_HEADER,
+} from './limits.ts';
 import type { Metrics } from './metrics.ts';
 import { BackstopError, PoolClosedError, PoolOverloadedError } from './pool.ts';
 import type { HookPool } from './pool.ts';
 import { outcomeOf } from './result.ts';
 import type { HookResult } from './result.ts';
+import type { RemixReplayResult } from './remix.ts';
 import { QuickJSInstance, compileQuickJS } from './sandbox.ts';
 import { runSelfTest } from './selftest.ts';
 import type { SelfTestReport } from './selftest.ts';
@@ -25,6 +33,11 @@ export type AppDeps = {
 /** The body of every `POST /v1/check` answer, signed in the SIG_HEADER response header. */
 export type CheckResponse =
   | { ts: number; req: string; result: HookResult; elapsedMs: number }
+  | { ts: number; req: string; error: { code: RefusalCode; message: string } };
+
+/** The body of every `POST /v1/remix/replay` answer: one result per replayed log, in order. */
+export type RemixReplayResponse =
+  | { ts: number; req: string; results: RemixReplayResult[]; elapsedMs: number }
   | { ts: number; req: string; error: { code: RefusalCode; message: string } };
 
 const STATUS: Record<RefusalCode, number> = {
@@ -46,6 +59,7 @@ const SELF_TEST_TTL_MS = 5_000;
 /**
  * Routes:
  *   POST /v1/check  signed hook evaluation (see README "Contract")
+ *   POST /v1/remix/replay  signed remix app replay (see README "Remix replay")
  *   GET  /healthz   process is up
  *   GET  /readyz    a worker is ready AND the built-in self-test hooks evaluate correctly
  *
@@ -61,7 +75,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     done(null, body);
   });
 
-  const send = (reply: FastifyReply, status: number, body: CheckResponse) => {
+  const send = (reply: FastifyReply, status: number, body: CheckResponse | RemixReplayResponse) => {
     const text = JSON.stringify(body);
     return reply
       .code(status)
@@ -119,51 +133,84 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return reply.code(ok ? 200 : 503).send({ ...body, ok });
   });
 
-  app.post('/v1/check', async (request, reply) => {
+  /**
+   * The checks every signed route makes before it evaluates anything, in this order: the HMAC
+   * over the raw bytes, then JSON, the timestamp, the schema, the source cap and its sha256.
+   * Either the request, or the refusal already sent.
+   */
+  const readSigned = <T extends { appId: string; sha256: string; source: string }>(
+    request: { body: unknown; headers: Record<string, string | string[] | undefined> },
+    reply: FastifyReply,
+    schema: z.ZodType<T>,
+    maxSourceBytes: number
+  ): { req: string; body: T } | { sent: FastifyReply } => {
     const raw = request.body;
     if (!Buffer.isBuffer(raw)) {
-      return refuse(reply, '', 'bad_request', 'content-type must be application/json');
+      return { sent: refuse(reply, '', 'bad_request', 'content-type must be application/json') };
     }
     const req = sha256Hex(raw);
 
     if (!verifySignature(deps.secret, raw, request.headers[SIG_HEADER])) {
-      return refuse(reply, req, 'bad_signature', 'signature does not match the body');
+      return { sent: refuse(reply, req, 'bad_signature', 'signature does not match the body') };
     }
 
     let json: unknown;
     try {
       json = JSON.parse(raw.toString('utf8'));
     } catch {
-      return refuse(reply, req, 'bad_request', 'body is not JSON');
+      return { sent: refuse(reply, req, 'bad_request', 'body is not JSON') };
     }
     const ts = checkTimestamp((json as { ts?: unknown } | null)?.ts, nowSec());
-    if (!ts.ok) return refuse(reply, req, 'stale_timestamp', ts.reason);
+    if (!ts.ok) return { sent: refuse(reply, req, 'stale_timestamp', ts.reason) };
 
-    const parsed = CheckRequest.safeParse(json);
+    const parsed = schema.safeParse(json);
     if (!parsed.success) {
       // Paths and messages only: never echo values, which may be user documents.
       const issues = parsed.error.issues
         .slice(0, 5)
         .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
         .join('; ');
-      return refuse(reply, req, 'bad_request', issues);
+      return { sent: refuse(reply, req, 'bad_request', issues) };
     }
     const body = parsed.data;
 
     const sourceBytes = Buffer.from(body.source, 'utf8');
-    if (sourceBytes.length > MAX_SOURCE_BYTES) {
-      return refuse(
-        reply,
-        req,
-        'source_too_large',
-        `source exceeds ${MAX_SOURCE_BYTES} bytes`,
-        body.appId
-      );
+    if (sourceBytes.length > maxSourceBytes) {
+      const message = `source exceeds ${maxSourceBytes} bytes`;
+      return { sent: refuse(reply, req, 'source_too_large', message, body.appId) };
     }
     // The runner evaluates only the exact source the approved manifest pinned.
     if (sha256Hex(sourceBytes) !== body.sha256) {
-      return refuse(reply, req, 'sha_mismatch', 'sha256(source) does not match sha256', body.appId);
+      const message = 'sha256(source) does not match sha256';
+      return { sent: refuse(reply, req, 'sha_mismatch', message, body.appId) };
     }
+    return { req, body };
+  };
+
+  /** A pool rejection as its refusal: each is a runner fault, never an author's. */
+  const refusePoolError = (reply: FastifyReply, req: string, appId: string, err: unknown) => {
+    if (err instanceof PoolOverloadedError) {
+      return refuse(reply, req, 'overloaded', err.message, appId);
+    }
+    if (err instanceof PoolClosedError) {
+      return refuse(reply, req, 'shutting_down', 'runner is shutting down', appId);
+    }
+    if (err instanceof BackstopError) {
+      return refuse(
+        reply,
+        req,
+        'worker_terminated',
+        'the call outran the interrupt and its worker was terminated',
+        appId
+      );
+    }
+    return refuse(reply, req, 'worker_crashed', 'hook worker failed', appId);
+  };
+
+  app.post('/v1/check', async (request, reply) => {
+    const signed = readSigned(request, reply, CheckRequest, MAX_SOURCE_BYTES);
+    if ('sent' in signed) return signed.sent;
+    const { req, body } = signed;
 
     let out;
     try {
@@ -174,28 +221,42 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         timeoutMs: clampTimeout(body.timeoutMs),
       });
     } catch (err) {
-      if (err instanceof PoolOverloadedError) {
-        return refuse(reply, req, 'overloaded', err.message, body.appId);
-      }
-      if (err instanceof PoolClosedError) {
-        return refuse(reply, req, 'shutting_down', 'runner is shutting down', body.appId);
-      }
-      if (err instanceof BackstopError) {
-        return refuse(
-          reply,
-          req,
-          'worker_terminated',
-          'the call outran the interrupt and its worker was terminated',
-          body.appId
-        );
-      }
-      return refuse(reply, req, 'worker_crashed', 'hook worker failed', body.appId);
+      return refusePoolError(reply, req, body.appId, err);
     }
 
     const outcome = outcomeOf(out.result);
     deps.metrics.calls.inc({ app: body.appId, collection: body.collection, op: body.op, outcome });
     deps.metrics.duration.observe({ outcome }, out.elapsedMs / 1000);
     return send(reply, 200, { ts: nowSec(), req, result: out.result, elapsedMs: out.elapsedMs });
+  });
+
+  app.post('/v1/remix/replay', async (request, reply) => {
+    const signed = readSigned(request, reply, RemixReplayRequest, MAX_REMIX_SOURCE_BYTES);
+    if ('sent' in signed) return signed.sent;
+    const { req, body } = signed;
+    const { source, base, branches = [], autoAnswer } = body.input;
+    const logs = [base, ...branches.map((branch) => [...base, ...branch])];
+
+    let out;
+    try {
+      out = await deps.pool.runRemix({
+        appId: body.appId,
+        source: body.source,
+        image: source,
+        logs,
+        autoAnswer,
+        budgetMs: logs.length * REMIX_REPLAY_TIMEOUT_MS,
+      });
+    } catch (err) {
+      return refusePoolError(reply, req, body.appId, err);
+    }
+
+    for (const result of out.results) {
+      const outcome = 'cause' in result ? result.cause : result.done ? 'done' : 'effect';
+      deps.metrics.calls.inc({ app: body.appId, collection: 'remix', op: 'replay', outcome });
+    }
+    deps.metrics.duration.observe({ outcome: 'remix' }, out.elapsedMs / 1000);
+    return send(reply, 200, { ts: nowSec(), req, results: out.results, elapsedMs: out.elapsedMs });
   });
 
   return app;

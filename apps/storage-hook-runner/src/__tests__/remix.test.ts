@@ -1,0 +1,261 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { buildApp } from '../app.ts';
+import {
+  BACKSTOP_MS,
+  MAX_REMIX_BRANCHES,
+  MAX_REMIX_EFFECTS,
+  MAX_REMIX_SOURCE_BYTES,
+  REMIX_REPLAY_TIMEOUT_MS,
+  SIG_HEADER,
+} from '../limits.ts';
+import { createMetrics } from '../metrics.ts';
+import { HookPool } from '../pool.ts';
+import { PICK_OF_FOUR, SECRET, hmac, sha256 } from '../test-support/fixtures.ts';
+
+/** `POST /v1/remix/replay` through the real Fastify app and the real worker pool. */
+
+const IMAGE = { imageId: 7, url: 'https://image.example/source.png', width: 1200, height: 800 };
+const take = (n: number) => ({ url: `https://blobs.example/take-${n}.png` });
+const TAKES = { type: 'workflow', result: { workflowId: 'wf-1', images: [0, 1, 2, 3].map(take) } };
+
+let pool: HookPool;
+let app: FastifyInstance;
+beforeAll(async () => {
+  pool = await HookPool.start({ size: 2 });
+  app = buildApp({ secret: SECRET, pool, metrics: createMetrics() });
+  await app.ready();
+});
+afterAll(async () => {
+  await app.close();
+  await pool.close();
+});
+
+function replayBody(
+  source: string,
+  input: { base?: unknown[]; branches?: unknown[][]; autoAnswer?: 'first' } = {}
+) {
+  return {
+    ts: Math.floor(Date.now() / 1000),
+    appId: 'remix-u5-probe',
+    sha256: sha256(source),
+    source,
+    input: { source: IMAGE, base: [], ...input },
+  };
+}
+
+async function replay(source: string, input?: Parameters<typeof replayBody>[1]) {
+  const body = JSON.stringify(replayBody(source, input));
+  const res = await app.inject({
+    method: 'POST',
+    url: '/v1/remix/replay',
+    headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+    payload: body,
+  });
+  return res;
+}
+
+const results = async (source: string, input?: Parameters<typeof replayBody>[1]) => {
+  const res = await replay(source, input);
+  expect(res.statusCode).toBe(200);
+  expect(res.headers[SIG_HEADER]).toBe(hmac(SECRET, res.body));
+  return res.json().results as Record<string, unknown>[];
+};
+
+/** An app whose only step is one ask, whose prompt reports `expr` as evaluated inside the VM. */
+const reporting = (expr: string) => `
+export default defineRemixApp({
+  async run(ctx) {
+    await ctx.ask({ kind: 'text', prompt: String(${expr}), maxLength: 10 });
+    return [];
+  },
+});`;
+const reported = async (expr: string) => {
+  const [result] = await results(reporting(expr));
+  return (result.effects as { spec: { prompt: string } }[])[0].spec.prompt;
+};
+
+describe('POST /v1/remix/replay: Pick of four', () => {
+  it('stops at the first step the log has no entry for, and finishes on a full log', async () => {
+    const [start, atPick, done] = await results(PICK_OF_FOUR, {
+      base: [],
+      branches: [[TAKES], [TAKES, { type: 'ask', answer: 2 }, { type: 'ask', answer: 'keep' }]],
+    });
+    expect(start).toEqual({
+      effects: [
+        {
+          type: 'workflow',
+          request: {
+            kind: 'image',
+            prompt: 'Reimagine this image',
+            images: [IMAGE],
+            aspectRatio: 'source',
+            quantity: 4,
+          },
+        },
+      ],
+    });
+    expect((atPick.effects as unknown[]).at(-1)).toMatchObject({
+      type: 'ask',
+      spec: { kind: 'pick' },
+    });
+    expect(done).toMatchObject({ done: { outputs: [take(2)] } });
+  });
+
+  it(`answers ${1 + MAX_REMIX_BRANCHES} replays in one call, inside the backstop`, async () => {
+    const atChoice = [TAKES, { type: 'ask', answer: 1 }];
+    const branches = Array.from({ length: MAX_REMIX_BRANCHES }, (_, i) => [
+      { type: 'ask', answer: i % 2 ? 'keep' : 'upscale' },
+    ]);
+    const t0 = performance.now();
+    const res = await replay(PICK_OF_FOUR, { base: atChoice, branches });
+    const wall = performance.now() - t0;
+    expect(res.statusCode).toBe(200);
+    const all = res.json().results as Record<string, unknown>[];
+    expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
+    expect(all[1]).toMatchObject({ effects: expect.any(Array) });
+    expect(all[2]).toMatchObject({ done: { outputs: [take(1)] } });
+    // Loose upper bound: the backstop would have answered 500 past this.
+    expect(wall).toBeLessThan((1 + MAX_REMIX_BRANCHES) * REMIX_REPLAY_TIMEOUT_MS + BACKSTOP_MS);
+  });
+
+  it('with autoAnswer, answers each ask with its first answer until the first workflow', async () => {
+    const asksFirst = `
+export default defineRemixApp({
+  async run(ctx) {
+    const style = await ctx.ask({ kind: 'choice', prompt: 'Style?', options: [{ value: 'anime', label: 'Anime' }, { value: 'clay', label: 'Clay' }] });
+    const extra = await ctx.ask({ kind: 'text', prompt: 'Extra?', maxLength: 20 });
+    const { images } = await ctx.workflow({ kind: 'image', prompt: style + ' ' + extra, images: [ctx.source], aspectRatio: 'source', quantity: 1 });
+    return images;
+  },
+});`;
+    const [result] = await results(asksFirst, { autoAnswer: 'first' });
+    expect(result.effects).toMatchObject([
+      { type: 'ask', answer: 'anime' },
+      { type: 'ask', answer: 'remix' },
+      { type: 'workflow', request: { prompt: 'anime remix' } },
+    ]);
+    // POSITIVE CONTROL: without it, the replay stops at the first ask.
+    const [plain] = await results(asksFirst);
+    expect(plain.effects).toEqual([expect.objectContaining({ type: 'ask' })]);
+    expect(plain.effects).not.toContainEqual(
+      expect.objectContaining({ answer: expect.anything() })
+    );
+  });
+});
+
+describe('POST /v1/remix/replay: a pure function of its input', () => {
+  it('has no Date and no Math.random', async () => {
+    expect(await reported('typeof Date + " " + typeof Math.random')).toBe('undefined undefined');
+    // POSITIVE CONTROL: the rest of Math is there.
+    expect(await reported('typeof Math.floor')).toBe('function');
+  });
+
+  it('keeps no global from one call to the next, or from one replay to the next', async () => {
+    // POSITIVE CONTROL: within one replay the global does persist, so the probe can see one.
+    expect(await reported('(globalThis.seen = 1, globalThis.seen + 1)')).toBe('2');
+    const counter = reporting('(globalThis.seen = (globalThis.seen || 0) + 1)');
+    expect(await reported('(globalThis.seen = (globalThis.seen || 0) + 1)')).toBe('1');
+    expect(await reported('(globalThis.seen = (globalThis.seen || 0) + 1)')).toBe('1');
+    const both = await results(counter, { branches: [[]] });
+    expect(both.map((r) => (r.effects as { spec: { prompt: string } }[])[0].spec.prompt)).toEqual([
+      '1',
+      '1',
+    ]);
+  });
+});
+
+describe('POST /v1/remix/replay: what the app cannot change', () => {
+  it('stays stopped when the app catches the stop and returns', async () => {
+    const stubborn = `
+export default defineRemixApp({
+  async run(ctx) {
+    try { await ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); } catch {}
+    return [ctx.source];
+  },
+});`;
+    const [result] = await results(stubborn);
+    expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it('stops at a step whose type the log disagrees with', async () => {
+    const [result] = await results(PICK_OF_FOUR, { base: [{ type: 'ask', answer: 0 }] });
+    expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it(`returns at most ${MAX_REMIX_EFFECTS + 1} effects, the last past the limit`, async () => {
+    const asker = `
+export default defineRemixApp({
+  async run(ctx) {
+    for (;;) await ctx.ask({ kind: 'text', prompt: 'More?', maxLength: 10 });
+  },
+});`;
+    // Answering every ask itself, the loop alone would run to the deadline.
+    const [result] = await results(asker, { autoAnswer: 'first' });
+    expect(result.effects).toHaveLength(MAX_REMIX_EFFECTS + 1);
+  });
+});
+
+describe("POST /v1/remix/replay: faults are the author's, per replay", () => {
+  it.each([
+    ['a loop', 'export default defineRemixApp({ async run() { for (;;) {} } });', 'timeout'],
+    [
+      'a promise loop',
+      'export default defineRemixApp({ async run() { for (;;) await null; } });',
+      'timeout',
+    ],
+    [
+      'a run that never settles',
+      'export default defineRemixApp({ run: () => new Promise(() => {}) });',
+      'invalid_result',
+    ],
+    [
+      'a throw',
+      'export default defineRemixApp({ async run() { throw new Error("no"); } });',
+      'error',
+    ],
+    ['no app', 'export default 42;', 'error'],
+    ['a syntax error', 'export default defineRemixApp({', 'error'],
+  ])('%s answers %s', async (_, source, cause) => {
+    const [result] = await results(source);
+    expect(result).toMatchObject({ cause });
+  });
+});
+
+it(`gives each of ${
+  1 + MAX_REMIX_BRANCHES
+} looping replays its own deadline, inside the call's backstop`, async () => {
+  const loop = 'export default defineRemixApp({ async run() { for (;;) {} } });';
+  const all = await results(loop, {
+    branches: Array.from({ length: MAX_REMIX_BRANCHES }, () => []),
+  });
+  expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
+  expect(all.every((r) => r.cause === 'timeout')).toBe(true);
+});
+
+describe('POST /v1/remix/replay: refusals', () => {
+  it('refuses an unsigned request', async () => {
+    const body = JSON.stringify(replayBody(PICK_OF_FOUR));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/remix/replay',
+      headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(`${SECRET}x`, body) },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it(`refuses a source over ${MAX_REMIX_SOURCE_BYTES} bytes`, async () => {
+    const big = `${PICK_OF_FOUR}\n//${'x'.repeat(MAX_REMIX_SOURCE_BYTES)}`;
+    expect((await replay(big)).json().error.code).toBe('source_too_large');
+    // POSITIVE CONTROL: the same app at its own size replays.
+    expect((await replay(PICK_OF_FOUR)).statusCode).toBe(200);
+  });
+
+  it(`refuses more than ${MAX_REMIX_BRANCHES} branches, or a branch past ${MAX_REMIX_EFFECTS} entries`, async () => {
+    const many = Array.from({ length: MAX_REMIX_BRANCHES + 1 }, () => []);
+    expect((await replay(PICK_OF_FOUR, { branches: many })).statusCode).toBe(400);
+    const long = Array.from({ length: MAX_REMIX_EFFECTS + 1 }, () => ({ type: 'ask', answer: 0 }));
+    expect((await replay(PICK_OF_FOUR, { branches: [long] })).statusCode).toBe(400);
+  });
+});

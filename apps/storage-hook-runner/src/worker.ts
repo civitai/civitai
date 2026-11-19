@@ -1,4 +1,6 @@
 import { parentPort } from 'node:worker_threads';
+import { evaluateRemix } from './remix.ts';
+import type { RemixArgs, RemixOutput } from './remix.ts';
 import { QuickJSInstance, compileQuickJS } from './sandbox.ts';
 import type { EvaluateArgs, EvaluateOutput } from './sandbox.ts';
 
@@ -11,17 +13,31 @@ import type { EvaluateArgs, EvaluateOutput } from './sandbox.ts';
  * Loaded by Node directly (type stripping under test, the tsup bundle in production), so this
  * file and its imports use erasable TypeScript only and `.ts` import specifiers.
  */
-export type WorkerRequest = { id: number } & EvaluateArgs;
+export type WorkerJob = ({ kind: 'hook' } & EvaluateArgs) | ({ kind: 'remix' } & RemixArgs);
+export type WorkerRequest = { id: number } & WorkerJob;
 export type WorkerResponse =
   | ({ id: number } & EvaluateOutput)
+  | { id: number; remix: RemixOutput }
   | { id: number; crashed: string }
   | { ready: true };
 
 if (!parentPort) throw new Error('worker.ts must run in a worker thread');
 const port = parentPort;
-const instance = QuickJSInstance.fromCompiled(compileQuickJS());
+const compiled = compileQuickJS();
+const instance = QuickJSInstance.fromCompiled(compiled);
+
+// Only runner faults reach a rejection (every author-caused one is an answer); the pool answers 500.
+const crashed = (id: number) => (err: unknown) =>
+  port.postMessage({ id, crashed: String(err) } satisfies WorkerResponse);
 
 port.on('message', (msg: WorkerRequest) => {
+  if (msg.kind === 'remix') {
+    evaluateRemix(compiled, msg).then(
+      (remix) => port.postMessage({ id: msg.id, remix } satisfies WorkerResponse),
+      crashed(msg.id)
+    );
+    return;
+  }
   instance.evaluate(msg).then(
     (out) =>
       port.postMessage({
@@ -29,9 +45,7 @@ port.on('message', (msg: WorkerRequest) => {
         result: out.result,
         elapsedMs: out.elapsedMs,
       } satisfies WorkerResponse),
-    // Only runner faults reach here (evaluate answers every hook-caused one); the pool answers 500.
-    (err: unknown) =>
-      port.postMessage({ id: msg.id, crashed: String(err) } satisfies WorkerResponse)
+    crashed(msg.id)
   );
 });
 

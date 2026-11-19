@@ -44,6 +44,21 @@ export const COMPILE_ALLOWANCE_FLOOR_MS = 5;
  */
 export const BACKSTOP_MS = 100;
 
+/** A remix app's source size cap (UTF-8 bytes), matching the civitai row schema. */
+export const MAX_REMIX_SOURCE_BYTES = 32 * 1024;
+
+/** Each remix replay's time budget; not settable by the caller. */
+export const REMIX_REPLAY_TIMEOUT_MS = 50;
+
+/** Logs one remix call replays: the base log, then at most this many branches of it. */
+export const MAX_REMIX_BRANCHES = 12;
+
+/** Effects one run may hold (asks included), matching the civitai host's limit. */
+export const MAX_REMIX_EFFECTS = 16;
+
+/** One replay's result, serialised inside the VM, at most this many characters. */
+export const MAX_REMIX_RESULT_CHARS = 32 * 1024;
+
 /** Hook source size cap (UTF-8 bytes), matching the manifest-side cap. */
 export const MAX_SOURCE_BYTES = 64 * 1024;
 

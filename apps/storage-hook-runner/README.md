@@ -107,6 +107,45 @@ transport failure or unverifiable response, to `hook_unavailable` (fail closed):
 | 500    | `worker_crashed`, `worker_terminated`             |
 | 503    | `overloaded`, `shutting_down`                     |
 
+### Remix replay: `POST /v1/remix/replay`
+
+Replays a civitai remix app (`docs/features` has the product side): a module whose default export is
+`defineRemixApp({ async run(ctx) { ... } })`. `run` asks for steps through `ctx.workflow(request)`
+and `ctx.ask(spec)`; the caller keeps a log of each step's result and replays the app from the
+start over that log every time the run moves on. The runner only replays: it records each call the
+app makes and answers it from the log, stopping at the first call with no entry. It checks nothing
+about the steps themselves. The caller checks every step and output it gets back, since an app can
+change anything inside the VM.
+
+Signed, timestamped and answered exactly as `/v1/check` is (same header, same `ts` and `req`, same
+non-2xx codes). Body (strict):
+
+| field       | type             | notes                                                                                            |
+| ----------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `ts`        | integer          | as `/v1/check`                                                                                   |
+| `appId`     | string           | the remix row's blockId                                                                          |
+| `sha256`    | 64 lowercase hex | of `source`                                                                                      |
+| `source`    | string           | the app module, at most 32 KiB (UTF-8)                                                           |
+| `input`     | object           | `{ source: { imageId, url, width, height }, base: Log, branches?: Log[], autoAnswer?: 'first' }` |
+
+A `Log` is up to 16 entries, each `{ type: 'workflow', result: { workflowId, images: [{ url, width?, height? }] } }`
+or `{ type: 'ask', answer: string | number }`. The runner replays `base`, then `base` followed by
+each branch (at most 12, each with `base` at most 16 entries): how the caller prices a choice's
+options in one call. With `autoAnswer: 'first'`, each ask past the log is answered with its first
+answer (a choice's first option, a pick's first image, the text `remix`) until the first workflow.
+
+`200` answers `{ ts, req, elapsedMs, results }`, one result per replay in order:
+
+| result                         | meaning                                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ effects }`                  | the app's calls up to the one the log has no entry for (the last); an auto-answered ask carries its `answer`; at most 17, the 17th past the limit |
+| `{ effects, done: { outputs } }` | `run` returned `outputs` after using the whole log                                                                                            |
+| `{ cause, detail }`            | the app's fault, as for hooks: `error`, `timeout`, `oom`, `stack_overflow`, or `invalid_result` (including a `run` that never settles)      |
+
+A replay stops for good at its first stop: an app that catches it and goes on still answers `{ effects }`.
+A call the log disagrees with (a workflow where the log has an answer) is returned as the last
+effect, for the caller to refuse.
+
 ### The hook
 
 One self-contained ES module whose **default export** is a synchronous function:
@@ -134,10 +173,10 @@ All bounds live in `src/limits.ts`.
 | -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | heap     | 16 MiB                                             | `runtime.setMemoryLimit`                                                                                        |
 | stack    | 256 KiB                                            | `runtime.setMaxStackSize` (see below)                                                                           |
-| time     | `timeoutMs`, [1, 500], default 50, evaluation only | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
-| backstop | `timeoutMs` + 100 ms                               | the pool terminates and replaces the worker; answered 500                                                       |
+| time     | `timeoutMs`, [1, 500], default 50, evaluation only (a remix replay: 50, its awaits included) | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
+| backstop | `timeoutMs` + 100 ms (a remix call: 50 ms per replay + 100 ms) | the pool terminates and replaces the worker; answered 500                                          |
 | per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight      | the pool; past it that app gets 503 while others proceed                                                        |
-| source   | 64 KiB                                             | request validation                                                                                              |
+| source   | 64 KiB (a remix app 32 KiB)                        | request validation                                                                                              |
 | body     | 256 KiB                                            | Fastify `bodyLimit`                                                                                             |
 
 - **A fresh QuickJS runtime per call, inside one shared WebAssembly instance per worker.** The
@@ -147,6 +186,12 @@ All bounds live in `src/limits.ts`.
   runtime (1 KiB hook, one CI run). The accepted residual
   risk: calls on one worker share the instance's linear memory, so a QuickJS memory-safety bug
   could read freed memory from an earlier call.
+- **A remix call gets more.** Every replay gets its own fresh runtime and deadline, and every
+  remix call a fresh WebAssembly instance (measured above as the instance-per-call cost), since
+  an author sees what their own unreviewed app returns. `Date` and `Math.random` are removed
+  before the app's module runs, so it is a pure function of its input, which replay relies on.
+  Pick of four, 13 replays in one call over HTTP: p50 12.4 / p99 33.2 ms (n=200, one local run)
+  against a 750 ms backstop.
 - **When the shared instance is replaced.** After a call that leaves the VM other than by a clean
   in-VM exception: a throw out of the WASM boundary (a WASM trap, a host stack overflow), a
   failure creating the runtime or context, a failure disposing them, or a failed instantiation.

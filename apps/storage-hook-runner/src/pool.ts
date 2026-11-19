@@ -8,8 +8,9 @@ import {
   RESPAWN_MAX_MS,
   defaultMaxPerApp,
 } from './limits.ts';
+import type { RemixArgs, RemixOutput } from './remix.ts';
 import type { EvaluateArgs, EvaluateOutput } from './sandbox.ts';
-import type { WorkerRequest, WorkerResponse } from './worker.ts';
+import type { WorkerJob, WorkerRequest, WorkerResponse } from './worker.ts';
 
 /** The pool's queue, or this app's share of it, is full. Answered 503 (`hook_unavailable`). */
 export class PoolOverloadedError extends Error {
@@ -35,12 +36,20 @@ export type RunArgs = EvaluateArgs & {
   appId: string;
 };
 
+export type RemixRunArgs = RemixArgs & {
+  appId: string;
+  /** The call's time before the backstop's margin: the sum of its replays' budgets. */
+  budgetMs: number;
+};
+
+type Answer = Exclude<WorkerResponse, { ready: true } | { crashed: string }>;
+
 export type PoolOptions = {
   size?: number;
   maxQueue?: number;
   /** Calls one app may have queued plus in flight. Default ⌈maxQueue / 4⌉. */
   maxPerApp?: number;
-  /** Added to each call's timeoutMs to get the worker-terminate deadline. */
+  /** Added to each call's budget (a hook's timeoutMs) to get the worker-terminate deadline. */
   backstopMs?: number;
   /** Called each time the backstop terminates a worker (the metric hook). */
   onBackstop?: (appId: string) => void;
@@ -53,8 +62,10 @@ export type PoolOptions = {
 };
 
 type Pending = {
-  args: RunArgs;
-  resolve: (out: EvaluateOutput) => void;
+  appId: string;
+  budgetMs: number;
+  job: WorkerJob;
+  resolve: (out: Answer) => void;
   reject: (err: Error) => void;
 };
 
@@ -77,7 +88,8 @@ const WORKER_URL = new URL(
  * Fairness: one app may hold at most `maxPerApp` calls (queued plus in flight); past that, that
  * app gets PoolOverloadedError('app') while other apps are still admitted.
  *
- * The backstop: a call still unanswered at `timeoutMs + backstopMs` (measured from dispatch to
+ * The backstop: a call still unanswered at its budget (a hook's `timeoutMs`, a remix call's
+ * `budgetMs`) + `backstopMs` (measured from dispatch to
  * the worker, so queue time is not charged to the hook) gets its worker TERMINATED and replaced,
  * and rejects with BackstopError. See BACKSTOP_MS.
  *
@@ -128,22 +140,36 @@ export class HookPool {
     return pool;
   }
 
-  run(args: RunArgs): Promise<EvaluateOutput> {
+  async run({ appId, ...args }: RunArgs): Promise<EvaluateOutput> {
+    const out = await this.enqueue(appId, args.timeoutMs, { kind: 'hook', ...args });
+    if (!('result' in out)) throw new WorkerCrashedError('worker answered a remix call');
+    return { result: out.result, elapsedMs: out.elapsedMs };
+  }
+
+  async runRemix({ appId, budgetMs, ...args }: RemixRunArgs): Promise<RemixOutput> {
+    const out = await this.enqueue(appId, budgetMs, { kind: 'remix', ...args });
+    if (!('remix' in out)) throw new WorkerCrashedError('worker answered a hook call');
+    return out.remix;
+  }
+
+  private enqueue(appId: string, budgetMs: number, job: WorkerJob): Promise<Answer> {
     if (this.closed) return Promise.reject(new PoolClosedError('pool is closed'));
     if (this.queue.length >= this.maxQueue) {
       return Promise.reject(new PoolOverloadedError('queue'));
     }
-    const held = this.perApp.get(args.appId) ?? 0;
+    const held = this.perApp.get(appId) ?? 0;
     if (held >= this.maxPerApp) return Promise.reject(new PoolOverloadedError('app'));
-    this.perApp.set(args.appId, held + 1);
+    this.perApp.set(appId, held + 1);
     const release = () => {
-      const n = (this.perApp.get(args.appId) ?? 1) - 1;
-      if (n <= 0) this.perApp.delete(args.appId);
-      else this.perApp.set(args.appId, n);
+      const n = (this.perApp.get(appId) ?? 1) - 1;
+      if (n <= 0) this.perApp.delete(appId);
+      else this.perApp.set(appId, n);
     };
     return new Promise((resolve, reject) => {
       this.queue.push({
-        args,
+        appId,
+        budgetMs,
+        job,
         resolve: (out) => {
           release();
           resolve(out);
@@ -236,7 +262,7 @@ export class HookPool {
         clearTimeout(busy.timer);
         slot.busy = null;
         if ('crashed' in msg) busy.reject(new WorkerCrashedError(msg.crashed));
-        else busy.resolve({ result: msg.result, elapsedMs: msg.elapsedMs });
+        else busy.resolve(msg);
         this.pump();
       });
       let dead = false;
@@ -279,18 +305,9 @@ export class HookPool {
       const next = this.queue.shift();
       if (!next) return;
       const id = this.nextId++;
-      const timer = setTimeout(
-        () => this.backstop(slot, id),
-        next.args.timeoutMs + this.backstopMs
-      );
+      const timer = setTimeout(() => this.backstop(slot, id), next.budgetMs + this.backstopMs);
       slot.busy = { ...next, id, timer };
-      const req: WorkerRequest = {
-        id,
-        source: next.args.source,
-        inputJson: next.args.inputJson,
-        timeoutMs: next.args.timeoutMs,
-      };
-      slot.worker.postMessage(req);
+      slot.worker.postMessage({ id, ...next.job } satisfies WorkerRequest);
     }
   }
 
@@ -301,7 +318,7 @@ export class HookPool {
     slot.busy = null;
     slot.ready = false;
     this.terminatedCount++;
-    this.onBackstop(busy.args.appId);
+    this.onBackstop(busy.appId);
     // Replace first, so the dead worker's 'exit' finds the slot already taken.
     const old = slot.worker;
     if (index !== -1 && !this.closed) void this.spawnInto(index, 0).catch(() => undefined);

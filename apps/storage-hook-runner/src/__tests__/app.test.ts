@@ -154,6 +154,9 @@ describe('POST /v1/check: sha256 pin', () => {
     const res = await post(JSON.stringify(checkBody(src)));
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('source_too_large');
+    // POSITIVE CONTROL: a source just under the cap is evaluated.
+    const under = `${ALLOW}\n//${'x'.repeat(MAX_SOURCE_BYTES - ALLOW.length - 4)}`;
+    expect((await post(JSON.stringify(checkBody(under)))).json().result).toEqual({ allow: true });
   });
 });
 
