@@ -304,11 +304,14 @@ export function createServerSideProps<P>({
 
     // The trial's getServerSideProps CPU runs from here (its prefetches) through dehydrate.
     const gsspCpuStart = cpuUsageNow();
+    // Resolvers see the viewer's effective rights: a moderator on a reduced key is not a moderator here.
+    const resolverSession =
+      session?.user && viewer !== session.user ? { ...session, user: viewer } : session;
     const result = ((await resolver?.({
       ctx: context,
       isClient,
       ssg,
-      session,
+      session: resolverSession,
       features,
     })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
