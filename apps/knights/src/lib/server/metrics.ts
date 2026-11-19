@@ -35,6 +35,7 @@ const REFUSAL_REASONS = [
   'bad-answer',
   'bad-block-reason',
   'already-voted',
+  'own-image',
   'no-weight',
   'reset-pending',
   'limited',

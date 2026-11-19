@@ -14,6 +14,8 @@ import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
 import {
   getEnabledRemixApps,
   getRemixAppRegistry,
+  visibleRemixApps,
+  type RegisteredRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
@@ -35,7 +37,11 @@ import {
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
-import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import {
+  type RemixLogEntry,
+  RemixReplayError,
+  type RemixReplayer,
+} from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import {
   getRemixSourceUrl,
@@ -63,8 +69,8 @@ const ASPECT_BUCKETS: GenerationAspectRatio[] = [
 const MAX_REFERENCE_IMAGES = 1;
 
 /** Every remix app, disabled ones too, so the tray can name a run of one; the menu lists `enabled`. */
-export async function listRemixApps() {
-  return (await getRemixAppRegistry()).map(
+export async function listRemixApps(caller: Parameters<typeof visibleRemixApps>[1]) {
+  return visibleRemixApps(await getRemixAppRegistry(), caller).map(
     ({ slug, name, icon, description, target, enabled, app }) => ({
       slug,
       name,
@@ -180,11 +186,11 @@ export function buildRuntimeRequest({
 }
 
 /** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
-export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
+export async function firstRuntimeRequest(replay: RemixReplayer, image: RemixSourceImage) {
   const log: RemixLogEntry[] = [];
   // Bounded: an app that only ever asks has no first workflow to price.
   for (let asked = 0; asked <= 8; asked++) {
-    const outcome = await replayRemixApp(app, runtimeSourceOf(image), log).catch((error) => {
+    const outcome = await replay(runtimeSourceOf(image), log).catch((error) => {
       if (error instanceof RemixReplayError) return null;
       throw error;
     });
@@ -333,9 +339,12 @@ export async function quoteRemixApps({
   await assertInputsUsable([getRemixSourceUrl(image)], caller, 'remixAppQuote');
   const pricing = await pricingFor(caller);
 
-  const apps = (await getEnabledRemixApps()).filter((entry) => entry.target === 'image.remix');
+  // A user app is priced when its modal opens, never in the menu's quote.
+  const apps = (await getEnabledRemixApps(caller)).filter(
+    (entry) => entry.target === 'image.remix' && !entry.author
+  );
   const prices = await Promise.all(
-    apps.map(({ app }) => quoteRuntimeApp(app, image, caller, pricing))
+    apps.map((entry) => quoteRuntimeApp(entry, image, caller, pricing))
   );
   return { prices };
 }
@@ -386,14 +395,14 @@ async function quoteApp(
 }
 
 async function quoteRuntimeApp(
-  app: RemixApp,
+  { app, replay }: Pick<RegisteredRemixApp, 'app' | 'replay'>,
   image: RemixSourceImage,
   caller: RemixAppCaller,
   pricing: Pricing
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-  const request = await firstRuntimeRequest(app, image);
+  const request = await firstRuntimeRequest(replay, image);
   if (!request) return { slug: app.slug, refusal: PRICE_UNAVAILABLE };
   const { tier, shape, graphInput } = buildRuntimeRequest({
     app,

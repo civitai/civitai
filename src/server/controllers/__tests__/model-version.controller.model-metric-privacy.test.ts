@@ -183,3 +183,39 @@ describe('modelVersion.getById: coverage and recommended resources', () => {
     expect(result.generationCoverage).toEqual(generationCoverage);
   });
 });
+
+describe('modelVersion.getById: the download name of a trainer-published file', () => {
+  const trainerFile = {
+    id: 11,
+    name: 'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    overrideName: null,
+    type: 'Model',
+    visibility: 'Public',
+    metadata: {},
+  };
+  const loadWithFiles = (user: { id: number; isModerator?: boolean } | null) =>
+    getModelVersionHandler({
+      input: { id: versionRow.id, withFiles: true },
+      ctx: { user, features: {}, domain: 'blue' },
+    } as never);
+
+  beforeEach(() => {
+    mockGetVersionById.mockImplementation(async ({ select }) =>
+      project({ ...versionRow, files: [trainerFile], posts: [] }, select)
+    );
+  });
+
+  it.each([
+    ['owner', { id: OWNER_ID }],
+    ['moderator', { id: 1, isModerator: true }],
+  ])('gives the %s the readable name the download uses', async (_, user) => {
+    const { files } = await loadWithFiles(user);
+    expect(files[0].downloadName).toBe('model_v1.safetensors');
+  });
+
+  // Built from the real model name, which a .com face hides from everyone else.
+  it('gives nobody else a download name', async () => {
+    expect((await loadWithFiles(null)).files[0].downloadName).toBeUndefined();
+    expect((await loadWithFiles({ id: 99 })).files[0].downloadName).toBeUndefined();
+  });
+});

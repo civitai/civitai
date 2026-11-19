@@ -20,6 +20,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
@@ -369,6 +370,24 @@ func TestComputeWithinParentDeadlineIsADeadline(t *testing.T) {
 	})
 	if got := fallback.Reason(err); got != "canceled" {
 		t.Fatalf("cancelled parent: reason = %q, want canceled", got)
+	}
+}
+
+// Every computation runs under one write-back budget (hydrate.WithWriteBudget), so its
+// cache writes share one bound however many caches it fills; the probe and shadow paths go through
+// within too. Fails on: within not installing it (each write would take its own bound).
+func TestWithinInstallsOneWriteBudget(t *testing.T) {
+	s := &Server{Metrics: NewMetrics(prometheus.NewRegistry()), Log: quietLog(), RequestBudget: time.Minute}
+	var marked bool
+	_, err := s.computeWithin(context.Background(), publicRequest(), "serve", func(ctx context.Context, _ *http.Request) (*computed, error) {
+		marked = hydrate.WithWriteBudget(ctx) == ctx
+		return &computed{payload: []byte(`{}`)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marked {
+		t.Fatal("the computation's context carries no write-back budget")
 	}
 }
 

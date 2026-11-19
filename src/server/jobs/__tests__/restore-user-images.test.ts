@@ -289,7 +289,7 @@ describe('restoreUserImages', () => {
 
       await run();
 
-      // The grace block cleared a User.image naming one of these images; the refresh restores it.
+      // Their cached profile pictures are re-read, so an unblocked picture serves the avatar again.
       expect(refreshPictures).toHaveBeenCalledTimes(1);
       expect(refreshPictures).toHaveBeenCalledWith([7, 8]);
     });
