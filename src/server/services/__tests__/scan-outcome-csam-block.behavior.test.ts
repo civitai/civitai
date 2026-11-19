@@ -549,14 +549,19 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
         (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
         (95, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('tag')}),
-        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')});
+        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')}),
+        (98, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'),
+        (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
+        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')});
     `);
 
     await unblockAccountDeletionImages(OWNER);
 
-    const rows = await reviewsOf([81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96]);
+    const rows = await reviewsOf([
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100,
+    ]);
     // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(16).fill('Scanned'));
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(19).fill('Scanned'));
     expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
       // Nothing set since: every listed review but csam comes back.
       [81, 'poi'],
@@ -579,6 +584,10 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       [94, 'poi'],
       [95, 'tag'],
       [96, 'appeal'],
+      // Nothing usable recorded (no key, JSON null, a value outside the list): the current flag stays.
+      [98, 'minor'],
+      [99, 'poi'],
+      [100, 'tag'],
     ]);
 
     const logged = loggingMock.logToAxiom.mock.calls
