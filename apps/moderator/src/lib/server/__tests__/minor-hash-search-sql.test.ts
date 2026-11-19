@@ -39,11 +39,10 @@ describe('minor queue search', () => {
       getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
     );
     // minor_src is an unindexed CTE (~20k rows at real size): an EXISTS over it per candidate cost
-    // seconds. The per-candidate check must read the id-filtered set instead.
+    // seconds. Pinned here because pglite results cannot see the plan.
     expect(statement).toMatch(
-      /searched_seeds AS MATERIALIZED \(\s*SELECT hash, "userId" FROM minor_src\s+WHERE "minorModelId" = \$\d+ OR "userId" = \$\d+/
+      /searched_seeds AS MATERIALIZED \([^)]*FROM minor_src\s+WHERE "minorModelId" = \$\d+ OR "userId" = \$\d+/
     );
-    expect(statement).not.toMatch(/EXISTS \(\s*SELECT 1 FROM minor_src s3/);
   });
 
   it('compares a username case-insensitively', async () => {

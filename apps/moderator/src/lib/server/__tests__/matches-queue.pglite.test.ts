@@ -215,6 +215,18 @@ describe('Needs review: file matches', () => {
     expect(await ids(2)).toEqual([11]);
     expect(await ids(13)).toEqual([]);
     expect(await ids(999)).toEqual([]);
+    expect(await getNeedsReviewCount({ sources: MATCHES, search: { modelOrUserId: 16 } })).toBe(1);
+  });
+
+  it("does not take a searched seed's id as matching a copy of a different file", async () => {
+    await pg.exec(`INSERT INTO "User" VALUES (4, 'other seeder')`);
+    await seedModel(17, 4, 'bb', { minor: true }); // seeds 'bb'; model 13 (user 3) copies it
+    const ids = async (id: number) =>
+      (await matches({ limit: 10, search: { modelOrUserId: id } })).items.map((r) => r.modelId);
+
+    expect(await ids(17)).toEqual([13]);
+    expect(await ids(4)).toEqual([13]);
+    expect(await ids(10)).toEqual([11]);
   });
 
   it('pages with one extra row to know there is another page', async () => {
