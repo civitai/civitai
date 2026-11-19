@@ -98,6 +98,7 @@ describe('mintDevTunnelOauthToken', () => {
       userId: USER_ID,
       clientId: 'appdev-42-my-app',
       scope: SPEND,
+      impersonatedBy: null,
     });
   });
 

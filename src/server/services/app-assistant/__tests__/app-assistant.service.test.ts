@@ -422,6 +422,7 @@ describe('mintAppAssistantToken', () => {
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: SCOPE,
+      impersonatedBy: null,
     });
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.oauthClient.upsert).not.toHaveBeenCalled();
@@ -434,6 +435,7 @@ describe('mintAppAssistantToken', () => {
       userId: USER_ID,
       clientId: CLIENT_ID,
       scope: TokenScope.UserRead,
+      impersonatedBy: null,
     });
   });
 
