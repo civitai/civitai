@@ -37,10 +37,11 @@ JOIN listed ON i.id = listed.id
 WHERE ${CSAM_BLOCKED}`;
 
 /**
- * Postgres copies exist for every CSAM entry written from here on. A hash reported earlier that is
- * neither in the blocklist read nor copied may be an unblocklist a merge hid, so it is never healed.
+ * From here on both apps were serving the code that writes a Postgres copy with every CSAM entry
+ * (the later of the two releases, with margin). A hash reported earlier that is neither in the
+ * blocklist read nor copied may be an unblocklist a merge hid, so it is never healed.
  */
-export const COPY_ERA_START = new Date('2026-11-18T00:00:00Z');
+export const COPY_ERA_START = new Date('2026-11-19T01:00:00Z');
 export const SWEEP_COUNT_SQL = `SELECT count(*)::int AS sweep FROM "Image"
   WHERE ${CSAM_BLOCKED} AND NOT (id = ANY(${LISTED_IDS}))`;
 /** On the primary, right before a write: the ids among $1 still removed for CSAM, with their hash. */

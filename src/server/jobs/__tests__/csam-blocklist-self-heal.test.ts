@@ -37,6 +37,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 const {
   healCsamBlocklist,
   runCsamBlocklistSelfHeal,
+  COPY_ERA_START,
   HEAL_CAP,
   PG_CSAM_AMONG_SQL,
   REPORTED_CANDIDATES_SQL,
@@ -50,7 +51,7 @@ type Newest = { reason: string; disabled: boolean };
  * One blocklist and Postgres copy, held in memory; every image listed and still removed.
  * `blocklist` holds what NEWEST_ROWS_SQL returns: only hashes that have ever had a CSAM row.
  */
-const RECENT = new Date('2026-11-19T00:00:00Z');
+const RECENT = new Date('2026-11-20T00:00:00Z');
 const PRE_COPY = new Date('2026-11-01T00:00:00Z');
 
 function world(
@@ -173,14 +174,37 @@ describe('healCsamBlocklist', () => {
   // hid, so only images first reported after COPY_ERA_START are healed from that class.
   it('never heals a never-listed hash first reported before the copy era', async () => {
     const w = world([
-      { id: 1, pHash: '11', reportedAt: PRE_COPY },
       { id: 2, pHash: '11', reportedAt: RECENT },
+      { id: 1, pHash: '11', reportedAt: PRE_COPY },
     ]);
 
     const counts = await healCsamBlocklist({ writes: true }, w.deps);
 
     expect(w.added).toEqual([]);
     expect(counts).toMatchObject({ notCsamEver: 0, notCsamEverPreCopy: 1, healed: 0 });
+  });
+
+  it('heals a never-listed hash first reported exactly at the start of the copy era', async () => {
+    const w = world([{ id: 1, pHash: '11', reportedAt: COPY_ERA_START }]);
+
+    expect(await healCsamBlocklist({ writes: true }, w.deps)).toMatchObject({ healed: 1 });
+  });
+
+  // Decision: copies are only guaranteed once both apps fully served the copy writer (#9502): the
+  // moderator app by 2026-11-18T22:01Z, the main app by 2026-11-19T00:00Z. Moving this earlier lets
+  // the job overwrite an unblocklist it cannot see.
+  it('starts the copy era no earlier than both copy-writing releases were fully serving', () => {
+    expect(COPY_ERA_START.getTime()).toBeGreaterThanOrEqual(Date.parse('2026-11-19T00:00:00Z'));
+  });
+
+  it('never heals one first reported a moment before the copy era', async () => {
+    const before = new Date(COPY_ERA_START.getTime() - 1000);
+    const w = world([{ id: 1, pHash: '11', reportedAt: before }]);
+
+    expect(await healCsamBlocklist({ writes: true }, w.deps)).toMatchObject({
+      healed: 0,
+      notCsamEverPreCopy: 1,
+    });
   });
 
   it('does not write an entry for a hash whose CSAM row landed after the classification', async () => {
@@ -233,7 +257,7 @@ describe('the candidate SQL, on real Postgres', () => {
     pg = new PGlite();
     await pg.exec(`
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "blockedFor" text, "pHash" bigint);
-      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb, "createdAt" timestamptz);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb, "createdAt" timestamp(3));
       CREATE TABLE "BlockedImage" (hash bigint PRIMARY KEY, reason text);
     `);
   });
@@ -249,7 +273,7 @@ describe('the candidate SQL, on real Postgres', () => {
         (5, 7, 'Blocked', 'CSAM', 205),                  -- listed as an object
         (6, 7, 'Blocked', 'CSAM', NULL);                 -- listed, no hash yet
       INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES
-        (7, '[1, 3, 4, 6, "abc", 9999999999999999999]', '2026-11-19'),
+        (7, '[1, 3, 4, 6, "abc", 9999999999999999999]', '2026-11-20'),
         (7, '[{"id": 5}]', '2026-11-20'),
         (7, '[5]', '2026-11-01');
     `);
@@ -257,7 +281,7 @@ describe('the candidate SQL, on real Postgres', () => {
 
   it('reads only listed images still removed for CSAM, at full precision', async () => {
     expect((await candidates()).sort((a, b) => a.id - b.id)).toEqual([
-      { id: 1, pHash: '-4276845791567733103', reportedAt: new Date('2026-11-19T00:00:00Z') },
+      { id: 1, pHash: '-4276845791567733103', reportedAt: new Date('2026-11-20T00:00:00Z') },
       // Its earliest report, not its latest.
       { id: 5, pHash: '205', reportedAt: new Date('2026-11-01T00:00:00Z') },
     ]);
