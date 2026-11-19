@@ -158,14 +158,21 @@ export const bucketLevelSql = sql<number>`CASE
   ELSE 0
 END`;
 
+/** Rows the first round of a stage's normal-order scan reads; each later round reads twice as many as the one before. */
+export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
+
 /**
- * One stage's candidates, read in index order: one read of the items escalated within the priority window (skipped at
- * the entry stage, where nothing is escalated), then the stage's normal order (priority, age) per level bucket. Each
- * bucket read stops at `FEED.bucketWindowSize`, so a crowded bucket cannot push the others out of the window; the
- * caller buckets the escalated rows with `itemBucket`. An item whose level has no bucket is read only once escalated.
- * No read includes an image the player has already judged for the question, at any stage or in any earlier item.
+ * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
+ * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
+ * (priority, age, id), so a crowded bucket cannot push the others out of the window. The caller buckets the escalated
+ * rows with `itemBucket`. An item whose level has no bucket is read only once escalated. No read includes an image the
+ * player has already judged for the question, at any stage or in any earlier item.
+ *
+ * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
+ * is full or the stage runs out. Most open items can be unservable (a draft or scheduled post, a deleted image), and
+ * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket.
  */
-function stageWindow(
+async function stageWindow(
   db: Executor,
   userId: number,
   stage: Rank,
@@ -203,31 +210,49 @@ function stageWindow(
         'img.nsfwLevel as imageLevel',
       ]);
 
-  const normal = BUCKET_LEVELS.map((level) =>
-    candidates()
-      .where((eb) => eb(bucketLevelSql, '=', level))
-      .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
-      .orderBy('i.priority', 'asc')
-      .orderBy('i.createdAt', 'asc')
-      .orderBy('i.id', 'asc')
-      .limit(FEED.bucketWindowSize)
-  );
   const escalated =
     stage === ESCALATION_PATH[0]
       ? []
-      : [
-          candidates()
-            .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
-            .where('i.escalatedAt', '>', utc(escalatedSince))
-            .orderBy('i.escalatedAt', 'asc')
-            .orderBy('i.id', 'asc')
-            .limit(FEED.bucketWindowSize * BUCKET_LEVELS.length),
-        ];
-  // Each read is wrapped so its ORDER BY and LIMIT stay its own inside the UNION ALL.
-  const [first, ...rest] = [...escalated, ...normal].map((read) =>
-    db.selectFrom(read.as('w')).selectAll()
-  );
-  return rest.reduce((query, read) => query.unionAll(read), first).execute();
+      : await candidates()
+          .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
+          .where('i.escalatedAt', '>', utc(escalatedSince))
+          .orderBy('i.escalatedAt', 'asc')
+          .orderBy('i.id', 'asc')
+          .limit(FEED.bucketWindowSize * BUCKET_LEVELS.length)
+          .execute();
+
+  const normal: (typeof escalated)[number][] = [];
+  const taken = new Map<LevelBucket | null, number>();
+  let filled = 0;
+  let after: number | null = null;
+  for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
+    const cursor = after;
+    const rows = await candidates()
+      .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
+      .where((eb) => eb(bucketLevelSql, '!=', 0))
+      // (priority, createdAt, id) is unique and never changes on a row, so a round starts exactly after the last one.
+      .$if(cursor !== null, (qb) =>
+        qb.where(
+          sql<SqlBool>`(i.priority, i."createdAt", i.id) > (SELECT c.priority, c."createdAt", c.id FROM "KnightsQueueItem" c WHERE c.id = ${cursor})`
+        )
+      )
+      .orderBy('i.priority', 'asc')
+      .orderBy('i.createdAt', 'asc')
+      .orderBy('i.id', 'asc')
+      .limit(size)
+      .execute();
+    for (const row of rows) {
+      const bucket = itemBucket(row.prediction, row.imageLevel);
+      const count = taken.get(bucket) ?? 0;
+      if (count >= FEED.bucketWindowSize) continue;
+      taken.set(bucket, count + 1);
+      if (count + 1 === FEED.bucketWindowSize) filled++;
+      normal.push(row);
+    }
+    if (rows.length < size || filled === BUCKET_LEVELS.length) break;
+    after = rows[rows.length - 1].id;
+  }
+  return [...escalated, ...normal];
 }
 
 /**

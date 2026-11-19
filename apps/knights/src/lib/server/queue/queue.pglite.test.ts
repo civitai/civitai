@@ -23,6 +23,7 @@ import {
   type QueueDeps,
   bucketLevelSql,
   servableItems,
+  STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 
@@ -279,6 +280,20 @@ describe('getFeed', () => {
 
     const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
     expect(served.filter((id) => nsfw.includes(id)).length).toBeGreaterThan(0);
+  });
+
+  it('serves a bucket whose first item sits behind a whole scan round of another bucket', async () => {
+    await player(1, 'Knight');
+    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round.
+    for (let n = 0; n < STAGE_SCAN_FIRST_ROUND; n++) {
+      await image(1000 + n, 1);
+      await item(1000 + n, { priority: 1 });
+    }
+    await image(5000, 8);
+    const x = await item(5000, { priority: 2 });
+
+    const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
   });
 
   it('reads each level bucket by the same rule as itemBucket', async () => {
