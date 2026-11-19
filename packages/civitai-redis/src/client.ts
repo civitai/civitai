@@ -3665,6 +3665,12 @@ const REDIS_KEYS_UNPREFIXED = {
      */
     MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
     /*
+      Use: attempts the retry job has made per article; past the cap it sends nothing, so a call that
+      keeps failing is not billed forever. Lost on eviction, an article gets up to one more round of retries.
+      Structure: integer (INCRBY), TTL 31d, key = `text-scan:category-retries:${articleId}`.
+     */
+    CATEGORY_RETRIES: 'text-scan:category-retries',
+    /*
       Use: one moderator resolution of a re-detected poi/minor label at a time, per model and label
         (`resolveTextScanRedetection`). Expires on its own if the process dies mid-ruling.
       Structure: string, set NX with EX, key suffix = "<modelId>:<label>"
