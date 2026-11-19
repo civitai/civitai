@@ -159,14 +159,23 @@ describe('ReviewConsole — the old-SDK notice', () => {
       );
   });
 
-  test('@civitai/blocks-react (which forwards none at any version) gets a notice that says so', async () => {
+  test('@civitai/blocks-react below 0.85.0 gets the "too old" notice, naming its own cut-off', async () => {
     await mount();
-    sdk.ready('0.62.0', 'blocks-react');
+    sdk.ready('0.84.0', 'blocks-react');
     await expect
       .element(page.getByTestId('apps-review-console-sdk-too-old'))
       .toHaveTextContent(
-        'This app uses @civitai/blocks-react 0.62.0, which does not report other errors'
+        "This app's SDK (@civitai/blocks-react 0.84.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/blocks-react 0.85.0."
       );
+  });
+
+  test('🔴 @civitai/blocks-react 0.85.0, which forwards them, gets no notice', async () => {
+    await mount();
+    sdk.ready('0.85.0', 'blocks-react');
+    await expect
+      .element(page.getByTestId('apps-review-console-empty'))
+      .toHaveTextContent('No errors reported.');
+    expect(page.getByTestId('apps-review-console-sdk-too-old').elements()).toHaveLength(0);
   });
 
   test('the cut-off itself, and anything above it, gets none', async () => {
