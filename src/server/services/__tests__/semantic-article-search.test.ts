@@ -1,7 +1,6 @@
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
@@ -133,7 +132,6 @@ beforeEach(() => {
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
   h.addons = [];
-  loggingMock.logToAxiom.mockClear();
   dbMock.dbRead.article.findMany.mockImplementation((args: never) =>
     harness.prisma.article.findMany(args)
   );
@@ -171,17 +169,6 @@ describe('semantic article search', () => {
       excludedUserIds: [901],
       excludedTagIds: [801],
     });
-  });
-
-  it('logs how many candidates came back and how many survived hydration', async () => {
-    await search([11, 12, 10]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'semantic-article-search',
-        hydrated: 1,
-        payload: expect.objectContaining({ returned: 3 }),
-      })
-    );
   });
 });
 

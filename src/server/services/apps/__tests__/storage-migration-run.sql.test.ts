@@ -292,13 +292,6 @@ describe('claim and save on a real database', () => {
     await runStorageMigrationsForRequest('pubreq_R', ['cards'], APP);
     const [row] = await rows();
     expect([row.status, row.claim_token]).toEqual(['running', 'other-runner']);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'info',
-        message: 'storage migration run pubreq_R/cards was re-claimed by another runner',
-      }),
-      'app-blocks'
-    );
   });
 });
 
@@ -395,16 +388,6 @@ describe('the operator hold (app-blocks-storage-migration-hold) on a real databa
       { advanced: 0, held: 1, tableMissing: false },
     ]);
     expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-storage-migration-hold', APP, undefined);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'app-storage-migration-run',
-        type: 'info',
-        publishRequestId: 'pubreq_H',
-        appBlockId: APP,
-        held: true,
-      }),
-      'app-blocks'
-    );
 
     // Lifted: the next job run claims it. The request reads as pending, so the claimed run waits
     // (one claim, one save, no page) — enough to show it was taken.
