@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -369,10 +371,79 @@ describe('the existing entry, read right after a write', () => {
     expect(mockDbWrite.collectionItem.findMany).toHaveBeenCalled();
   });
 
+  it('is flagged as just written once a save lands', async () => {
+    redisMock.redis.get.mockResolvedValue(null as never);
+    await resave(AUTHOR_ID, TAG_B);
+    expect(redisMock.redis.set).toHaveBeenCalledWith(
+      expect.stringContaining(`collectionItem:${COLLECTION_ID}:imageId:${IMAGE_ID}`),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it('is read from the replica otherwise (control)', async () => {
     redisMock.redis.get.mockResolvedValue(null as never);
     await resave(AUTHOR_ID, SYSTEM_TAG);
     expect(mockDbWrite.collectionItem.findMany).not.toHaveBeenCalled();
     expect(writtenTag()).toBe(SYSTEM_TAG);
+  });
+});
+
+describe('the entry write itself, run on Postgres', () => {
+  let pg: PGlite;
+  beforeAll(async () => {
+    pg = await PGlite.create();
+    await pg.exec(`
+      CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
+      CREATE TABLE "TagsOnCollection" ("collectionId" int, "tagId" int, "filterableOnly" boolean);
+      CREATE TABLE "CollectionItem" (
+        id serial PRIMARY KEY, "collectionId" int, "addedById" int,
+        status "CollectionItemStatus", "imageId" int, "tagId" int
+      );
+      CREATE UNIQUE INDEX ON "CollectionItem" ("collectionId", "imageId") WHERE "imageId" IS NOT NULL;
+      INSERT INTO "TagsOnCollection" VALUES
+        (${COLLECTION_ID}, ${TAG_A}, false), (${COLLECTION_ID}, ${TAG_B}, false),
+        (${COLLECTION_ID}, ${SYSTEM_TAG}, true);
+    `);
+  });
+  afterAll(() => pg.close());
+
+  // The save as the service builds it, then that statement run on the given table state.
+  const runSave = async (tagId: number, stored: { tagId: number | null } | null) => {
+    await pg.exec('DELETE FROM "CollectionItem"');
+    if (stored)
+      await pg.query(
+        'INSERT INTO "CollectionItem" ("collectionId", "addedById", status, "imageId", "tagId") VALUES ($1, $2, $3, $4, $5)',
+        [COLLECTION_ID, AUTHOR_ID, 'ACCEPTED', IMAGE_ID, stored.tagId]
+      );
+    await resave(AUTHOR_ID, tagId);
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const query = Prisma.sql(strings, ...values);
+    await pg.query(query.text, query.values as unknown[]);
+    return (await pg.query<{ tagId: number | null }>('SELECT "tagId" FROM "CollectionItem"')).rows;
+  };
+
+  // The read below still shows the entry with its system tag (a stale replica): the service sends it.
+  beforeEach(() => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: SYSTEM_TAG, addedById: AUTHOR_ID, note: null },
+    ]);
+  });
+
+  it('does not re-create a removed entry with its old system tag', async () => {
+    expect(await runSave(SYSTEM_TAG, null)).toEqual([]);
+  });
+
+  it('does not put a system tag back on an entry whose tag was cleared', async () => {
+    expect(await runSave(SYSTEM_TAG, { tagId: null })).toEqual([{ tagId: null }]);
+  });
+
+  it('writes a category tag (control)', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    expect(await runSave(TAG_B, null)).toEqual([{ tagId: TAG_B }]);
   });
 });

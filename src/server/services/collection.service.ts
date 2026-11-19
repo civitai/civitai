@@ -1345,6 +1345,15 @@ export const saveItemInCollections = async ({
         "${Prisma.raw(itemKey)}" INTEGER,
         "tagId" INTEGER
       )
+      -- A system (filterableOnly) tag is never written from here: such a row only re-sends an entry
+      -- its stored system tag, which the update below would keep anyway, so dropping it writes the
+      -- same; on a stale read it stops the tag landing on a new or since-cleared entry.
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "TagsOnCollection" tc
+        WHERE tc."collectionId" = v."collectionId"
+          AND tc."tagId" = v."tagId"
+          AND tc."filterableOnly"
+      )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
         DO UPDATE SET "tagId" = EXCLUDED."tagId"
