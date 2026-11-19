@@ -411,3 +411,18 @@ describe('parseNoticeKeys', () => {
     expect(parseNoticeKeys([`${Number.MAX_SAFE_INTEGER}0:1`])).toEqual([]);
   });
 });
+
+describe("a hidden check on the player's own image", () => {
+  it('is never served to the player who posted it, and their answer is refused', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+
+    expect(await pick(1)).toBeNull();
+    expect((await pick(2))?.referenceId).toBe(ref);
+
+    expect(await answer(1, ref, '4')).toMatchObject({ status: 'rejected', reason: 'own-image' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(0);
+  });
+});

@@ -1,13 +1,8 @@
 import type { PromptHighlightCategory } from '@civitai/mod-utils/prompt-audit';
+import type { ImageReviewType as AnyImageReviewType } from '@civitai/shared/image-review-types';
 
-export type ImageReviewType =
-  | 'minor'
-  | 'poi'
-  | 'tag'
-  | 'newUser'
-  | 'modRule'
-  | 'remixSource'
-  | 'csam';
+/** The review queues; appeals have their own. */
+export type ImageReviewType = Exclude<AnyImageReviewType, 'appeal'>;
 
 export const IMAGE_REVIEW_SLUGS = [
   'minor',
@@ -23,7 +18,7 @@ export type ImageReviewSlug = (typeof IMAGE_REVIEW_SLUGS)[number];
 export const IMAGE_VIEW_SLUGS = [...IMAGE_REVIEW_SLUGS, 'csam', 'reported', 'appeals'] as const;
 export type ImageViewSlug = (typeof IMAGE_VIEW_SLUGS)[number];
 
-const IMAGE_REVIEW_REASONS: Record<ImageReviewType | 'appeal', string> = {
+const IMAGE_REVIEW_REASONS: Record<AnyImageReviewType, string> = {
   minor: 'The scan, the prompt, an attached resource or a collection AI review suggested a minor.',
   poi: 'The scan, the prompt, an attached resource, or a bounty it belongs to or was entered into suggested a real person.',
   tag: 'An applied tag sends images to review.',

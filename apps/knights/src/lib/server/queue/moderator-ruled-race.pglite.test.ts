@@ -44,13 +44,13 @@ it('leaves an item another path moved off Open after the sweep read it', async (
   await castVote(db, { userId: 1, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
   await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
 
-  // The connection is handed out in call order: the sweep reads the item Open, the hand-up to the Inquisitors commits, then the sweep's close runs.
+  // The connection is handed out in call order: the sweep reads the item Open, the expiry (one vote, below the Paladin quorum) commits, then the sweep's close runs.
   const [swept, escalated] = await Promise.all([
     closeModeratorRuledItems(db, { now: LATER }),
     escalateExpired(db, { now: LATER }),
   ]);
 
-  expect(escalated).toMatchObject({ toInquisitor: 1 });
+  expect(escalated).toMatchObject({ expired: 1 });
   expect(swept).toEqual({ closed: 0, failed: 0 });
   const row = (
     await pg.query<Record<string, unknown>>(
@@ -58,12 +58,12 @@ it('leaves an item another path moved off Open after the sweep read it', async (
       [id]
     )
   ).rows[0];
-  expect(row).toEqual({ status: 'Inquisitor', reason: null, resolvedValue: null });
+  expect(row).toEqual({ status: 'Closed', reason: 'expired', resolvedValue: null });
   const votes = await pg.query<{ verdict: string; settledAt: Date | null }>(
     `SELECT verdict, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1`,
     [id]
   );
-  expect(votes.rows).toEqual([{ verdict: 'pending', settledAt: null }]);
+  expect(votes.rows).toEqual([{ verdict: 'inconclusive', settledAt: null }]);
 });
 
 it('closes against the level the image has when the close runs, not when the sweep read it', async () => {

@@ -78,12 +78,15 @@ export function domainDocLevel(claims: Pick<BlockTokenClaims, 'maxBrowsingLevel'
 /**
  * A registry subscription's level, from the mature ratings its audience may read
  * (`registry-adapter/audience.ts`): PG and PG-13 for everyone (the site never hides those by
- * rating), R with `r`, X with `x`. XXX is never included: an audience records only `r` and `x`,
- * so it cannot say whether its user admits XXX, and the feed fails closed on it.
+ * rating), R with `r`, X with `x`, XXX with `xxx`.
  */
-export function audienceDocLevel(allowed: { r: boolean; x: boolean }): number {
+export function audienceDocLevel(allowed: { r: boolean; x: boolean; xxx: boolean }): number {
   return (
-    NsfwLevel.PG | NsfwLevel.PG13 | (allowed.r ? NsfwLevel.R : 0) | (allowed.x ? NsfwLevel.X : 0)
+    NsfwLevel.PG |
+    NsfwLevel.PG13 |
+    (allowed.r ? NsfwLevel.R : 0) |
+    (allowed.x ? NsfwLevel.X : 0) |
+    (allowed.xxx ? NsfwLevel.XXX : 0)
   );
 }
 

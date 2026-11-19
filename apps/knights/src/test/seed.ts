@@ -18,14 +18,14 @@ export async function seedImage(
   {
     nsfwLevel = 4,
     publishedAt = '2020-01-01',
-  }: { nsfwLevel?: number; publishedAt?: string | null } = {}
+    userId = null,
+  }: { nsfwLevel?: number; publishedAt?: string | null; userId?: number | null } = {}
 ) {
   await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [id, publishedAt]);
-  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,$3,$1)`, [
-    id,
-    `key-${id}`,
-    nsfwLevel,
-  ]);
+  await pg.query(
+    `INSERT INTO "Image" ("id","url","nsfwLevel","postId","userId") VALUES ($1,$2,$3,$1,$4)`,
+    [id, `key-${id}`, nsfwLevel, userId]
+  );
 }
 
 /** Settled, graded votes in the player's history, newest last; they need the current month's vote partition. */

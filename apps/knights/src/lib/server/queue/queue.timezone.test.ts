@@ -52,14 +52,16 @@ describe('on a host that is not on UTC', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 0,
+      rerated: 0,
     });
     const atExpiry = new Date('2026-12-18T12:00:00Z');
-    // No higher rank is staffed here, so the voted item goes straight to the Inquisitors.
+    // No higher rank is staffed here and one vote is below the quorum, so the voted item closes at its expiry.
     expect(await escalateExpired(db, { now: atExpiry })).toEqual({
       escalated: 0,
-      toInquisitor: 1,
+      toInquisitor: 0,
       extended: 0,
-      expired: 0,
+      expired: 1,
+      rerated: 0,
     });
   });
 });

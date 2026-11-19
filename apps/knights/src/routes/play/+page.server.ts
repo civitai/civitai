@@ -63,6 +63,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'bad-answer': 'That answer is not on offer.',
   'bad-block-reason': BLOCK_REASON_TEXT,
   'already-voted': 'You have already judged this one.',
+  'own-image': 'You cannot judge your own image.',
   'not-open': 'This one has already been settled.',
   unavailable: 'This one is not open for judging.',
   'no-weight': 'Your standing is too low for your judgment to count yet.',

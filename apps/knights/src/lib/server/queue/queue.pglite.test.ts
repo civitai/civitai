@@ -663,26 +663,29 @@ describe('resolution', () => {
     expect(applyConsensus).toHaveBeenCalledTimes(1);
   });
 
-  it('hands a Paladin split to the Inquisitors without applying anything', async () => {
+  it('re-rates a Paladin split instead of handing it to the Inquisitors', async () => {
     for (let u = 20; u < 24; u++) await player(u, 'Paladin');
     await image(10, 4);
     const id = await item(10, { minRank: 'Paladin' });
     const answers = ['1', '2', '4', '8'];
-    const before = await counterValue('knights_escalations_total', { reason: 'no-consensus' });
+    const before = await counterValue('knights_escalations_total', {
+      reason: 'no-consensus-rerate',
+    });
     for (let i = 0; i < 4; i++) await vote(20 + i, id, answers[i]);
-    expect(await counterValue('knights_escalations_total', { reason: 'no-consensus' })).toBe(
+    expect(await counterValue('knights_escalations_total', { reason: 'no-consensus-rerate' })).toBe(
       before + 1
     );
 
+    // Four answers, one vote each: the highest of them.
     expect(await itemRow(id)).toMatchObject({
-      status: 'Inquisitor',
-      minRank: 'Inquisitor',
-      questionKey: Q,
-      escalationReason: 'no-consensus',
+      status: 'Resolved',
+      minRank: 'Paladin',
+      resolvedValue: '8',
+      reason: 'no-consensus-rerate',
+      escalationReason: null,
     });
-    expect((await itemRow(id)).expiresAt).toBeNull();
-    expect(applyConsensus).not.toHaveBeenCalled();
-    expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect((await verdicts(id)).every((v) => v.verdict === 'inconclusive')).toBe(true);
   });
 
   it('sends a rating more than one level below the current one to the Inquisitors', async () => {
@@ -1238,12 +1241,13 @@ describe('escalateExpired', () => {
     await vote(3, stalePaladin, '4');
 
     const res = await escalateExpired(db, { now: NOW });
-    expect(res).toEqual({ escalated: 1, toInquisitor: 1, extended: 0, expired: 0 });
+    expect(res).toEqual({ escalated: 1, toInquisitor: 0, extended: 0, expired: 1, rerated: 0 });
     expect(await itemRow(stale)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+    // One vote is below the Paladin quorum, so the end of the path closes it instead of re-rating.
     expect(await itemRow(stalePaladin)).toMatchObject({
-      status: 'Inquisitor',
-      minRank: 'Inquisitor',
-      escalationReason: 'no-consensus',
+      status: 'Closed',
+      minRank: 'Paladin',
+      reason: 'expired',
     });
     expect((await itemRow(stale)).escalationReason).toBeNull();
     expect(await itemRow(fresh)).toMatchObject({ status: 'Open', minRank: 'Knight' });
@@ -1293,12 +1297,14 @@ describe('escalateExpired', () => {
       toInquisitor: 0,
       extended: 1,
       expired: 0,
+      rerated: 0,
     });
     expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
       escalated: 0,
       toInquisitor: 0,
       extended: 0,
       expired: 1,
+      rerated: 0,
     });
 
     expect(await itemRow(id)).toMatchObject({
@@ -1335,12 +1341,14 @@ describe('escalateExpired', () => {
     expect(await escalateExpired(db, { now: hoursAfter(72) })).toMatchObject({
       extended: 1,
       expired: 0,
+      rerated: 0,
     });
     expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
       escalated: 0,
       toInquisitor: 0,
       extended: 0,
       expired: 1,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
@@ -1368,6 +1376,7 @@ describe('escalateExpired', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 1,
+      rerated: 0,
     });
     expect(await itemRow(voted)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(idle)).toMatchObject({ status: 'Closed', reason: 'expired' });
@@ -1388,18 +1397,20 @@ describe('escalation with empty ranks', () => {
     return id;
   }
 
-  it('sends a voted item straight to the Inquisitors when no Templar or Paladin plays', async () => {
+  it('closes a voted item below the Knight quorum as expired when no Templar or Paladin plays', async () => {
     const id = await votedAndLapsed();
     expect(await escalateExpired(db, { now: NOW })).toEqual({
       escalated: 0,
-      toInquisitor: 1,
+      toInquisitor: 0,
       extended: 0,
-      expired: 0,
+      expired: 1,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
-      status: 'Inquisitor',
-      minRank: 'Inquisitor',
-      escalationReason: 'no-consensus',
+      status: 'Closed',
+      minRank: 'Knight',
+      reason: 'expired',
+      escalationReason: null,
     });
   });
 
@@ -1411,6 +1422,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 0,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar', votesNeeded: 3 });
   });
@@ -1429,14 +1441,14 @@ describe('escalation with empty ranks', () => {
       `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT 2 FROM generate_series(1, 3)`
     );
     await escalateExpired(db, { now: NOW });
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({ status: 'Closed', minRank: 'Knight' });
   });
 
   it('does not count a Paladin who has not voted in the last 14 days', async () => {
     const id = await votedAndLapsed();
     await active(2, 'Paladin', 15);
     await escalateExpired(db, { now: NOW });
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({ status: 'Closed', minRank: 'Knight' });
   });
 
   it('counts a Paladin who voted 13 days ago', async () => {
@@ -1446,12 +1458,19 @@ describe('escalation with empty ranks', () => {
     expect(await itemRow(id)).toMatchObject({ minRank: 'Templar' });
   });
 
-  it('sends a split item to the Inquisitors when no Templar or Paladin plays', async () => {
+  it('re-rates a split item instead of asking the Inquisitors when no Templar or Paladin plays', async () => {
+    // Earlier tests leave their own outcome on the shared mock.
+    applyConsensus.mockImplementation(async () => APPLIED);
     for (let i = 1; i <= 10; i++) await player(i, 'Knight');
     await image(10);
     const id = await item(10);
     for (let i = 1; i <= 10; i++) await vote(i, id, i % 2 ? '4' : '8');
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Resolved',
+      minRank: 'Knight',
+      resolvedValue: '8',
+      reason: 'no-consensus-rerate',
+    });
   });
 
   it('sends a split item to the Templar stage when a Paladin plays', async () => {
@@ -1472,6 +1491,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 1,
       expired: 0,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Open',
@@ -1507,6 +1527,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 1,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
@@ -1531,6 +1552,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 1,
       expired: 0,
+      rerated: 0,
     });
     // A second lapse at the same stage with no vote there closes it: its Knight-stage vote does not count.
     expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
@@ -1538,6 +1560,7 @@ describe('escalation with empty ranks', () => {
       toInquisitor: 0,
       extended: 0,
       expired: 1,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
@@ -1942,6 +1965,7 @@ describe('held players', () => {
       toInquisitor: 0,
       extended: 1,
       expired: 0,
+      rerated: 0,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
   });
@@ -1956,11 +1980,12 @@ describe('held players', () => {
 
     expect(await escalateExpired(db, { now: NOW })).toEqual({
       escalated: 0,
-      toInquisitor: 1,
+      toInquisitor: 0,
       extended: 0,
-      expired: 0,
+      expired: 1,
+      rerated: 0,
     });
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({ status: 'Closed', minRank: 'Knight' });
 
     await image(11);
     const other = await item(11, { expires: PAST });
@@ -1968,6 +1993,340 @@ describe('held players', () => {
     await vote(1, other, '4');
     await escalateExpired(db, { now: NOW });
     expect(await itemRow(other)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+});
+
+describe('no consensus at the end of the path', () => {
+  beforeEach(() => {
+    applyConsensus.mockImplementation(async () => APPLIED);
+  });
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const rerateCount = () =>
+    counterValue('knights_escalations_total', { reason: 'no-consensus-rerate' });
+  const noConsensusCount = () =>
+    counterValue('knights_escalations_total', { reason: 'no-consensus' });
+  const ledger = async (itemId: number) =>
+    (
+      await pg.query<{
+        playerId: number;
+        verdict: string;
+        gold: number;
+        xp: number;
+        settledAt: Date | null;
+      }>(
+        `SELECT "playerId", verdict, gold, xp, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+        [itemId]
+      )
+    ).rows;
+  const inquisitorRows = async () =>
+    (
+      await pg.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "KnightsQueueItem" WHERE status = 'Inquisitor'`
+      )
+    ).rows[0].n;
+  const goldEarned = async (userId: number) =>
+    (
+      await pg.query<{ goldEarned: number }>(
+        `SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=$1`,
+        [userId]
+      )
+    ).rows[0].goldEarned;
+  const hold = (userId: number) =>
+    pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId" = $1`, [userId]);
+  /** A counted vote cast at an earlier stage, which the re-rate sets aside with the rest. */
+  async function earlierVote(itemId: number, playerId: number, stage: string, answer = '4') {
+    await player(playerId, 'Knight');
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold")
+       VALUES ($1,$2,$3,$4,10,$5,$6,1,5)`,
+      [itemId, playerId, NOW, Q, stage, answer]
+    );
+  }
+
+  it('re-rates a split at the last staffed stage to the highest most-voted level, pays XP only and never asks the Inquisitors', async () => {
+    // Knights alone play, so the Knight stage is the end of the path.
+    for (let u = 1; u <= 10; u++) await active(u, 'Knight');
+    await image(10, 4);
+    const id = await item(10);
+    const [rerated, noConsensus] = [await rerateCount(), await noConsensusCount()];
+    // One PG-13, four R, four X and one XXX: R and X tie, X is higher.
+    const answers = ['2', '4', '8', '4', '8', '4', '8', '4', '8', '16'];
+    for (let i = 0; i < 9; i++) expect((await vote(i + 1, id, answers[i])).status).toBe('recorded');
+    expect((await vote(10, id, answers[9])).status).toBe('resolved');
+
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Resolved',
+      minRank: 'Knight',
+      resolvedValue: '8',
+      resolvedFromLevel: 4,
+      reason: 'no-consensus-rerate',
+      escalationReason: null,
+    });
+    expect((await itemRow(id)).appliedAt).not.toBeNull();
+    // The latest voter who gave the level is the write-back's actor.
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect(applyConsensus).toHaveBeenCalledWith({
+      questionKey: Q,
+      imageId: 10,
+      value: '8',
+      actorId: 9,
+    });
+    const votes = await ledger(id);
+    expect(votes).toHaveLength(10);
+    for (const v of votes) {
+      expect(v).toMatchObject({ verdict: 'inconclusive', gold: 0, xp: PROGRESSION.voteXp });
+      expect(v.settledAt).not.toBeNull();
+      expect(await goldEarned(v.playerId)).toBe(0);
+    }
+    expect(await inquisitorRows()).toBe(0);
+    expect(await rerateCount()).toBe(rerated + 1);
+    expect(await noConsensusCount()).toBe(noConsensus);
+
+    // History keeps each player's own answer and never shows the level the image got.
+    const [own] = (await listJudgments(db, 3, { page: 1 })).judgments;
+    expect(own).toMatchObject({ status: 'inconclusive', verdictLabel: null, gold: 0 });
+    const [other] = (await listJudgments(db, 1, { page: 1 })).judgments;
+    expect(other).toMatchObject({ status: 'inconclusive', verdictLabel: null, gold: 0 });
+    expect(other.answerLabel).not.toBe(own.answerLabel);
+  });
+
+  it('re-rates a lapsed stage that has its quorum, down as well, and the tick writes it back', async () => {
+    for (let u = 1; u <= 3; u++) await active(u, 'Templar');
+    await active(4, 'Templar');
+    await hold(4);
+    await image(10, 8);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    await earlierVote(id, 20, 'Knight', '8');
+    // Three votes, two of them PG-13: the Templar quorum, without the unanimity that settles it.
+    for (const [u, answer] of [
+      [1, '2'],
+      [2, '16'],
+      [3, '2'],
+      [4, '16'],
+    ] as const) {
+      expect((await vote(u, id, answer)).status).toBe('recorded');
+    }
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 0,
+      expired: 0,
+      rerated: 1,
+    });
+    // Two levels down: the pushed-down check guards a consensus, not a re-rate.
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Resolved',
+      minRank: 'Templar',
+      resolvedValue: '2',
+      resolvedBy: 3,
+      resolvedFromLevel: 8,
+      reason: 'no-consensus-rerate',
+      appliedAt: null,
+      escalationReason: null,
+    });
+    expect((await ledger(id)).map((v) => [v.playerId, v.verdict, v.settledAt])).toEqual([
+      [1, 'inconclusive', null],
+      [2, 'inconclusive', null],
+      [3, 'inconclusive', null],
+      [4, 'inconclusive', null],
+      [20, 'inconclusive', null],
+    ]);
+    expect(applyConsensus).not.toHaveBeenCalled();
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 1,
+      failed: 0,
+      rerouted: 0,
+    });
+    expect(applyConsensus).toHaveBeenCalledWith({
+      questionKey: Q,
+      imageId: 10,
+      value: '2',
+      actorId: 3,
+    });
+    expect((await itemRow(id)).appliedAt).not.toBeNull();
+    for (const v of await ledger(id)) {
+      expect(v).toMatchObject({ verdict: 'inconclusive', gold: 0 });
+      expect(v.settledAt).not.toBeNull();
+    }
+    expect(await goldEarned(20)).toBe(0);
+    expect(await inquisitorRows()).toBe(0);
+  });
+
+  it('sends a lapsed stage below its quorum whose pick is Blocked to the Inquisitors as blocked', async () => {
+    for (let u = 1; u <= 2; u++) await active(u, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    // Two votes, tied: Blocked is the highest level, below the Templar quorum of three.
+    await vote(1, id, '4');
+    await vote(2, id, '32');
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+      expired: 0,
+      rerated: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+      reason: null,
+      resolvedValue: null,
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['pending', 'pending']);
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('hands a re-rate whose image moved before the write-back to the Inquisitors with its votes pending again', async () => {
+    for (let u = 1; u <= 3; u++) await active(u, 'Templar');
+    await image(10, 8);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    for (const [u, answer] of [
+      [1, '2'],
+      [2, '4'],
+      [3, '2'],
+    ] as const) {
+      await vote(u, id, answer);
+    }
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ rerated: 1 });
+    expect((await verdicts(id)).every((v) => v.verdict === 'inconclusive')).toBe(true);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 16 WHERE id = 10`);
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 1,
+    });
+    // The write-back tab: Inquisitor with a write-back reason and no escalation reason.
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      reason: 'level-moved',
+      escalationReason: null,
+      resolvedValue: null,
+      appliedAt: null,
+    });
+    expect((await ledger(id)).map((v) => [v.verdict, v.settledAt])).toEqual([
+      ['pending', null],
+      ['pending', null],
+      ['pending', null],
+    ]);
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('still hands a non-rating question to the Inquisitors as no-consensus, split or lapsed, and writes nothing', async () => {
+    for (let u = 1; u <= 4; u++) await active(u, 'Paladin');
+    await image(10, 4);
+    await image(11, 4);
+    const split = await item(10, { minRank: 'Paladin', question: 'knights.test.bool' });
+    const answers = ['yes', 'no', 'yes', 'no'];
+    for (let i = 0; i < 3; i++) await vote(i + 1, split, answers[i]);
+    expect((await vote(4, split, answers[3])).status).toBe('inquisitor');
+    // One vote, below the Paladin quorum: a rating would close as expired.
+    const lapsed = await item(11, {
+      minRank: 'Paladin',
+      question: 'knights.test.bool',
+      expires: PAST,
+    });
+    await vote(1, lapsed, 'yes');
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+      expired: 0,
+      rerated: 0,
+    });
+
+    for (const id of [split, lapsed]) {
+      expect(await itemRow(id)).toMatchObject({
+        status: 'Inquisitor',
+        minRank: 'Inquisitor',
+        escalationReason: 'no-consensus',
+        reason: null,
+        resolvedValue: null,
+      });
+      expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    }
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('closes a lapsed stage below its quorum as expired, with no write-back', async () => {
+    for (let u = 1; u <= 2; u++) await active(u, 'Templar');
+    await image(10, 8);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    await vote(1, id, '2');
+    await vote(2, id, '4');
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 0,
+      expired: 1,
+      rerated: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'expired',
+      resolvedValue: null,
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['inconclusive', 'inconclusive']);
+    await settleFinalItems(db, { now: NOW });
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 0,
+    });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    for (const v of await ledger(id)) expect(v).toMatchObject({ verdict: 'inconclusive', gold: 0 });
+  });
+
+  it('sends a Blocked pick to the Inquisitors as blocked', async () => {
+    for (let u = 1; u <= 4; u++) await player(u, 'Paladin');
+    await image(10, 4);
+    const id = await item(10, { minRank: 'Paladin' });
+    const answers = ['32', '4', '32', '8'];
+    for (let i = 0; i < 3; i++) expect((await vote(i + 1, id, answers[i])).status).toBe('recorded');
+    expect((await vote(4, id, answers[3])).status).toBe('inquisitor');
+
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+      resolvedValue: null,
+    });
+    expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('grades the votes against a moderator who locked the image before the write-back', async () => {
+    for (let u = 1; u <= 3; u++) await active(u, 'Templar');
+    await image(10, 8);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    for (const [u, answer] of [
+      [1, '2'],
+      [2, '1'],
+      [3, '2'],
+    ] as const) {
+      await vote(u, id, answer);
+    }
+    await escalateExpired(db, { now: NOW });
+    await lockImage(pg, 10, { reason: 'Moderator rating review', level: 1 });
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 1,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '1',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['failed', 'correct', 'failed']);
+    expect(applyConsensus).not.toHaveBeenCalled();
   });
 });
 
@@ -1984,5 +2343,24 @@ describe('countOpenServableKnightItems', () => {
 
     expect(await countOpenServableKnightItems(db, 100)).toBe(2);
     expect(await countOpenServableKnightItems(db, 1)).toBe(1);
+  });
+});
+
+describe('a player and their own image', () => {
+  it('never serves a player an image they posted, and refuses their vote on it', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+    const mine = await item(10);
+    const other = await item(11);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([mine, other].sort());
+
+    expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
+    expect(await verdicts(mine)).toEqual([]);
+    expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
   });
 });
