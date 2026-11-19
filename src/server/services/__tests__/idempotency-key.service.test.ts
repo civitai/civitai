@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as FliptClient from '~/server/flipt/client';
@@ -384,5 +384,66 @@ describe('the migration', () => {
 
   it('can be applied twice', async () => {
     await expect(pg.exec(MIGRATION)).resolves.toBeDefined();
+  });
+});
+
+describe('a sysRedis key always counts, whatever the date the flag is turned on', () => {
+  // A flag first turned on long after this PR: a pod without the flag yet may be mid-send.
+  beforeEach(() => {
+    h.isFlipt.mockResolvedValue(true);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2027-06-01T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('refuses while a sysRedis claim is pending, leaving no Postgres claim', async () => {
+    sys.set(`${HP}:7:k20`, 'pending');
+
+    const claim = await claimIdempotencyKey('headless-post', '7:k20', { db });
+
+    expect(claim.status).toBe('pending');
+    expect(await rows()).toEqual([]);
+  });
+
+  it('answers with the result sysRedis holds, without acting again', async () => {
+    sys.set(`${HP}:7:k21`, '{"postId":57}');
+
+    const claim = await claimIdempotencyKey('headless-post', '7:k21', { db });
+
+    expect([claim.status, claim.result]).toEqual(['done', '{"postId":57}']);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('a stripe-air marker in sysRedis is taken', async () => {
+    sys.set('webhooks:stripe:air-notified:cs_20', '1');
+
+    const claim = await claimIdempotencyKey('stripe-air', 'cs_20', { db });
+
+    expect(claim.status).toBe('taken');
+  });
+});
+
+describe('purgeExpiredIdempotencyKeys statement', () => {
+  it('re-checks expiry on the row it deletes, so a claim taken over meanwhile survives', async () => {
+    // A takeover between the LIMIT subquery and the DELETE's row lock leaves (scope, key)
+    // matching after the recheck; only a predicate on the deleted row itself spares the new claim.
+    const seen: string[] = [];
+    const recording = pgliteKysely(
+      () =>
+        ({
+          query: (text: string, params: unknown[]) => {
+            seen.push(text.replace(/\s+/g, ' ').trim());
+            return pg.query(text, params);
+          },
+        } as unknown as PGlite)
+    );
+
+    await purgeExpiredIdempotencyKeys({ db: recording, batch: 10 });
+
+    expect(seen).toEqual([
+      'DELETE FROM "IdempotencyKey" WHERE "expiresAt" < now() AND (scope, key) IN ( SELECT scope, key FROM "IdempotencyKey" WHERE "expiresAt" < now() LIMIT $1 )',
+    ]);
   });
 });
