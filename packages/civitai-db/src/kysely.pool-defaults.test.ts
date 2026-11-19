@@ -109,6 +109,23 @@ describe('createKyselyClients applies pool defaults', () => {
     expect(dbWrite).toBeDefined();
   });
 
+  it.each([undefined, ''])(
+    'with no replica (%j) hands back the primary as dbRead and builds one pool',
+    (replicaConnectionString) => {
+      // Apps such as Knights pass an optional replica URL straight through and ship before it is set: unset or
+      // empty must leave every read on the primary client, not build a pool against an empty connection string.
+      const { dbRead, dbWrite } = createKyselyClients<TestDB>({
+        connectionString: PRIMARY_URL,
+        replicaConnectionString,
+        sslNoVerify: true,
+      });
+
+      expect(createdPools).toHaveLength(1);
+      expect(createdPools[0].options.connectionString).toContain('primary.example.test');
+      expect(dbRead).toBe(dbWrite);
+    }
+  );
+
   it('forces sslmode=no-verify on both pools, and still applies the defaults', () => {
     // Pins an ORDER DEPENDENCY that the defaults object introduced. `config` snapshots
     // `poolConfig.connectionString`, so the sslNoVerify rewrite has to run BEFORE that snapshot.

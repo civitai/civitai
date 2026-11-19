@@ -19,6 +19,7 @@ import {
 
 type WriteMock = {
   $transaction: ReturnType<typeof vi.fn>;
+  $queryRaw: ReturnType<typeof vi.fn>;
   appListing: { updateMany: ReturnType<typeof vi.fn> };
   appBlock: {
     updateMany: ReturnType<typeof vi.fn>;
@@ -37,6 +38,7 @@ type ReadMock = {
 const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     appListing: { updateMany: vi.fn(async () => ({ count: 1 })) },
     appBlock: {
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -140,6 +142,7 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite));
   mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockWrite.$queryRaw.mockReset().mockResolvedValue([]);
   mockWrite.appBlock.findUnique
     .mockReset()
     .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
@@ -176,6 +179,10 @@ describe('resetOnsiteListingToPending', () => {
     expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
       where: { clientId: 'appblk-reset', type: { in: ['Access', 'Refresh'] } },
     });
+    // The client's block rows are locked before the flip, so a concurrent suspension waits on it.
+    expect(mockWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
     const orchestrator = await import('~/server/services/orchestrator/civitai');
     expect(orchestrator.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 7 });
     // (3) fresh pending block publish request cloned from the last approved (owner-owned).
