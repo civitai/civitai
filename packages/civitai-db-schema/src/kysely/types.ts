@@ -5258,10 +5258,6 @@ export type PostText = {
    * Set by a CSAM verdict and held for review. Cleared only when no csam hold on it is pending or confirmed, never by a scan.
    */
   csamHeld: Generated<boolean>;
-  /**
-   * The latest confirmation among its csam holds (`post_text_sync_csam_hold`). A "none" report choice holds the text one year from here.
-   */
-  csamConfirmedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

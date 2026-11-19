@@ -1,36 +1,27 @@
--- Confirmed held PostText: a hold confirmed with the "none" report choice holds for one year from
--- `csamConfirmedAt`, then `post_text_held` stops holding it on that ground unless
+-- Confirmed held PostText: a hold confirmed with the "none" report choice holds for one year from the
+-- latest confirmation (`post_text_csam_confirmed_at`, read off its TextScanHold rows), then
+-- `post_text_held` stops holding it on that ground unless
 -- `post_text_retention_skip` names a reason (any other hold still applies), and the
 -- `purge-confirmed-csam-text` job deletes it. However the row goes, the delete trigger drops the hold's
 -- copy of the text and its label-store snapshot with it.
 --
--- MANUAL APPLY, per environment, BEFORE the PR that writes the column merges. Applying early is safe
--- for the running code: nothing deployed reads the column, and with it NULL `post_text_held` holds
--- exactly what it held before. Needs 20270108093000_post_text.
+-- MANUAL APPLY, per environment, BEFORE the PR that records the report choice merges. Applying early is
+-- safe for the running code: retention needs every confirmed hold to carry `meta.reportChoice = 'none'`,
+-- which nothing deployed writes, so `post_text_held` holds exactly what it held before. Needs
+-- 20270108093000_post_text.
 --
 -- Apply statement by statement (psql autocommit, the default), off-peak. Every step is re-runnable.
 SET lock_timeout = '3s';
 
--- 1. Column and index.
-ALTER TABLE "PostText" ADD COLUMN IF NOT EXISTS "csamConfirmedAt" TIMESTAMP(3);
+-- 1. The latest confirmation of a text's csam holds. Read off TextScanHold, not stored on PostText.
+CREATE OR REPLACE FUNCTION post_text_csam_confirmed_at(text_id INTEGER)
+RETURNS timestamp AS $$
+  SELECT max(h."decidedAt") FROM "TextScanHold" h
+  WHERE h."entityType" = 'PostText' AND h."entityId" = text_id AND h.label = 'csam'
+    AND h.status = 'Confirmed';
+$$ LANGUAGE sql STABLE SET search_path = public, pg_temp;
 
-CREATE INDEX IF NOT EXISTS "PostText_csamConfirmedAt_idx" ON "PostText" ("csamConfirmedAt")
-  WHERE "csamConfirmedAt" IS NOT NULL;
-
--- 2. Backfill from the latest confirmed hold's decision time, as `post_text_sync_csam_hold` sets it.
-UPDATE "PostText" t
-SET "csamConfirmedAt" = h."decidedAt"
-FROM (
-  SELECT "entityId", max("decidedAt") AS "decidedAt"
-  FROM "TextScanHold"
-  WHERE "entityType" = 'PostText' AND label = 'csam' AND status = 'Confirmed'
-    AND "decidedAt" IS NOT NULL
-  GROUP BY "entityId"
-) h
-WHERE h."entityId" = t."id" AND t."csamHeld" AND t."csamConfirmedAt" IS NULL;
-
--- 3. The hold check. Same signature, so the delete trigger and the app's callers are unchanged; the
--- confirmation time is read off the row, which a BEFORE DELETE trigger still sees.
+-- 2. The hold check. Same signature, so the delete trigger and the app's callers are unchanged.
 CREATE OR REPLACE FUNCTION post_text_held(
   text_id INTEGER, csam_held BOOLEAN, post_id INTEGER, author_id INTEGER
 )
@@ -41,7 +32,7 @@ BEGIN
   -- `csamHeld` keeps the text from readers for good. As a delete hold it stands while the hold is
   -- pending, and once confirmed until a CSAM report captured the post's text after the hold was raised
   -- (from then on that report's own retention, below, holds it). A confirmation whose report choice
-  -- was "none" holds for one year from `csamConfirmedAt`, and after it while
+  -- was "none" holds for one year from its latest confirmation, and after it while
   -- `post_text_retention_skip` names a reason; any other choice, or none recorded, holds until the
   -- report is filed.
   IF csam_held AND (
@@ -72,12 +63,8 @@ BEGIN
           AND (c ->> 'capturedAt')::timestamptz >= h."createdAt" AT TIME ZONE 'UTC'
       )
       AND NOT (
-        EXISTS (
-          SELECT 1 FROM "PostText" t
-          WHERE t."id" = text_id
-            AND t."csamConfirmedAt" IS NOT NULL
-            AND t."csamConfirmedAt" <= (now() AT TIME ZONE 'UTC') - interval '1 year'
-        )
+        -- No confirmation time (a hold confirmed without one) never starts the year.
+        coalesce(post_text_csam_confirmed_at(text_id) <= (now() AT TIME ZONE 'UTC') - interval '1 year', false)
         AND NOT EXISTS (
           SELECT 1 FROM "TextScanHold" h
           WHERE h."entityType" = 'PostText' AND h."entityId" = text_id AND h.label = 'csam'
@@ -125,7 +112,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp;
 
--- 4. What keeps a deleted text's copies past its retention. The purge job reports the same reasons.
+-- 3. What keeps a deleted text's copies past its retention. The purge job reports the same reasons.
 CREATE OR REPLACE FUNCTION post_text_retention_skip(post_id INTEGER, author_id INTEGER)
 RETURNS text AS $$
 BEGIN
@@ -185,7 +172,7 @@ $$;
 
 REVOKE ALL ON FUNCTION label_store.drop_label_notes(TEXT, TEXT, TEXT) FROM PUBLIC;
 
--- 5. The delete trigger: refuses a held text as before; a confirmed "none" text past its year takes its
+-- 4. The delete trigger: refuses a held text as before; a confirmed "none" text past its year takes its
 -- hold copy and label-store snapshot with it, in the same statement.
 CREATE OR REPLACE FUNCTION post_text_keep_held() RETURNS trigger AS $$
 BEGIN
@@ -193,8 +180,7 @@ BEGIN
     RAISE EXCEPTION 'PostText % cannot be deleted while it is held', OLD."id";
   END IF;
   IF OLD."csamHeld"
-    AND OLD."csamConfirmedAt" IS NOT NULL
-    AND OLD."csamConfirmedAt" <= (now() AT TIME ZONE 'UTC') - interval '1 year'
+    AND coalesce(post_text_csam_confirmed_at(OLD."id") <= (now() AT TIME ZONE 'UTC') - interval '1 year', false)
     AND NOT EXISTS (
       SELECT 1 FROM "TextScanHold" h
       WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'
@@ -233,9 +219,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
--- 6. A text's held flag and confirmation time, recomputed from all of its csam holds after each
--- decision: held while any hold is pending or confirmed, confirmed at the latest confirmation. So a
--- dismissal of one hold leaves what another hold gave.
+-- 5. A text's held flag, recomputed from all of its csam holds after each decision: held while any hold
+-- is pending or confirmed. So a dismissal of one hold leaves what another hold gave.
 CREATE OR REPLACE FUNCTION post_text_sync_csam_hold(text_id INTEGER)
 RETURNS void AS $$
   UPDATE "PostText" t
@@ -243,11 +228,6 @@ RETURNS void AS $$
         SELECT 1 FROM "TextScanHold" h
         WHERE h."entityType" = 'PostText' AND h."entityId" = t."id" AND h.label = 'csam'
           AND h.status IN ('Pending', 'Confirmed')
-      ),
-      "csamConfirmedAt" = (
-        SELECT max(h."decidedAt") FROM "TextScanHold" h
-        WHERE h."entityType" = 'PostText' AND h."entityId" = t."id" AND h.label = 'csam'
-          AND h.status = 'Confirmed'
       ),
       "updatedAt" = now()
   WHERE t."id" = text_id;

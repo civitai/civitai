@@ -70,8 +70,8 @@ async function confirmed({
 }) {
   const at = confirmedDaysAgo === null ? 'NULL' : ago(confirmedDaysAgo);
   const { rows } = await pg.query<{ id: number }>(
-    `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "csamConfirmedAt", "updatedAt")
-     VALUES ($1, $2, 0, '<p>x</p>', true, ${at}, now()) RETURNING id`,
+    `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "updatedAt")
+     VALUES ($1, $2, 0, '<p>x</p>', true, now()) RETURNING id`,
     [postId, AUTHOR]
   );
   const textId = rows[0].id;
@@ -116,7 +116,7 @@ beforeAll(async () => {
   await pg.exec(`SET TimeZone = 'America/New_York'`);
   await pg.exec(SCHEMA);
   await pg.exec(migration('20270108093000_post_text'));
-  await pg.exec(migration('20271115120000_post_text_csam_confirmed_at'));
+  await pg.exec(migration('20271119030000_post_text_csam_retention'));
 });
 
 afterAll(async () => {
@@ -144,7 +144,7 @@ beforeEach(async () => {
 });
 
 describe('post_text_held: a confirmed hold with no report', () => {
-  it('holds a "none" confirmation for a year from csamConfirmedAt, then not', async () => {
+  it('holds a "none" confirmation for a year from its latest confirmation, then not', async () => {
     const young = await confirmed({ confirmedDaysAgo: 364 });
     const old = await confirmed({ confirmedDaysAgo: 366, postId: 2 });
     await expect(deleteText(young.textId)).rejects.toThrow(/cannot be deleted while it is held/);
@@ -156,11 +156,11 @@ describe('post_text_held: a confirmed hold with no report', () => {
     await expect(deleteText(textId)).rejects.toThrow(/held/);
   });
 
-  it('reads the confirmation time off the row being deleted', async () => {
-    const { textId } = await confirmed({ confirmedDaysAgo: 366 });
-    await pg.query(`UPDATE "PostText" SET "csamConfirmedAt" = ${ago(10)} WHERE id = $1`, [textId]);
+  it("reads the confirmation time off the text's holds", async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(`UPDATE "TextScanHold" SET "decidedAt" = ${ago(10)} WHERE id = $1`, [holdId]);
     await expect(deleteText(textId)).rejects.toThrow(/held/);
-    await pg.query(`UPDATE "PostText" SET "csamConfirmedAt" = ${ago(366)} WHERE id = $1`, [textId]);
+    await pg.query(`UPDATE "TextScanHold" SET "decidedAt" = ${ago(366)} WHERE id = $1`, [holdId]);
     await deleteText(textId);
   });
 
@@ -275,8 +275,8 @@ describe('purgeConfirmedCsamText', () => {
     await confirmed({ confirmedDaysAgo: 366 });
     await confirmed({ confirmedDaysAgo: 366, postId: 2 });
     const other = await pg.query<{ id: number }>(
-      `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "csamConfirmedAt", "updatedAt")
-       VALUES (3, ${AUTHOR + 1}, 0, 'x', true, ${ago(366)}, now()) RETURNING id`
+      `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "updatedAt")
+       VALUES (3, ${AUTHOR + 1}, 0, 'x', true, now()) RETURNING id`
     );
     await pg.query(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta", "decidedAt")
@@ -297,8 +297,8 @@ it('reaches a purgeable text behind more kept ones than its page budget', async 
   await confirmed({ confirmedDaysAgo: 366 });
   await confirmed({ confirmedDaysAgo: 366, postId: 2 });
   const other = await pg.query<{ id: number }>(
-    `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "csamConfirmedAt", "updatedAt")
-     VALUES (3, ${AUTHOR + 1}, 0, 'x', true, ${ago(366)}, now()) RETURNING id`
+    `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "updatedAt")
+     VALUES (3, ${AUTHOR + 1}, 0, 'x', true, now()) RETURNING id`
   );
   await pg.query(
     `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta", "decidedAt")
@@ -509,7 +509,7 @@ describe('post_text_sync_csam_hold', () => {
     await pg.query(`SELECT post_text_sync_csam_hold($1)`, [textId]);
     const { rows } = await pg.query<{ held: boolean; days: number | null }>(
       `SELECT "csamHeld" AS held,
-              extract(day FROM (now() AT TIME ZONE 'UTC') - "csamConfirmedAt")::int AS days
+              extract(day FROM (now() AT TIME ZONE 'UTC') - post_text_csam_confirmed_at(id))::int AS days
        FROM "PostText" WHERE id = $1`,
       [textId]
     );

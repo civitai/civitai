@@ -16,7 +16,7 @@ export type CsamTextRetentionSkip =
 const dueSql = Prisma.sql`
   FROM "PostText" t
   WHERE t."csamHeld"
-    AND t."csamConfirmedAt" <= (now() AT TIME ZONE 'UTC') - interval '1 year'
+    AND post_text_csam_confirmed_at(t.id) <= (now() AT TIME ZONE 'UTC') - interval '1 year'
     AND EXISTS (
       SELECT 1 FROM "TextScanHold" h
       WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'

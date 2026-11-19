@@ -357,8 +357,7 @@ export async function decideCsamHold(args: DecideArgs) {
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
       // Held while any of the text's csam holds is pending or confirmed, so a confirmed text stays from
-      // readers even when its scan never marked it held. `csamConfirmedAt`, the latest confirmation,
-      // starts the retention `post_text_held` applies to a `none` report choice.
+      // readers even when its scan never marked it held.
       if (hold.entityType === 'PostText')
         await tx.$executeRaw`SELECT post_text_sync_csam_hold(${hold.entityId}::int)`;
 

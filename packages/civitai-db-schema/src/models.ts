@@ -7034,7 +7034,6 @@ export interface PostText {
   nsfwLevel: number;
   refused: boolean;
   csamHeld: boolean;
-  csamConfirmedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
