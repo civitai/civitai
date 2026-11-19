@@ -49,13 +49,14 @@ export default PublicEndpoint(
         user: session?.user,
         browsingLevel: getRequestBrowsingLevel({ features, user: session?.user }),
         // The media viewer carries the credential, because a token is not a session whatever owner or
-        // moderator presents it. It carries no request headers: the verified-crawler header is only
-        // stripped on proxied paths, and this route's signed-out answers are edge-cached for everyone.
+        // moderator presents it. Of the request headers it carries only the host, which the domain cap
+        // needs: the verified-crawler header is only stripped on proxied paths, and this route's
+        // signed-out answers are edge-cached for everyone.
         mediaViewer: {
           ...getRequestCredential(req),
           user: session?.user,
           features,
-          req: { headers: {} } as typeof req,
+          req: { headers: { host: req.headers.host } } as typeof req,
         },
       });
       return res.status(200).json(queryResult);

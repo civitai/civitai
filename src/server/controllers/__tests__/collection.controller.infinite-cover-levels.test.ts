@@ -60,11 +60,15 @@ const itemCover = (collectionId: number, imageId: number, nsfwLevel: number, ext
   src: null,
 });
 
-const SIGNED_OUT = { user: undefined, features: { canViewNsfw: true }, req: { headers: {} } };
+const SIGNED_OUT = {
+  user: undefined,
+  features: { canViewNsfw: true },
+  req: { headers: { host: 'example.test' } },
+};
 const MATURE_VIEWER = {
   user: { id: 9, isModerator: false, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
   features: { canViewNsfw: true },
-  req: { headers: {} },
+  req: { headers: { host: 'example.test' } },
 };
 const GREEN_MATURE_VIEWER = {
   ...MATURE_VIEWER,

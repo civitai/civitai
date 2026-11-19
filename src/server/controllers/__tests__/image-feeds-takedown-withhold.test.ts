@@ -68,7 +68,7 @@ const ctx = (user?: User, subject?: unknown) =>
     user,
     subject,
     features: { imageIndexFeed: true },
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     ip: '127.0.0.1',
   } as never);
 const feedInput = (selector: object) =>
@@ -226,7 +226,7 @@ describe('image.getImagesForModelVersion on a capped site', () => {
     } as never);
     const result = await getImagesForModelVersionHandler({
       input: { id: 20 },
-      ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+      ctx: { req: { headers: { host: 'example.test' } }, ip: '127.0.0.1', ...context } as never,
     });
     return result[20].images.map((i) => i.id);
   };
@@ -249,12 +249,16 @@ describe('image.getImagesForModelVersion on a capped site', () => {
 
   it("keeps a verified crawler's answer out of the edge cache, since humans get a capped one", async () => {
     const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
-    const req = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
+    const req = { headers: { host: 'example.test', 'x-civitai-verified-bot': 'googlebot' } };
     await run({ features: { canViewNsfw: true }, req, cache });
     expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
 
     const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
-    await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
+    await run({
+      features: { canViewNsfw: true },
+      req: { headers: { host: 'example.test' } },
+      cache: human,
+    });
     expect(human).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
   });
 });
@@ -288,7 +292,7 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
     } as never);
     const result = await getImagesForModelVersionHandler({
       input: { id: 20 },
-      ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+      ctx: { req: { headers: { host: 'example.test' } }, ip: '127.0.0.1', ...context } as never,
     });
     return result[20].images.map((i) => i.id);
   };
@@ -311,7 +315,7 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
       dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(null as never);
       const result = await getImagesForModelVersionHandler({
         input: { id: 20 },
-        ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+        ctx: { req: { headers: { host: 'example.test' } }, ip: '127.0.0.1', ...context } as never,
       });
       return result[20]?.images.map((i) => i.id) ?? [];
     };

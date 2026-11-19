@@ -57,7 +57,7 @@ const check = ({
     ctx: {
       user: { id: 7, isModerator },
       features: { mysteryBox, userMenuV2, isGreen, canViewNsfw },
-      req: { headers: country ? { 'cf-ipcountry': country } : {} },
+      req: { headers: { host: 'example.test', ...(country ? { 'cf-ipcountry': country } : {}) } },
     } as never,
   });
 

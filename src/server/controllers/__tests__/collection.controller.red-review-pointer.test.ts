@@ -53,7 +53,7 @@ const call = ({ isGreen, restricted = false }: { isGreen: boolean; restricted?: 
     ctx: {
       user: { id: 1 },
       features: { isGreen, canViewNsfw: !isGreen && !restricted },
-      req: { headers: { 'cf-ipcountry': 'US' } },
+      req: { headers: { host: 'example.test', 'cf-ipcountry': 'US' } },
     } as unknown as Context,
     input: { id: 10 },
   });

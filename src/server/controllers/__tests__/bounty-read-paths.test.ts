@@ -140,7 +140,7 @@ const {
   submitBountyEntryHandler,
 } = await import('../bountyEntry.controller');
 // canViewNsfw: true, so the domain applies no browsing-level cap.
-const uncapped = { features: { canViewNsfw: true } };
+const uncapped = { features: { canViewNsfw: true }, req: { headers: { host: 'example.test' } } };
 const stranger = { user: { id: 6 }, ...uncapped } as never;
 
 beforeEach(() => {
@@ -372,8 +372,15 @@ describe('bounty detail and feed visibility', () => {
 
 describe('bounty images on a capped site', () => {
   const OWNER = 5;
-  const signedInSfw = { user: { id: 6 }, features: { canViewNsfw: false } };
-  const signedOut = { features: { canViewNsfw: false } };
+  const signedInSfw = {
+    user: { id: 6 },
+    features: { canViewNsfw: false },
+    req: { headers: { host: 'example.test' } },
+  };
+  const signedOut = {
+    features: { canViewNsfw: false },
+    req: { headers: { host: 'example.test' } },
+  };
   const image = (id: number, nsfwLevel: number, entityId = 0) => ({
     id,
     entityId,
@@ -489,8 +496,22 @@ describe('bounty images on a capped site', () => {
   });
 
   it.each([
-    ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
-    ['a moderator', { user: { id: 77, isModerator: true }, features: { canViewNsfw: false } }],
+    [
+      'the owner',
+      {
+        user: { id: OWNER },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
+    [
+      'a moderator',
+      {
+        user: { id: 77, isModerator: true },
+        features: { canViewNsfw: false },
+        req: { headers: { host: 'example.test' } },
+      },
+    ],
   ])('the detail page caps %s like any other viewer', async (_l, ctx) => {
     expect(await detail(ctx)).toEqual([10]);
   });
@@ -510,7 +531,11 @@ describe('bounty images on a capped site', () => {
 
   it('entry detail caps the entry owner like any other viewer', async () => {
     mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
-    const ctx = { user: { id: OWNER }, features: { canViewNsfw: false } };
+    const ctx = {
+      user: { id: OWNER },
+      features: { canViewNsfw: false },
+      req: { headers: { host: 'example.test' } },
+    };
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
     expect(ids(entry.images)).toEqual([30]);
   });

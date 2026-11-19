@@ -4,6 +4,7 @@ import {
   clampRequestBrowsingLevels,
   clampToDomainCap,
   domainBrowsingLevelCap,
+  requestDomainBrowsingLevelCap,
 } from '~/server/utils/browsing-level';
 import {
   publicBrowsingLevelsFlag,
@@ -26,6 +27,27 @@ describe('domainBrowsingLevelCap', () => {
       sfwBrowsingLevelsFlag
     );
     expect(domainBrowsingLevelCap({ isAuthorized: true, canViewNsfw: true })).toBeUndefined();
+  });
+});
+
+describe('requestDomainBrowsingLevelCap', () => {
+  type CapCtx = Parameters<typeof requestDomainBrowsingLevelCap>[0];
+  const signedInMature = (headers: Record<string, string>) =>
+    ({
+      user: { id: 1 },
+      features: { canViewNsfw: true },
+      req: { headers },
+    } as unknown as CapCtx);
+
+  it('caps a request with no Host at PG, even signed in where mature content is allowed', () => {
+    expect(requestDomainBrowsingLevelCap(signedInMature({}))).toBe(publicBrowsingLevelsFlag);
+    expect(
+      requestDomainBrowsingLevelCap({ ...signedInMature({}), req: undefined } as unknown as CapCtx)
+    ).toBe(publicBrowsingLevelsFlag);
+  });
+
+  it('caps nothing for the same viewer once the request names its host', () => {
+    expect(requestDomainBrowsingLevelCap(signedInMature({ host: 'civitai.red' }))).toBeUndefined();
   });
 });
 

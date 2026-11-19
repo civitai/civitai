@@ -48,7 +48,7 @@ function callerFor(user: User | undefined, canViewNsfw: boolean) {
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     res: { setHeader: () => undefined },
     cache: {
       browserTTL: 0,

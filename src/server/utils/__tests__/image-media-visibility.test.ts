@@ -23,7 +23,7 @@ function ctxFor({ user, canViewNsfw, bot }: Viewer) {
   return {
     user,
     features: { canViewNsfw },
-    req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
+    req: { headers: { host: 'example.test', ...(bot ? { [VERIFIED_BOT_HEADER]: bot } : {}) } },
     cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, skip: false },
   } as never as Parameters<typeof viewerCanSeeImageMedia>[0];
 }
@@ -168,7 +168,12 @@ describe('image.get media for a viewer', () => {
 
 describe('keepCrawlerAnswerOutOfEdgeCache', () => {
   const signedOut = (headerValue?: string | string[]) => ({
-    req: { headers: headerValue === undefined ? {} : { [VERIFIED_BOT_HEADER]: headerValue } },
+    req: {
+      headers: {
+        host: 'example.test',
+        ...(headerValue === undefined ? {} : { [VERIFIED_BOT_HEADER]: headerValue }),
+      },
+    },
     cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, skip: false },
   });
   const run = (ctx: ReturnType<typeof signedOut>) => {
@@ -243,7 +248,7 @@ describe('withoutMediaReferences', () => {
 
 const KEY_OWNER = 7;
 // A capped (SFW) domain: signed in, without canViewNsfw.
-const green = { features: { canViewNsfw: false }, req: { headers: {} } };
+const green = { features: { canViewNsfw: false }, req: { headers: { host: 'example.test' } } };
 const mature = { nsfwLevel: NsfwLevel.X, user: { id: KEY_OWNER } };
 const key = (tokenScope: bigint) => ({
   apiKeyId: 9,

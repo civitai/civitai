@@ -174,7 +174,12 @@ function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false, scopedTok
     }),
     user: viewer.userId ? { id: viewer.userId, isModerator: viewer.isModerator } : undefined,
     features: { canViewNsfw },
-    req: { headers: crawler ? { 'x-civitai-verified-bot': 'googlebot' } : {} },
+    req: {
+      headers: {
+        host: 'example.test',
+        ...(crawler ? { 'x-civitai-verified-bot': 'googlebot' } : {}),
+      },
+    },
     cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 },
   } as unknown as MediaViewer & { cache: { edgeTTL: number } };
 }
