@@ -3,6 +3,7 @@ package modelfeed
 import (
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -398,5 +399,22 @@ func TestBuildTakenDown(t *testing.T) {
 		} else if !strings.Contains(got, c.want) {
 			t.Errorf("%s: missing %s", c.name, c.want)
 		}
+	}
+}
+
+// A cursored page of a multi-field DESC sort splits into UNION ALL branches, each with the WHERE:
+// the viewer must be bound in both, with no slot left for Postgres to reject.
+func TestBuildTakenDownSplitCursor(t *testing.T) {
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, Cursor: "50|10|3101002"})
+	if strings.Contains(stmt.Text, withheldViewerSlot) {
+		t.Fatal("unbound viewer slot left in the SQL")
+	}
+	n := strconv.Itoa(len(stmt.Args))
+	if stmt.Args[len(stmt.Args)-1] != 7 {
+		t.Fatalf("last arg %v, want the viewer 7", stmt.Args[len(stmt.Args)-1])
+	}
+	clause := `OR mm."userId" = $` + n + `)`
+	if got := strings.Count(norm(stmt.Text), clause); got != 2 {
+		t.Fatalf("%s appears %d times, want once per UNION branch:\n%s", clause, got, norm(stmt.Text))
 	}
 }

@@ -598,9 +598,8 @@ export const getModelsRaw = async ({
    */
   coverage?: CoverageAudience;
   /**
-   * Keep taken-down models listed for every viewer: the public v1 API documents them as listed
-   * with images dropped. Everywhere else they are their owner's and moderators' alone. A sibling
-   * of `input` so it can never arrive from parsed query params.
+   * Keep taken-down models listed (the v1 API's documented behaviour). A sibling of `input` so
+   * it can never arrive from parsed query params.
    */
   includeWithheld?: boolean;
 }) => {

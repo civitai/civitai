@@ -12,7 +12,7 @@ export const HOT_RANK_RUNS_TABLE = 'default.model_hot_rank_runs';
 /**
  * Every model the Hot feed shows to some viewer who is not its owner: getModelsRaw's default status,
  * availability and Archived filters, a browsing level any viewer can pick (so unscanned and
- * Blocked-only models are out), and no TakenDown, which getModelsRaw shows only to its owner.
+ * Blocked-only models are out), and no TakenDown, which getModelsRaw shows only to its owner and moderators.
  * Unscored models stay in: the feed shows them, first. Per-viewer filters (browsing level, poi,
  * minor, Hide Paid) are stored as columns, so a viewer's rank can be re-derived at read time.
  * model-hot-rank-snapshot.pglite.test.ts holds this to the feed.

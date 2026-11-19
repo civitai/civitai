@@ -624,9 +624,10 @@ func (q *PageQuery) Build() (SQL, error) {
     LIMIT ` + limit + `
   `
 	}
-	// Bound last, so the clause leaves every other placeholder's number as it was.
+	// Bound last, so the clause leaves every other placeholder's number as it was. A split cursor
+	// puts the WHERE in both UNION ALL branches: one bind, every occurrence.
 	if strings.Contains(text, withheldViewerSlot) {
-		text = strings.Replace(text, withheldViewerSlot, b.arg(q.ViewerID), 1)
+		text = strings.ReplaceAll(text, withheldViewerSlot, b.arg(q.ViewerID))
 	}
 	return SQL{Text: text, Args: b.args}, nil
 }
