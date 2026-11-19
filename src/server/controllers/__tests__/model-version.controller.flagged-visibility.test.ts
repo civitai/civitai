@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 
@@ -39,7 +41,14 @@ const VIEWERS = {
 } as const;
 type ViewerKey = keyof typeof VIEWERS;
 
-async function lookup(viewer: ViewerKey, poi: boolean) {
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.ModelsRead,
+};
+
+async function lookup(viewer: ViewerKey, poi: boolean, credential = {}) {
   mockGetVersionById.mockResolvedValue({
     id: 100,
     status: 'Published',
@@ -48,7 +57,7 @@ async function lookup(viewer: ViewerKey, poi: boolean) {
   });
   const outcome = await getModelVersionHandler({
     input: { id: 100 },
-    ctx: { user: VIEWERS[viewer], features: {} },
+    ctx: { user: VIEWERS[viewer], features: {}, ...credential },
   } as never).then(
     () => new Error('expected to stop at the coverage read'),
     (e: unknown) => e
@@ -69,6 +78,20 @@ describe('getModelVersionHandler, flagged model', () => {
     ['moderator', 'served'],
   ])('%s gets %s', async (viewer, expected) => {
     expect(await lookup(viewer, true)).toBe(expected);
+  });
+
+  it.each<[string, string, ViewerKey, object]>([
+    ['the owner on a scoped key', 'not-found', 'owner', SCOPED_KEY],
+    [
+      'the owner on a full-access key',
+      'served',
+      'owner',
+      { ...SCOPED_KEY, tokenScope: TokenScope.Full },
+    ],
+    // Request context leaves moderator rights only where the key keeps them (the system account).
+    ['a moderator whose key kept moderator rights', 'served', 'moderator', SCOPED_KEY],
+  ])('%s gets %s', async (_, expected, viewer, credential) => {
+    expect(await lookup(viewer, true, credential)).toBe(expected);
   });
 
   it.each<ViewerKey>(['anon', 'other'])('control: unflagged model is served to %s', async (v) => {

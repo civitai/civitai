@@ -1,4 +1,5 @@
 import type { SessionUser } from '~/types/session';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
@@ -286,9 +287,7 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    // The owner's view (and a moderator's, already withheld from other keys) holds only on a
-    // session or a full-access key; any other key reads as a stranger.
-    const ownerViewer = isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
+    const ownerViewer = ownerOrModeratorViewer(ctx);
     if (!model || !canViewPoiModel(model.poi, model.user.id, ownerViewer))
       throw throwNotFoundError(`No model with id ${input.id}`);
 

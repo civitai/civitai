@@ -149,6 +149,11 @@ describe('getModelHandler version visibility', () => {
     expect(await visibleVersions('owner', credential)).toEqual(expected);
   });
 
+  it('a moderator whose key kept moderator rights sees every version', async () => {
+    arrange(ModelStatus.Draft);
+    expect(await visibleVersions('moderator', 'scopedKey')).toEqual(ALL);
+  });
+
   it.each<[CredentialKey, VersionKey[] | 'not-found']>([
     ['scopedKey', 'not-found'],
     ['fullKey', ALL],

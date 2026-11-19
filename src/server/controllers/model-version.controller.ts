@@ -98,6 +98,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -227,7 +228,8 @@ const loadModelVersion = async ({
         },
       },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ctx.user))
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    if (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
       throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
@@ -330,7 +332,7 @@ const loadModelVersion = async ({
       })
     )[id];
     const isOwnerOrMod =
-      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+      !!ownerViewer && (ownerViewer.id === version.model.user.id || !!ownerViewer.isModerator);
     const eaDonationGoal =
       paidAccess && isOwnerOrMod
         ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
