@@ -60,17 +60,17 @@ function validate(req: NamedSampleRequest) {
   };
   if (req.blind && !Number.isSafeInteger(req.blind.seed)) fail('blind.seed must be an integer');
   const generated = [...new Set(req.generated ?? [])];
-  const refusedByHash = new Map((req.refused ?? []).map((r) => [r.hash, r]));
-  const refused = [...refusedByHash.values()];
+  const refused = [...new Set((req.refused ?? []).map((r) => r.hash))];
   if (generated.length + refused.length > MAX_NAMED_SAMPLES) {
     fail(`at most ${MAX_NAMED_SAMPLES} samples per call`);
   }
   for (const hash of generated) if (!INT64_PATTERN.test(hash)) fail(`invalid hash "${hash}"`);
-  for (const { hash, date } of refused) {
+  for (const { hash, date } of req.refused ?? []) {
     if (!INT64_PATTERN.test(hash)) fail(`invalid hash "${hash}"`);
     if (!DAY_PATTERN.test(date)) fail(`invalid date "${date}"`);
   }
-  const days = [...new Set(refused.map((r) => r.date))];
+  // A hash given with several days is looked up on all of them.
+  const days = [...new Set((req.refused ?? []).map((r) => r.date))];
   if (days.length > MAX_REFUSED_DAYS) fail(`at most ${MAX_REFUSED_DAYS} distinct days per call`);
   return { generated, refused, days };
 }
@@ -122,21 +122,17 @@ export function buildNamedSampleQueries(generated: string[], refused: string[], 
   };
 }
 
-// A batch is either blind or not: ON CONFLICT keeps an existing row, so mixing would leave revealing
-// rows in a blind batch.
+// A blind batch is loaded in one call into an empty batch: the shuffle covers one call only, and
+// ON CONFLICT keeps an existing row, so a second load would leave its rows in a revealing order or
+// mix plain rows in. A plain load into a blind batch is refused for the same reason.
 async function assertBatchMode(db: Kysely<LabDB>, batch: string, blind: boolean) {
-  const clash = await db
-    .selectFrom('sample')
-    .select('id')
-    .where('batch', '=', batch)
-    .where('source', blind ? '!=' : '=', BLIND_SOURCE)
-    .limit(1)
-    .executeTakeFirst();
-  if (clash) {
+  let clash = db.selectFrom('sample').select('id').where('batch', '=', batch);
+  if (!blind) clash = clash.where('source', '=', BLIND_SOURCE);
+  if (await clash.limit(1).executeTakeFirst()) {
     throw new NamedSampleInputError(
       blind
-        ? `batch "${batch}" already holds rows that are not blind`
-        : `batch "${batch}" is blind; load into it with blind set`
+        ? `batch "${batch}" is not empty; a blind batch is loaded in one call`
+        : `batch "${batch}" is blind; it takes no further rows`
     );
   }
 }
@@ -147,16 +143,13 @@ export async function importNamedSamples(
 ): Promise<NamedSampleSummary> {
   const { generated, refused, days } = validate(req);
   const blind = req.blind;
+  // The lab schema enforces the batch mode on every insert; this check answers early, with a 400.
   await assertBatchMode(db, req.batch, !!blind);
 
-  const sql = buildNamedSampleQueries(
-    generated,
-    refused.map((r) => r.hash),
-    days
-  );
+  const queries = buildNamedSampleQueries(generated, refused, days);
   const [generatedRows, refusedRows] = await Promise.all([
-    sql.generated ? query<ChRow>(sql.generated) : [],
-    sql.refused ? query<ChRow>(sql.refused) : [],
+    queries.generated ? query<ChRow>(queries.generated) : [],
+    queries.refused ? query<ChRow>(queries.refused) : [],
   ]);
 
   const toRow = (r: ChRow, source: string) => ({
@@ -196,7 +189,20 @@ export async function importNamedSamples(
     duplicates: values.length - inserted,
     missing: {
       generated: generated.filter((h) => !foundGenerated.has(h)),
-      refused: refused.map((r) => r.hash).filter((h) => !foundRefused.has(h)),
+      refused: refused.filter((h) => !foundRefused.has(h)),
     },
   };
+}
+
+/** The lab's ClickHouse connection for this path: read-only and time-boxed, since its SQL is built from caller input. */
+export function namedSampleClickhouseConfig(env: {
+  host?: string;
+  username?: string;
+  password?: string;
+}) {
+  if (!env.host) throw new Error('CLICKHOUSE_HOST not set');
+  const url = new URL(env.host);
+  url.searchParams.set('readonly', '2');
+  url.searchParams.set('max_execution_time', '30');
+  return { host: url.toString(), username: env.username, password: env.password };
 }

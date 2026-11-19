@@ -52,6 +52,33 @@ CREATE TABLE IF NOT EXISTS sample (
 CREATE INDEX IF NOT EXISTS sample_batch_idx ON sample (batch);
 CREATE INDEX IF NOT EXISTS sample_prompt_hash_idx ON sample (prompt_hash);
 
+-- A blind batch (source 'named') is reviewed without hints, so its rows carry no owner, scores or
+-- date, and no other rows may join it. Enforced here so every writer is bound, not only the
+-- endpoint that creates blind batches.
+ALTER TABLE sample DROP CONSTRAINT IF EXISTS sample_blind_rows_carry_no_hints;
+ALTER TABLE sample ADD CONSTRAINT sample_blind_rows_carry_no_hints CHECK (
+  source <> 'named' OR (user_id IS NULL AND live_scores IS NULL AND prompt_created_at IS NULL)
+);
+
+CREATE OR REPLACE FUNCTION sample_keep_batch_mode() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- Serialises writers to one batch until commit, so two loads cannot both pass the check.
+  PERFORM pg_advisory_xact_lock(hashtext(NEW.batch));
+  IF EXISTS (
+    SELECT 1 FROM sample
+     WHERE batch = NEW.batch
+       AND (source = 'named') <> (NEW.source = 'named')
+  ) THEN
+    RAISE EXCEPTION 'batch "%" mixes blind and plain rows', NEW.batch
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS sample_keep_batch_mode ON sample;
+CREATE TRIGGER sample_keep_batch_mode BEFORE INSERT OR UPDATE OF batch, source ON sample
+  FOR EACH ROW EXECUTE FUNCTION sample_keep_batch_mode();
+
 -- What a model said about (sample, label). Covers both XGuard and the AI rater;
 -- `source` distinguishes them and `model` records which one.
 CREATE TABLE IF NOT EXISTS machine_judgement (

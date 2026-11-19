@@ -10,6 +10,7 @@ import {
   MAX_NAMED_SAMPLES,
   MAX_REFUSED_DAYS,
   NamedSampleInputError,
+  namedSampleClickhouseConfig,
   REFUSED_PROMPT_HASH_SQL,
 } from '$lib/server/xguard-named-samples';
 import { clickhouse } from '../../../../../../xguard-lab/sample-core';
@@ -43,16 +44,10 @@ export const POST = defineWebhookEndpoint({
   notes: [
     `At most ${MAX_NAMED_SAMPLES} hashes and ${MAX_REFUSED_DAYS} distinct days per call.`,
     'Idempotent per (batch, hash). Prompt text is read server-side, so the caller sends hashes only.',
-    'A batch is either blind or not; mixing the two is refused.',
+    'A blind batch is loaded in one call into an empty batch, and then takes no further rows.',
   ],
   handler: async (input) => {
-    const { host, username, password } = clickhouseEnv();
-    if (!host) throw new Error('CLICKHOUSE_HOST not set');
-    // Read-only and time-boxed: this path builds SQL from caller input.
-    const url = new URL(host);
-    url.searchParams.set('readonly', '2');
-    url.searchParams.set('max_execution_time', '30');
-    const config = { host: url.toString(), username, password };
+    const config = namedSampleClickhouseConfig(clickhouseEnv());
     try {
       const summary = await importNamedSamples(input, {
         query: (sql) => clickhouse(sql, config),

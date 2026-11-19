@@ -11,6 +11,7 @@ import {
   buildNamedSampleQueries,
   importNamedSamples,
   NamedSampleInputError,
+  namedSampleClickhouseConfig,
   REFUSED_PROMPT_HASH_SQL,
 } from '../xguard-named-samples';
 
@@ -245,6 +246,7 @@ describe('importNamedSamples', () => {
 
   it.each([
     ['blind into a batch that already holds plain rows', false, true],
+    ['blind into a batch that already holds blind rows', true, true],
     ['plain into a blind batch', true, false],
   ])('refuses to load %s', async (_name, firstBlind, secondBlind) => {
     const load = (hash: string, blind: boolean) =>
@@ -267,6 +269,22 @@ describe('importNamedSamples', () => {
       { query: manyClickhouse(), db }
     );
     expect(summary).toMatchObject({ requested: 2, inserted: 1, duplicates: 1 });
+  });
+
+  it('looks a refused hash given with two days up on both, and counts it once', async () => {
+    const query = manyClickhouse();
+    const summary = await importNamedSamples(
+      {
+        batch: 'review-1',
+        refused: [
+          { hash: '9', date: '2026-11-17' },
+          { hash: '9', date: '2026-11-18' },
+        ],
+      },
+      { query, db }
+    );
+    expect(query.mock.calls[0][0]).toContain("createdDate IN ('2026-11-17','2026-11-18')");
+    expect(summary).toMatchObject({ requested: 1, inserted: 1 });
   });
 
   it('accepts exactly the cap across both lists', async () => {
@@ -317,19 +335,74 @@ describe('importNamedSamples', () => {
   });
 });
 
+const flat = (s: string | null) => s?.replace(/\s+/g, ' ').trim();
+
+describe('lab schema: blind batches', () => {
+  const insert = (batch: string, source: string, extra = '') =>
+    pg.exec(
+      `INSERT INTO sample (prompt_hash, source, batch, positive_prompt${
+        extra ? ', user_id, live_scores' : ''
+      })
+       VALUES (${Math.floor(Math.random() * 1e9)}, '${source}', '${batch}', 'x'${extra})`
+    );
+
+  it('refuses a plain row into a blind batch, from any writer', async () => {
+    await insert('b', 'named');
+    await expect(insert('b', 'xguardPromptResults')).rejects.toThrow(/mixes blind and plain rows/);
+  });
+
+  it('refuses a blind row into a plain batch', async () => {
+    await insert('p', 'xguardPromptResults');
+    await expect(insert('p', 'named')).rejects.toThrow(/mixes blind and plain rows/);
+  });
+
+  it('refuses a blind row that carries an owner or scores', async () => {
+    await expect(insert('b', 'named', `, 1, '{"CR":0.1}'`)).rejects.toThrow(
+      /sample_blind_rows_carry_no_hints/
+    );
+  });
+
+  it('still accepts owner and scores on plain rows', async () => {
+    await insert('p', 'xguardPromptResults', `, 1, '{"CR":0.1}'`);
+    await insert('p', 'prohibitedRequests', `, 2, '{"CR":0.2}'`);
+    const { rows } = await pg.query(`SELECT 1 FROM sample WHERE batch = 'p'`);
+    expect(rows).toHaveLength(2);
+  });
+});
+
 describe('buildNamedSampleQueries', () => {
-  it('bounds the refused lookup by day and matches on the shared hash expression', () => {
+  it('filters refused rows by day and hash inside a subquery, then groups by hash', () => {
     const { refused } = buildNamedSampleQueries([], ['7', '-8'], ['2026-11-15', '2026-11-16']);
-    expect(refused).toContain("WHERE createdDate IN ('2026-11-15','2026-11-16')");
-    expect(refused).toContain(`AND ${REFUSED_PROMPT_HASH_SQL} IN (7,-8)`);
-    expect(refused).toContain(`SELECT ${REFUSED_PROMPT_HASH_SQL} AS h,`);
+    expect(flat(refused)).toBe(
+      flat(`SELECT toString(h) AS promptHash, toString(min(time)) AS promptCreatedAt,
+        argMin(userId, time) AS userId, any(p) AS positivePrompt, any(n) AS negativePrompt
+        FROM ( SELECT ${REFUSED_PROMPT_HASH_SQL} AS h, time, userId, prompt AS p,
+          ifNull(negativePrompt, '') AS n
+          FROM default.prohibitedRequests
+          WHERE createdDate IN ('2026-11-15','2026-11-16')
+            AND ${REFUSED_PROMPT_HASH_SQL} IN (7,-8) )
+        GROUP BY h`)
+    );
   });
 
   it('takes every generated column from the earliest row', () => {
     const { generated } = buildNamedSampleQueries(['5'], [], []);
-    for (const col of ['userId', 'positivePrompt', 'negativePrompt', 'scores']) {
-      expect(generated).toContain(`argMin(${col}, createdAt) AS ${col}`);
-    }
-    expect(generated).toContain('WHERE promptHash IN (5)');
+    expect(flat(generated)).toBe(
+      flat(`SELECT toString(promptHash) AS promptHash, toString(min(createdAt)) AS promptCreatedAt,
+        argMin(userId, createdAt) AS userId, argMin(positivePrompt, createdAt) AS positivePrompt,
+        argMin(negativePrompt, createdAt) AS negativePrompt, argMin(scores, createdAt) AS scores
+        FROM orchestration.xguardPromptResults
+        WHERE promptHash IN (5)
+        GROUP BY promptHash`)
+    );
+  });
+});
+
+describe('namedSampleClickhouseConfig', () => {
+  it('makes every query read-only and time-boxed', () => {
+    const { host } = namedSampleClickhouseConfig({ host: 'https://ch.example:8443/' });
+    const url = new URL(host);
+    expect(url.searchParams.get('readonly')).toBe('2');
+    expect(url.searchParams.get('max_execution_time')).toBe('30');
   });
 });
