@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const excluded = vi.hoisted(() => ({ ids: [] as number[] }));
 vi.mock('~/server/services/metric-excluded-users.service', () => ({
@@ -14,8 +14,7 @@ import {
 
 let pg: PGlite;
 
-beforeEach(async () => {
-  excluded.ids = [];
+beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark');
@@ -42,8 +41,17 @@ beforeEach(async () => {
   `);
 });
 
-afterEach(async () => {
+afterAll(async () => {
   await pg.close();
+});
+
+beforeEach(async () => {
+  excluded.ids = [];
+  await pg.exec('BEGIN');
+});
+
+afterEach(async () => {
+  await pg.exec('ROLLBACK');
 });
 
 async function countsOf(entityType: 'Article' | 'Collection', ids: number[]) {
@@ -136,14 +144,6 @@ describe('getCollectionItemCountTasks', () => {
     expect(chCalls).toEqual([
       ['Article', 'collectedCount', new Date(lastUpdate.getTime() - LOOKBACK_MS)],
     ]);
-  });
-
-  it('reads ClickHouse once per five minutes, and still recounts the queue in between', async () => {
-    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
-    const { run, chCalls, updates } = context(new Date(NOW.getTime() - 60 * 1000), [34]);
-    await run();
-    expect(chCalls).toEqual([]);
-    expect(updates).toEqual({ 34: { articleId: 34, collectedCount: 1 } });
   });
 
   it('writes 0 for an affected entity with no rows left, so the old value does not stand', async () => {

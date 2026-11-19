@@ -16,12 +16,14 @@ import {
   attachmentStatus,
   canAttachInStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
 } from '~/components/CreatorShop/Services/deals/deal-files';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useServiceDealFiles } from '~/components/CreatorShop/Services/deals/DealFilesPanel';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { SERVICE_DEAL_FILE_RETENTION_NOTICE } from '~/shared/constants/creator-services.constants';
 import type { RouterOutput } from '~/types/router';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -57,6 +59,11 @@ export function DealAttachmentsPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>{isBuyer ? 'Your files for the creator' : 'Files from the buyer'}</Text>
+        {showsRetentionNotice(deal.status) && attachments.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {SERVICE_DEAL_FILE_RETENTION_NOTICE}
+          </Text>
+        )}
         {canAttach && <AttachStep deal={deal} attachments={attachments} />}
         <AttachmentList
           dealId={deal.id}
