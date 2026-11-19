@@ -34,6 +34,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const image = {
   id: 1,
@@ -115,5 +116,80 @@ describe('minor routing does not depend on a locked rating', () => {
     scan.tags = [{ name: 'scene', nsfwLevel: X }];
     scan.associatedMinor = true;
     expect(await minorReview(stored as Partial<ScanImage>)).toBe(true);
+  });
+});
+
+describe('the count of what a scan newly sets after a moderator review', () => {
+  // The minor column the outcome write sets, read from its parameters.
+  function writtenMinor() {
+    const call = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.find(([strings]) =>
+        (strings as TemplateStringsArray).join('').includes('"minor" = ')
+      );
+    if (!call) return undefined;
+    const [strings, ...values] = call as unknown as [TemplateStringsArray, ...unknown[]];
+    return values[strings.findIndex((s) => s.includes('"minor" = '))];
+  }
+  const lines = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([line]) => line as { name: string; payload?: Record<string, unknown> })
+      .filter((line) => line.name === 'scan-outcome-after-review');
+  const reviewed = (yes: boolean) =>
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([{ reviewed: yes }] as never);
+
+  beforeEach(() => {
+    loggingMock.logToAxiom.mockClear();
+    scan.tags = [{ name: 'scene', nsfwLevel: NsfwLevel.R }];
+    scan.associatedMinor = true;
+  });
+
+  it('logs a reviewed image the scan newly marks minor, and the minor write lands', async () => {
+    reviewed(true);
+    await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    expect(lines()).toEqual([
+      {
+        name: 'scan-outcome-after-review',
+        type: 'info',
+        payload: {
+          priorReview: true,
+          sampled: false,
+          newlyBlocked: false,
+          newlyMinor: true,
+          newlyPoi: false,
+          newlyNeedsReview: expect.any(Boolean),
+        },
+      },
+    ]);
+    expect(writtenMinor()).toBe(true);
+  });
+
+  it('logs nothing for an unreviewed image outside the sample', async () => {
+    reviewed(false);
+    await resolveScanOutcome({ image: { ...image, id: 7 }, workflowId: 'wf' });
+    expect(lines()).toEqual([]);
+  });
+
+  it('logs a sampled unreviewed image, flagged as sampled', async () => {
+    reviewed(false);
+    await resolveScanOutcome({ image: { ...image, id: 300 }, workflowId: 'wf' });
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0].payload).toMatchObject({ priorReview: false, sampled: true });
+  });
+
+  it('still writes the outcome when the review lookup fails', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValue(new Error('replica down'));
+    await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    expect(writtenMinor()).toBe(true);
+    expect(lines()).toEqual([]);
+  });
+
+  it('still writes the outcome when the log line throws', async () => {
+    reviewed(true);
+    loggingMock.logToAxiom.mockImplementationOnce(() => {
+      throw new Error('log down');
+    });
+    await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    expect(writtenMinor()).toBe(true);
   });
 });
