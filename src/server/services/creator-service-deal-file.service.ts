@@ -613,11 +613,7 @@ export async function dropRemovedPreviewCopies({ limit = 50 } = {}) {
   return dropped;
 }
 
-/**
- * Deletes every stored version of the upload, a zip's archive and a published preview's copy, so a
- * versioned bucket keeps no copy. `deleted` is false when any object may remain; `etag` is the
- * upload's, for the purge record.
- */
+/** The upload's ETag, for the purge record; null when it cannot be read. */
 async function uploadEtag(s3Key: string) {
   const head = await getS3Client()
     .send(new HeadObjectCommand({ Bucket: await getBucket(), Key: s3Key }))
@@ -625,6 +621,10 @@ async function uploadEtag(s3Key: string) {
   return head?.ETag?.replace(/"/g, '') ?? null;
 }
 
+/**
+ * Deletes every stored version of the upload, a zip's archive and a published preview's copy, so a
+ * versioned bucket keeps no copy. False when any object may remain.
+ */
 async function deleteFileObjects(
   file: FileObjects,
   /** Asked before each object delete; false stops, and the file counts as not deleted. */
@@ -748,10 +748,13 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     const deleted = await deleteFileObjects(file, stillDeletable);
     if (!deleted) continue;
     const done = await dbWrite.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        UPDATE "ServiceDealFilePurge" SET "purgedAt" = now() WHERE "fileId" = ${file.id}::int`;
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
-      return tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
+      const gone = await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
+      // Only the run that removed the row stamps when the purge finished.
+      if (gone)
+        await tx.$executeRaw`
+          UPDATE "ServiceDealFilePurge" SET "purgedAt" = now() WHERE "fileId" = ${file.id}::int`;
+      return gone;
     });
     if (done) purged++;
   }
