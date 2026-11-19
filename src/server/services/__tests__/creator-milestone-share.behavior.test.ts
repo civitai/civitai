@@ -365,6 +365,7 @@ describe('share card avatar', () => {
     ['awaiting review', { nsfwLevel: 1, needsReview: 'minor' }],
     // A rescan moves ingestion back to Scanned but leaves the block reason.
     ['scanned again with its block reason left', { nsfwLevel: 1, blockedFor: 'moderated' }],
+    // Control: the safe-level check already turns this one away.
     ['at the Blocked level', { nsfwLevel: 32 }],
   ])('shows no avatar for a picture that is %s', async (_, picture) => {
     expect(await avatarFor(picture)).toBeNull();

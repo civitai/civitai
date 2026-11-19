@@ -961,9 +961,9 @@ async function buildChallengeDetail(
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
   >`
-    SELECT id, username, image, "deletedAt"
-    FROM "User"
-    WHERE id = ${createdById}
+    SELECT u.id, u.username, ${Prisma.raw(fallbackUserImageColumn)} AS image, u."deletedAt"
+    FROM "User" u
+    WHERE u.id = ${createdById}
   `;
 
   // Fetch profile picture and cosmetics for creator

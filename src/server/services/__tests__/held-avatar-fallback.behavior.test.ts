@@ -118,6 +118,57 @@ describe('clearHeldUserImages', () => {
   });
 });
 
+describe('fallbackUserImageColumn and the clear', () => {
+  // Keys in the form the clear matches another own upload by: a bare upload uuid, or a CDN url around one.
+  const A = 'a0000000-0000-4000-8000-0000000000a1';
+  const B = 'b0000000-0000-4000-8000-0000000000b2';
+  const C = 'c0000000-0000-4000-8000-0000000000c3';
+  const D = 'd0000000-0000-4000-8000-0000000000d4';
+
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, "userId", url, "needsReview", ingestion, "nsfwLevel", "blockedFor") VALUES
+        (40, 40, '${A}', 'minor', 'Scanned', 1, NULL),
+        (41, 40, '${B}', NULL, 'Scanned', 1, NULL),
+        (42, 41, '${C}', NULL, 'Scanned', 1, NULL),
+        (43, 41, '${B.replace('b2', 'b9')}', NULL, 'Scanned', 1, NULL),
+        (44, 42, '${D}', NULL, 'Scanned', 1, 'moderated'),
+        (45, 99, '${C.replace('c3', 'c8')}', 'csam', 'Scanned', 1, NULL);
+      INSERT INTO "User" (id, "profilePictureId", image, meta) VALUES
+        (40, 41, 'https://cdn.example/xG1/${A}/width=96', '{}'),
+        (41, 43, '${C}', '{}'),
+        (42, NULL, '${D}', '{}'),
+        (43, NULL, '${C.replace('c3', 'c8')}', '{}');
+    `);
+  });
+
+  it('leaves out an older own upload that is held or blocked, and keeps a clean one and another user’s key', async () => {
+    const { rows } = await pg.query<{ id: number; image: string | null }>(
+      `SELECT u.id, ${fallbackUserImageColumn} AS image FROM "User" u WHERE u.id BETWEEN 40 AND 43 ORDER BY u.id`
+    );
+    expect(rows.map((row) => [row.id, row.image])).toEqual([
+      // A: an older own upload under a minor hold, while the profile picture B is clean.
+      [40, null],
+      // C: an older own upload, clean.
+      [41, C],
+      // D: an own upload with a block reason, and no profile picture.
+      [42, null],
+      // Another user's held image key: not this user's upload, so not this rule's to hide.
+      [43, C.replace('c3', 'c8')],
+    ]);
+  });
+
+  it('agrees with the clear on the same rows', async () => {
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT u.id FROM "User" u WHERE u.id BETWEEN 40 AND 43 AND (${fallbackUserImageColumn}) IS NULL ORDER BY u.id`
+    );
+    const nulledByFallback = rows.map((row) => row.id);
+    const cleared = (await clearHeldUserImages(db, [40, 41, 42, 43])).sort((a, b) => a - b);
+    expect(nulledByFallback).toEqual([40, 42]);
+    expect(cleared).toEqual(nulledByFallback);
+  });
+});
+
 describe('anyImageHeldOrBlocked', () => {
   it('is true for a key stored on an image held csam or minor, and false for an unheld one', async () => {
     expect(await anyImageHeldOrBlocked(db, ['key-csam'])).toBe(true);
@@ -151,7 +202,7 @@ describe('a blocked picture', () => {
         (23, 23, 'key-clean', '{}');
     `);
     const { rows } = await pg.query<{ image: string | null }>(
-      `SELECT ${fallbackUserImageColumn} AS image FROM "User" u WHERE u.id >= 20 ORDER BY u.id`
+      `SELECT ${fallbackUserImageColumn} AS image FROM "User" u WHERE u.id BETWEEN 20 AND 39 ORDER BY u.id`
     );
     expect(rows.map((row) => row.image)).toEqual([null, null, 'another-value', 'key-clean']);
   });

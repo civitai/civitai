@@ -68,7 +68,7 @@ ALTER TABLE "User" ADD COLUMN username text, ADD COLUMN "deletedAt" timestamp, A
   ADD COLUMN "profilePictureId" int;
 ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS url text, ADD COLUMN IF NOT EXISTS "needsReview" text,
   ADD COLUMN IF NOT EXISTS ingestion text, ADD COLUMN IF NOT EXISTS "nsfwLevel" int,
-  ADD COLUMN IF NOT EXISTS "blockedFor" text;
+  ADD COLUMN IF NOT EXISTS "blockedFor" text, ADD COLUMN IF NOT EXISTS "userId" int;
 UPDATE "User" SET username = 'u' || id;
 INSERT INTO "Article" VALUES (10);
 INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 10);
