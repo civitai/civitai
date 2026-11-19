@@ -480,6 +480,24 @@ describe('the purge after the sweep', () => {
     expect(await kept(preview.id)).toBe(false);
   });
 
+  it('does not let a file whose delete keeps failing hold up the rest', async () => {
+    const first = await closedDeal('Cancelled', 40);
+    const second = await closedDeal('Cancelled', 40);
+    s3.purgeObjectVersions.mockImplementation(async ({ key }: { key: string }) =>
+      key.startsWith(`k/${first.dealId}/`)
+        ? { versionsDeleted: 0, remaining: 1 }
+        : { versionsDeleted: 1, remaining: 0 }
+    );
+    await sweep();
+    await q(
+      `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+    );
+    for (let run = 0; run < 60 && (await kept(second.finalId)); run++)
+      await files.purgeRemovedFiles({ limit: 1 });
+    expect(await kept(second.finalId)).toBe(false);
+    expect(await kept(first.finalId)).toBe(true);
+  });
+
   it('waits until a download link signed before the removal has expired', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();

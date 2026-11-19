@@ -604,7 +604,8 @@ export async function dropRemovedPreviewCopies({ limit = 50 } = {}) {
   const rows = await dbWrite.$queryRaw<{ id: number; watermarkedKey: string }[]>`
     SELECT "id", "watermarkedKey" FROM "ServiceDealFile"
     WHERE "removedAt" IS NOT NULL AND "watermarkedKey" IS NOT NULL
-    ORDER BY "id" LIMIT ${limit}::int`;
+    -- Random, so files whose deletes keep failing cannot hold up the rest.
+    ORDER BY random() LIMIT ${limit}::int`;
   let dropped = 0;
   for (const row of rows) if (await dropPreviewCopy(row.id, row.watermarkedKey)) dropped++;
   return dropped;
@@ -695,7 +696,8 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT f."id" FROM "ServiceDealFile" f
     WHERE ${purgeable(Prisma.sql`f`)}
-    ORDER BY f."id" LIMIT ${limit}::int`;
+    -- Random, so files whose deletes keep failing cannot hold up the rest.
+    ORDER BY random() LIMIT ${limit}::int`;
   let purged = 0;
   for (const { id } of candidates) {
     // Re-read under the row lock, so a hold that landed since the candidates were read wins.
