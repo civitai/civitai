@@ -317,8 +317,8 @@ describe('handleUnblockImages and a CSAM block', () => {
       (strings as TemplateStringsArray).join('?').includes('"blockedFor" = NULL')
     );
     // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
-    const bound = unblock.map(
-      ([strings, ...values]) => Prisma.sql(strings as never, ...(values as never[])).values
+    const bound = unblock.map(([strings, ...values]) =>
+      Prisma.sql(strings as never, ...(values as never[])).values.slice(-2)
     );
     expect(bound).toEqual([[2, 'CSAM']]);
     expect(result.map((image) => image.id)).toEqual([2]);

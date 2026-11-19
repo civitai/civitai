@@ -104,9 +104,18 @@ export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: Togg
       { value: 'on', label: 'Off' },
     ],
   },
+  signalsDisabled: {
+    description:
+      'Judging pages drop settled items and update stats live. Off, they refresh after each judgment as before.',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'off', label: 'On' },
+      { value: 'on', label: 'Off' },
+    ],
+  },
 };
 
-export const KILL_SWITCHES: ToggleKey[] = ['shopDisabled', 'conversionDisabled'];
+export const KILL_SWITCHES: ToggleKey[] = ['shopDisabled', 'conversionDisabled', 'signalsDisabled'];
 
 export const toggleLabel = (key: ToggleKey, stored: boolean | undefined) =>
   TOGGLE_ROWS[key].options.find((option) => option.value === toggleChoice(stored))?.label ?? '';

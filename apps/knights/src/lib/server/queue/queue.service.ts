@@ -85,6 +85,9 @@ export const backoffMinutes = (attempts: number) =>
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
+/** An item as it stood before a step moved it off its stage: what the live queue drops are worked out from. */
+export type MovedItem = { id: number; status: string; minRank: string };
+
 export type QuestionOption = { value: string; label: string };
 
 export type Feed = {
@@ -862,13 +865,18 @@ async function applyReroute(
  */
 export async function closeModeratorRuledItems(
   db: Kysely<DB>,
-  { now, limit = 200, mirror }: { now: Date; limit?: number; mirror?: XpMirror }
+  {
+    now,
+    limit = 200,
+    mirror,
+    moved,
+  }: { now: Date; limit?: number; mirror?: XpMirror; moved?: (items: MovedItem[]) => void }
 ): Promise<{ closed: number; failed: number }> {
   // Narrowed to rows the rule closes, so rows it skips cannot fill the limit every tick.
   const candidates = await db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .select(['i.id', 'i.imageId'])
+    .select(['i.id', 'i.imageId', 'i.minRank'])
     .where('i.status', '=', 'Open')
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
@@ -879,7 +887,8 @@ export async function closeModeratorRuledItems(
     .execute();
 
   const counts = { closed: 0, failed: 0 };
-  for (const { id, imageId } of candidates) {
+  const closed: MovedItem[] = [];
+  for (const { id, imageId, minRank } of candidates) {
     try {
       const xp = await db.transaction().execute(async (trx) => {
         const item = await trx
@@ -896,6 +905,7 @@ export async function closeModeratorRuledItems(
       });
       if (!xp) continue;
       counts.closed++;
+      closed.push({ id, status: 'Open', minRank });
       await mirrorXp(mirror, xp);
     } catch (error) {
       counts.failed++;
@@ -905,6 +915,7 @@ export async function closeModeratorRuledItems(
       });
     }
   }
+  moved?.(closed);
   return counts;
 }
 
@@ -1067,7 +1078,7 @@ export async function applyPendingResolutions(
  */
 export async function escalateExpired(
   db: Kysely<DB>,
-  { now, limit = 200 }: { now: Date; limit?: number }
+  { now, limit = 200, moved }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
 ): Promise<{
   escalated: number;
   toInquisitor: number;
@@ -1075,6 +1086,7 @@ export async function escalateExpired(
   expired: number;
   rerated: number;
 }> {
+  let left: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
@@ -1165,6 +1177,9 @@ export async function escalateExpired(
       counts.expired = lapsed.length;
     }
 
+    left = due
+      .filter((item) => !extend(item))
+      .map((item) => ({ id: item.id, status: 'Open', minRank: item.minRank }));
     for (const item of due) {
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
@@ -1175,6 +1190,7 @@ export async function escalateExpired(
     return counts;
   });
   for (let i = 0; i < result.expired; i++) metrics.escalation('expired');
+  moved?.(left);
   return result;
 }
 
@@ -1182,6 +1198,12 @@ export async function escalateExpired(
 export const UNSERVABLE_REASON = 'unservable';
 /** `reason` of an item closed because its post publishes only after the item would have expired (`closeUnservableItems`). */
 export const PUBLISHES_AFTER_EXPIRY_REASON = 'publishes-after-expiry';
+/** `reason` of an item closed because its post is still a draft long after queueing (`closeUnservableItems`). */
+export const UNPUBLISHED_DRAFT_REASON = 'unpublished-draft';
+/** Hours after queueing an item on a draft post (`publishedAt` null) is given to publish before `closeUnservableItems` closes it. */
+export const UNPUBLISHED_DRAFT_HOURS = 24;
+/** The main app's scan-sampling `source`: the only items `unpublished-draft` closes. */
+export const SCAN_SAMPLE_SOURCE = 'scan-sample';
 
 const hours = (n: number) => sql`${sql.lit(`${n} hours`)}::interval`;
 
@@ -1204,20 +1226,28 @@ END`;
  *   (`latestStageEndSql`), so it would close as `expired` before any player could be served it. Only for an item still at the
  *   stage it was queued at (never escalated, `minRank` Knight, where nobody serving the stage means nobody serves any stage, so
  *   it expires instead of being handed up) with no counted vote there (a voted item is handed up, not expired). A draft has no
- *   date and is left alone, as is an item that never expires.
- * Hidden checks and yes/no items are never touched. At most `limit` items per call; rows another transaction holds are skipped.
+ *   date and is left to the next reason, as is an item that never expires.
+ * - `unpublished-draft`: a scan sample (`SCAN_SAMPLE_SOURCE`) whose post is still a draft (`publishedAt` null) more than
+ *   `UNPUBLISHED_DRAFT_HOURS` after the item was queued. Many drafts never publish, and until then the item only fills the
+ *   queue; nothing re-queues it if the post publishes later. At any stage. An owner's rating on a draft is left open.
+ * Hidden checks and yes/no items are never touched. At most `limit` items per call, shared by every reason, oldest item id
+ * first; rows another transaction holds are skipped.
  */
 export async function closeUnservableItems(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ unservable: number; publishesAfterExpiry: number }> {
+): Promise<{ unservable: number; publishesAfterExpiry: number; unpublishedDrafts: number }> {
   const result = await db.transaction().execute(async (trx) => {
     // Primary-key lookups into Image and Post from the open items: never a scan of either table.
     const due = await trx
       .selectFrom('KnightsQueueItem as i')
       .leftJoin('Image as img', 'img.id', 'i.imageId')
       .leftJoin('Post as p', 'p.id', 'img.postId')
-      .select(['i.id', sql<boolean>`"p"."id" IS NULL`.as('gone')])
+      .select([
+        'i.id',
+        sql<boolean>`"p"."id" IS NULL`.as('gone'),
+        sql<boolean>`"p"."id" IS NOT NULL AND "p"."publishedAt" IS NULL`.as('draft'),
+      ])
       .where('i.status', '=', 'Open')
       .where('i.isHiddenCheck', '=', false)
       .where('i.audience', 'is', null)
@@ -1225,6 +1255,12 @@ export async function closeUnservableItems(
         eb.or([
           // Also true when the image is gone: the Post join then has nothing to match.
           eb('p.id', 'is', null),
+          eb.and([
+            eb('i.source', '=', SCAN_SAMPLE_SOURCE),
+            eb('p.id', 'is not', null),
+            eb('p.publishedAt', 'is', null),
+            eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),
+          ]),
           eb.and([
             eb('i.minRank', '=', 'Knight'),
             eb('i.escalatedAt', 'is', null),
@@ -1251,14 +1287,21 @@ export async function closeUnservableItems(
       .execute();
 
     const gone = due.filter((item) => item.gone).map((item) => item.id);
-    const late = due.filter((item) => !item.gone).map((item) => item.id);
+    const drafts = due.filter((item) => item.draft).map((item) => item.id);
+    const late = due.filter((item) => !item.gone && !item.draft).map((item) => item.id);
     if (gone.length > 0) await closeItems(trx, gone, now, UNSERVABLE_REASON);
     if (late.length > 0) await closeItems(trx, late, now, PUBLISHES_AFTER_EXPIRY_REASON);
-    return { unservable: gone.length, publishesAfterExpiry: late.length };
+    if (drafts.length > 0) await closeItems(trx, drafts, now, UNPUBLISHED_DRAFT_REASON);
+    return {
+      unservable: gone.length,
+      publishesAfterExpiry: late.length,
+      unpublishedDrafts: drafts.length,
+    };
   });
   for (let i = 0; i < result.unservable; i++) metrics.escalation(UNSERVABLE_REASON);
   for (let i = 0; i < result.publishesAfterExpiry; i++)
     metrics.escalation(PUBLISHES_AFTER_EXPIRY_REASON);
+  for (let i = 0; i < result.unpublishedDrafts; i++) metrics.escalation(UNPUBLISHED_DRAFT_REASON);
   return result;
 }
 
