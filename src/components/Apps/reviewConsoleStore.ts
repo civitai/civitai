@@ -14,8 +14,7 @@ import {
 
 /**
  * Each SDK's first release that forwards non-fatal errors to a review preview, keyed by the
- * `sdkName` it sends in `BLOCK_READY`: `@civitai/sdk` from 0.29.0 and `@civitai/blocks-react` from
- * 0.85.0, both published. An SDK not named here forwards none.
+ * `sdkName` it sends in `BLOCK_READY`. An SDK not named here forwards none.
  */
 export const REVIEW_CONSOLE_MIN_SDKS: Record<string, { packageName: string; version: string }> = {
   sdk: { packageName: '@civitai/sdk', version: '0.29.0' },
@@ -87,6 +86,14 @@ function parseVersion(version: string): [number, number, number, boolean] | null
   return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] !== undefined];
 }
 
+/** The cut-off entry for an app-sent SDK name, or `undefined` for a name not in the table. */
+function minSdkFor(name: string | null): { packageName: string; version: string } | undefined {
+  // `hasOwn`: an app-sent name like `constructor` must not hit an inherited property.
+  return name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, name)
+    ? REVIEW_CONSOLE_MIN_SDKS[name]
+    : undefined;
+}
+
 /**
  * Does this SDK forward non-fatal errors to a review preview? Only an SDK named in
  * {@link REVIEW_CONSOLE_MIN_SDKS}, at or above ITS OWN entry. An unknown SDK, one that names no
@@ -94,11 +101,7 @@ function parseVersion(version: string): [number, number, number, boolean] | null
  * sorts below it, as semver orders it.
  */
 export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
-  // `hasOwn`, so a name like `constructor` cannot reach an inherited property.
-  const cutoff =
-    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-      ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]
-      : undefined;
+  const cutoff = minSdkFor(sdk.name);
   if (!cutoff || !sdk.version) return false;
   const have = parseVersion(sdk.version);
   const min = parseVersion(cutoff.version);
@@ -111,13 +114,9 @@ export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
 
 /** "@civitai/sdk 0.28.0": the SDK as its package; an unknown name is shown as sent. */
 export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
-  // The package names live in REVIEW_CONSOLE_MIN_SDKS only, so a new SDK is named and cut off
-  // in one place. `hasOwn`, so an app-sent name cannot reach an inherited property.
   const name = !sdk.name
     ? 'an SDK that does not name itself'
-    : Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-    ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]!.packageName
-    : sdk.name;
+    : minSdkFor(sdk.name)?.packageName ?? sdk.name;
   return sdk.version ? `${name} ${sdk.version}` : name;
 }
 
@@ -129,11 +128,8 @@ export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
 export function reviewConsoleSdkNotice(sdk: ReviewConsoleSdk | null): string | null {
   if (!sdk || sdkForwardsReviewErrors(sdk)) return null;
   const label = sdkPackageLabel(sdk);
-  // Its own package's cut-off when it names one we know; otherwise every package's.
-  const own =
-    sdk.name && Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
-      ? [REVIEW_CONSOLE_MIN_SDKS[sdk.name]!]
-      : Object.values(REVIEW_CONSOLE_MIN_SDKS);
+  const cutoff = minSdkFor(sdk.name);
+  const own = cutoff ? [cutoff] : Object.values(REVIEW_CONSOLE_MIN_SDKS);
   const min = own.map((c) => `${c.packageName} ${c.version}`).join(' or ');
   return `This app's SDK (${label}) is too old to report other errors, so only fatal crashes show here. Apps report every error from ${min}.`;
 }

@@ -38,7 +38,6 @@ describe('the SDK cut-off', () => {
     ['blocks-react', '1.0.0', true],
     ['blocks-react', '0.84.0', false],
     ['blocks-react', '0.85.0-next.1', false],
-    // Each package against its OWN cut-off, never the other's.
     ['blocks-react', '0.29.0', false],
     ['sdk', '0.85.0', true],
     ['some-other-sdk', '9.9.9', false],
