@@ -99,7 +99,6 @@ import {
 } from '~/server/services/apps/doc-rater.service';
 import { loadAppDocSubjects } from '~/server/services/apps/doc-rater-subject';
 import {
-  asImageId,
   DOC_MEDIA_MAX_KEYS,
   docMediaKeys,
   isImageIdKey,
@@ -130,18 +129,38 @@ const ID_UNSCANNED = 7303;
 const ID_BLOCKED = 7304;
 const ID_PG13 = 7305;
 const ID_NO_ROW = 7399;
+// Not ids: zero, negative, fractional, past `Image.id`'s integer range, and what `Number` makes of
+// '1e3'.
+const JUNK_IDS = [0, -ID_X, ID_X + 0.5, 2_147_483_648, 1000];
 type ImageWhere = {
   url?: { in: string[] };
   id?: { in: number[] };
-  OR?: { url?: { in: string[] }; id?: { in: number[] } }[];
+  OR?: ImageWhere[];
+  AND?: ImageWhere[];
 };
-const IMAGE_ROWS: {
+type ImageRowFixture = {
   id: number;
   url: string;
   nsfwLevel: number;
   ingestion: string;
   needsReview?: string;
-}[] = [
+};
+/**
+ * A `where` read with Prisma's semantics: sibling fields must ALL hold, `OR` is a union, `AND` an
+ * intersection. Any other operator throws, so a change of the query's shape is never matched by
+ * accident.
+ */
+function matchesWhere(row: ImageRowFixture, where: ImageWhere): boolean {
+  return Object.entries(where).every(([field, cond]) => {
+    if (field === 'OR') return (cond as ImageWhere[]).some((w) => matchesWhere(row, w));
+    if (field === 'AND') return (cond as ImageWhere[]).every((w) => matchesWhere(row, w));
+    if (field !== 'url' && field !== 'id') throw new Error(`unexpected image where: ${field}`);
+    const ops = Object.keys(cond as object);
+    if (ops.length !== 1 || ops[0] !== 'in') throw new Error(`unexpected ${field} filter`);
+    return (cond as { in: unknown[] }).in.includes(row[field]);
+  });
+}
+const IMAGE_ROWS: ImageRowFixture[] = [
   { id: ID_R, url: IMG_R, nsfwLevel: 4, ingestion: 'Scanned' },
   { id: ID_UNSCANNED, url: IMG_UNSCANNED, nsfwLevel: 0, ingestion: 'Pending' },
   // Scanned at PG, but under moderator review: the site's image gate hides it at every level.
@@ -149,6 +168,9 @@ const IMAGE_ROWS: {
   { id: ID_X, url: 'key-of-x', nsfwLevel: 8, ingestion: 'Scanned' },
   { id: ID_BLOCKED, url: 'key-of-blocked', nsfwLevel: 0, ingestion: 'Blocked' },
   { id: ID_PG13, url: 'key-of-pg13', nsfwLevel: 2, ingestion: 'Scanned' },
+  // Rated X, at ids only a wrong reading of a value could produce: if any is ever read, the
+  // document rates X rather than its text's level.
+  ...JUNK_IDS.map((id) => ({ id, url: `key-of-junk-${id}`, nsfwLevel: 8, ingestion: 'Scanned' })),
 ];
 
 let harness: Harness;
@@ -178,13 +200,8 @@ beforeEach(() => {
     if (h.brokenApps.has(args.where.id)) throw new Error('manifest read failed');
     return { manifest: MANIFEST };
   }) as never);
-  dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: ImageWhere }) => {
-    // Either one condition, or an OR of them: a row matches by its url or by its id.
-    const conditions = args.where.OR ?? [args.where];
-    const urls = conditions.flatMap((c) => c.url?.in ?? []);
-    const ids = conditions.flatMap((c) => c.id?.in ?? []);
-    return IMAGE_ROWS.filter((r) => urls.includes(r.url) || ids.includes(r.id));
-  }) as never);
+  dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: ImageWhere }) =>
+    IMAGE_ROWS.filter((r) => matchesWhere(r, args.where))) as never);
   dbMock.dbWrite.entityModeration.findMany.mockImplementation((async (args: {
     where: { entityId: { in: number[] } };
   }) =>
@@ -491,10 +508,12 @@ describe('🔴 numeric image ids under an image-id key count like image keys', (
     expect(await callback(id, 1)).toEqual({ status: 'rated', level: 32 });
   });
 
-  it('an id that names no image leaves it pending, as a key in an image url does', async () => {
+  it('an id that names no image adds no level: the document rates on its other inputs', async () => {
     const app = freshApp('RSVIDNOROW');
-    const id = await submitted(app, 'b1', { imageId: ID_NO_ROW });
-    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+    const alone = await submitted(app, 'b1', { imageId: ID_NO_ROW });
+    expect(await callback(alone, 2)).toEqual({ status: 'rated', level: 2 });
+    const beside = await submitted(app, 'b2', { imageIds: [ID_NO_ROW, ID_R] });
+    expect(await callback(beside, 1)).toEqual({ status: 'rated', level: 4 });
   });
 
   it('a number under any other key is not an image id, however image-like the key', async () => {
@@ -514,7 +533,19 @@ describe('🔴 numeric image ids under an image-id key count like image keys', (
   it('a value under an image-id key that is not a whole positive id is not an id', async () => {
     const app = freshApp('RSVIDJUNK');
     const id = await submitted(app, 'b1', {
-      imageIds: [` ${ID_X}`, `${ID_X}.0`, `-${ID_X}`, `${ID_X}abc`, ID_X + 0.5, -ID_X, 0],
+      imageIds: [
+        // Strings that are not only digits, though `Number` reads most of them as ID_X.
+        ` ${ID_X}`,
+        `${ID_X}.0`,
+        `+${ID_X}`,
+        `-${ID_X}`,
+        `${ID_X}abc`,
+        '1e3',
+        '',
+        // Numbers no `Image.id` can be.
+        ...JUNK_IDS.filter((n) => n !== 1000),
+        '2147483648',
+      ],
       imageId: { nested: 'object' },
     });
     expect(await callback(id, 2)).toEqual({ status: 'rated', level: 2 });
@@ -528,6 +559,21 @@ describe('🔴 numeric image ids under an image-id key count like image keys', (
     expect(await callback(keyHigher, 1)).toEqual({ status: 'rated', level: 4 });
   });
 
+  it('a document deleted after the callback loaded it is gone, not rated', async () => {
+    const app = freshApp('RSVIDGONE');
+    const id = await submitted(app, 'b1', { imageId: ID_X });
+    const subject = await load(id);
+    await store.delete(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1');
+    expect(
+      await applyAppDocTextScan({
+        outcome: outcome(1),
+        subject,
+        textHash: textScanTextHash(subject),
+      })
+    ).toEqual({ status: 'gone' });
+    expect(h.synced).toEqual([]);
+  });
+
   it('a pass rating from a stored verdict reads the ids too', async () => {
     const app = freshApp('RSVIDPASS');
     const id = await submitted(app, 'b1', { imageId: ID_X });
@@ -536,19 +582,13 @@ describe('🔴 numeric image ids under an image-id key count like image keys', (
     expect((await ratingOf(app, 'b1')).level).toBe(8);
   });
 
+  // The contract with apps: a number is read as an image id under exactly these keys, in any case,
+  // and under no other key, however image-like.
   it('THE image-id keys: these, compared lower-cased, and nothing else', () => {
     for (const key of ['imageId', 'imageIds', 'image_id', 'image_ids', 'IMAGEID', 'ImageIds'])
       expect(isImageIdKey(key)).toBe(true);
     for (const key of ['id', 'ids', 'image', 'images', 'coverImageId', 'imageIdx', 'image-id'])
       expect(isImageIdKey(key)).toBe(false);
-  });
-
-  it('an id is a whole number from 1 to the largest Image.id, or a string of digits naming one', () => {
-    expect(asImageId(ID_X)).toBe(ID_X);
-    expect(asImageId(String(ID_X))).toBe(ID_X);
-    expect(asImageId(2_147_483_647)).toBe(2_147_483_647);
-    for (const junk of [0, -1, 1.5, 2_147_483_648, '2147483648', '', ' 1', '+1', '1e3', null, true])
-      expect(asImageId(junk)).toBeNull();
   });
 
   it('ids and keys share one cap: past it the document is not rated on a subset', () => {

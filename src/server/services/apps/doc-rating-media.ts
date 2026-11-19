@@ -18,11 +18,14 @@
  * whole document unrated, so it stays hidden from other viewers until the next pass; a Blocked
  * image makes the document Blocked; an image carrying a moderation flag (under review, flagged
  * minor or POI, a ToS violation, hard-blocked: what the site's own image gate hides at every level)
- * leaves it pending too; and a reference that says it is an image but names no `Image` row is
- * treated as an image not rated yet: a key inside an image url (an `http(s)://` url on a civitai
- * image CDN host, `imageCdnHosts`), or an image id. A key anywhere else that names no row (an app's
- * own uuid ids, a link to another site) adds no level.
+ * leaves it pending too; and a key inside an image url (an `http(s)://` url on a civitai image CDN
+ * host, `imageCdnHosts`) that names no `Image` row is treated as an image not rated yet. A key
+ * anywhere else that names no row (an app's own uuid ids, a link to another site) adds no level, and
+ * so does an image id that names no row: an id exists only once its row does, so a missing one is a
+ * deleted image or a number the app made up, and it has no content to show. Holding the document
+ * pending for it would hide it from every viewer but its author until the document is edited.
  */
+import { PG_INT4_MAX } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { imageCdnHosts } from '~/server/services/generation-input-urls';
@@ -45,14 +48,13 @@ export type DocMediaKeys =
       keys: string[];
       /** The keys inside an image url: one that names no `Image` row keeps the document pending. */
       urlKeys: string[];
-      /** The image ids (`docImageIds`): one that names no `Image` row keeps the document pending. */
+      /** The image ids (`docImageIds`): one that names no `Image` row adds no level. */
       ids: number[];
     }
   | { overflow: 'too-many' | 'decode-budget' };
 
 /**
- * THE object keys whose values are read as image ids, compared lower-cased: the names the platform
- * and the App Blocks starters use for an image's id, camelCase and snake_case. Deliberately a short
+ * THE object keys whose values are read as image ids, compared lower-cased. Deliberately a short
  * explicit list, not a pattern: a key that merely contains "id" could hold anything.
  */
 const IMAGE_ID_KEYS: ReadonlySet<string> = new Set([
@@ -67,20 +69,17 @@ export function isImageIdKey(key: string): boolean {
   return IMAGE_ID_KEYS.has(key.toLowerCase());
 }
 
-/** The largest `Image.id` (a Postgres `integer`). */
-const MAX_IMAGE_ID = 2_147_483_647;
-
 /**
  * The image id a value under an image-id key holds: a positive integer, or a string of digits only
  * (no sign, space or decimal point) naming one. Anything else, or a number no `Image.id` can be,
- * is not an id.
+ * is not an id (`Image.id` is a Postgres `integer`).
  */
-export function asImageId(value: unknown): number | null {
+function asImageId(value: unknown): number | null {
   let n: number;
   if (typeof value === 'number') n = value;
   else if (typeof value === 'string' && /^[0-9]{1,10}$/.test(value)) n = Number(value);
   else return null;
-  return Number.isInteger(n) && n >= 1 && n <= MAX_IMAGE_ID ? n : null;
+  return Number.isInteger(n) && n >= 1 && n <= PG_INT4_MAX ? n : null;
 }
 
 /**
@@ -171,7 +170,6 @@ export type DocMediaLevel =
   | { status: 'pending' };
 
 type ImageRow = {
-  id: number;
   url: string;
   nsfwLevel: number;
   ingestion: ImageIngestionStatus;
@@ -188,7 +186,7 @@ type ImageRow = {
  * as not rated, whatever the level: the same flags the site's image gate hides an image for
  * (`classifyGatedImageForViewer`), decided first, as there.
  */
-export function imageLevel(row: Omit<ImageRow, 'id' | 'url'>): NsfwLevel | null {
+export function imageLevel(row: Omit<ImageRow, 'url'>): NsfwLevel | null {
   if (
     row.needsReview != null ||
     row.poi ||
@@ -219,7 +217,6 @@ export async function resolveDocMediaLevel(
       ],
     },
     select: {
-      id: true,
       url: true,
       nsfwLevel: true,
       ingestion: true,
@@ -232,9 +229,8 @@ export async function resolveDocMediaLevel(
     },
   });
   const foundUrls = new Set(rows.map((r) => r.url));
-  const foundIds = new Set(rows.map((r) => r.id));
+  // An id that names no row adds no level (see the module header), so only url keys are checked.
   if (urlKeys.some((key) => !foundUrls.has(key))) return { status: 'pending' };
-  if (ids.some((id) => !foundIds.has(id))) return { status: 'pending' };
   let level: NsfwLevel = NsfwLevel.PG;
   for (const row of rows) {
     const own = imageLevel(row);
