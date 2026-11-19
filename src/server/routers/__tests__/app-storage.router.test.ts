@@ -738,6 +738,120 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
       }
     });
 
+    it('a page stops once its bodies reach 1 MiB, inside the 100-record limit, and the cursor resumes with the next record', async () => {
+      // 25 private records of exactly 50,000 body bytes each (`recordBodyBytes`, the JSON text):
+      // 20 are 1,000,000 bytes, under the 1,048,576-byte cap; the 21st reaches 1,050,000, past
+      // it, so the first page ends at 21 records, well short of 100.
+      const BIG = 8_606;
+      const APP_C = { id: 'apb_STO_C', blockId: 'gamma-store' };
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        where.id === APP_C.id
+          ? { blockId: APP_C.blockId, manifest: MANIFESTS[APP_B.id] }
+          : null) as never);
+      const roomy = createDocStore({
+        db: harness.db,
+        limits: { ...LIMITS, userBytes: 5_000_000, userDocs: 100 },
+      });
+      const body = (i: number) => ({ t: `${String(i).padStart(2, '0')}${'x'.repeat(49_990)}` });
+      expect(JSON.stringify(body(0)).length).toBe(50_000);
+      for (let i = 0; i < 25; i += 1) {
+        await roomy.put(
+          storeCtx(APP_C.id, 'prod', BIG),
+          PREFS,
+          `k${String(i).padStart(2, '0')}`,
+          body(i)
+        );
+      }
+      const order = (records: { body: unknown }[]) =>
+        records.map((r) => (r.body as { t: string }).t.slice(0, 2));
+
+      const first = await caller(user(BIG)).exportMine({});
+      expect(order(first.records)).toEqual(
+        Array.from({ length: 21 }, (_, i) => String(i).padStart(2, '0'))
+      );
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await caller(user(BIG)).exportMine({ cursor: first.nextCursor });
+      expect(order(second.records)).toEqual(['21', '22', '23', '24']);
+      expect(second.nextCursor).toBeNull();
+      expect(second.skipped).toEqual([]);
+    });
+
+    it('reports what it cannot export, per app and reason, once each, across page boundaries', async () => {
+      // Alpha's manifest no longer declares `notes` (the user holds notes/n1 there); their private
+      // pref in alpha has no record_id yet; and in the app with no row they hold one private
+      // document plus a counter document they started, which is not theirs to export.
+      const collections = {
+        prefs: { visibility: 'private' },
+        posts: { visibility: 'shared', write: 'own' },
+      };
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        SLUGS[where.id]
+          ? {
+              blockId: SLUGS[where.id],
+              manifest:
+                where.id === APP_A.id
+                  ? { scopes: ['apps:storage'], storage: { collections } }
+                  : MANIFESTS[where.id],
+            }
+          : null) as never);
+      await harness.raw(
+        `UPDATE appdata.doc SET record_id = NULL
+          WHERE app_id = $1 AND ns = 'prod' AND coll = 'prefs' AND scope_uid = $2 AND key = 'theme'`,
+        [APP_A.id, USER]
+      );
+      await h.store.increment(storeCtx(APP_GONE, 'prod', USER), TALLIES, 'c1', 'plays');
+
+      const NOT_DECLARED = { appBlockId: APP_A.id, reason: 'collection_not_declared', docs: 1 };
+      const UNREADABLE = { appBlockId: APP_A.id, reason: 'unreadable', docs: 1 };
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [A_RECORDS[1], ...B_RECORDS],
+        nextCursor: null,
+        skipped: [NOT_DECLARED, UNREADABLE, GONE_SKIPPED],
+      });
+
+      // One record per page: each skip is reported on the page that read its row, never again.
+      const pages: Array<{ urns: string[]; skipped: unknown[]; last: boolean }> = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 10; i += 1) {
+        const page: Awaited<ReturnType<ReturnType<typeof caller>['exportMine']>> = await caller(
+          user(USER)
+        ).exportMine({ limit: 1, cursor });
+        cursor = page.nextCursor;
+        pages.push({
+          urns: page.records.map((r) => r.urn),
+          skipped: page.skipped,
+          last: cursor === null,
+        });
+        if (cursor === null) break;
+      }
+      expect(pages).toEqual([
+        { urns: [A_RECORDS[1].urn], skipped: [NOT_DECLARED], last: false },
+        { urns: [B_RECORDS[0].urn], skipped: [UNREADABLE], last: false },
+        { urns: [], skipped: [GONE_SKIPPED], last: true },
+      ]);
+    });
+
+    it('never exports a shared document of theirs that moderation hid', async () => {
+      await h.store.put(storeCtx(APP_A.id, 'prod', USER), POSTS, 'post-hid', sized(66));
+      // Positive control: visible, it is exported.
+      expect((await caller(user(USER)).exportMine({})).records.map((r) => r.urn)).toContain(
+        'urn:apps.civitai.com:alpha-store/posts/post-hid'
+      );
+      await harness.raw(
+        `UPDATE appdata.doc SET hidden_at = now(), hidden_by = 1
+          WHERE app_id = $1 AND ns = 'prod' AND coll = 'posts' AND key = 'post-hid'`,
+        [APP_A.id]
+      );
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+    });
+
     it('an API-key caller is refused', async () => {
       await expect(apiKeyCaller(user(USER)).exportMine({})).rejects.toMatchObject({
         code: 'FORBIDDEN',

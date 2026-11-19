@@ -195,7 +195,10 @@ export const APP_RECORD_EXPORT_PAGE_BODY_BYTES = 1024 * 1024;
 
 /** Why some of the user's documents are not in the bundle, counted per app. */
 export type AppRecordExportSkipReason =
-  /** No app row to name the records from (no slug for their URN): the app's row is gone. */
+  /**
+   * No app row to name the records from (no slug for their URN): the app's row is gone. Counts
+   * the rows the export would have read there (private, and visible shared ones they created).
+   */
   | 'app_unknown'
   /** The app's enforced manifest no longer declares the collection: no owner policy to apply. */
   | 'collection_not_declared'
@@ -371,8 +374,14 @@ export async function exportMyAppRecords(
         : null;
     const app = await lookup(appId);
     if (!app) {
-      // Counted once, on the page that reaches the app.
-      if (after === null) skip(appId, 'app_unknown', usage.docs);
+      // Counted once, on the page that reaches the app, as the rows the export would have read
+      // there (`viewerRecords`): private documents and visible shared ones the user created. Not
+      // `usage.docs`, which also counts their hidden posts and the counter documents they started.
+      if (after === null) {
+        const held = await viewerData.viewerHoldings(userId, appId);
+        const docs = held.private.docs + held.shared.docs;
+        if (docs > 0) skip(appId, 'app_unknown', docs);
+      }
       continue;
     }
     for (;;) {
