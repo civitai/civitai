@@ -79,7 +79,6 @@ const SOUND_FORMATS = new Set([
   'fl32',
   'ac-4',
 ]);
-const MAX_REORDER_FRAMES = 8;
 type Box = { type: string; body: number; end: number };
 
 function boxes(b: Uint8Array, start: number, end: number): Box[] {
@@ -95,7 +94,8 @@ function boxes(b: Uint8Array, start: number, end: number): Box[] {
     } else if (size === 0) size = end - offset;
     if (size < header || offset + size > end) throw new Malformed();
     const type = fourcc(b, offset + 4);
-    if (type === 'free' || type === 'skip') pad(size - header);
+    if ((type === 'free' || type === 'skip') && !reservedSpace(b, offset + header, offset + size))
+      pad(size - header);
     out.push({ type, body: offset + header, end: offset + size });
     offset += size;
   }
@@ -132,40 +132,14 @@ function table(b: Uint8Array, box: Box, at: number, size: number) {
   return { count, start: at + 4 };
 }
 
-/**
- * Whether every sample is shown within the timing table's span, give or take a few frames (or a
- * second): its decode time plus its composition offset. Both tables are run-length, walked together.
- */
-function shownWithinTiming(
-  b: Uint8Array,
-  timing: { count: number; start: number },
-  offsets: { count: number; start: number },
-  ticks: number,
-  samples: number,
-  timescale: number
-) {
-  const tolerance = Math.max(timescale, samples ? (MAX_REORDER_FRAMES * ticks) / samples : 0);
-  let run = -1;
-  let left = 0;
-  let delta = 0;
-  let decode = 0;
-  for (let i = 0; i < offsets.count; i++) {
-    let count = u32(b, offsets.start + i * 8);
-    const offset = i32(b, offsets.start + i * 8 + 4);
-    while (count > 0) {
-      while (left === 0) {
-        if (++run >= timing.count) return false;
-        left = u32(b, timing.start + run * 8);
-        delta = u32(b, timing.start + run * 8 + 4);
-      }
-      visit();
-      const step = Math.min(count, left);
-      const lastDecode = decode + (step - 1) * delta;
-      if (lastDecode + offset > ticks + tolerance || decode + offset < -tolerance) return false;
-      decode += step * delta;
-      count -= step;
-      left -= step;
-    }
+/** Room an encoder reserved (for a moov written later, say): all zeros, so it carries nothing. */
+const MAX_RESERVED_BYTES = 16 * 1024 * 1024;
+function reservedSpace(b: Uint8Array, start: number, end: number) {
+  if (end - start > MAX_RESERVED_BYTES) return false;
+  for (let chunk = start; chunk < end; chunk += 64 * 1024) {
+    visit();
+    const stop = Math.min(end, chunk + 64 * 1024);
+    for (let i = chunk; i < stop; i++) if (b[i] !== 0) return false;
   }
   return true;
 }
@@ -179,84 +153,195 @@ function timescaleAndDuration(b: Uint8Array, box: Box) {
     : { timescale: u32(b, box.body + 12), duration: u32(b, box.body + 16) };
 }
 
+/** Children a parent may hold beyond these are bytes no player reads: they count as padding. */
+function unread(b: Uint8Array, kids: ReturnType<typeof children>, known: string[]) {
+  for (const type of kids.types())
+    if (!known.includes(type) && type !== 'free' && type !== 'skip')
+      for (const box of kids.all(type)) pad(box.end - box.body);
+}
+
+/** Bytes past a box's fields count as padding. */
+const tail = (box: Box, used: number) => pad(Math.max(0, box.end - box.body - used));
+
+/** Room for a sample entry's codec configuration (avcC, hvcC, esds and the like). */
+const SAMPLE_ENTRY_BYTES = 4096;
+const HANDLER_NAME_BYTES = 64;
+
+type Range = { start: number; end: number; shown: boolean };
+
+/** The byte range of each chunk of a track's samples in the file. */
+function chunkRanges(
+  b: Uint8Array,
+  stbl: ReturnType<typeof children>,
+  stsz: Box,
+  samples: number,
+  shown: boolean,
+  out: Range[]
+) {
+  const stsc = stbl.one('stsc');
+  const stco = stbl.one('stco');
+  const co64 = stbl.one('co64');
+  if (!stsc || !!stco === !!co64) throw new Malformed();
+  const runs = table(b, stsc, stsc.body + 4, 12);
+  tail(stsc, 8 + runs.count * 12);
+  const wide = !!co64;
+  const offsets = table(b, (stco ?? co64)!, (stco ?? co64)!.body + 4, wide ? 8 : 4);
+  tail((stco ?? co64)!, 8 + offsets.count * (wide ? 8 : 4));
+  const sampleSize = u32(b, stsz.body + 4);
+  const sizes = sampleSize ? undefined : table(b, stsz, stsz.body + 8, 4);
+  tail(stsz, sizes ? 12 + sizes.count * 4 : 12);
+  let run = -1;
+  let perChunk = 0;
+  let sample = 0;
+  for (let chunk = 1; chunk <= offsets.count; chunk++) {
+    while (run + 1 < runs.count && u32(b, runs.start + (run + 1) * 12) === chunk) {
+      run++;
+      perChunk = u32(b, runs.start + run * 12 + 4);
+    }
+    if (run < 0 || (run + 1 < runs.count && u32(b, runs.start + (run + 1) * 12) <= chunk))
+      throw new Malformed();
+    visit();
+    if (sample + perChunk > samples) throw new Malformed();
+    let size = 0;
+    if (sizes) for (let i = 0; i < perChunk; i++) size += u32(b, sizes.start + (sample + i) * 4);
+    else size = sampleSize * perChunk;
+    const at = (chunk - 1) * (wide ? 8 : 4) + offsets.start;
+    const start = wide ? u64(b, at) : u32(b, at);
+    out.push({ start, end: start + size, shown });
+    sample += perChunk;
+  }
+  if (sample !== samples || run + 1 !== runs.count) throw new Malformed();
+}
+
+/**
+ * The span the samples are shown over: each one's decode time plus its composition offset, to the
+ * end of its frame. The timing and offset tables are run-length, walked together.
+ */
+function shownSpan(
+  b: Uint8Array,
+  timing: { count: number; start: number },
+  offsets: { count: number; start: number }
+) {
+  let first = Infinity;
+  let last = -Infinity;
+  let run = -1;
+  let left = 0;
+  let delta = 0;
+  let decode = 0;
+  for (let i = 0; i < offsets.count; i++) {
+    let count = u32(b, offsets.start + i * 8);
+    const offset = i32(b, offsets.start + i * 8 + 4);
+    while (count > 0) {
+      while (left === 0) {
+        if (++run >= timing.count) throw new Malformed();
+        left = u32(b, timing.start + run * 8);
+        delta = u32(b, timing.start + run * 8 + 4);
+      }
+      visit();
+      const step = Math.min(count, left);
+      first = Math.min(first, decode + offset);
+      last = Math.max(last, decode + (step - 1) * delta + offset + delta);
+      decode += step * delta;
+      count -= step;
+      left -= step;
+    }
+  }
+  return last - first;
+}
+
 function mp4Lengths(b: Uint8Array): number[] | null {
   const top = children(b, { type: '', body: 0, end: b.length });
   // A fragmented file keeps its samples outside the sample table, where it cannot be summed.
   if (top.has('moof') || top.has('meta')) return null;
   const moovBox = top.one('moov');
-  if (!moovBox) return null;
-  // Every byte is a sample, a structure read here, or counted as padding: a box no player shows is
-  // a place to carry anything.
-  const PARSED_TOP = ['ftyp', 'moov', 'mdat', 'free', 'skip'];
-  for (const type of top.types())
-    if (!PARSED_TOP.includes(type)) for (const box of top.all(type)) pad(box.end - box.body);
-  const mdatBytes = top.all('mdat').reduce((sum, box) => sum + (box.end - box.body), 0);
-  let sampleBytes = 0;
+  const ftyp = top.one('ftyp');
+  if (!moovBox || !ftyp) return null;
+  // Every byte is a sample, a field read here, reserved zeros, or counted as padding.
+  unread(b, top, ['ftyp', 'moov', 'mdat']);
+  tail(ftyp, 64);
+  const mdats = top.all('mdat');
   // Cover art is a picture a player shows that the scan never sees.
   if (Buffer.from(b.subarray(moovBox.body, moovBox.end)).includes('covr')) return null;
   const moov = children(b, moovBox);
+  unread(b, moov, ['mvhd', 'trak']);
   const mvhd = moov.one('mvhd');
   if (!mvhd || moov.has('mvex')) return null;
+  tail(mvhd, b[mvhd.body] === 1 ? 112 : 100);
   const movie = timescaleAndDuration(b, mvhd);
   if (!movie.timescale) return null;
   const lengths = [movie.duration / movie.timescale];
 
-  for (const type of moov.types())
-    if (type !== 'mvhd' && type !== 'trak' && type !== 'free' && type !== 'skip')
-      for (const box of moov.all(type)) pad(box.end - box.body);
   const traks = moov.all('trak');
   if (!traks.length) return null;
+  const ranges: Range[] = [];
   let videoTracks = 0;
   for (const trakBox of traks) {
     const trak = children(b, trakBox);
-    for (const type of trak.types())
-      if (!['tkhd', 'edts', 'mdia', 'free', 'skip'].includes(type))
-        for (const box of trak.all(type)) pad(box.end - box.body);
+    unread(b, trak, ['tkhd', 'edts', 'mdia']);
     const tkhd = trak.one('tkhd');
     if (!tkhd) return null;
     const tv1 = b[tkhd.body] === 1;
     if (tkhd.body + (tv1 ? 36 : 24) > tkhd.end) return null;
+    tail(tkhd, tv1 ? 96 : 84);
     lengths.push((tv1 ? u64(b, tkhd.body + 28) : u32(b, tkhd.body + 20)) / movie.timescale);
 
-    const elst = children(b, trak.one('edts')).one('elst');
-    if (elst) {
-      const v1 = b[elst.body] === 1;
-      const entrySize = v1 ? 20 : 12;
-      const { count, start } = table(b, elst, elst.body + 4, entrySize);
-      let sum = 0;
-      let mediaEdits = 0;
-      for (let i = 0; i < count; i++) {
-        const entry = start + i * entrySize;
-        sum += v1 ? u64(b, entry) : u32(b, entry);
-        const empty = v1
-          ? u32(b, entry + 8) === 0xffffffff && u32(b, entry + 12) === 0xffffffff
-          : i32(b, entry + 4) === -1;
-        if (!empty) mediaEdits++;
+    const edts = trak.one('edts');
+    if (edts) {
+      const edits = children(b, edts);
+      unread(b, edits, ['elst']);
+      const elst = edits.one('elst');
+      if (elst) {
+        const v1 = b[elst.body] === 1;
+        const entrySize = v1 ? 20 : 12;
+        const { count, start } = table(b, elst, elst.body + 4, entrySize);
+        tail(elst, 8 + count * entrySize);
+        let sum = 0;
+        let mediaEdits = 0;
+        for (let i = 0; i < count; i++) {
+          const entry = start + i * entrySize;
+          sum += v1 ? u64(b, entry) : u32(b, entry);
+          const empty = v1
+            ? u32(b, entry + 8) === 0xffffffff && u32(b, entry + 12) === 0xffffffff
+            : i32(b, entry + 4) === -1;
+          if (!empty) mediaEdits++;
+        }
+        // Two edits can show one stretch of the media twice and never another.
+        if (mediaEdits > 1) return null;
+        lengths.push(sum / movie.timescale);
       }
-      // Two edits can show one stretch of the media twice and never another.
-      if (mediaEdits > 1) return null;
-      lengths.push(sum / movie.timescale);
     }
 
     const mdia = children(b, trak.one('mdia'));
+    unread(b, mdia, ['mdhd', 'hdlr', 'minf']);
     // Only one picture track and sound: a subtitle or other track can draw what the scan never sees.
     const hdlr = mdia.one('hdlr');
-    const handler = hdlr ? fourcc(b, hdlr.body + 8) : '';
-    if (handler !== 'vide' && handler !== 'soun') return null;
+    if (!hdlr) return null;
+    tail(hdlr, 24 + HANDLER_NAME_BYTES);
+    const handler = fourcc(b, hdlr.body + 8);
+    // Timecode and metadata tracks draw nothing, but their samples are bytes no player shows.
+    const unshown = handler === 'tmcd' || handler === 'meta';
+    if (handler !== 'vide' && handler !== 'soun' && !unshown) return null;
     if (handler === 'vide') videoTracks++;
     const mdhd = mdia.one('mdhd');
-    const stbl = children(b, children(b, mdia.one('minf')).one('stbl'));
+    if (!mdhd) return null;
+    tail(mdhd, b[mdhd.body] === 1 ? 36 : 24);
+    const minf = children(b, mdia.one('minf'));
+    unread(b, minf, ['stbl']);
+    const stbl = children(b, minf.one('stbl'));
+    unread(b, stbl, ['stsd', 'stts', 'stsz', 'ctts', 'stsc', 'stco', 'co64']);
     // One sample format, and a sound track's must be a sound codec: a player decodes by format.
     const stsd = stbl.one('stsd');
     if (!stsd || stsd.body + 16 > stsd.end || u32(b, stsd.body + 4) !== 1) return null;
+    tail(stsd, SAMPLE_ENTRY_BYTES);
     if (handler === 'soun' && !SOUND_FORMATS.has(fourcc(b, stsd.body + 12))) return null;
     const stts = stbl.one('stts');
     const stsz = stbl.one('stsz');
-    if (!mdhd || !stts || !stsz) return null;
+    if (!stts || !stsz) return null;
     const media = timescaleAndDuration(b, mdhd);
     if (!media.timescale) return null;
     lengths.push(media.duration / media.timescale);
     const timing = table(b, stts, stts.body + 4, 8);
+    tail(stts, 8 + timing.count * 8);
     let samples = 0;
     let ticks = 0;
     for (let i = 0; i < timing.count; i++) {
@@ -266,33 +351,31 @@ function mp4Lengths(b: Uint8Array): number[] | null {
     }
     // Samples the timing table does not cover would still be played.
     if (stsz.body + 12 > stsz.end || samples !== u32(b, stsz.body + 8)) return null;
-    const sampleSize = u32(b, stsz.body + 4);
-    if (sampleSize) sampleBytes += sampleSize * samples;
-    else {
-      const sizes = table(b, stsz, stsz.body + 8, 4);
-      for (let i = 0; i < sizes.count; i++) sampleBytes += u32(b, sizes.start + i * 4);
-    }
-    // A composition offset can show a sample well after the timing table ends.
-    const ctts = stbl.one('ctts');
-    if (
-      ctts &&
-      !shownWithinTiming(
-        b,
-        timing,
-        table(b, ctts, ctts.body + 4, 8),
-        ticks,
-        samples,
-        media.timescale
-      )
-    )
-      return null;
+    chunkRanges(b, stbl, stsz, samples, !unshown, ranges);
     lengths.push(ticks / media.timescale);
+    // A composition offset can show a sample outside the timing table's span.
+    const ctts = stbl.one('ctts');
+    if (ctts) {
+      const offsets = table(b, ctts, ctts.body + 4, 8);
+      tail(ctts, 8 + offsets.count * 8);
+      lengths.push(shownSpan(b, timing, offsets) / media.timescale);
+    }
   }
   // Which of two video tracks a player or the scan picks is not this code's to decide.
   if (videoTracks !== 1) return null;
-  // Sample bytes the tables do not account for are bytes no player shows.
-  if (sampleBytes > mdatBytes) return null;
-  pad(mdatBytes - sampleBytes);
+
+  // Samples must lie inside an mdat without overlapping; what they leave of it is unshown.
+  ranges.sort((x, y) => x.start - y.start);
+  let previousEnd = -1;
+  let used = 0;
+  for (const range of ranges) {
+    if (range.start < previousEnd) return null;
+    if (!mdats.some((m) => range.start >= m.body && range.end <= m.end)) return null;
+    previousEnd = range.end;
+    used += range.end - range.start;
+    if (!range.shown) pad(range.end - range.start);
+  }
+  pad(mdats.reduce((sum, m) => sum + (m.end - m.body), 0) - used);
   return lengths;
 }
 // #endregion
@@ -406,6 +489,26 @@ function blockOffset(b: Uint8Array, body: number, tracks: Set<number>) {
   return raw & 0x8000 ? raw - 0x10000 : raw;
 }
 
+/** Fields read or written by every muxer, each up to a size; anything else, or more, is padding. */
+const HEADER_FIELDS = new Map(
+  [0x4286, 0x42f7, 0x42f2, 0x42f3, 0x4282, 0x4287, 0x4285].map((id) => [id, 32])
+);
+const INFO_FIELDS = new Map(
+  [0x2ad7b1, 0x4489, 0x4d80, 0x5741, 0x73a4, 0x4461].map((id) => [id, 256])
+);
+const TRACK_FIELDS = new Map([
+  ...[
+    0xd7, 0x73c5, 0x83, 0x86, 0x9c, 0x22b59c, 0x23e383, 0xe0, 0xe1, 0x88, 0xb9, 0x56aa, 0x56bb,
+    0x55ee, 0x55aa, 0x23314f,
+  ].map((id) => [id, 256] as const),
+  [0x63a2, 4096] as const, // CodecPrivate: the codec's configuration
+]);
+function allowed(fields: { id: number; body: number; end: number }[], limits: Map<number, number>) {
+  for (const field of fields)
+    if (field.id !== EBML_VOID)
+      pad(Math.max(0, field.end - field.body - (limits.get(field.id) ?? 0)));
+}
+
 function only<T extends { id: number }>(list: T[], id: number) {
   const found = list.filter((el) => el.id === id);
   if (found.length > 1) throw new Malformed();
@@ -415,6 +518,7 @@ function only<T extends { id: number }>(list: T[], id: number) {
 function matroskaLengths(b: Uint8Array): number[] | null {
   const header = element(b, 0);
   if (header.end === undefined) return null;
+  allowed(sized(b, header.body, header.end), HEADER_FIELDS);
   const segment = element(b, header.end);
   if (segment.id !== EBML.segment) return null;
   // Bytes past the Segment (a second one, say) are something a player may show and this never read.
@@ -487,6 +591,7 @@ function matroskaLengths(b: Uint8Array): number[] | null {
     if (el.id === EBML.info) {
       if (++infos > 1) return null;
       const fields = sized(b, el.body, el.end);
+      allowed(fields, INFO_FIELDS);
       const scaleField = only(fields, EBML.timecodeScale);
       const durationField = only(fields, EBML.duration);
       if (scaleField) scale = uint(b, scaleField.body, scaleField.end);
@@ -494,8 +599,12 @@ function matroskaLengths(b: Uint8Array): number[] | null {
     } else if (el.id === EBML.tracks) {
       if (++trackLists > 1) return null;
       for (const entry of sized(b, el.body, el.end)) {
-        if (entry.id !== EBML.trackEntry) continue;
+        if (entry.id !== EBML.trackEntry) {
+          if (entry.id !== EBML_VOID) pad(entry.end - entry.body);
+          continue;
+        }
         const fields = sized(b, entry.body, entry.end);
+        allowed(fields, TRACK_FIELDS);
         // Only one picture track and sound, each with a codec of its kind.
         const type = only(fields, EBML.trackType);
         const kind = type ? uint(b, type.body, type.end) : 0;

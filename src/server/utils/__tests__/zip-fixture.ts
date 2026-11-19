@@ -157,38 +157,95 @@ export const mp4Clip = ({
     editSeconds === undefined
       ? []
       : [box('edts', box('elst', words(0, 1, Math.round(editSeconds * 1000), 0, 0x10000)))];
-  return Buffer.concat([
-    box('ftyp', Buffer.from('isom', 'latin1'), words(0x200), Buffer.from('isomiso2mp41', 'latin1')),
-    box(
-      'moov',
-      box('mvhd', words(0, 0, 0, 1000, claimed), Buffer.alloc(80)),
-      ...(mvex ? [box('mvex')] : []),
+  return tileMp4(
+    Buffer.concat([
       box(
-        'trak',
-        box('tkhd', words(0, 0, 0, 1, 0, claimed), Buffer.alloc(60)),
-        ...edits,
+        'ftyp',
+        Buffer.from('isom', 'latin1'),
+        words(0x200),
+        Buffer.from('isomiso2mp41', 'latin1')
+      ),
+      box(
+        'moov',
+        box('mvhd', words(0, 0, 0, 1000, claimed), Buffer.alloc(80)),
+        ...(mvex ? [box('mvex')] : []),
         box(
-          'mdia',
-          box('mdhd', words(0, 0, 0, 1000, claimed, 0)),
-          box('hdlr', words(0, 0), Buffer.from('vide', 'latin1'), Buffer.alloc(12)),
+          'trak',
+          box('tkhd', words(0, 0, 0, 1, 0, claimed), Buffer.alloc(60)),
+          ...edits,
           box(
-            'minf',
+            'mdia',
+            box('mdhd', words(0, 0, 0, 1000, claimed, 0)),
+            box('hdlr', words(0, 0), Buffer.from('vide', 'latin1'), Buffer.alloc(12)),
             box(
-              'stbl',
-              box('stsd', words(0, 1), box('avc1', Buffer.alloc(8))),
-              box('stts', words(0, 1, 1, Math.round(seconds * 1000))),
-              box('stsz', words(0, 4, 1))
+              'minf',
+              box(
+                'stbl',
+                box('stsd', words(0, 1), box('avc1', Buffer.alloc(8))),
+                box('stts', words(0, 1, 1, Math.round(seconds * 1000))),
+                box('stsz', words(0, 4, 1)),
+                ...mp4ChunkTables(1)
+              )
             )
           )
         )
-      )
-    ),
-    largeMdat
-      ? Buffer.concat([words(1), Buffer.from('mdat', 'latin1'), words(0, 20), Buffer.alloc(4)])
-      : box('mdat', Buffer.alloc(4)),
-  ]);
+      ),
+      largeMdat
+        ? Buffer.concat([words(1), Buffer.from('mdat', 'latin1'), words(0, 20), Buffer.alloc(4)])
+        : box('mdat', Buffer.alloc(4)),
+    ])
+  );
 };
 export { box as mp4Box, words as mp4Words };
+
+/** One chunk holding all of a track's samples; `tileMp4` points it at them. */
+export const mp4ChunkTables = (samples: number) => [
+  box('stsc', words(0, 1, 1, samples, 1)),
+  box('stco', words(0, 1, 0)),
+];
+
+/** Points each track's single chunk at its samples, laid end to end from the first mdat's start. */
+export function tileMp4(file: Buffer) {
+  const out = Buffer.from(file);
+  const kids = (start: number, end: number) => {
+    const found: { type: string; body: number; end: number }[] = [];
+    for (let at = start; at + 8 <= end; ) {
+      let size = out.readUInt32BE(at);
+      let header = 8;
+      if (size === 1) {
+        size = Number(out.readBigUInt64BE(at + 8));
+        header = 16;
+      } else if (size === 0) size = end - at;
+      found.push({
+        type: out.toString('latin1', at + 4, at + 8),
+        body: at + header,
+        end: at + size,
+      });
+      at += size;
+    }
+    return found;
+  };
+  const child = (parent: { body: number; end: number } | undefined, type: string) =>
+    parent && kids(parent.body, parent.end).find((k) => k.type === type);
+  const top = kids(0, out.length);
+  const mdat = top.find((k) => k.type === 'mdat');
+  const moov = top.find((k) => k.type === 'moov');
+  if (!mdat || !moov) return out;
+  let at = mdat.body;
+  for (const trak of kids(moov.body, moov.end).filter((k) => k.type === 'trak')) {
+    const stbl = child(child(child(trak, 'mdia'), 'minf'), 'stbl');
+    const stsz = child(stbl, 'stsz');
+    const stco = child(stbl, 'stco');
+    if (!stsz || !stco) continue;
+    const size = out.readUInt32BE(stsz.body + 4);
+    const count = out.readUInt32BE(stsz.body + 8);
+    let bytes = size * count;
+    if (!size) for (let i = 0; i < count; i++) bytes += out.readUInt32BE(stsz.body + 12 + i * 4);
+    out.writeUInt32BE(at, stco.body + 8);
+    at += bytes;
+  }
+  return out;
+}
 
 const ebmlSize = (n: number | 'unknown') => {
   const out = Buffer.alloc(8);

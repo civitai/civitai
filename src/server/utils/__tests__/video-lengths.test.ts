@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ebml,
   mp4Box,
+  mp4ChunkTables,
   mp4Clip,
   mp4Words,
+  tileMp4,
   WEBM_VIDEO_TRACKS,
   webmClip,
 } from '~/server/utils/__tests__/zip-fixture';
@@ -159,17 +161,20 @@ describe('readVideoLengths, on what a player could show and it would not measure
             'stbl',
             B('stsd', w(0, 1), B(format, Buffer.alloc(8))),
             ...stbl,
-            B('stsz', w(0, 4, samples))
+            B('stsz', w(0, 4, samples)),
+            ...mp4ChunkTables(samples)
           )
         )
       )
     );
   const movie = (traks: Buffer[], extra: Buffer[] = []) =>
-    Buffer.concat([
-      ftyp,
-      B('moov', B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)), ...traks, ...extra),
-      B('mdat', Buffer.alloc(4096)),
-    ]);
+    tileMp4(
+      Buffer.concat([
+        ftyp,
+        B('moov', B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)), ...traks, ...extra),
+        B('mdat', Buffer.alloc(4096)),
+      ])
+    );
   const elst = (...entries: [number, number][]) =>
     B('edts', B('elst', w(0, entries.length, ...entries.flatMap(([d, t]) => [d, t, 0x10000]))));
 
@@ -205,6 +210,20 @@ describe('readVideoLengths, on what a player could show and it would not measure
       'cover art',
       () => movie([trak(10)], [B('udta', B('meta', w(0), B('ilst', B('covr', w(0)))))]),
     ],
+    ['a subtitle track', () => movie([trak(10), trak(10, { handler: 'subp', format: 'mp4s' })])],
+    ['a track with no handler', () => movie([trak(10), trak(10, { noHandler: true })])],
+    [
+      'a sound track holding video',
+      () => movie([trak(10), trak(10, { handler: 'soun', format: 'avc1' })]),
+    ],
+    ['no video track', () => movie([trak(10, { handler: 'soun' })])],
+    ['a top-level meta box', () => Buffer.concat([movie([trak(10)]), B('meta', w(0))])],
+    ['a second moov', () => Buffer.concat([movie([trak(10)]), B('moov')])],
+  ])('refuses an mp4 with %s', (_n, bytes) => {
+    expect(readVideoLengths(bytes())).toBeNull();
+  });
+
+  it.each([
     [
       'a last frame shown seconds after the rest',
       () =>
@@ -235,17 +254,19 @@ describe('readVideoLengths, on what a player could show and it would not measure
           }),
         ]),
     ],
-    ['a subtitle track', () => movie([trak(10), trak(10, { handler: 'subp', format: 'mp4s' })])],
-    ['a track with no handler', () => movie([trak(10), trak(10, { noHandler: true })])],
     [
-      'a sound track holding video',
-      () => movie([trak(10), trak(10, { handler: 'soun', format: 'avc1' })]),
+      'six 8 s frames, the last shown 70 s late',
+      () =>
+        movie([
+          trak(48, {
+            stbl: [B('stts', w(0, 1, 6, 8000)), B('ctts', w(0, 2, 5, 0, 1, 70_000))],
+            samples: 6,
+          }),
+        ]),
     ],
-    ['no video track', () => movie([trak(10, { handler: 'soun' })])],
-    ['a top-level meta box', () => Buffer.concat([movie([trak(10)]), B('meta', w(0))])],
-    ['a second moov', () => Buffer.concat([movie([trak(10)]), B('moov')])],
-  ])('refuses an mp4 with %s', (_n, bytes) => {
-    expect(readVideoLengths(bytes())).toBeNull();
+  ])('measures the span shown, not the timing table, for %s', (_n, bytes) => {
+    const lengths = readVideoLengths(bytes())!;
+    expect(Math.max(...lengths) - Math.min(...lengths)).toBeGreaterThan(1);
   });
 
   const head = ebml(0x1a45dfa3, ebml(0x4282, Buffer.from('webm')));
@@ -493,7 +514,10 @@ describe('readVideoLengths, at its bounds', () => {
           cluster(timecode(0), block(0xa3))
         ),
     ],
-    ['a megabyte in a free box', () => Buffer.concat([clip, B('free', Buffer.alloc(1024 * 1024))])],
+    [
+      'a megabyte in a free box',
+      () => Buffer.concat([clip, B('free', Buffer.alloc(1024 * 1024, 1))]),
+    ],
   ])('refuses %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
   });
@@ -524,17 +548,20 @@ describe('readVideoLengths, at its bounds', () => {
             B('stsd', w(0, 1), B('avc1', Buffer.alloc(8))),
             stts,
             ...extra.filter((x) => x.toString('latin1', 4, 8) === 'ctts'),
-            B('stsz', w(0, 4, 1))
+            B('stsz', w(0, 4, 1)),
+            ...mp4ChunkTables(1)
           )
         )
       )
     );
   const movie = (t: Buffer) =>
-    Buffer.concat([
-      B('ftyp', Buffer.from('isom', 'latin1'), w(0x200)),
-      B('moov', B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)), t),
-      B('mdat', Buffer.alloc(4)),
-    ]);
+    tileMp4(
+      Buffer.concat([
+        B('ftyp', Buffer.from('isom', 'latin1'), w(0x200)),
+        B('moov', B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)), t),
+        B('mdat', Buffer.alloc(4)),
+      ])
+    );
 
   it('takes an empty edit followed by one media edit', () => {
     const edits = B('edts', B('elst', w(0, 2, 500, 0xffffffff, 0x10000, 9_500, 0, 0x10000)));
@@ -564,7 +591,7 @@ describe('readVideoLengths, on bytes no player shows', () => {
     ['a megabyte in a second mdat', () => Buffer.concat([clip, B('mdat', MB)])],
     [
       'a megabyte in moov user data',
-      () => Buffer.concat([ftyp, moovWith(B('udta', MB)), B('mdat', Buffer.alloc(4))]),
+      () => tileMp4(Buffer.concat([ftyp, moovWith(B('udta', MB)), B('mdat', Buffer.alloc(4))])),
     ],
     [
       'a megabyte of mdat no sample uses',
@@ -632,6 +659,192 @@ describe('readVideoLengths, on bytes no player shows', () => {
     ],
     ['a block for a track it never declared', () => webm(cluster(5000, block(0x82)))],
     ['ordered chapters', () => webm(chapters(1))],
+  ])('refuses a webm with %s', (_n, bytes) => {
+    expect(readVideoLengths(bytes())).toBeNull();
+  });
+});
+
+describe('readVideoLengths, on tracks that draw nothing and reserved space', () => {
+  const w = mp4Words;
+  const B = mp4Box;
+  const clip = mp4Clip({ seconds: 10 });
+  const moovAt = clip.indexOf('moov') - 4;
+  const moovEnd = moovAt + clip.readUInt32BE(moovAt);
+  const ftyp = clip.subarray(0, moovAt);
+  const sideTrak = (handler: string, bytes: number) =>
+    B(
+      'trak',
+      B('tkhd', w(0, 0, 0, 2, 0, 10_000), Buffer.alloc(60)),
+      B(
+        'mdia',
+        B('mdhd', w(0, 0, 0, 1000, 10_000, 0)),
+        B('hdlr', w(0, 0), Buffer.from(handler, 'latin1'), Buffer.alloc(12)),
+        B(
+          'minf',
+          B(
+            'stbl',
+            B('stsd', w(0, 1), B(handler === 'tmcd' ? 'tmcd' : 'mebx', Buffer.alloc(8))),
+            B('stts', w(0, 1, 1, 10_000)),
+            B('stsz', w(0, bytes, 1)),
+            ...mp4ChunkTables(1)
+          )
+        )
+      )
+    );
+  /** The clip with a side track whose one sample is `bytes` long, its bytes in the mdat. */
+  const withSide = (handler: string, bytes: number) =>
+    tileMp4(
+      Buffer.concat([
+        ftyp,
+        B('moov', clip.subarray(moovAt + 8, moovEnd), sideTrak(handler, bytes)),
+        B('mdat', Buffer.alloc(4 + bytes)),
+      ])
+    );
+
+  it('takes a small timecode track', () => {
+    expect(readVideoLengths(withSide('tmcd', 16))).toContain(10);
+  });
+
+  it('refuses a metadata track whose samples carry more than the cap', () => {
+    expect(readVideoLengths(withSide('meta', 32 * 1024))).toContain(10);
+    expect(readVideoLengths(withSide('meta', 1024 * 1024))).toBeNull();
+  });
+
+  it('takes reserved space of zeros, and refuses it with one byte set', () => {
+    const zeros = Buffer.alloc(1024 * 1024);
+    expect(readVideoLengths(Buffer.concat([clip, B('free', zeros)]))).toContain(10);
+    const marked = Buffer.from(zeros);
+    marked[700_000] = 1;
+    expect(readVideoLengths(Buffer.concat([clip, B('free', marked)]))).toBeNull();
+  });
+});
+
+describe('readVideoLengths, on bytes hidden inside the structures it reads', () => {
+  const w = mp4Words;
+  const B = mp4Box;
+  const MB = Buffer.alloc(1024 * 1024, 7);
+  const movie = ({
+    stblExtra = [] as Buffer[],
+    handlerName = Buffer.alloc(12),
+    entryExtra = Buffer.alloc(0),
+    second = false,
+  } = {}) => {
+    const trak = (id: number) =>
+      B(
+        'trak',
+        B('tkhd', w(0, 0, 0, id, 0, 10_000), Buffer.alloc(60)),
+        B(
+          'mdia',
+          B('mdhd', w(0, 0, 0, 1000, 10_000, 0)),
+          B('hdlr', w(0, 0), Buffer.from(id === 1 ? 'vide' : 'soun', 'latin1'), handlerName),
+          B(
+            'minf',
+            B(
+              'stbl',
+              B('stsd', w(0, 1), B(id === 1 ? 'avc1' : 'mp4a', Buffer.alloc(8), entryExtra)),
+              B('stts', w(0, 1, 1, 10_000)),
+              B('stsz', w(0, 4, 1)),
+              ...mp4ChunkTables(1),
+              ...stblExtra
+            )
+          )
+        )
+      );
+    return tileMp4(
+      Buffer.concat([
+        B('ftyp', Buffer.from('isom', 'latin1'), w(0x200)),
+        B(
+          'moov',
+          B('mvhd', w(0, 0, 0, 1000, 10_000), Buffer.alloc(80)),
+          trak(1),
+          ...(second ? [trak(2)] : [])
+        ),
+        B('mdat', Buffer.alloc(second ? 8 : 4)),
+      ])
+    );
+  };
+  /** Points every stco at the mdat's first byte, so the tracks share one range. */
+  const overlapping = () => {
+    const file = movie({ second: true });
+    const mdatBody = file.indexOf('mdat') + 4;
+    for (let at = file.indexOf('stco'); at >= 0; at = file.indexOf('stco', at + 4))
+      file.writeUInt32BE(mdatBody, at + 12);
+    return file;
+  };
+  const outside = () => {
+    const file = movie();
+    file.writeUInt32BE(8, file.indexOf('stco') + 12);
+    return file;
+  };
+
+  it('takes the movie as built, with a second (sound) track (the control for the cases below)', () => {
+    expect(readVideoLengths(movie())).toContain(10);
+    expect(readVideoLengths(movie({ second: true }))).toContain(10);
+  });
+
+  it.each([
+    [
+      'a megabyte in a sample table box of another kind',
+      () => movie({ stblExtra: [B('uuid', MB)] }),
+    ],
+    ['a megabyte of handler name', () => movie({ handlerName: MB })],
+    ['a megabyte in its sample description', () => movie({ entryExtra: B('uuid', MB) })],
+    ['two tracks whose samples share bytes', overlapping],
+    ['samples outside the mdat', outside],
+  ])('refuses an mp4 with %s', (_n, bytes) => {
+    expect(readVideoLengths(bytes())).toBeNull();
+  });
+
+  const head = (extra = Buffer.alloc(0)) =>
+    ebml(0x1a45dfa3, Buffer.concat([ebml(0x4282, Buffer.from('webm')), extra]));
+  const info = (extra = Buffer.alloc(0)) => {
+    const f = Buffer.alloc(8);
+    f.writeDoubleBE(10_000);
+    return ebml(
+      0x1549a966,
+      Buffer.concat([ebml(0x2ad7b1, Buffer.from([0x0f, 0x42, 0x40])), ebml(0x4489, f), extra])
+    );
+  };
+  const tracks = (entryExtra = Buffer.alloc(0), extra = Buffer.alloc(0)) =>
+    ebml(
+      0x1654ae6b,
+      Buffer.concat([
+        ebml(
+          0xae,
+          Buffer.concat([
+            ebml(0xd7, Buffer.from([1])),
+            ebml(0x83, Buffer.from([1])),
+            ebml(0x86, Buffer.from('V_VP9')),
+            entryExtra,
+          ])
+        ),
+        extra,
+      ])
+    );
+  const cluster = (ms: number) =>
+    ebml(
+      0x1f43b675,
+      Buffer.concat([
+        ebml(0xe7, Buffer.from([ms >> 16, (ms >> 8) & 0xff, ms & 0xff])),
+        ebml(0xa3, Buffer.from([0x81, 0, 0, 0x80, 0])),
+      ])
+    );
+  const webm = ({ h = head(), i = info(), t = tracks() } = {}) =>
+    Buffer.concat([h, ebml(0x18538067, Buffer.concat([i, t, cluster(0), cluster(10_000)]))]);
+
+  it('takes the webm as built, with a small CodecPrivate (the control for the cases below)', () => {
+    expect(readVideoLengths(webm())).toEqual([10, 10]);
+    expect(readVideoLengths(webm({ t: tracks(ebml(0x63a2, Buffer.alloc(200))) }))).toEqual([
+      10, 10,
+    ]);
+  });
+
+  it.each([
+    ['a megabyte of CodecPrivate', () => webm({ t: tracks(ebml(0x63a2, MB)) })],
+    ['a megabyte of track Name', () => webm({ t: tracks(ebml(0x536e, MB)) })],
+    ['a megabyte in an unknown Tracks child', () => webm({ t: tracks(undefined, ebml(0xc0, MB)) })],
+    ['a megabyte of Info Title', () => webm({ i: info(ebml(0x7ba9, MB)) })],
+    ['a megabyte in the EBML header', () => webm({ h: head(ebml(0xc0, MB)) })],
   ])('refuses a webm with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
   });
