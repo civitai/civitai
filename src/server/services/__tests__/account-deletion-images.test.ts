@@ -23,7 +23,11 @@ import {
   MAX_RESTORE_BATCHES,
   RESTORE_BATCH_SIZE,
 } from '~/server/services/account-deletion-images';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -48,6 +52,7 @@ type ImageRow = {
   postId: number | null;
   ingestion: string;
   blockedFor: string | null;
+  needsReview?: string | null;
   metadata: Record<string, string>;
   /** Fiction: a row the claim matches but the UPDATE never moves off `Blocked`. */
   stuck?: boolean;
@@ -85,6 +90,7 @@ const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
+const COALESCE_EXPR = /^COALESCE\(("\w+"),\s*([\s\S]+)\)$/;
 const CASE_EXPR = /^CASE\s+WHEN\s+([\s\S]+?)\s+THEN\s+([\s\S]+?)\s+ELSE\s+([\s\S]+?)\s+END$/;
 const takeKeys = (part: string, keys: string[]) => keys.splice(0, (part.match(/\?/g) ?? []).length);
 
@@ -105,6 +111,8 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
     const elseKeys = takeKeys(otherwise, keys);
     return holds ? evalValue(then, thenKeys, row) : evalValue(otherwise, elseKeys, row);
   }
+  const coalesce = expr.match(COALESCE_EXPR);
+  if (coalesce) return evalValue(coalesce[1], [], row) ?? evalValue(coalesce[2], keys, row);
   const lookup = expr.match(METADATA_LOOKUP);
   if (lookup) {
     const value = row.metadata[keys[0]] ?? null;
@@ -113,11 +121,13 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
     return value;
   }
   if (expr === '"blockedFor"') return row.blockedFor;
+  if (expr === '"needsReview"') return row.needsReview ?? null;
   if (expr === `'Blocked'::"ImageIngestionStatus"`) return 'Blocked';
   throw new Error(`unhandled assignment: ${expr}`);
 }
 
-function applyRestoreUpdate(sql: string, values: unknown[]) {
+function applyRestoreUpdate(rawSql: string, values: unknown[]) {
+  const sql = rawSql.replace(/--[^\n]*/g, '');
   const params = [...values];
   const whereAt = sql.indexOf('WHERE');
   const assignments = splitTopLevel(sql.slice(sql.indexOf('SET ') + 4, whereAt)).map(
@@ -361,6 +371,7 @@ describe('unblockAccountDeletionImages', () => {
         metadata: {
           [PRIOR_INGESTION_KEY]: 'Blocked',
           [PRIOR_BLOCKED_FOR_KEY]: 'AiNotVerified',
+          [PRIOR_NEEDS_REVIEW_KEY]: 'minor',
         },
       }),
     ];
@@ -368,6 +379,51 @@ describe('unblockAccountDeletionImages', () => {
     await unblockAccountDeletionImages(7);
 
     expect(images[0].metadata).toEqual({});
+  });
+
+  it('puts back the review flag the grace pass cleared', async () => {
+    images = [
+      hidden(1, 'Scanned', {
+        needsReview: null,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' },
+      }),
+      hidden(2, 'Scanned', {
+        needsReview: 'csam',
+        blockedFor: 'CSAM',
+        metadata: {
+          [PRIOR_INGESTION_KEY]: 'Scanned',
+          [PRIOR_BLOCKED_FOR_KEY]: 'CSAM',
+          [PRIOR_NEEDS_REVIEW_KEY]: 'csam',
+        },
+      }),
+    ];
+
+    await unblockAccountDeletionImages(7);
+
+    // Visible again, but back in the review queue it was held in.
+    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: 'minor', metadata: {} });
+    expect(images[1]).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam', metadata: {} });
+  });
+
+  it('keeps a review flag set during the grace window over the recorded one', async () => {
+    images = [
+      hidden(1, 'Scanned', {
+        needsReview: 'poi',
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' },
+      }),
+    ];
+
+    await unblockAccountDeletionImages(7);
+
+    expect(images[0].needsReview).toBe('poi');
+  });
+
+  it('leaves the review flag alone on a row blocked before the flag was recorded', async () => {
+    images = [hidden(1, 'Scanned', { needsReview: null })];
+
+    await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: null, metadata: {} });
   });
 
   it('resets the blocked nsfwLevel only for images that came back visible', async () => {

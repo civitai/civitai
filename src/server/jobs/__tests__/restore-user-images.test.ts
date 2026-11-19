@@ -51,28 +51,38 @@ let pendingSet: (string | Buffer)[] = [];
 
 const EXISTS_SELECT = /SELECT EXISTS\s*\(([\s\S]*?)\)\s*AS\s+"?(\w+)"?/;
 
+const BATCH_SELECT = /^\s*SELECT u\.id FROM "User" u WHERE ([\s\S]*)$/;
+
+// Every predicate is applied, and one this does not recognise is rejected rather than assumed,
+// so a gate that widens its scope cannot pass by relying on the harness to narrow it back.
+function parseOwnerPredicates(where: string, values: unknown[]) {
+  const params = [...values];
+  return where.split(/\s+AND\s+/).map((clause) => {
+    const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
+    if (/^\s*u\.id = \?/.test(clause)) return (row: UserRow) => row.id === args[0];
+    if (/^\s*u\.id = ANY\(\?\)/.test(clause))
+      return (row: UserRow) => (args[0] as number[]).includes(row.id);
+    if (/^\s*u\."deletedAt" IS NOT NULL/.test(clause))
+      return (row: UserRow) => row.deletedAt != null;
+    if (/^\s*u\."deletedAt" IS NULL/.test(clause)) return (row: UserRow) => row.deletedAt == null;
+    throw new Error(`unrecognized owner-gate predicate: ${clause.trim()}`);
+  });
+}
+
 function evaluateOwnerGate(sql: string, values: unknown[]) {
+  const batch = BATCH_SELECT.exec(sql);
+  if (batch) {
+    const predicates = parseOwnerPredicates(batch[1], values);
+    return users.filter((row) => predicates.every((holds) => holds(row))).map(({ id }) => ({ id }));
+  }
+
   const match = EXISTS_SELECT.exec(sql);
   if (!match) throw new Error(`unexpected read: ${sql}`);
 
   const [, body, alias] = match;
   if (!/FROM "User" u/.test(body)) throw new Error(`the gate must read "User": ${body}`);
 
-  const params = [...values];
-  // Every predicate is applied, and one this does not recognise is rejected rather than assumed,
-  // so a gate that widens its scope cannot pass by relying on the harness to narrow it back.
-  const predicates = body
-    .slice(body.indexOf('WHERE') + 5)
-    .split(/\s+AND\s+/)
-    .map((clause) => {
-      const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
-      if (/^\s*u\.id = \?/.test(clause)) return (row: UserRow) => row.id === args[0];
-      if (/^\s*u\."deletedAt" IS NOT NULL/.test(clause))
-        return (row: UserRow) => row.deletedAt != null;
-      if (/^\s*u\."deletedAt" IS NULL/.test(clause)) return (row: UserRow) => row.deletedAt == null;
-      throw new Error(`unrecognized owner-gate predicate: ${clause.trim()}`);
-    });
-
+  const predicates = parseOwnerPredicates(body.slice(body.indexOf('WHERE') + 5), values);
   return [{ [alias]: users.some((row) => predicates.every((holds) => holds(row))) }];
 }
 
@@ -203,10 +213,11 @@ describe('restoreUserImages', () => {
     pendingSet = ['7'];
 
     await run();
+    const readsAfterFirst = mockDbWrite.$queryRaw.mock.calls.length;
     const second = await run();
 
     expect(mockUnblock).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(readsAfterFirst);
     expect(second).toMatchObject({ pending: 0, finished: 0, unblocked: 0 });
   });
 
@@ -230,7 +241,9 @@ describe('restoreUserImages', () => {
     await run();
 
     // Unfiltered, `NaN` is carried all the way into the gate's parameter list on every run.
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const params = mockDbWrite.$queryRaw.mock.calls.flatMap(([, ...values]) => values).flat();
+    expect(params).toContain(7);
+    expect(params).not.toContainEqual(NaN);
     expect(mockUnblock).toHaveBeenCalledWith(7);
   });
 
@@ -302,6 +315,20 @@ describe('restoreUserImages', () => {
       expect(refreshPictures).toHaveBeenCalledTimes(1);
       // 9's reversal threw after batches that may have committed.
       expect(refreshPictures).toHaveBeenCalledWith([7, 9, 10]);
+    });
+
+    it('leaves out an account deleted again after its unblock ran', async () => {
+      users = [restored(7), restored(8)];
+      pendingSet = ['7', '8'];
+      mockUnblock.mockImplementationOnce(async () => {
+        users[0] = { id: 7, deletedAt: new Date('2026-07-29T00:00:00Z') };
+        return { unblocked: 3, stillBlocked: 0, skipped: 0, drained: true };
+      });
+
+      await run();
+
+      // Its new grace block clears the picture; a refresh now would put it back.
+      expect(refreshPictures).toHaveBeenCalledWith([8]);
     });
 
     it('clears a worklist entry only after the refresh ran', async () => {

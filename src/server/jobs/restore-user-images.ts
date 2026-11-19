@@ -23,6 +23,15 @@ async function isRestored(userId: number) {
   return row?.restored ?? false;
 }
 
+async function filterRestored(userIds: number[]) {
+  if (!userIds.length) return [];
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT u.id FROM "User" u WHERE u.id = ANY(${userIds}) AND u."deletedAt" IS NULL
+  `;
+  const restored = new Set(rows.map((r) => r.id));
+  return userIds.filter((id) => restored.has(id));
+}
+
 /**
  * Undoes the grace block `remove-deleted-user-images` wrote, off a worklist `restoreUser` names
  * rather than one this job discovers: the breadcrumb has no supporting index on ~120M `Image`
@@ -76,7 +85,9 @@ export async function runRestoreUserImages(
   }
 
   // Before the worklist entries are cleared: a run cut short in between refreshes them next tick.
-  if (refreshed.length) await refreshPictures(refreshed);
+  // An account deleted again since its unblock is left out: its grace block clears the picture.
+  const stillRestored = await filterRestored(refreshed);
+  if (stillRestored.length) await refreshPictures(stillRestored);
   for (const userId of drained) {
     await clearPendingImageRestore(userId);
     finished++;

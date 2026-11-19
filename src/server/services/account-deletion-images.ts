@@ -12,7 +12,11 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 
 export const RESTORE_BATCH_SIZE = 500;
 const RESTORE_FOLLOWUP_CONCURRENCY = 2;
@@ -76,7 +80,10 @@ export async function unblockAccountDeletionImages(userId: number) {
             WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
             ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
           END,
-          "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text
+          -- A review the block cleared comes back; one set since is kept. No key (a row blocked
+          -- before it was recorded): left as it is.
+          "needsReview" = COALESCE("needsReview", "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text),
+          "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
       WHERE id IN (
         SELECT i.id
         FROM "Image" i
