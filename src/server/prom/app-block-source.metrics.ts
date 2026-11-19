@@ -39,9 +39,8 @@ export const appBlockHostSourceCounter = registerCounterWithLabels({
 });
 
 /**
- * Sources the gate accepted on App Blocks entries, one per distinct source of a call that passed.
- * A refused call counts nothing. Without it an accepted cdn or key source leaves no series, so
- * "the gate ran" could not be told from "the gate was skipped".
+ * Sources the gate accepted on App Blocks entries, one per distinct source of a call that passed;
+ * a refused call counts nothing.
  */
 export const appBlockSourceAcceptedCounter = registerCounterWithLabels({
   name: 'app_block_source_accepted_total',
@@ -51,7 +50,7 @@ export const appBlockSourceAcceptedCounter = registerCounterWithLabels({
 
 /**
  * Publishes both counters at 0 for every label pair, so a series that never fired reads as 0
- * rather than as absent. Idempotent; /api/metrics calls it on every scrape.
+ * rather than absent. Idempotent.
  */
 export function seedAppBlockSourceMetrics(): void {
   try {
