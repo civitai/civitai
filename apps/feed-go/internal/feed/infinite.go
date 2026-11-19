@@ -47,9 +47,8 @@ type InfiniteInput struct {
 	// a signed-in viewer, applies the pending visibility instead of the reviewed one. The feed path's
 	// mapper refuses it (an empty page).
 	Pending bool
-	// BaseModels is `baseModels` (z.string().array()), as sent: getAllImages keeps the images with an
-	// ImageResourceNew row whose ModelVersion's `baseModel` is one of them (the feed hydrate too); the
-	// feed query sends the non-empty ones. The names are matched as text, never against a list.
+	// BaseModels is `baseModels`, as sent (order, repeats and empty names kept); matched as text,
+	// never against a list.
 	BaseModels []string
 }
 

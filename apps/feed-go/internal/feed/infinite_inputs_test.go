@@ -133,8 +133,6 @@ func TestParseInfiniteIgnoresStrippedLegacyKeys(t *testing.T) {
 			t.Errorf("ParseInfinite %s = %+v, want the input without it: %+v", input, *got, *want)
 		}
 	}
-	// Any other key outside the schema still falls back beside one of them; an unported key still
-	// names the gap.
 	for input, reason := range map[string]string{
 		`{"useIndex":true,"someNewFilter":1}`: "input-unknown-key",
 		`{"search":"x","zzz":1}`:              "input-unknown-key",
