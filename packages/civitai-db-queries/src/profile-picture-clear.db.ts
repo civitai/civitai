@@ -26,7 +26,11 @@ export const userImageNamesPicture = (alias: string, user = 'u') =>
 const heldOrBlockedText = (alias: string) =>
   `(${alias}."needsReview" = ANY($2::text[]) OR ${blockMarkerText(alias)})`;
 
-/** The first upload key in `User.image` (`User` aliased `user`), lowercased, an encoded dash read as one. */
+/**
+ * The first upload key in `User.image` (`User` aliased `user`), lowercased, an encoded dash read as one.
+ * Fewer forms than the main app's `keysIn`: the column holds a bare key or a CDN url around one, since
+ * the profile save refuses any new key and only the restore writes one (a picture's bare url).
+ */
 const userImageKeyText = (user: string) =>
   `(regexp_match(replace(lower(${user}.image), '%2d', '-'), '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'))[1]`;
 
@@ -189,6 +193,12 @@ const RESTORE_CLEARED_USER_IMAGES_SQL = `
       AND ${MARKER_IS_CURRENT}
       AND u.image IS NULL
       AND ${servablePictureText}
+      -- Another of the user's rows stored under the same key, held or blocked, keeps it withheld.
+      AND NOT EXISTS (
+        SELECT 1 FROM "Image" twin
+        WHERE twin."userId" = u.id AND twin.url = i.url AND twin.id <> i.id
+          AND ${heldOrBlockedText('twin')}
+      )
     FOR SHARE OF i
   )
   UPDATE "User" u

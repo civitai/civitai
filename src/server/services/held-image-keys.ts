@@ -40,10 +40,7 @@ export async function clearHeldUserImages(db: RawUnsafeQueryClient, userIds: num
   return runStatement(db, clearHeldUserImagesStatement(userIds));
 }
 
-/**
- * `pictureUserIdsStatement` from `@civitai/db-queries/profile-picture-clear`: the users whose profile
- * picture is one of `imageIds`, and the owners whose `User.image` names one of them.
- */
+/** `pictureUserIdsStatement` from `@civitai/db-queries/profile-picture-clear`. */
 export async function getPictureUserIds(db: RawUnsafeQueryClient, imageIds: number[]) {
   return runStatement(db, pictureUserIdsStatement(imageIds));
 }

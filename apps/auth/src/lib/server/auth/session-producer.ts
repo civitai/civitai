@@ -35,10 +35,9 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      // Drop User.image when it names the profile picture; the picture then reaches the session only via
-      // profilePicture, which also gates the OAuth userinfo picture, so it needs the full servable rule,
-      // wider than the main app's fallbackUserImageColumn. Drop it too when it names another of the
-      // user's own images that is not servable.
+      // User.image is also the OAuth userinfo picture, so a key it names is held to the full servable
+      // rule (wider than the main app's fallbackUserImageColumn): the profile picture reaches the session
+      // only through profilePicture, and any other own image only while servable.
       sql<string | null>`CASE WHEN EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i.id = "User"."profilePictureId"

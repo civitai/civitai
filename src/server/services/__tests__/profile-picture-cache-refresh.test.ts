@@ -20,6 +20,7 @@ const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
 const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
 const restoreImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
 const dropMarkers = vi.fn(async (_db: unknown, _ids: number[]) => undefined);
+const pictureLookup = vi.fn();
 
 vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -28,13 +29,15 @@ vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   dropStaleHeldImageMarkers: (db: unknown, ids: number[]) => dropMarkers(db, ids),
   // The lookup's SQL runs against Postgres in held-avatar-restore.behavior.test.ts; here it answers
   // from the same user fake as the profile pictures.
-  getPictureUserIds: async (db: typeof dbMock.dbWrite, ids: number[]) =>
-    (
+  getPictureUserIds: async (db: typeof dbMock.dbWrite, ids: number[]) => {
+    pictureLookup(db, ids);
+    return (
       (await db.user.findMany({
         where: { profilePictureId: { in: ids } },
         select: { id: true },
       })) as { id: number }[]
-    ).map((row) => row.id),
+    ).map((row) => row.id);
+  },
 }));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({
@@ -366,5 +369,12 @@ describe('a moderator report flag', () => {
     expect(dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]
     );
+  });
+});
+
+describe('the users an image change reaches', () => {
+  it('come from the shared lookup, on the primary', async () => {
+    await reRate(AVATAR);
+    expect(pictureLookup).toHaveBeenCalledWith(dbMock.dbWrite, [AVATAR]);
   });
 });

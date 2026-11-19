@@ -371,6 +371,11 @@ describe("produceSessionUser — a User.image naming another of the user's own i
     expect((await produceSessionUser(BUILDER))?.image).toBe(staleKey);
   });
 
+  it("is the session image when the blocked image is another user's (owner-scoped)", async () => {
+    await seed(`"blockedFor" = 'tos'`, staleKey, NEIGHBOUR);
+    expect((await produceSessionUser(BUILDER))?.image).toBe(staleKey);
+  });
+
   it('leaves an external avatar url, even with a blocked upload in the history', async () => {
     const external = 'https://avatars.githubusercontent.com/u/1?v=4';
     await seed(`"blockedFor" = 'tos'`, external);

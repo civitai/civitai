@@ -2447,7 +2447,7 @@ export async function deleteUserProfilePictureCache(userId: number) {
   );
 }
 
-/** `getPictureUserIds` from the primary: the users an image change can reach through their avatar. */
+/** `getPictureUserIds` on the primary. */
 export async function getProfilePictureUserIds(imageIds: number[]) {
   return getPictureUserIds(dbWrite, imageIds);
 }

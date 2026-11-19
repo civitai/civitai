@@ -816,7 +816,7 @@ export const updateUserHandler = async ({
 
     // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
     // The modal sends the field on every user-level save, so this recomputes on cosmetic
-    // saves too. That is deliberate: the upsert is 0.87 ms and idempotent, cheaper than
+    // saves too. That is deliberate: the upsert is cheap and idempotent, cheaper than
     // reading the stored value back to compare.
     if (input.leaderboardShowcase !== undefined)
       postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));

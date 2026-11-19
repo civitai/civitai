@@ -13,10 +13,7 @@ import { dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 
-/**
- * The users whose profile picture is one of `imageIds`, and the owners whose `User.image` names one of
- * them. Read before a delete: the relation is set null.
- */
+/** `pictureUserIds` on `db`. Read before a delete: the relation is set null. */
 export async function profilePictureUserIds(
   imageIds: number[],
   db: Kysely<DB> = dbWrite

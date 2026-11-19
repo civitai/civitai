@@ -198,10 +198,10 @@ describe("a User.image naming another of the user's own images", () => {
   const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
   // Upper-case and CDN-wrapped, as a stored url may be; the match lowercases it.
   const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY.toUpperCase()}/width=96`;
-  const seed = async (oldImage: string, image: string) =>
+  const seed = async (oldImage: string, image: string, owner = 1, storedUrl = OLD_KEY) =>
     pg.exec(`
       INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-1', 1);
-      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${OLD_KEY}', 1);
+      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${storedUrl}', ${owner});
       UPDATE "Image" SET ${oldImage} WHERE id = 2;
       INSERT INTO "User" VALUES (1, 1, '${image}', NULL);
     `);
@@ -243,5 +243,52 @@ describe("a User.image naming another of the user's own images", () => {
     expect(await getPictureUserIds(db, [2])).toEqual([]);
     // The profile picture's own user is still found.
     expect(await getPictureUserIds(db, [1])).toEqual([1]);
+  });
+  it.each([
+    ['an upper-case stored url', staleKey, OLD_KEY.toUpperCase()],
+    ['an encoded dash in User.image', staleKey.replace(/-/g, '%2D'), OLD_KEY],
+  ])('🔴 is cleared for %s', async (_form, image, storedUrl) => {
+    await seed(`"needsReview" = 'minor'`, image, 1, storedUrl);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it("is left when the held image is another user's (owner-scoped)", async () => {
+    await seed(`"needsReview" = 'minor'`, staleKey, 2);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(staleKey);
+  });
+});
+
+describe('a profile picture with a twin row under the same key', () => {
+  const TWIN_KEY = '8d2c4b6a-1e3f-4a5b-9c7d-0e1f2a3b4c5d';
+  const seedTwin = async (twin: string) =>
+    pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", "needsReview") VALUES (1, '${TWIN_KEY}', 1, 'minor');
+      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${TWIN_KEY}', 1);
+      UPDATE "Image" SET ${twin} WHERE id = 2;
+      INSERT INTO "User" VALUES (1, 1, '${TWIN_KEY}', '{}');
+    `);
+
+  it('🔴 keeps the restore marker when the twin is held too', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect(await user(1)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 1 } } });
+  });
+
+  it('🔴 is not restored while the twin is still held', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    await clearHeldUserImages(db, [1]);
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it('is restored once the twin is clean too (control)', async () => {
+    await seedTwin(`"needsReview" = 'minor'`);
+    await clearHeldUserImages(db, [1]);
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([1]);
+    expect((await user(1)).image).toBe(TWIN_KEY);
   });
 });
