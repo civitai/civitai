@@ -39,8 +39,8 @@ async function filterRestored(userIds: number[]) {
  * tick to learn that nobody was restored. An empty set costs one SMEMBERS and no query at all.
  *
  * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked, drained
- * or threw. The grace block cleared any `User.image` naming one of their images; the refresh puts it
- * back once that picture is servable again (`restoreClearedUserImages`).
+ * or threw. The grace block cleared any `User.image` naming one of their images, and that stays
+ * empty; the refresh re-reads their cached profile pictures, which serve the avatar once servable.
  */
 export async function runRestoreUserImages(
   refreshPictures: (userIds: number[]) => Promise<unknown> = refreshProfilePicturesForUsersLazy
