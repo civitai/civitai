@@ -35,6 +35,7 @@ import {
 import {
   isVideoPreviewMime,
   SERVICE_DEAL_FILE_RETENTION_NOTICE,
+  SERVICE_FINAL_VIDEO_HELP,
 } from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
@@ -161,6 +162,9 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         {takesPreview
           ? 'Upload a preview and your final files. The buyer sees a low-resolution, watermarked copy of the preview. The final files stay sealed until they accept.'
           : 'Upload your final files. They stay sealed until the buyer accepts.'}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {SERVICE_FINAL_VIDEO_HELP}
       </Text>
       <Group gap="sm">
         {takesPreview && (
