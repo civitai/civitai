@@ -54,7 +54,7 @@ export const POST: RequestHandler = async ({ request }) => {
   );
   // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
   const unservable = await settle('unservable sweep', () =>
-    closeUnservableItems(db, { now: new Date() })
+    closeUnservableItems(db, { now: new Date(), moved: collect })
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })

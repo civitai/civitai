@@ -21,6 +21,7 @@ import {
   escalateExpired,
   getFeed as serveFeed,
   MAX_APPLY_ATTEMPTS,
+  type MovedItem,
   type QueueDeps,
   bucketLevelSql,
   servableItems,
@@ -2040,13 +2041,22 @@ describe('closeUnservableItems', () => {
       exp: await exp(1),
       metric: await counterValue('knights_escalations_total', { reason: 'image-unservable' }),
     };
+    const moved: MovedItem[] = [];
 
-    expect(await sweep()).toEqual({
+    expect(
+      await closeUnservableItems(db, { now: NOW, moved: (items) => moved.push(...items) })
+    ).toEqual({
       unservable: 0,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
       imageUnservable: 8,
     });
+    // Players holding one in their buffer are told it left.
+    expect(moved.sort((a, b) => a.id - b.id)).toEqual(
+      Object.values(ids)
+        .sort((a, b) => a - b)
+        .map((id) => ({ id, status: 'Open', minRank: 'Knight' }))
+    );
 
     expect(await statusOf(Object.values(ids))).toEqual(
       Object.values(ids).map(() => ['Closed', 'image-unservable'])
@@ -2076,7 +2086,25 @@ describe('closeUnservableItems', () => {
     expect(await closeModeratorRuledItems(db, { now: NOW })).toEqual({ closed: 1, failed: 0 });
   });
 
-  it('closes an Inquisitor item whose image or post is gone, votes set aside, and leaves blocked images and rulings in progress', async () => {
+  it('leaves an item whose image has not finished scanning open, and it is servable once the scan lands', async () => {
+    const ownerRating = await queued(95, { source: 'owner-rating' });
+    await pg.query(`UPDATE "Image" SET ingestion='Pending', "nsfwLevel"=0 WHERE id=95`);
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+    expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
+
+    await pg.query(`UPDATE "Image" SET ingestion='Scanned', "nsfwLevel"=4 WHERE id=95`);
+    expect((await sweep()).imageUnservable).toBe(0);
+    expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
+    expect(await countOpenServableKnightItems(db, 10)).toBe(1);
+  });
+
+  it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {
     const atInquisitors = async (
       imageId: number,
       { status = 'Inquisitor', leaseUntil = null as Date | null } = {}
@@ -2090,6 +2118,7 @@ describe('closeUnservableItems', () => {
     };
     const imageGone = await atInquisitors(90);
     await countedVote(imageGone, 3, 90);
+    // An evidence hold keeps the image when its post is deleted: the moderators can still rule on it.
     const postGone = await atInquisitors(91);
     // Blocked escalations wait for a moderator by design.
     const blocked = await atInquisitors(92);
@@ -2099,9 +2128,12 @@ describe('closeUnservableItems', () => {
     await pg.query(`DELETE FROM "Image" WHERE id IN (90, 93, 94)`);
     await pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=91`);
     const before = await counterValue('knights_escalations_total', { reason: 'unservable' });
+    const moved: MovedItem[] = [];
 
-    expect(await sweep()).toEqual({
-      unservable: 3,
+    expect(
+      await closeUnservableItems(db, { now: NOW, moved: (items) => moved.push(...items) })
+    ).toEqual({
+      unservable: 2,
       publishesAfterExpiry: 0,
       unpublishedDrafts: 0,
       imageUnservable: 0,
@@ -2109,13 +2141,15 @@ describe('closeUnservableItems', () => {
 
     expect(await statusOf([imageGone, postGone, blocked, midRuling, lapsedRuling])).toEqual([
       ['Closed', 'unservable'],
-      ['Closed', 'unservable'],
+      ['Inquisitor', null],
       ['Inquisitor', null],
       ['Ruling', null],
       ['Closed', 'unservable'],
     ]);
+    // Never in a player's buffer: nothing to announce.
+    expect(moved).toEqual([]);
     expect(await counterValue('knights_escalations_total', { reason: 'unservable' })).toBe(
-      before + 3
+      before + 2
     );
     expect(await verdicts(imageGone)).toEqual([
       { playerId: 3, verdict: 'inconclusive', stage: 'Knight' },

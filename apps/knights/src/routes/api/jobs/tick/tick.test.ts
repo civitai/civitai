@@ -161,6 +161,18 @@ describe('POST /api/jobs/tick', () => {
     );
   });
 
+  it('hands the open items the unservable sweep closes to the same live-update list as the other moves', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    expect((await run()).status).toBe(200);
+
+    const collect = escalateExpired.mock.calls[0][1].moved;
+    expect(typeof collect).toBe('function');
+    expect(closeUnservableItems.mock.calls[0][1].moved).toBe(collect);
+    expect(closeModeratorRuledItems.mock.calls[0][1].moved).toBe(collect);
+  });
+
   it('reports how many unvoted items the escalation closed as expired', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0, toInquisitor: 0, extended: 1, expired: 4 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
