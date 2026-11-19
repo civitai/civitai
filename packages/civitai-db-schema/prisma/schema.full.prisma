@@ -2896,8 +2896,8 @@ model IdempotencyKey {
   key       String
   state     String
   result    Json?
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime @db.Timestamptz(6)
 
   @@id([scope, key])
   @@index([expiresAt])

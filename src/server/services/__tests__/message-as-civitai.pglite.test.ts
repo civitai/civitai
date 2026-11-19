@@ -489,9 +489,8 @@ describe('sendAsCivitaiOnce', () => {
 
 describe('sendAsCivitaiOnce with the idempotency-keys-pg flag', () => {
   const idemRows = async () =>
-    (await db.query<{ scope: string; state: string }>(
-      'SELECT scope, state FROM "IdempotencyKey"'
-    )).rows;
+    (await db.query<{ scope: string; state: string }>('SELECT scope, state FROM "IdempotencyKey"'))
+      .rows;
   afterEach(() => {
     h.isFlipt.mockResolvedValue(false);
   });

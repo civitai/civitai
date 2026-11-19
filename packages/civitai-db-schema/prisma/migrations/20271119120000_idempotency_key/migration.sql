@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS "IdempotencyKey" (
   "key"       TEXT           NOT NULL,
   "state"     TEXT           NOT NULL,
   "result"    JSONB,
-  "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-  "expiresAt" TIMESTAMPTZ(3) NOT NULL,
+  "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+  "expiresAt" TIMESTAMPTZ(6) NOT NULL,
   CONSTRAINT "IdempotencyKey_pkey" PRIMARY KEY ("scope", "key"),
   CONSTRAINT "IdempotencyKey_state_check" CHECK ("state" IN ('pending', 'done'))
 );

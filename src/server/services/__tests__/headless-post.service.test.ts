@@ -395,9 +395,11 @@ describe('createHeadlessPost with the idempotency-keys-pg flag', () => {
   let withTable: PGlite;
   let withoutTable: PGlite;
   const rows = async () =>
-    (await withTable.query<{ scope: string; key: string; state: string }>(
-      'SELECT scope, key, state FROM "IdempotencyKey" ORDER BY key'
-    )).rows;
+    (
+      await withTable.query<{ scope: string; key: string; state: string }>(
+        'SELECT scope, key, state FROM "IdempotencyKey" ORDER BY key'
+      )
+    ).rows;
 
   beforeAll(async () => {
     withTable = new PGlite();

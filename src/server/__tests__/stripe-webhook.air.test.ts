@@ -197,8 +197,11 @@ describe('stripe webhook: Civitai AIR checkout, with the idempotency-keys-pg fla
   let withTable: PGlite;
   let withoutTable: PGlite;
   const rows = async () =>
-    (await withTable.query<{ scope: string; key: string }>('SELECT scope, key FROM "IdempotencyKey"'))
-      .rows;
+    (
+      await withTable.query<{ scope: string; key: string }>(
+        'SELECT scope, key FROM "IdempotencyKey"'
+      )
+    ).rows;
 
   beforeAll(async () => {
     withTable = new PGlite();
