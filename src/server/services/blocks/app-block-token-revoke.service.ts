@@ -9,6 +9,23 @@ const ORCHESTRATOR_REVOKE_BATCH = 10;
 export type RevokedAppTokens = { clientId: string; userIds: number[] };
 
 /**
+ * Locks every `app_blocks` row of the block's OAuth client, in id order, until the transaction ends.
+ * A writer that suspends a block takes it before the flip, so two suspensions of one client's blocks
+ * run one after the other and the second counts the first as suspended; the id order keeps them from
+ * deadlocking. A reader that locks the same rows FOR SHARE in id order waits on it too.
+ */
+export async function lockAppBlockClientRows(
+  tx: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT id FROM app_blocks
+    WHERE app_id = (SELECT app_id FROM app_blocks WHERE id = ${appBlockId})
+    ORDER BY id
+    FOR UPDATE`;
+}
+
+/**
  * Deletes the OAuth app tokens of a suspended block's own OAuth client, so the suspension stops
  * them at once instead of when they expire: general bearer routes check the token, not the
  * block's status. Runs in the suspending transaction, after the block row is suspended. The
@@ -16,8 +33,9 @@ export type RevokedAppTokens = { clientId: string; userIds: number[] };
  *
  * Does nothing unless the block now reads `suspended`, so a drifted flip (pending, deprecated) and
  * the shared remix client's rows (their own statuses) revoke nothing. A client with another block
- * still approved keeps its tokens. A block on an ordinary third-party OAuth client loses its Access
- * tokens only: its Refresh tokens belong to that integration's own users.
+ * still approved keeps its tokens; the caller holds {@link lockAppBlockClientRows}, so a concurrent
+ * suspension of that block is counted. A block on an ordinary third-party OAuth client loses its
+ * Access tokens only: its Refresh tokens belong to that integration's own users.
  */
 export async function revokeAppBlockOauthTokens(
   tx: Prisma.TransactionClient,
