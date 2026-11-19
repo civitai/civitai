@@ -226,7 +226,7 @@ const readyPreview = async (dealId: number) => {
 };
 
 const list = (dealId: number, userId: number, isModerator = false) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator });
+  files.listServiceDealFiles({ dealId, userId, isModerator, servableLevels: 31 });
 
 const download = (fileId: number, userId: number, isModerator = false) =>
   files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
@@ -1337,23 +1337,31 @@ describe('preview pipeline', () => {
     });
   });
 
-  it.each([
-    ['a minor', `"minor" = true`],
-    ['a real person', `poi = true`],
-    ['one held for review', `"needsReview" = 'csam'`],
-    ['a Blocked rating', `"nsfwLevel" = 32`],
-  ])('refuses %s on the most mature deal, with the plain reason', async (_name, set) => {
-    const { fileId } = await waiting();
-    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = 16`);
-    await files.startPreviewScans();
-    await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 4`);
-    await q(`UPDATE "Image" SET ${set}`);
-    await files.settlePreviewScans();
-    expect(await fileRow(fileId)).toMatchObject({
-      status: 'Failed',
-      failReason: 'This preview was rejected when it was checked.',
-    });
-  });
+  it.each(
+    [
+      ['a minor', `"minor" = true`],
+      ['a real person', `poi = true`],
+      ['one held for review', `"needsReview" = 'csam'`],
+      ['a Blocked rating', `"nsfwLevel" = 32`],
+    ].flatMap(([name, set]) => [
+      [name, 16, 4, set],
+      [name, 2, 8, set],
+    ])
+  )(
+    'refuses %s with the plain reason (deal %i, rated %i)',
+    async (_name, dealLevel, level, set) => {
+      const { fileId } = await waiting();
+      await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [dealLevel]);
+      await files.startPreviewScans();
+      await q(`UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = $1`, [level]);
+      await q(`UPDATE "Image" SET ${set}`);
+      await files.settlePreviewScans();
+      expect(await fileRow(fileId)).toMatchObject({
+        status: 'Failed',
+        failReason: 'This preview was rejected when it was checked.',
+      });
+    }
+  );
 
   it('does not pass a scanned preview the scan left unrated', async () => {
     const { fileId } = await waiting();

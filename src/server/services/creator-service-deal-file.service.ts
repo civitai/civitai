@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
@@ -825,7 +826,7 @@ export async function listServiceDealFiles({
   /** See `resolveServiceDealFileDownload`. */
   canReviewCsam?: boolean;
   /** What this domain may show; a preview rated outside it is listed without its URL. */
-  servableLevels?: number;
+  servableLevels: number;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -908,10 +909,7 @@ export async function listServiceDealFiles({
         (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
     const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
     const offDomain =
-      row.kind === 'Preview' &&
-      servableLevels !== undefined &&
-      !!row.nsfwLevel &&
-      !Flags.intersects(row.nsfwLevel, servableLevels);
+      row.kind === 'Preview' && !!row.nsfwLevel && !Flags.intersects(row.nsfwLevel, servableLevels);
     const key = offDomain ? null : row.watermarkedKey;
 
     return [
@@ -1294,7 +1292,7 @@ export async function settlePreviewScans() {
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
           -- Blocked rates above every level a deal can have.
-          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > 16)))`;
+          AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > ${NsfwLevel.XXX}::int)))`;
   // Only the rating is above the deal's level: the seller is told that, and nothing else.
   const overLevel = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
@@ -1303,7 +1301,8 @@ export async function settlePreviewScans() {
     FROM "Image" i, "ServiceDeal" d
     WHERE i."id" = f."imageId" AND d."id" = f."dealId" AND ${waiting}
       AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
-      AND i."nsfwLevel" > d."maxNsfwLevel"`;
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+      AND i."nsfwLevel" > d."maxNsfwLevel" AND i."nsfwLevel" <= ${NsfwLevel.XXX}::int`;
   const rejected = refused + overLevel;
   const unchecked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
