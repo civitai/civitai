@@ -9,6 +9,7 @@
   import TrainingDataSheet from '$lib/components/TrainingDataSheet.svelte';
   import type { LightboxItem } from '$lib/lightbox';
   import { bytes, dateTime } from '$lib/format';
+  import { previewFileControl } from '$lib/model-preview-file';
   import type { ModelPreview } from '$lib/server/model-preview.service';
   import { SSR_PENDING } from '$lib/ssr-pending';
 
@@ -56,7 +57,6 @@
   // moderator's disk. The sheet unpacks the zip in memory and releases it on close.
   let trainingVersion = $state<{ id: number; title: string } | null>(null);
   let trainingOpen = $state(false);
-  const isTrainingData = (f: { type: string }) => f.type === 'Training Data';
 
   const lightboxItems = (p: ModelPreview): LightboxItem[] =>
     p.images.map((i) => ({
@@ -174,14 +174,19 @@
               <ul class="divide-y text-xs">
                 {#each v.files as file (file.id)}
                   {@const flagged = scanState(file)}
+                  {@const control = previewFileControl(file)}
                   <li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5">
                     <span class="min-w-0 flex-1 truncate font-mono" title={file.name}>{file.name}</span>
                     <span class="text-muted-foreground">
                       {file.type}{file.format ? ` · ${file.format}` : ''} · {bytes(file.sizeKB)}
                     </span>
-                    {#if file.visibility !== 'Public'}<Badge variant="outline">{file.visibility}</Badge>{/if}
+                    {#if control.kind === 'purged'}
+                      <Badge variant="outline">{control.label}</Badge>
+                    {:else if file.visibility !== 'Public'}
+                      <Badge variant="outline">{file.visibility}</Badge>
+                    {/if}
                     {#if flagged}<Badge class={flagged.class}>{flagged.label}</Badge>{/if}
-                    {#if isTrainingData(file)}
+                    {#if control.kind === 'view'}
                       {#if canViewTrainingData}
                         <Button
                           type="button"
@@ -196,7 +201,7 @@
                           View
                         </Button>
                       {/if}
-                    {:else}
+                    {:else if control.kind === 'download'}
                       <!-- The site's own download route, by file id, on the moderator's civitai.com
                            session — so the file they get is the one listed, scan state and all. -->
                       <a

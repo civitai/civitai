@@ -1,8 +1,10 @@
 import { error } from '@sveltejs/kit';
+import { sql } from 'kysely';
 import type { RequestHandler } from './$types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { callModEndpoint } from '$lib/server/user-actions.service';
 import { recordModActivity } from '$lib/server/mod-activity';
+import { dbRead } from '$lib/server/db';
 
 /**
  * Streams a version's training-data zip so the review pages can unpack it in the browser.
@@ -36,6 +38,9 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
     'Training data'
   );
   if (!resolved.ok) {
+    // The resolver serves live datasets only. When every one on the version was purged, that is the
+    // answer, not an upstream fault.
+    if (await allTrainingDataPurged(versionId)) error(410, 'Training data was purged.');
     console.error('[training-data] resolve failed', resolved.error);
     error(502, resolved.error);
   }
@@ -72,3 +77,14 @@ export const GET: RequestHandler = async ({ params, locals, fetch }) => {
     },
   });
 };
+
+/** True only when the version has training data files and all of them were purged. */
+async function allTrainingDataPurged(versionId: number): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('ModelFile')
+    .select(sql<boolean | null>`bool_and("dataPurged")`.as('purged'))
+    .where('modelVersionId', '=', versionId)
+    .where('type', '=', 'Training Data')
+    .executeTakeFirst();
+  return row?.purged === true;
+}

@@ -45,6 +45,8 @@ export type ModelPreviewFile = {
   pickleScan: string;
   virusScan: string;
   visibility: string;
+  /** Contents deleted with the row kept (the old-training-data cleanup). The model page hides it. */
+  purged: boolean;
 };
 
 export type ModelPreviewVersion = {
@@ -128,6 +130,7 @@ export async function getModelPreview(
         'mf.pickleScanResult',
         'mf.virusScanResult',
         'mf.visibility',
+        'mf.dataPurged',
       ])
       .where('mv.modelId', '=', modelId)
       .where('mf.replacedAt', 'is', null)
@@ -151,6 +154,7 @@ export async function getModelPreview(
       pickleScan: f.pickleScanResult,
       virusScan: f.virusScanResult,
       visibility: f.visibility,
+      purged: f.dataPurged,
     });
     filesByVersion.set(f.modelVersionId, list);
   }
