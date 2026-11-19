@@ -3,6 +3,8 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToolsInfinite } from '~/components/Tool/ToolsInfinite';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -19,6 +21,11 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function ToolsPage() {
+  const features = useFeatureFlags();
+  // The header bar's search of this page (pageSearch): a name or company match.
+  const searchText = useFeedSearchQuery();
+  const query = features.pageSearch ? searchText : undefined;
+
   return (
     <>
       <Meta
@@ -28,7 +35,7 @@ function ToolsPage() {
       />
       <MasonryContainer>
         <Stack gap="xs">
-          <ToolsInfinite />
+          <ToolsInfinite filters={{ query }} />
         </Stack>
       </MasonryContainer>
     </>

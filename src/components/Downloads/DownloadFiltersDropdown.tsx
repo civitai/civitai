@@ -44,6 +44,8 @@ type FilterBarProps = {
     baseModels: string[];
   };
   onFiltersChange: (filters: Partial<DownloadFilters>) => void;
+  /** The header bar searches this page (pageSearch), so the bar's own box is left out. */
+  hideSearch?: boolean;
 };
 
 type ActiveFiltersProps = {
@@ -145,7 +147,12 @@ function PeriodSelector({
 }
 
 /** Search bar with filter buttons - can be placed next to title */
-export function DownloadFilterBar({ filters, availableOptions, onFiltersChange }: FilterBarProps) {
+export function DownloadFilterBar({
+  filters,
+  availableOptions,
+  onFiltersChange,
+  hideSearch,
+}: FilterBarProps) {
   // Local state for search input with debouncing
   const [searchValue, setSearchValue] = useState(filters.query ?? '');
   const [debouncedSearch] = useDebouncedValue(searchValue, 300);
@@ -205,21 +212,22 @@ export function DownloadFilterBar({ filters, availableOptions, onFiltersChange }
   return (
     <Paper radius="xl" withBorder shadow="sm" p="xs" className="bg-white dark:bg-dark-6">
       <Group gap="xs" wrap="nowrap">
-        {/* Search Input */}
-        <TextInput
-          placeholder="Search downloads..."
-          leftSection={<IconSearch size={18} />}
-          value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
-          variant="unstyled"
-          className="flex-1"
-          classNames={{
-            input: 'pl-9',
-          }}
-        />
-
-        {/* Separator */}
-        <Divider orientation="vertical" className="h-8" />
+        {!hideSearch && (
+          <>
+            <TextInput
+              placeholder="Search downloads..."
+              leftSection={<IconSearch size={18} />}
+              value={searchValue}
+              onChange={(e) => setSearchValue(e.target.value)}
+              variant="unstyled"
+              className="flex-1"
+              classNames={{
+                input: 'pl-9',
+              }}
+            />
+            <Divider orientation="vertical" className="h-8" />
+          </>
+        )}
 
         {/* Filter Buttons */}
         <Group gap={4}>
