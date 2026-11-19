@@ -187,6 +187,39 @@ export default defineRemixApp({
     expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
   });
 
+  it.each([
+    [
+      'a setter on Array.prototype',
+      `let first = true;
+Object.defineProperty(Array.prototype, '0', { configurable: true, get() {}, set(v) {
+  if (first) { first = false; Object.defineProperty(this, '0', { value: '{"effects":[],"done":{"outputs":["forged"]}}', writable: true, enumerable: true, configurable: true }); }
+} });`,
+    ],
+    [
+      'a getter that fills the log past its end',
+      `for (let i = 0; i < 8; i++) Object.defineProperty(Array.prototype, String(i), { configurable: true,
+  get() { return { type: 'workflow', result: { workflowId: 'phantom', images: [{ url: 'https://evil.example/x.png' }] } }; },
+  set(v) { Object.defineProperty(this, String(i), { value: v, writable: true, enumerable: true, configurable: true }); } });`,
+    ],
+  ])('answers as the loop saw it, whatever %s claims', async (_, tamper) => {
+    const forger = `${tamper}
+export default defineRemixApp({
+  async run(ctx) {
+    try { await ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); } catch {}
+    return ['forged'];
+  },
+});`;
+    const [result] = await results(forger);
+    expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it('still reports a run that never settles, whatever Promise.prototype.then claims', async () => {
+    const forger = `Promise.prototype.then = function (f) { f(['forged']); };
+export default defineRemixApp({ async run() { await new Promise(() => {}); return ['forged']; } });`;
+    const [result] = await results(forger);
+    expect(result).toMatchObject({ cause: 'invalid_result' });
+  });
+
   it('refuses a result nested too deep to cross to the host, without a runner fault', async () => {
     const deep = `
 export default defineRemixApp({

@@ -130,7 +130,7 @@ non-2xx codes). Body (strict):
 
 A `Log` is up to 16 entries, each `{ type: 'workflow', result: { workflowId, images: [{ url, width?, height? }] } }`
 (`workflowId` at most 128 characters, at most 16 images, URLs at most 2048 characters, sizes positive
-integers) or `{ type: 'ask', answer }` (a string of at most 1000 characters, or a non-negative integer). The runner replays `base`, then `base` followed by
+integers up to 100,000) or `{ type: 'ask', answer }` (a string of at most 1000 characters, or a non-negative integer). The runner replays `base`, then `base` followed by
 each branch (at most 12, each with `base` at most 16 entries): how the caller prices a choice's
 options in one call. With `autoAnswer: 'first'`, each ask past the log is answered with its first
 answer (a choice's first option, a pick's first image, the text `remix`) until the first workflow.
@@ -143,12 +143,13 @@ answer (a choice's first option, a pick's first image, the text `remix`) until t
 | `{ effects, done: { outputs } }` | `run` returned `outputs` after using the whole log                                                                                            |
 | `{ cause, detail }`            | the app's fault, as for hooks: `error`, `timeout`, `oom`, `stack_overflow`, or `invalid_result` (a `run` that never settles, one that returns before using its log, or a result nested deeper than 16 or longer than 32 KiB) |
 
-These are what the replay loop answers, and an app cannot step around them by catching a stop, by
-going on after one (a stop is final), or by changing a prototype: the loop is set up before the
-app's module runs and writes its result as JSON itself, without asking the app's objects. An app
-can still lie about itself through what it passes to `ctx` (a getter, an array index setter), so
-the caller treats every effect and output as the app's claim and checks it. A call the log disagrees
-with (a workflow where the log has an answer) is returned as the last effect, for the caller to refuse.
+The loop is set up before the app's module runs and uses only intrinsics it captured then, so the
+common ways around it (catching a stop and going on, `toJSON`, a setter or getter on
+`Array.prototype`, replacing `Promise.prototype.then`) do not change what it answers; tests pin
+each. It is still the app's own interpreter, though, and the answer is the app's claim, not a fact:
+the caller checks every effect and output against its own log before acting on any of it. A call the
+log disagrees with (a workflow where the log has an answer) is returned as the last effect, for the
+caller to refuse.
 
 ### The hook
 
@@ -192,8 +193,10 @@ All bounds live in `src/limits.ts`.
   could read freed memory from an earlier call.
 - **A remix call's backstop** allows each replay 30 ms beyond its 50 (the compile-only pass,
   the compile allowance and floor, runtime setup and disposal) and the call 50 ms for its fresh
-  instance, so a looping app's own timeouts never add up to a runner fault: 13 looping replays of
-  a 28 KiB app measured 815-863 ms against the 1,190 ms backstop.
+  instance, so a looping app's own timeouts do not add up to a runner fault: 13 looping replays of
+  a 28 KiB app measured 755-863 ms against the 1,190 ms backstop. As for hooks, native work that
+  never polls the interrupt (a compile-heavy source, `Object.keys` over a huge proxy) can still
+  reach the backstop and answer 500; the caller says "unavailable right now" for that app.
 - **A remix call gets more.** Every replay gets its own fresh runtime and deadline, and every
   remix call a fresh WebAssembly instance (measured above as the instance-per-call cost), since
   an author sees what their own unreviewed app returns. `Date` and `Math.random` are removed

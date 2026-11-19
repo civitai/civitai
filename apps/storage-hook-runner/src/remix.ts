@@ -66,13 +66,24 @@ globalThis.defineRemixApp = (app) => app;
   const isArray = Array.isArray;
   const isFinite = Number.isFinite;
   const quote = JSON.stringify;
+  const defineProperty = Object.defineProperty;
+  const freeze = Object.freeze;
+  const apply = Reflect.apply;
+  const then = Promise.prototype.then;
+  // An own property, so no accessor the app put on Array.prototype sees the write.
+  const put = (list, value) =>
+    defineProperty(list, list.length, { value, writable: true, enumerable: true, configurable: true });
   // JSON, written in JS so it polls the interrupt, bounded in depth and size, and never asks the
   // app's objects (toJSON, a prototype) how to write them.
   const write = (v, depth, out) => {
     if (depth > ${MAX_REMIX_RESULT_DEPTH} || out.n > ${MAX_REMIX_RESULT_CHARS}) throw TOO_BIG;
     let s;
     if (v === null || v === undefined) s = 'null';
-    else if (typeof v === 'string') s = quote(v);
+    else if (typeof v === 'string') {
+      // Before the native copy, which does not poll the interrupt.
+      if (v.length > ${MAX_REMIX_RESULT_CHARS} - out.n) throw TOO_BIG;
+      s = quote(v);
+    }
     else if (typeof v === 'number') s = isFinite(v) ? '' + v : 'null';
     else if (typeof v === 'boolean') s = v ? 'true' : 'false';
     else if (typeof v !== 'object') s = 'null';
@@ -89,6 +100,7 @@ globalThis.defineRemixApp = (app) => app;
       const ks = keysOf(v);
       for (let i = 0; i < ks.length; i++) {
         if (i) out.push(',');
+        if (ks[i].length > ${MAX_REMIX_RESULT_CHARS} - out.n) throw TOO_BIG;
         out.push(quote(ks[i]) + ':');
         write(v[ks[i]], depth + 1, out);
       }
@@ -98,16 +110,14 @@ globalThis.defineRemixApp = (app) => app;
     out.push(s);
   };
   const toJson = (v) => {
-    const parts = [];
-    const out = { n: 0, push: (s) => { parts[parts.length] = s; out.n += s.length; } };
+    let text = '';
+    const out = { n: 0, push: (s) => { text += s; out.n = text.length; } };
     try {
       write(v, 0, out);
     } catch (e) {
       if (e === TOO_BIG) return '{"tooBig":true}';
       throw e;
     }
-    let text = '';
-    for (let i = 0; i < parts.length; i++) text += parts[i];
     return text;
   };
   const firstAnswer = (spec) =>
@@ -119,7 +129,7 @@ globalThis.defineRemixApp = (app) => app;
     let next = 0;
     let stopped = false;
     const stop = (effect) => {
-      if (effect) effects[effects.length] = effect;
+      if (effect) put(effects, effect);
       stopped = true;
       throw STOP;
     };
@@ -127,7 +137,9 @@ globalThis.defineRemixApp = (app) => app;
       if (stopped) stop();
       // The one past the limit is returned too, so the host refuses it by its own limit.
       if (effects.length >= ${MAX_REMIX_EFFECTS}) stop(effect);
-      const entry = log[next++];
+      // Past the log's own entries, never a hole an Array.prototype getter could fill.
+      const entry = next < log.length ? log[next] : undefined;
+      next++;
       if (!entry) {
         if (!auto || effect.type !== 'ask') stop(effect);
         let answer;
@@ -136,25 +148,38 @@ globalThis.defineRemixApp = (app) => app;
         } catch {
           stop(effect);
         }
-        effects[effects.length] = { type: 'ask', spec: effect.spec, answer };
+        put(effects, { type: 'ask', spec: effect.spec, answer });
         return answer;
       }
       if (entry.type !== effect.type) stop(effect);
-      effects[effects.length] = effect;
+      put(effects, effect);
       return entry.type === 'workflow' ? entry.result : entry.answer;
     };
-    const ctx = Object.freeze({
-      source: Object.freeze(input.source),
+    const ctx = freeze({
+      source: freeze(input.source),
       workflow: async (request) => step({ type: 'workflow', request }),
       ask: async (spec) => step({ type: 'ask', spec }),
     });
     let settled = false;
     let failed = false;
     let value;
-    (async () => app.run(ctx))().then(
-      (v) => { settled = true; value = v; },
-      (e) => { settled = true; failed = true; value = e; }
-    );
+    // Not through an async wrapper: resolving one with run's promise would look up then on it,
+    // which the app can replace. The captured then only takes a real promise.
+    const ok = (v) => { settled = true; value = v; };
+    const bad = (e) => { settled = true; failed = true; value = e; };
+    let result;
+    try {
+      result = app.run(ctx);
+    } catch (e) {
+      bad(e);
+    }
+    if (!settled) {
+      try {
+        apply(then, result, [ok, bad]);
+      } catch {
+        ok(result);
+      }
+    }
     return () => {
       // A stop is final: an app that caught it and went on still stops there.
       if (stopped) return toJson({ effects });
