@@ -699,6 +699,7 @@ describe('resolution', () => {
       resolvedValue: null,
       questionKey: Q,
       escalationReason: 'pushed-down',
+      meta: { escalatedFromLevel: 16 },
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -1645,6 +1646,50 @@ describe('closeModeratorRuledItems', () => {
 
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
     expect(await snapshot()).toEqual(before);
+  });
+
+  it('closes an item waiting on the Inquisitors when a moderator rules on its image elsewhere, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      escalationReason: 'pushed-down',
+    });
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = await exp(1);
+
+    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '1',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+      'correct',
+      'correct',
+      'correct',
+      'correct',
+    ]);
+    expect(await settled(id)).toEqual([true, true, true, true]);
+    expect(await exp(1)).toBe(before + PROGRESSION.correctXp);
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves an Inquisitor item alone while a moderator is ruling on it', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Ruling', "resolvedBy"=7 WHERE id=$1`, [
+      id,
+    ]);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
   });
 });
 

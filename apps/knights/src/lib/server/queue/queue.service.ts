@@ -13,7 +13,7 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import { servableImage } from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -577,6 +577,10 @@ async function toInquisitor(
       escalationReason,
       expiresAt: null,
       updatedAt: utc(now),
+      // A moderator ruling elsewhere can move the level later; the card shows what the Knights saw.
+      meta: sql`COALESCE("meta", '{}'::jsonb) || jsonb_build_object(${sql.lit(
+        ESCALATED_FROM_LEVEL_META_KEY
+      )}, (SELECT "nsfwLevel" FROM "Image" WHERE "Image"."id" = "KnightsQueueItem"."imageId"))`,
     })
     .where('id', '=', itemId)
     .execute();
@@ -859,10 +863,13 @@ async function applyReroute(
 }
 
 /**
- * Closes Open rating items whose image a moderator has since locked at a level, the way the write-back closes a settled one on
- * finding that lock (`moderatorRuling`). A blocked image, a lock without a level, and items no longer Open are left to their own paths.
- * Status and image are read again under the item row lock (the lock `castVote` takes), so the close uses the level as it is then.
+ * Closes Open and Inquisitor rating items whose image a moderator has since locked at a level (in any queue or tool), the way the
+ * write-back closes a settled one on finding that lock (`moderatorRuling`). A blocked image, a lock without a level, and items in any
+ * other status (an Inquisitor ruling under way is `Ruling`) are left to their own paths. Status and image are read again under the
+ * item row lock (the lock `castVote` and the Inquisitor claim take), so the close uses the level as it is then.
  */
+const SWEPT_FOR_RULINGS: string[] = ['Open', 'Inquisitor'];
+
 export async function closeModeratorRuledItems(
   db: Kysely<DB>,
   {
@@ -877,7 +884,7 @@ export async function closeModeratorRuledItems(
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
     .select(['i.id', 'i.imageId', 'i.minRank'])
-    .where('i.status', '=', 'Open')
+    .where('i.status', 'in', SWEPT_FOR_RULINGS)
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
     .where('i.isHiddenCheck', '=', false)
@@ -890,23 +897,23 @@ export async function closeModeratorRuledItems(
   const closed: MovedItem[] = [];
   for (const { id, imageId, minRank } of candidates) {
     try {
-      const xp = await db.transaction().execute(async (trx) => {
+      const result = await db.transaction().execute(async (trx) => {
         const item = await trx
           .selectFrom('KnightsQueueItem')
           .select('status')
           .where('id', '=', id)
           .forUpdate()
           .executeTakeFirst();
-        if (item?.status !== 'Open') return null;
+        if (!item || !SWEPT_FOR_RULINGS.includes(item.status)) return null;
         const image = await readImageState(trx, imageId);
         const ruling = image && !hasBlockMarker(image) ? moderatorRuling(image) : null;
         if (ruling?.kind !== 'moderator') return null;
-        return applyReroute(trx, id, ruling, now);
+        return { status: item.status, xp: await applyReroute(trx, id, ruling, now) };
       });
-      if (!xp) continue;
+      if (!result) continue;
       counts.closed++;
-      closed.push({ id, status: 'Open', minRank });
-      await mirrorXp(mirror, xp);
+      closed.push({ id, status: result.status, minRank });
+      await mirrorXp(mirror, result.xp);
     } catch (error) {
       counts.failed++;
       console.error('knights: could not close an item a moderator ruled, it will be retried', {

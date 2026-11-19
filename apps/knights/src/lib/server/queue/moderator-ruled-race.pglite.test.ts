@@ -66,6 +66,49 @@ it('leaves an item another path moved off Open after the sweep read it', async (
   expect(votes.rows).toEqual([{ verdict: 'inconclusive', settledAt: null }]);
 });
 
+it('leaves an item a moderator claimed on the Inquisitor page after the sweep read it', async () => {
+  await seedPlayer(pg, 1, 'Knight');
+  await seedImage(pg, 10, { nsfwLevel: 2 });
+  const id = await enqueueItem(
+    db,
+    { questionKey: 'knights.image.nsfwLevel', imageId: 10, source: 'test', expiresAt: null },
+    NOW
+  );
+  const applyConsensus = vi.fn();
+  await castVote(db, { userId: 1, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
+  await db
+    .updateTable('KnightsQueueItem')
+    .set({ status: 'Inquisitor', escalationReason: 'pushed-down' })
+    .where('id', '=', id)
+    .execute();
+  await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
+
+  // The connection is handed out in call order: the sweep reads the item waiting on the Inquisitors, a moderator's claim commits, then the sweep's close runs.
+  const [swept] = await Promise.all([
+    closeModeratorRuledItems(db, { now: LATER }),
+    db
+      .updateTable('KnightsQueueItem')
+      .set({ status: 'Ruling', resolvedBy: 7 })
+      .where('id', '=', id)
+      .where('status', '=', 'Inquisitor')
+      .execute(),
+  ]);
+
+  expect(swept).toEqual({ closed: 0, failed: 0 });
+  const row = (
+    await pg.query<Record<string, unknown>>(
+      `SELECT status, reason, "resolvedValue" FROM "KnightsQueueItem" WHERE id=$1`,
+      [id]
+    )
+  ).rows[0];
+  expect(row).toEqual({ status: 'Ruling', reason: null, resolvedValue: null });
+  const votes = await pg.query<{ verdict: string; settledAt: Date | null }>(
+    `SELECT verdict, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1`,
+    [id]
+  );
+  expect(votes.rows).toEqual([{ verdict: 'pending', settledAt: null }]);
+});
+
 it('closes against the level the image has when the close runs, not when the sweep read it', async () => {
   await seedPlayer(pg, 2, 'Knight');
   await seedImage(pg, 20, { nsfwLevel: 2 });
