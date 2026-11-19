@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
-const { mockGetVersionById, mockOwnerRow, STOP } = vi.hoisted(() => ({
+const { mockGetVersionById, mockOwnerRow, mockExistingIds, STOP } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
   mockOwnerRow: vi.fn(),
+  mockExistingIds: vi.fn(),
   STOP: new Error('reached the coverage read'),
 }));
 
@@ -26,8 +27,10 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads6>()),
   getModelVersionOwnerWithCosmetics: mockOwnerRow,
-  // The signed-out donation goal read checks the version exists here first: none do.
-  listExistingModelVersionIds: vi.fn(async () => []),
+  // The signed-out donation goal read checks the version exists here first.
+  listExistingModelVersionIds: mockExistingIds,
+  // ...and then reads its active goal: none.
+  listActiveModelVersionDonationGoals: vi.fn(async () => []),
 }));
 // The first read after the version is loaded and checked. Reaching it means it was served.
 vi.mock('~/server/services/generation/coverage-source', () => ({
@@ -257,10 +260,14 @@ describe('the public sibling reads of a version', () => {
     },
   });
   // Every read of these rows goes through `dbRead.modelVersion.findMany` with an id list.
-  const serveRows = (rows: ReturnType<typeof row>[]) =>
+  const serveRows = (rows: ReturnType<typeof row>[]) => {
     dbMock.dbRead.modelVersion.findMany.mockImplementation(async (args: any) =>
       rows.filter((r) => args.where.id.in.includes(r.id))
     );
+    mockExistingIds.mockImplementation(async (_db: unknown, ids: number[]) =>
+      rows.filter((r) => ids.includes(r.id)).map((r) => ({ id: r.id }))
+    );
+  };
 
   const HIDDEN = [
     ['a draft version', { versionStatus: 'Draft' }],
@@ -421,6 +428,11 @@ describe('the public sibling reads of a version', () => {
       serveRows([row(100)]);
       expect(await license('other')).toBe('served');
       expect(await goal('other')).toBe('served');
+    });
+
+    it('control: a published version has a goal read for a signed-out visitor', async () => {
+      serveRows([row(100)]);
+      expect(await goal('anon')).toBe('resolved');
     });
 
     it("a donation goal read on a scoped key never takes the owner's path", async () => {
