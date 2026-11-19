@@ -1,5 +1,6 @@
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -1406,7 +1407,8 @@ export const getUserCosmeticsHandler = async ({
       .filter(isDefined);
     const coverImages = await getEntityCoverImage({
       entities: inUseCosmeticEntities,
-      viewer: ctx.user,
+      // An app or scoped key acting for a user gets no owner or moderator exemption.
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
     });
     const withheld = await getWithheldCosmeticIds(user.cosmetics.map((x) => x.cosmetic.id));
 
