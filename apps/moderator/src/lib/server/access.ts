@@ -207,6 +207,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/creator-services/disputes', label: 'Service Disputes' },
+  { path: '/creator-program/payout-reviews', label: 'Payout Reviews' },
   { path: '/messages', label: 'Civitai Messages', countKey: 'civitaiMessages' },
   {
     label: 'Audit',
