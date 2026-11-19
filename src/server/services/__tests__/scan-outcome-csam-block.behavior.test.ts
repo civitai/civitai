@@ -592,6 +592,8 @@ describe('the account-deletion grace block', () => {
     });
 
     it('a clean scan verdict, which still keeps the image hash', async () => {
+      await holder.db.exec(`UPDATE "Image" SET "pHash" = 5 WHERE id = ${GRACED}`);
+
       await resolveScanOutcome({
         image: await loaded(GRACED),
         pHash: BigInt(77),
@@ -673,7 +675,11 @@ describe('the account-deletion grace block', () => {
       const outcome = await scan(GRACED);
 
       expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
-      expect(outcome).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+      expect(outcome).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
     });
 
     it('a scan error', async () => {

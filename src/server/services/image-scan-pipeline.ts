@@ -758,7 +758,15 @@ export async function resolveScanOutcome({
     // the row as it stands, so no Scanned effects run.
     await dbWrite.$executeRaw`
       UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}
-    `.catch(() => 0);
+    `.catch((error: Error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'scan-skipped-phash',
+        imageId: image.id,
+        message: error.message,
+      });
+      return 0;
+    });
     const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
