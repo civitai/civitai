@@ -79,3 +79,27 @@ export function withModeratorRightsFor<T extends { id: number; isModerator?: boo
   if (!user?.isModerator || isSessionOrFullUserKey(credential)) return user;
   return withholdsModerator(user, credential) ? { ...user, isModerator: false } : user;
 }
+
+/**
+ * The account the App Blocks AUTHOR capability is evaluated for: the request's user as the session
+ * resolved it, before `withModeratorRightsFor` withheld moderator rights. That capability belongs
+ * to the account (a moderator is always an author: the floor `isAppDeveloper` applies), not to the
+ * credential, and the REST author routes already read it this way: they pass the bearer session's
+ * own user to `isAppBlocksAuthorEnabled`.
+ *
+ * Read it ONLY for the author capability. It is no moderator check: `ctx.user.isModerator` is.
+ * Whether the credential may call a procedure at all stays with `enforceTokenScope`.
+ *
+ * Falls back to `ctx.user` when the context carries no subject (a context built outside
+ * `createContext`) or one for another user. No signed-in user reads as no one, so a banned
+ * session (`trpcViewer` moves it to `bannedUser`) gets nothing from here.
+ */
+export function appBlocksAuthorAccount<T extends { id: number }>(ctx: {
+  user?: T | null;
+  appBlocksAuthorSubject?: T | null;
+}): T | undefined {
+  const user = ctx.user;
+  if (!user) return undefined;
+  const subject = ctx.appBlocksAuthorSubject;
+  return subject && subject.id === user.id ? subject : user;
+}

@@ -91,8 +91,8 @@ import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
+import { enforceAppBlocksAuthorFlag } from '~/server/trpc/app-blocks-author.middleware';
 import {
-  isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
   resolveViewerAudienceFloor,
@@ -150,20 +150,8 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
  * the mod-only `enforceAppBlocksFlag` (`isAppBlocksEnabled`) on those procs;
  * mods still pass via the author floor. Fail-CLOSED: absent flag / Flipt-down →
  * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
+ * It lives in `~/server/trpc/app-blocks-author.middleware`, shared with `app-collaborators`.
  */
-const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
-  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
-  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
-  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
-  // subject (a capability has nothing to authorize without one), so the compiler makes
-  // this refusal mandatory rather than optional. Keep it: it is also what makes the
-  // middleware safe if it is ever attached to a `publicProcedure`.
-  if (!ctx.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-  }
-  if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
-});
 
 /**
  * Token-scope gate for the OWNER-SCOPED listing procs the civitai CLI drives

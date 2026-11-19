@@ -7,6 +7,7 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import {
   narrowStoreScope,
   type StoreVisibilityScope as StoreVisibilityScopeValue,
@@ -409,8 +410,11 @@ export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Pro
   const user = opts.user;
   // Moderator floor — the `availability: ['mod']` static fallback. Keeps mods'
   // existing author access intact while the Flipt flag is absent (dark window)
-  // and regardless of how the flag's segments are later configured.
-  if (user.isModerator) return true;
+  // and regardless of how the flag's segments are later configured. The same floor
+  // `appDeveloperProcedure` and the author pages apply (`isAppDeveloper`). On tRPC, pass
+  // `appBlocksAuthorAccount(ctx)`, not `ctx.user`: a moderator on a scoped credential reads as
+  // a non-moderator there, and keeps this capability.
+  if (isAppDeveloper(user)) return true;
   // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
   // author cohort segment resolves identically to the client/hasFeature gate.
   return isFlipt(APP_BLOCKS_AUTHOR_FLAG, String(user.id), buildFliptContext(user));

@@ -92,6 +92,11 @@ export const createContext = async ({
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   // A banned viewer stays here (trpcViewer moves it to `bannedUser`), so the appeal flags still reach it.
   const viewer = withModeratorRightsFor(session?.user, credential);
+  // The App Blocks author capability is the account's, not the credential's: read it only through
+  // `appBlocksAuthorAccount`. Optional in the type, so contexts built elsewhere need not set it.
+  const authorSubject: { appBlocksAuthorSubject?: typeof viewer } = {
+    appBlocksAuthorSubject: session?.user,
+  };
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
@@ -99,6 +104,7 @@ export const createContext = async ({
 
   return {
     ...trpcViewer(viewer),
+    ...authorSubject,
     acceptableOrigin,
     // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
     // account must still reach them.
