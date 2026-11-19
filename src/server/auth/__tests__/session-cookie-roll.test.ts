@@ -67,6 +67,7 @@ describe('session cookie roll rule', () => {
   });
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    vi.useRealTimers();
   });
 
   // Test 4. Host mode, a request carrying only the shared-slot token past the update age: it is served, but
@@ -101,6 +102,40 @@ describe('session cookie roll rule', () => {
     const written = setCookies.find((c) => c.startsWith(`${SHARED}=`));
     expect(written).toMatch(/Domain=civitai\.com/);
     expect(setCookies.some((c) => c.startsWith(`${HOST}=`))).toBe(false);
+  });
+
+  // The hub answers 503 while it cannot confirm the session: the cookie stays, and this process does not ask
+  // again for that token for five minutes, since an SSR render waits on the roll.
+  it('after a 503 keeps the cookie and backs off that token for five minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    h.refresh.mockImplementation(
+      async (_t: string, o?: { onFailure?: (r: CivitaiAuth.RefreshFailure) => void }) => {
+        o?.onFailure?.('unavailable');
+        return null;
+      }
+    );
+    const tok = token({ sub: '1', jti: 'j-roll', iat: now() - 2 * 24 * 3600, exp: now() + 3600 });
+    const first = await run('shared', { [SHARED]: tok });
+    expect(first.session?.user).toMatchObject({ id: 1 });
+    expect(first.setCookies).toEqual([]);
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 5 * 60 * 1000 + 1000);
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again on the next request after any other failed roll', async () => {
+    h.refresh.mockImplementation(
+      async (_t: string, o?: { onFailure?: (r: CivitaiAuth.RefreshFailure) => void }) => {
+        o?.onFailure?.('declined');
+        return null;
+      }
+    );
+    const tok = token({ sub: '1', jti: 'j-roll', iat: now() - 2 * 24 * 3600, exp: now() + 3600 });
+    await run('shared', { [SHARED]: tok });
+    await run('shared', { [SHARED]: tok });
+    expect(h.refresh).toHaveBeenCalledTimes(2);
   });
 
   it('host mode rolls a host-only token in place', async () => {

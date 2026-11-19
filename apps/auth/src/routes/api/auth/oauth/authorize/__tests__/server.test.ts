@@ -47,7 +47,7 @@ vi.mock('$lib/server/auth/device', () => ({
   touchAccount: vi.fn(async () => undefined),
 }));
 vi.mock('$lib/server/auth/pending-authz', () => ({
-  resolveAuthorizingUser: async () => ({ id: 7 }),
+  resolveAuthorizingUser: async (o: { sessionUser?: unknown }) => o.sessionUser ?? { id: 7 },
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({ getOrProduceSessionUser: vi.fn() }));
 vi.mock('$lib/server/oauth/access', () => ({ checkClientAccess: async () => ({ allowed: true }) }));
@@ -65,6 +65,7 @@ vi.mock('$lib/server/oauth/model', () => ({
 
 import { GET, POST } from '../+server';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
+import { markUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 
 function approve(
   scope: bigint,
@@ -267,6 +268,38 @@ describe('authorize — skipConsent needs the exact registered redirect', () => 
     h.isFirstParty = true;
     const res = await start({ redirect_uri: 'http://localhost:9999/cb', prompt: 'consent' });
     expect(res.location).toBe('http://localhost:9999/cb?code=the-code&state=s');
+  });
+});
+
+describe('authorize — session accepted without reading the session store', () => {
+  beforeEach(() => {
+    h.skipConsent = true;
+    h.authorize.mockResolvedValue({ authorizationCode: 'the-code' });
+  });
+  const unconfirmed = () => {
+    const session = { sub: '7', jti: 'j', sid: 'family-a' };
+    markUnconfirmedSession(session);
+    return { user: { id: 7 }, session };
+  };
+
+  it('sends a third-party client temporarily_unavailable and issues no code', async () => {
+    const res = await start({}, unconfirmed());
+    expect(new URL(res.location!).searchParams.get('error')).toBe('temporarily_unavailable');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('answers a first-party client 503 and issues no code', async () => {
+    h.isFirstParty = true;
+    expect((await start({}, unconfirmed())).status).toBe(503);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('issues the code for the same session once it is confirmed', async () => {
+    const res = await start(
+      {},
+      { user: { id: 7 }, session: { sub: '7', jti: 'j', sid: 'family-a' } }
+    );
+    expect(res.location).toBe('https://games.example.com/cb?code=the-code&state=s');
   });
 });
 

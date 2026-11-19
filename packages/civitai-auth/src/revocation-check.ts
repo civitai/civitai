@@ -116,9 +116,14 @@ const quietly = (fn: () => void) => {
   }
 };
 
+/** Per-call options: `timeoutMs` replaces the configured deadline for this read only. */
+export interface RevocationCheckCallOptions {
+  timeoutMs?: number;
+}
+
 export function createRevocationCheck(
   config: RevocationCheckConfig
-): (claims: SessionClaims) => Promise<boolean> {
+): (claims: SessionClaims, opts?: RevocationCheckCallOptions) => Promise<boolean> {
   const cacheOn = config.markerCache ?? true;
   const markers = createRevocationMarkerCache({ maxEntries: REVOCATION_MARKER_CACHE_MAX_ENTRIES });
   // The same predicate over the markers seen so far. Its reads are in memory and never touch the store.
@@ -142,11 +147,11 @@ export function createRevocationCheck(
   };
   const bound = config.bound ?? raceDeadline;
 
-  return async (claims) => {
+  return async (claims, opts) => {
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
     try {
-      const revoked = await bound(registryOf().isRevoked(claims), timeoutOf());
+      const revoked = await bound(registryOf().isRevoked(claims), opts?.timeoutMs ?? timeoutOf());
       quietly(() => config.onOutcome?.('hit', seconds()));
       return revoked;
     } catch (err) {

@@ -135,6 +135,13 @@ describe('createRevocationCheck deadline and reporting', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it('a per-call timeoutMs replaces the configured deadline for that read only', async () => {
+    const check = createRevocationCheck({ redis: hung, timeoutMs: 5000 });
+    const started = Date.now();
+    expect(await check(claims, { timeoutMs: 25 })).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('a store error is reported as an error; an answered read as a hit', async () => {
     const onError = vi.fn();
     const onOutcome = vi.fn();

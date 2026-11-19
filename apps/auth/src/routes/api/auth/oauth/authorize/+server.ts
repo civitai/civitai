@@ -9,6 +9,7 @@ import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { familyId } from '@civitai/auth';
 import { markFamilyLive } from '$lib/server/auth/lineage';
 import { preUpgradeHubSession } from '$lib/server/auth/legacy-upgrade';
+import { isUnconfirmedSession } from '$lib/server/auth/unconfirmed-session';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import {
@@ -298,6 +299,12 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
       if (typeof value === 'string') consentUrl.searchParams.set(key, value);
     }
     redirect(303, consentUrl.toString());
+  }
+
+  // A code turns into lasting credentials at /token and /session, so it is not issued on a session the hub
+  // accepted without reading the session store. A user handed over by a fresh sign-in is not this session.
+  if (user === locals.user && locals.session && isUnconfirmedSession(locals.session)) {
+    return failToClient('temporarily_unavailable', 'Try again in a minute', 503);
   }
 
   // Issue the authorization code via the library (PKCE challenge stored, code hashed in Redis). The
