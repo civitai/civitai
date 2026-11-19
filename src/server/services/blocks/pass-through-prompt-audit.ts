@@ -391,16 +391,13 @@ export async function shadowPassThroughPromptAudit(
   ctx: AuditContext,
   collected: PassThroughAuditText
 ): Promise<void> {
-  const base = {
-    name: 'app-block-pass-through-prompt-audit',
-    type: 'info' as const,
-    appBlockId: ctx.appBlockId,
-    stepTypes: collected.auditedTypes.join(','),
-    literal: collected.promptRefs.length === 0,
-    argumentRefs: collected.promptRefs.filter((r) => r === 'argument').length,
-    stepRefs: collected.promptRefs.filter((r) => r === 'step').length,
-    tooLarge: collected.tooLarge,
-  };
+  const name = 'app-block-pass-through-prompt-audit';
+  const { appBlockId } = ctx;
+  const stepTypes = collected.auditedTypes.join(',');
+  const literal = collected.promptRefs.length === 0;
+  const argumentRefs = collected.promptRefs.filter((r) => r === 'argument').length;
+  const stepRefs = collected.promptRefs.filter((r) => r === 'step').length;
+  const { tooLarge } = collected;
   const started = performance.now();
   try {
     const verdict = collected.tooLarge
@@ -424,25 +421,31 @@ export async function shadowPassThroughPromptAudit(
       verdict.outcome !== 'hard' &&
       ((externalError && env.PROMPT_CHECK_FAIL_CLOSED) || externalSkipped);
     const wouldRefuse =
-      !base.literal ||
+      !literal ||
       collected.tooLarge ||
       (verdict !== null && verdict.outcome !== 'pass') ||
       checkUnavailable;
     logToAxiom({
-      ...base,
+      name,
+      type: 'info',
+      appBlockId,
+      stepTypes,
       outcome,
       source: verdict?.source ?? null,
-      externalError,
-      externalSkipped,
       wouldRefuse,
       durationMs: Math.round(performance.now() - started),
+      // Not Axiom fields: the dataset is at its field limit (no-new-axiom-field.test.ts).
+      payload: { literal, argumentRefs, stepRefs, tooLarge, externalError, externalSkipped },
     });
   } catch (e) {
     logToAxiom({
-      ...base,
+      name,
       type: 'error',
+      appBlockId,
+      stepTypes,
       message: (e as Error).message,
       durationMs: Math.round(performance.now() - started),
+      payload: { literal, argumentRefs, stepRefs, tooLarge },
     });
   }
 }
