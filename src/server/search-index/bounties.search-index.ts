@@ -381,8 +381,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       `;
     logger(`PullData :: Pulled bounties`);
 
-    // transformData leaves out a bounty with no servable image; remove any document it was
-    // indexed with while it had one, or that document keeps serving the old images.
+    // transformData leaves these out, which would leave their earlier documents in place.
     const imageless = bounties.filter((b) => !b.images?.length).map((b) => b.id);
     if (imageless.length) await onSearchIndexDocumentsCleanup({ indexName, ids: imageless });
 
@@ -399,7 +398,6 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .filter(isDefined)
       .map((i) => i.id);
 
-    // A batch whose bounties have no servable image has no ids to look up.
     const imageTags = !imageIds.length
       ? []
       : await dbRead.$queryRaw<

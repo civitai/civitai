@@ -129,7 +129,6 @@ describe('bounties search index images', () => {
       indexName: 'bounties',
       ids: [id],
     });
-    // No image ids, so no tag lookup over an empty list.
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 

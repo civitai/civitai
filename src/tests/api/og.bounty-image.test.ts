@@ -6,8 +6,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
  * A bounty's share card shows only an image a signed-out visitor is served on the bounty page.
- * Image rows live in an in-process Postgres; a Prisma `imageConnection.findFirst` is answered
- * from the same rows by matching its `where`.
+ * Image rows live in an in-process Postgres.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
