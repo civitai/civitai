@@ -625,12 +625,10 @@ async function uploadEtag(s3Key: string) {
   return head?.ETag?.replace(/"/g, '') ?? null;
 }
 
-/** Sets `progress.touched` before the first object delete is tried. */
 async function deleteFileObjects(
   file: FileObjects,
   /** Asked before each object delete; false stops, and the file counts as not deleted. */
-  stillDeletable: () => Promise<boolean>,
-  progress: { touched: boolean }
+  stillDeletable: () => Promise<boolean>
 ) {
   const bucket = await getBucket();
   const client = getS3Client();
@@ -645,7 +643,6 @@ async function deleteFileObjects(
   ];
   for (const target of targets) {
     if (!(await stillDeletable())) return false;
-    progress.touched = true;
     if (!(await deleteEveryVersion(target, file.id))) return false;
   }
   // A preview deleted mid-scan: its hidden copy goes with it.
@@ -730,15 +727,15 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
         FOR UPDATE OF f SKIP LOCKED`
     );
     if (!file) continue;
-    // The record goes first, so no object is deleted without one: a record whose file row still
-    // exists is a purge begun, and the next run finishes it. A write that fails deletes nothing.
-    const etag = await uploadEtag(file.s3Key);
-    // `inserted`: this run began the purge. A retry keeps the first record, filling a missing etag.
-    const [{ inserted }] = await dbWrite.$queryRaw<{ inserted: boolean }[]>`
+    // The record goes first, so no object is deleted without one, and is never removed, so no run
+    // can leave another's deletes unrecorded. One whose file row still exists is a purge tried,
+    // which a later run finishes. A write that fails deletes nothing; a retry fills a missing etag.
+    await dbWrite.$executeRaw`
       INSERT INTO "ServiceDealFilePurge" AS p ("fileId", "dealId", "size", "etag")
-      VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
-      ON CONFLICT ("fileId") DO UPDATE SET "etag" = COALESCE(p."etag", EXCLUDED."etag")
-      RETURNING (xmax = 0) AS inserted`;
+      VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${await uploadEtag(
+      file.s3Key
+    )})
+      ON CONFLICT ("fileId") DO UPDATE SET "etag" = COALESCE(p."etag", EXCLUDED."etag")`;
     // Objects before the row, outside any transaction: a delete that failed or left versions
     // keeps the row, for the next run to try again.
     // The claim's lock is gone by now, so each delete re-reads the holds first.
@@ -748,22 +745,11 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
           SELECT f."id" FROM "ServiceDealFile" f
           WHERE f."id" = ${file.id}::int AND ${purgeable(Prisma.sql`f`)}`
       ).length > 0;
-    const progress = { touched: false };
-    let deleted = false;
-    try {
-      deleted = await deleteFileObjects(file, stillDeletable, progress);
-    } finally {
-      // Stopped, or failed, before any delete: nothing began, so this run's record goes.
-      if (!deleted && inserted && !progress.touched)
-        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFilePurge" WHERE "fileId" = ${file.id}::int`;
-    }
+    const deleted = await deleteFileObjects(file, stillDeletable);
     if (!deleted) continue;
     const done = await dbWrite.$transaction(async (tx) => {
-      // An upsert, so the row never goes without a record, even if an overlapping run removed it.
       await tx.$executeRaw`
-        INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
-        VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
-        ON CONFLICT ("fileId") DO UPDATE SET "purgedAt" = now()`;
+        UPDATE "ServiceDealFilePurge" SET "purgedAt" = now() WHERE "fileId" = ${file.id}::int`;
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
       return tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
     });

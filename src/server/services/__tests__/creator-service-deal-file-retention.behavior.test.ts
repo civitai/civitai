@@ -588,7 +588,9 @@ describe('the purge after the sweep', () => {
   });
 
   it('re-reads the holds before each delete: one landing after the claim stops it', async () => {
-    const { finalId } = await closedDeal('Cancelled', 40);
+    const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+    // Only the final is a candidate, so the HEAD below is its own.
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [attachmentId]);
     await sweep();
     // The storage HEAD runs after the claim and before the first delete.
     s3.send.mockImplementationOnce(async () => {
@@ -598,7 +600,8 @@ describe('the purge after the sweep', () => {
     expect(await purge()).toBe(0);
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
     expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
-    expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
+    // The record stays: tried, not finished.
+    expect(await q(`SELECT "fileId" FROM "ServiceDealFilePurge"`)).toEqual([{ fileId: finalId }]);
   });
 
   it('re-reads the holds before each object: one landing after the first stops the rest', async () => {
@@ -930,7 +933,7 @@ describe('the purge record', () => {
     expect(Date.now() - new Date(done.purgedAt).getTime()).toBeLessThan(60_000);
   });
 
-  it('drops its own record when it fails before deleting anything', async () => {
+  it('deletes nothing, and keeps its record, when it fails before the first delete', async () => {
     const { finalId } = await archived();
     // The HEAD runs just before the record is written; the hold read after it then fails.
     s3.send.mockImplementationOnce(async () => {
@@ -938,12 +941,12 @@ describe('the purge record', () => {
       return { ETag: '"abc123"' };
     });
     try {
-      await expect(purge()).rejects.toThrow();
+      await expect(purge()).rejects.toThrow(/Appeal/);
     } finally {
       await q(`ALTER TABLE "AppealGone" RENAME TO "Appeal"`);
     }
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
     expect(await kept(finalId)).toBe(true);
-    expect(await record(finalId)).toBeUndefined();
+    expect(await record(finalId)).toBeDefined();
   });
 });
