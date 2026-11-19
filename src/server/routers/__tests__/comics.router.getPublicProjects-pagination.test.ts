@@ -40,21 +40,28 @@ function findMany(args: {
   return Promise.resolve(args.take != null ? rows.slice(0, args.take) : rows);
 }
 
-// Ranked sorts read (rank, id) from raw SQL; every comic here has the same follower count, so
-// the order falls to id, and a cursor keeps the rows strictly after it.
+// Ranked sorts read (rank, id) from raw SQL, highest first; a cursor keeps the rows strictly after it.
+const FOLLOWERS: Record<number, number> = {
+  990000106: 1,
+  990000105: 3,
+  990000104: 3,
+  990000103: 2,
+  990000102: 5,
+  990000101: 3,
+};
+const RANKED = Object.entries(FOLLOWERS)
+  .map(([id, rank]) => ({ id: Number(id), rank_value: BigInt(rank) }))
+  .sort((a, b) => Number(b.rank_value - a.rank_value) || b.id - a.id);
+
 function rankedRows(query: { values: unknown[] } | TemplateStringsArray) {
   // Other reads on the path (the viewer's hidden users) are tagged templates and find nothing.
   if (Array.isArray(query)) return Promise.resolve([]);
-  query = query as { values: unknown[] };
-  const rank = query.values.find((v) => typeof v === 'bigint');
-  const cursorId = rank != null ? (query.values[query.values.indexOf(rank) + 1] as number) : null;
-  const rows = IDS.map((id) => ({ id, rank_value: BigInt(3) }));
+  const { values } = query as { values: unknown[] };
+  const rank = values.find((v): v is bigint => typeof v === 'bigint');
+  if (rank == null) return Promise.resolve(RANKED);
+  const id = values[values.indexOf(rank) + 1] as number;
   return Promise.resolve(
-    rank == null
-      ? rows
-      : rows.filter(
-          (r) => r.rank_value < (rank as bigint) || (r.rank_value === rank && r.id < cursorId!)
-        )
+    RANKED.filter((r) => r.rank_value < rank || (r.rank_value === rank && r.id < id))
   );
 }
 
@@ -92,7 +99,7 @@ describe('comics.getPublicProjects paging', () => {
     expect(await pageThrough('Newest', limit)).toEqual(IDS);
   });
 
-  it.each([2, 4])('MostFollowed, %i per page, shows all six comics once', async (limit) => {
-    expect(await pageThrough('MostFollowed', limit)).toEqual(IDS);
+  it.each([1, 2, 4])('MostFollowed, %i per page, shows all six comics once', async (limit) => {
+    expect(await pageThrough('MostFollowed', limit)).toEqual(RANKED.map((r) => r.id));
   });
 });
