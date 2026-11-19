@@ -863,12 +863,14 @@ export const getModelsRaw = async ({
     )`);
   }
 
+  let listedUserId: number | undefined;
   if (username || user) {
     const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
+    listedUserId = targetUser.id;
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -1088,7 +1090,9 @@ export const getModelsRaw = async ({
     );
   }
   if (availability) {
-    if (availability === Availability.Private && !(username || isModerator)) {
+    // A user's Private models are theirs and moderators' alone; naming the user is not enough.
+    const ownListing = !!sessionUser && listedUserId === sessionUser.id;
+    if (availability === Availability.Private && !(ownListing || isModerator)) {
       throw throwAuthorizationError();
     }
 
