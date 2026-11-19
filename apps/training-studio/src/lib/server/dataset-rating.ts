@@ -1,12 +1,12 @@
 // Server-only: the client-safe parse and decision are in $lib/dataset-rating.
-import { REDIS_SYS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { refreshBlob } from '@civitai/orchestration-client';
 import type { SessionUser } from '@civitai/auth';
 import { logToAxiom, safeError } from './axiom';
 import { flagVariant } from './flipt';
 import { orchestratorClient } from './orchestrator';
 import { mainAppRateImage } from './main-app-rating';
-import { getSysRedis } from './redis';
+import { getCacheRedis, getSysRedis } from './redis';
 import {
   isStoredRating,
   parseMatureLevel,
@@ -37,15 +37,26 @@ const DAILY_LIMITS: Record<DailyKind, number> = {
   probes: UPLOAD_READINESS_DAILY_PROBES,
 };
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
-const KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
-const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
+const KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING;
+const DAILY_KEY = REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
 const SENT_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
+/**
+ * Until this date a rating the cache cluster does not hold is also read from system Redis, where
+ * ratings were written before they moved. Without it, an image rated before the move whose sent
+ * marker (SENT_TTL_SECONDS, still in system Redis) is live would read as unrated and not be sent
+ * again until that marker lapses. Past it, delete the fallback (`sysCacheKey`, the branch in
+ * readRatings) and REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING with it.
+ */
+export const DATASET_RATING_SYS_FALLBACK_UNTIL = new Date('2027-01-15T00:00:00Z');
+const SYS_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING;
 /** How long a blob sent to the rater is not sent again, whatever came back. */
 const SENT_TTL_SECONDS = 7 * 24 * 60 * 60;
 // By rater and mature level: a verdict at one level is not a verdict at another. Blob ids are
 // case-insensitive.
 const cacheKey = (level: number, blobId: string) =>
   `${KEY}:${RATER_MODEL}:m${level}:${blobId.trim().toLowerCase()}` as const;
+const sysCacheKey = (level: number, blobId: string) =>
+  `${SYS_KEY}:${RATER_MODEL}:m${level}:${blobId.trim().toLowerCase()}` as const;
 
 const sentKey = (level: number, blobId: string) =>
   `${SENT_KEY}:${RATER_MODEL}:m${level}:${blobId.trim().toLowerCase()}` as const;
@@ -65,15 +76,32 @@ async function claimAllowance(
   if (want <= 0) return { granted: 0, key };
   const limit = DAILY_LIMITS[kind];
   try {
-    const redis = getSysRedis();
-    const total = await redis.incrBy(key, want);
-    if (total === want) await redis.expire(key, 2 * 24 * 60 * 60);
+    const total = await addToDaily(key, want);
+    if (!Number.isFinite(total)) return { granted: 0, key };
     const granted = Math.max(0, Math.min(want, limit - (total - want)));
-    if (granted < want) await redis.decrBy(key, want - granted).catch(() => undefined);
+    if (granted < want) await addToDaily(key, -(want - granted)).catch(() => undefined);
     return { granted, key };
   } catch {
     return { granted: 0, key };
   }
+}
+
+const DAILY_TTL_SECONDS = 2 * 24 * 60 * 60;
+
+/** Adds `by` (negative gives back) to a day's count on the cache cluster and answers the total:
+ *  SET NX EX + INCRBY in one MULTI on the one key, so the count always carries its TTL, even when
+ *  a give-back lands after the cluster evicted it. A give-back that would leave the count below
+ *  zero adds the deficit back, so it never grants more than the day's limit. */
+async function addToDaily(key: ReturnType<typeof dailyKey>, by: number): Promise<number> {
+  const redis = getCacheRedis();
+  const reply = await redis
+    .multi()
+    .set(key, '0', { NX: true, EX: DAILY_TTL_SECONDS })
+    .incrBy(key, by)
+    .exec();
+  const total = Number((reply as unknown[] | null)?.[1]);
+  if (by < 0 && total < 0) return redis.incrBy(key, -total);
+  return total;
 }
 
 export async function claimDaily(kind: DailyKind, userId: number, want: number): Promise<number> {
@@ -93,7 +121,7 @@ export async function claimDailyReturnable(
 async function returnDaily(key: ReturnType<typeof dailyKey>, n: number): Promise<void> {
   if (n <= 0) return;
   try {
-    await getSysRedis().decrBy(key, n);
+    await addToDaily(key, -n);
   } catch {
     // best-effort: the allowance is just smaller for the rest of the day
   }
@@ -110,7 +138,9 @@ async function readRatings(level: number, blobKeys: string[]): Promise<Map<strin
   const ratings = new Map<string, StoredRating>();
   if (blobKeys.length === 0) return ratings;
   try {
-    const values = await getSysRedis().packed.mGet<unknown>(
+    // packed.mGet on the cluster client reads key by key (grouped per node), never one MGET, so
+    // keys in different slots are fine.
+    const values = await getCacheRedis().packed.mGet<unknown>(
       blobKeys.map((k) => cacheKey(level, k))
     );
     values.forEach((value, i) => {
@@ -119,12 +149,25 @@ async function readRatings(level: number, blobKeys: string[]): Promise<Map<strin
   } catch (err) {
     console.warn('[training-studio] dataset rating cache read failed', safeError(err));
   }
+  const missing = blobKeys.filter((k) => !ratings.has(k));
+  if (missing.length && Date.now() < DATASET_RATING_SYS_FALLBACK_UNTIL.getTime()) {
+    try {
+      const values = await getSysRedis().packed.mGet<unknown>(
+        missing.map((k) => sysCacheKey(level, k))
+      );
+      values.forEach((value, i) => {
+        if (isStoredRating(value)) ratings.set(missing[i]!, value);
+      });
+    } catch (err) {
+      console.warn('[training-studio] dataset rating fallback read failed', safeError(err));
+    }
+  }
   return ratings;
 }
 
 async function writeRating(level: number, blobKey: string, rating: StoredRating): Promise<void> {
   try {
-    await getSysRedis().packed.set(cacheKey(level, blobKey), rating, { EX: CACHE_TTL_SECONDS });
+    await getCacheRedis().packed.set(cacheKey(level, blobKey), rating, { EX: CACHE_TTL_SECONDS });
   } catch {
     // best-effort: the image stays unrated and the next job rates it again
   }

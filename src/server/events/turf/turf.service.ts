@@ -58,7 +58,8 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
-import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
 import { FLAG_HAT_MAX, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
@@ -893,7 +894,8 @@ async function reactionPaysTeam(event: TurfEvent, imageId: number, userId: numbe
   // A sync still running on this server first, so a lead the placement just took is in the map. A
   // failed sync leaves the old map, which is still what a reaction scores on.
   await syncing.get(`${event.name}:${imageId}`)?.done.catch(() => undefined);
-  const rawEntry = await sysRedis.hGet(turfKeys(event.name).map, key);
+  const map = turfKeys(event.name).map;
+  const rawEntry = await boundedClusterCall('reactionPaysTeam', () => redis.hGet(map, key));
   const entry = rawEntry ? decodeTurfEntry(rawEntry) : undefined;
   return !!entry && sameTeam(entry.team) && entry.players.some((p) => p !== userId);
 }
@@ -1069,6 +1071,9 @@ function computeImages(
   return { entries, counts, stickers };
 }
 
+/** The stamp hash's ticket counter field; never an image's `Image:<id>` field. */
+export const TURF_TICKET_FIELD = '#ticket';
+
 // Per image (ARGV: ticket, then field, map value, counts value, rank value; '' = none): writes the map
 // entry and counts only when the ticket is above the image's stamp, so an older read never lands after
 // a newer one. Returns a code per image: 1 map changed, 2 counts changed, 4 stale (nothing written).
@@ -1076,14 +1081,23 @@ function computeImages(
 // rewritten on every write that lands, changed or not, so they hold what the counts hold and a
 // reconcile, which writes every image in either, repairs them. The rank value is encodeTurfRank's; it carries the scores as strings, so the
 // script does no arithmetic.
-const WRITE_TURF_SCRIPT = `
+//
+// The stamp hash also holds the ticket counter (TURF_TICKET_FIELD). A ticket above it was taken
+// from a counter the cluster has since lost (the hash was evicted while its read ran), so it is
+// refused like a stale one; and a stored stamp above it was written from such a lost counter, so it
+// reads as absent. Without both, one in-flight write after an eviction would leave stamps no ticket
+// from the restarted counter could pass until it caught up.
+export const WRITE_TURF_SCRIPT = `
 local ticket = tonumber(ARGV[1])
+local top = tonumber(redis.call('HGET', KEYS[3], '${TURF_TICKET_FIELD}') or '0')
 local teams = #KEYS - 5
 local out = {}
 for i = 2, #ARGV, 4 do
   local f, mv, cv, rv = ARGV[i], ARGV[i + 1], ARGV[i + 2], ARGV[i + 3]
   local code = 0
-  if ticket > tonumber(redis.call('HGET', KEYS[3], f) or '0') then
+  local stamp = tonumber(redis.call('HGET', KEYS[3], f) or '0')
+  if stamp > top then stamp = 0 end
+  if ticket <= top and ticket > stamp then
     redis.call('HSET', KEYS[3], f, ARGV[1])
     for j, v in ipairs({ mv, cv }) do
       local cur = redis.call('HGET', KEYS[j], f)
@@ -1158,7 +1172,7 @@ async function writeTurf(
   const mapChanged: string[] = [];
   const countsChanged: string[] = [];
   for (const part of chunk(fields, 500)) {
-    const codes = (await sysRedis.eval(WRITE_TURF_SCRIPT, {
+    const codes = (await redis.eval(WRITE_TURF_SCRIPT, {
       keys: [
         keys.map,
         keys.counts,
@@ -1178,9 +1192,9 @@ async function writeTurf(
     });
   }
   for (const part of chunk(mapChanged, 500))
-    await Promise.all(part.map((k) => sysRedis.xAdd(keys.log, '*', { k, v: map.get(k) ?? '' })));
+    await Promise.all(part.map((k) => redis.xAdd(keys.log, '*', { k, v: map.get(k) ?? '' })));
   if (mapChanged.length)
-    await sysRedis.xTrim(keys.log, 'MAXLEN', MAP_LOG_MAX, { strategyModifier: '~' });
+    await redis.xTrim(keys.log, 'MAXLEN', MAP_LOG_MAX, { strategyModifier: '~' });
   return { mapChanged, countsChanged };
 }
 
@@ -1192,8 +1206,16 @@ const turfRanks = (event: TurfEvent, counts: Map<string, TurfCounts>, contest: S
     })
   );
 
-/** A ticket for a sync or reconcile about to read: one taken later reads newer stickers. */
-const takeTicket = (event: TurfEvent) => sysRedis.incr(turfKeys(event.name).seq);
+/**
+ * A ticket for a sync or reconcile about to read: one taken later reads newer stickers. The counter
+ * is a field of the stamp hash (`TURF_TICKET_FIELD`), not a key of its own: the cache cluster evicts
+ * keys one at a time, and a counter lost apart from the stamps would restart below them. Lost
+ * together, both restart from nothing; a write still holding a ticket from before the loss is
+ * refused, and any stamp it left above the restarted counter is ignored (WRITE_TURF_SCRIPT), so
+ * the next sync or reconcile writes every image again.
+ */
+const takeTicket = (event: TurfEvent) =>
+  redis.hIncrBy(turfKeys(event.name).stamp, TURF_TICKET_FIELD, 1);
 
 /** Recomputes some images' turf from their stickers and writes it through. */
 export async function syncTurfImages(event: TurfEvent, imageIds: number[], now = new Date()) {
@@ -1293,7 +1315,7 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   const keys = turfKeys(event.name);
   // A snapshot only to choose which images to pick for; the write decides what is pushed. An
   // image that moved since did so by a sync, which pushed its stickers itself.
-  const before = (await sysRedis.hGetAll(keys.counts)) ?? {};
+  const before = (await redis.hGetAll(keys.counts)) ?? {};
   const changed = (key: string, c: TurfCounts) => JSON.stringify(c) !== before[key];
   // Each batch's ticket is taken just before its reads and covers its id range, so a sync that
   // started before that read loses to it (bans and hides land only here), and one after wins.
@@ -1346,12 +1368,12 @@ export async function reconcileTurf(event: TurfEvent, now = new Date()) {
   // The feed indexes too, so an entry with no counts (written by an older script during a deploy)
   // is cleared as well.
   const indexed = [
-    ...((await sysRedis.sMembers(keys.hatted)) ?? []),
-    ...((await sysRedis.zRange(keys.rankTotal, 0, -1)) ?? []),
+    ...((await redis.sMembers(keys.hatted)) ?? []),
+    ...((await redis.zRange(keys.rankTotal, 0, -1)) ?? []),
   ].map((id) => `Image:${String(id)}`);
   const fields = new Set([
-    ...Object.keys((await sysRedis.hGetAll(keys.counts)) ?? {}),
-    ...Object.keys((await sysRedis.hGetAll(keys.map)) ?? {}),
+    ...Object.keys((await redis.hGetAll(keys.counts)) ?? {}),
+    ...Object.keys((await redis.hGetAll(keys.map)) ?? {}),
     ...indexed,
     ...desired.keys(),
     ...desiredCounts.keys(),
@@ -1470,7 +1492,7 @@ export async function getTurfSummaries(
     : Prisma.empty;
   const { kyselyRead } = await loadKyselyDb();
   const [counts, hats, flags] = await Promise.all([
-    sysRedis.hmGet(turfKeys(event.name).counts, keys),
+    boundedClusterCall('getTurfCounts', () => redis.hmGet(turfKeys(event.name).counts, keys)),
     sysRedis.hmGet(eventPointKeys(event.name).hats, keys),
     // One statement for what were three (open, mine, contest entry), each answered per asked id by
     // the same predicate the separate reads applied, and through Kysely rather than Prisma's

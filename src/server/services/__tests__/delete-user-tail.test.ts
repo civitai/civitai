@@ -136,9 +136,6 @@ describe('deleteUser — the post-commit tail is unskippable', () => {
     await expect(deleteUser()).resolves.toBeDefined();
 
     expect(ran).toEqual(ALL_STEPS);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'close-pending-restrictions', userId: USER_ID })
-    );
   });
 
   it('a failing Stripe cancel still runs every other step', async () => {

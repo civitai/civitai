@@ -113,3 +113,38 @@ describe('search index :: single-action ids are unaffected', () => {
     expect(calls).toEqual([`pull:${QUEUED_ID}`, `push:${QUEUED_ID}`]);
   });
 });
+
+// A failed delete is re-queued into the Delete queue, so the checkout it came from must be committed
+// before that, by the cleanup, and exactly once: a commit after the re-queue can delete it again.
+describe('search index :: the Delete checkout is committed by the cleanup', () => {
+  const commits = { count: 0 };
+  beforeEach(() => {
+    commits.count = 0;
+    mockGetQueue.mockImplementation(
+      async (_index: string, action: SearchIndexUpdateQueueAction) => ({
+        content: action === SearchIndexUpdateQueueAction.Delete ? [QUEUED_ID] : [],
+        commit: async () => {
+          if (action === SearchIndexUpdateQueueAction.Delete) commits.count += 1;
+        },
+      })
+    );
+    mockCleanup.mockImplementation(async ({ commit }: { commit?: () => Promise<unknown> }) => {
+      await commit?.();
+    });
+  });
+
+  it('in update()', async () => {
+    await createSearchIndexUpdateProcessor(buildProcessor({ qualifies: false })).update(
+      {} as never
+    );
+    expect(commits.count).toBe(1);
+  });
+
+  it('in processQueues()', async () => {
+    await createSearchIndexUpdateProcessor(buildProcessor({ qualifies: false })).processQueues(
+      { processDeletes: true, processUpdates: false },
+      {} as never
+    );
+    expect(commits.count).toBe(1);
+  });
+});

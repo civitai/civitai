@@ -363,8 +363,7 @@ export async function processComFaceRestores(now = new Date(), budgetMs = COM_FA
 }
 
 export const comFaceRecheckRetryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
-/** The backoff after a run that made no progress. */
-export const comFaceRetryDelay = (attempt: number) =>
+const retryDelay = (attempt: number) =>
   backoffDelay(attempt - 1, {
     baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
     maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
@@ -480,7 +479,7 @@ export async function processComFaceRechecks(now = new Date()) {
         attempt,
         // From now, not the run's start: a long run would otherwise write a retry already due.
         nextAt: new Date(
-          now.getTime() + (Date.now() - startedAt) + comFaceRetryDelay(attempt)
+          now.getTime() + (Date.now() - startedAt) + retryDelay(attempt)
         ).toISOString(),
       };
       await dbWrite.keyValue.upsert({

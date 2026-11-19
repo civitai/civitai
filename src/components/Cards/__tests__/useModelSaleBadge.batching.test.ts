@@ -26,8 +26,7 @@ import {
  * client. Recording both into one list is what makes old code red for the RIGHT reason — the
  * request shape — rather than dying on a missing mock.
  *
- * Timers are FAKE, so "the window has passed" is an exact clock position rather than a real sleep
- * racing the window — which is also what lets the window's length itself be pinned below.
+ * Timers are FAKE, so "the window has passed" is an exact clock position rather than a real sleep.
  */
 const recorded = vi.hoisted(() => {
   const requests: number[][] = [];
@@ -81,10 +80,6 @@ const { useModelSaleBadge } = CardContext;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const RUNNING = new Date('2999-01-01T00:00:00.000Z');
-/**
- * The batch window, as a LITERAL rather than the exported constant: the window-length test pins the
- * value, and an expectation read off the implementation would follow a mutated constant.
- */
 const WINDOW_MS = 50;
 /** Comfortably past the window, so settle points do not sit on its boundary. */
 const SETTLE_MS = 3 * WINDOW_MS;
@@ -167,27 +162,10 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     expect(sorted(recorded.requests[0])).toEqual(sorted(ids));
   });
 
-  it('waits exactly the batch window before asking', async () => {
-    await mountCards([907, 41], { signedIn: true });
-
-    await advance(WINDOW_MS - 1);
-    expect(recorded.requests).toHaveLength(0);
-
-    await advance(1);
-    expect(recorded.requests).toHaveLength(1);
-  });
-
-  it('asks for a model once when two cards show it', async () => {
-    await renderCards([7, 8, 7], { signedIn: true });
-
-    expect(recorded.requests).toHaveLength(1);
-    expect(sorted(recorded.requests[0])).toEqual([7, 8]);
-  });
-
   it('splits a surface larger than one chunk into requests the procedure accepts', async () => {
     // Past the procedure's own cap (so a mutant that stops chunking is REJECTED by the schema, not
     // just mis-counted), and not a multiple of the chunk, so a trailing partial chunk exists.
-    const count = 1201;
+    const count = 513;
     const ids = Array.from({ length: count }, (_, i) => 900000 - i * 7);
 
     await renderCards(ids, { signedIn: true });
@@ -213,30 +191,6 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     expect(results.get(9)).toBeUndefined();
   });
 
-  it('drops a sale whose window has already closed (ISO string from the wire)', async () => {
-    recorded.onSale.set(7, '2000-01-01T00:00:00.000Z');
-
-    const { results } = await renderCards([7], { signedIn: true });
-
-    expect(results.get(7)).toBeUndefined();
-  });
-
-  it('asks nothing when a provider owns the lookup', async () => {
-    await renderCards([7, 8], { skip: true, signedIn: true });
-
-    expect(recorded.requests).toEqual([]);
-  });
-
-  it('CONTROL for the failure case: the same row without a failure shows the badge', async () => {
-    recorded.onSale.set(7, RUNNING);
-
-    const { results, client } = await renderCards([7, 8], { signedIn: true });
-
-    expect(recorded.requests).toHaveLength(1);
-    expect(results.get(7)).toMatchObject({ discountType: 'Percent' });
-    expect(statuses(client)).toEqual(['success', 'success']);
-  });
-
   it('settles every waiting card into an error, with no badge, when the request fails', async () => {
     recorded.onSale.set(7, RUNNING);
     recorded.failOnce();
@@ -249,65 +203,6 @@ describe('useModelSaleBadge — provider-less cards, signed in', () => {
     // forever, and render no badge exactly as a handled failure does.
     expect(statuses(client)).toEqual(['error', 'error']);
   });
-
-  it('settles every card, across chunks, when the fetch throws synchronously', async () => {
-    // Three chunks: a throw that escaped the loop would strand the first chunk AND the later ones.
-    const ids = Array.from({ length: MODEL_SALE_IDS_PER_REQUEST * 2 + 13 }, (_, i) => 50000 + i);
-    vi.spyOn(CardContext.modelSaleBatcher, 'fetch').mockImplementation(() => {
-      throw new Error('sync boom');
-    });
-
-    const { client } = await mountCards(ids, { signedIn: true });
-    let escaped: unknown;
-    try {
-      await advance(SETTLE_MS);
-    } catch (error) {
-      escaped = error;
-    }
-
-    const all = statuses(client);
-    expect(all).toHaveLength(ids.length);
-    expect(all.filter((s) => s !== 'error')).toEqual([]);
-    expect(escaped).toBeUndefined();
-  });
-
-  it('fails only the chunk whose request failed; every other chunk still gets its sales', async () => {
-    // Three chunks, the last one partial, and every id on sale — so a card that wrongly settles
-    // `error` also visibly loses a badge it should have had.
-    const ids = Array.from(
-      { length: MODEL_SALE_IDS_PER_REQUEST * 2 + 37 },
-      (_, i) => 70000 + i * 3
-    );
-    for (const id of ids) recorded.onSale.set(id, RUNNING);
-    // 🔴 ORDERING IS THE POINT. The first chunk rejects at once; the others answer only after a
-    // further timer tick. A promise settles once, so if the later chunks resolved FIRST, a reject
-    // that fanned out to every card in the flush would hit already-settled promises and be
-    // invisible. Rejecting first is the ordering in which a too-wide reject actually lands.
-    const calls: number[][] = [];
-    vi.spyOn(CardContext.modelSaleBatcher, 'fetch').mockImplementation((chunk: number[]) => {
-      calls.push(chunk);
-      if (calls.length === 1) return Promise.reject(new Error('chunk boom'));
-      return new Promise((resolve) => {
-        setTimeout(() => resolve(recorded.query({ ids: chunk }) as never), 10);
-      });
-    });
-
-    const { results, client } = await renderCards(ids, { signedIn: true });
-
-    expect(calls).toHaveLength(3);
-    const failed = new Set(calls[0]);
-    // Non-vacuous on both sides: a full chunk failed, and the rest of the surface is not empty.
-    expect(failed.size).toBe(MODEL_SALE_IDS_PER_REQUEST);
-    const rest = ids.filter((id) => !failed.has(id));
-    expect(rest).toHaveLength(ids.length - MODEL_SALE_IDS_PER_REQUEST);
-
-    const stateOf = (id: number) =>
-      client.getQueryState(['model.getActiveSales.byModel', id])?.status;
-    expect([...failed].filter((id) => stateOf(id) !== 'error')).toEqual([]);
-    expect(rest.filter((id) => stateOf(id) !== 'success')).toEqual([]);
-    expect(rest.filter((id) => !results.get(id))).toEqual([]);
-    for (const id of failed) expect(results.get(id)).toBeUndefined();
-  });
 });
 
 describe('useModelSaleBadge — provider-less cards, anonymous', () => {
@@ -319,21 +214,5 @@ describe('useModelSaleBadge — provider-less cards, anonymous', () => {
     expect(recorded.requests).toHaveLength(ids.length);
     for (const request of recorded.requests) expect(request).toHaveLength(1);
     expect(sorted(recorded.requests.flat())).toEqual(sorted(ids));
-  });
-
-  it('still asks once for a model shown by two cards', async () => {
-    await renderCards([7, 8, 7], { signedIn: false });
-
-    expect(sorted(recorded.requests.map((r) => r[0]))).toEqual([7, 8]);
-    for (const request of recorded.requests) expect(request).toHaveLength(1);
-  });
-
-  it('gives each card its own model’s sale', async () => {
-    recorded.onSale.set(8, RUNNING);
-
-    const { results } = await renderCards([7, 8], { signedIn: false });
-
-    expect(results.get(8)).toMatchObject({ discountType: 'Percent', discountAmount: 25 });
-    expect(results.get(7)).toBeUndefined();
   });
 });

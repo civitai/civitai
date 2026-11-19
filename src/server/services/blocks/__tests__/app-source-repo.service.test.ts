@@ -381,6 +381,15 @@ function installRedis() {
     return 'OK';
   });
   redisMock.sysRedis.del.mockImplementation(async (k: string) => (redisStore.delete(k) ? 1 : 0));
+  // The writer lock is on the cache cluster: SET NX, released by a compare-and-delete script.
+  redisMock.redis.set.mockImplementation(redisMock.sysRedis.set.getMockImplementation()!);
+  redisMock.redis.eval.mockImplementation(
+    async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+      if (redisStore.get(keys[0]) !== args[0]) return 0;
+      redisStore.delete(keys[0]);
+      return 1;
+    }
+  );
   (redisMock.sysRedis as unknown as { scanIterator: unknown }).scanIterator = vi.fn(
     async function* () {
       yield [] as string[];

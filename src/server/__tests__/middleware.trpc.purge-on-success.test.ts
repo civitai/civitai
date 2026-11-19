@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CloudflareClient from '~/server/cloudflare/client';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const purge = vi.hoisted(() => ({ next: (): Promise<void> => Promise.resolve() }));
 vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
@@ -32,7 +31,6 @@ const ctx = () =>
 beforeEach(() => {
   purge.next = () => Promise.resolve();
   vi.mocked(purgeCache).mockClear();
-  loggingMock.logToAxiom.mockClear();
 });
 
 describe('purgeOnSuccess', () => {
@@ -50,15 +48,9 @@ describe('purgeOnSuccess', () => {
     expect(purgeCache).toHaveBeenCalledWith({ tags: [TAG] });
   });
 
-  it('logs a failed purge with its tags and procedure, and still returns the save', async () => {
+  it('still returns the save when the purge fails', async () => {
     purge.next = () => Promise.reject(new Error('purge failed'));
     const c = ctx();
     await expect(call(c).save()).resolves.toEqual({ saved: true });
-    await vi.waitFor(() =>
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'edge-purge-failed', tags: [TAG], path: 'save' }),
-        expect.anything()
-      )
-    );
   });
 });

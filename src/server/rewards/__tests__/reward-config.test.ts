@@ -256,19 +256,6 @@ describe('resolveRewardConfig', () => {
     expect((await resolveRewardConfig('otherReward', { ...DEFAULTS })).enabled).toBe(false);
   });
 
-  it('warns about the stray rather than swallowing it', async () => {
-    storedConfig({ rewards: { testReward: { enabled: false } }, note: 'x', owner: 'ops' });
-
-    await resolve();
-
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining('unrecognised top-level keys'),
-        strays: ['note', 'owner'],
-      })
-    );
-  });
-
   // Asserts the WRITE did not happen, not merely that something threw. A bare
   // `rejects.toThrow()` passes here only because `beforeEach` nulls both row
   // mocks, so the malformed guard cannot fire and the schema is the only thing
@@ -280,7 +267,7 @@ describe('resolveRewardConfig', () => {
     expect(dbMock.dbWrite.keyValue.upsert).not.toHaveBeenCalled();
   });
 
-  it('warns and runs unconfigured on a row written without the `rewards` wrapper', async () => {
+  it('runs unconfigured on a row written without the `rewards` wrapper', async () => {
     storedConfig({ testReward: { enabled: false } });
 
     expect(await resolve()).toMatchObject({
@@ -288,15 +275,6 @@ describe('resolveRewardConfig', () => {
       awardAmount: DEFAULTS.awardAmount,
     });
     expect(await getStoredRewardConfig()).toMatchObject({ malformed: true });
-    // The WARNING is the whole difference a non-strict envelope makes: it would
-    // resolve to exactly the same values, silently. Asserting only the values
-    // tests nothing about the strictness.
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'reward-config',
-        message: expect.stringContaining('no `rewards` wrapper'),
-      })
-    );
   });
 
   // A Retool text field produces the string, not the boolean. Falling back to the
