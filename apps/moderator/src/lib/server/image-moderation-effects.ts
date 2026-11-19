@@ -20,7 +20,7 @@ import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
-import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { mirrorBlockedHashesSql, NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
 
 /**
  * Run a post-write side effect so it cannot fail the moderation action that already happened.
@@ -157,7 +157,7 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
   try {
     const resultSet = await getClickhouse().query({
-      query: `SELECT toString(hash) AS hash FROM (SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest FROM "blocked_images" WHERE hash IN (${hashes.join(
+      query: `SELECT toString(hash) AS hash FROM (SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest FROM "blocked_images" WHERE hash IN (${hashes.join(
         ','
       )}) GROUP BY hash) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`,
       format: 'JSONEachRow',

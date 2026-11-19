@@ -1,5 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
+import { loggableQuery } from '@civitai/db';
+import { NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as Flipt from '~/server/flipt/client';
 import type { HealCounts, HealDeps } from '~/server/jobs/csam-blocklist-self-heal';
 
 /**
@@ -9,8 +13,30 @@ import type { HealCounts, HealDeps } from '~/server/jobs/csam-blocklist-self-hea
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+const boundary = vi.hoisted(() => ({
+  flagOn: false,
+  chQueries: [] as string[],
+  chRows: [] as { hash: string; reason: string; disabled: unknown }[],
+  inserts: [] as { values: unknown[]; clickhouse_settings?: unknown }[],
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Flipt>()),
+  isFlipt: async () => boundary.flagOn,
+}));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: {
+    $query: async (query: string) => {
+      boundary.chQueries.push(query);
+      return boundary.chRows;
+    },
+    insert: async (args: { values: unknown[]; clickhouse_settings?: unknown }) =>
+      void boundary.inserts.push(args),
+  },
+}));
+
 const {
   healCsamBlocklist,
+  runCsamBlocklistSelfHeal,
   HEAL_CAP,
   PG_CSAM_AMONG_SQL,
   REPORTED_CANDIDATES_SQL,
@@ -88,7 +114,7 @@ describe('healCsamBlocklist', () => {
     expect(w.copied).toEqual([]);
   });
 
-  // Decision (pending a policy ruling): a newer TOS row is counted, never written over.
+  // Decision: a newer row of another reason is counted, never written over.
   it('never writes over a newer row of another reason', async () => {
     const w = world([{ id: 5, pHash: '55' }], blocklist);
 
@@ -111,6 +137,21 @@ describe('healCsamBlocklist', () => {
   it('writes nothing for an image unblocked between the read and the write', async () => {
     const w = world([{ id: 1, pHash: '11' }]);
     w.still.delete(1);
+
+    const counts = await healCsamBlocklist({ writes: true }, w.deps);
+
+    expect(w.added).toEqual([]);
+    expect(counts.healed).toBe(0);
+  });
+
+  it('does not write an entry for a hash whose row landed after the classification', async () => {
+    const w = world([{ id: 1, pHash: '11' }]);
+    const classify = w.deps.readNewest;
+    let reads = 0;
+    w.deps.readNewest = async (hashes) =>
+      ++reads === 1
+        ? classify(hashes)
+        : hashes.map((hash) => ({ hash, reason: 'TOS', disabled: false }));
 
     const counts = await healCsamBlocklist({ writes: true }, w.deps);
 
@@ -200,5 +241,66 @@ describe('the candidate SQL, on real Postgres', () => {
     await healCsamBlocklist({ writes: true }, deps);
 
     expect(added.at(-1)).toContain('205');
+  });
+});
+
+describe('the job as scheduled, against its boundaries', () => {
+  const HASH = '-4276845791567733103';
+  beforeEach(() => {
+    boundary.flagOn = false;
+    boundary.chQueries = [];
+    boundary.chRows = [];
+    boundary.inserts = [];
+    dbMock.dbRead.$queryRawUnsafe.mockImplementation((async (sql: string) =>
+      sql === REPORTED_CANDIDATES_SQL
+        ? [{ id: 1, pHash: HASH }]
+        : sql === SWEEP_COUNT_SQL
+        ? [{ sweep: 3 }]
+        : []) as never);
+    dbMock.dbWrite.$queryRawUnsafe.mockReset();
+    dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([{ id: 1, pHash: HASH }] as never);
+    dbMock.dbWrite.$executeRawUnsafe.mockResolvedValue(1 as never);
+  });
+
+  it('with the flag off, reads and counts but neither re-reads nor writes', async () => {
+    const counts = await runCsamBlocklistSelfHeal();
+
+    expect(counts).toMatchObject({ writes: false, candidates: 1, missing: 1, sweep: 3, healed: 0 });
+    expect(dbMock.dbWrite.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(boundary.inserts).toEqual([]);
+  });
+
+  it('with the flag on, re-reads on the primary and writes the entry synchronously', async () => {
+    boundary.flagOn = true;
+
+    const counts = await runCsamBlocklistSelfHeal();
+
+    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledWith(STILL_BLOCKED_SQL, [1]);
+    expect(boundary.inserts).toEqual([
+      {
+        table: 'blocked_images',
+        values: [{ hash: HASH, reason: 'CSAM' }],
+        format: 'JSONEachRow',
+        clickhouse_settings: { async_insert: 0 },
+      },
+    ]);
+    expect(counts.healed).toBe(1);
+  });
+
+  it("classifies with the readers' tie-break and reads a 0/1 disabled column", async () => {
+    boundary.chRows = [{ hash: HASH, reason: 'CSAM', disabled: 1 }];
+    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 1, missing: 0 });
+
+    boundary.chRows = [{ hash: HASH, reason: 'CSAM', disabled: 0 }];
+    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 0, missing: 0 });
+
+    expect(boundary.chQueries[0]).toContain(NEWEST_BLOCKLIST_ROW_SQL);
+    expect(boundary.chQueries[0]).toContain(HASH);
+  });
+
+  it('keeps the hashes it looks up in Postgres out of the slow-query log', () => {
+    expect(
+      loggableQuery({ query: PG_CSAM_AMONG_SQL, params: JSON.stringify([[HASH]]) })
+    ).not.toContain(HASH);
   });
 });

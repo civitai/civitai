@@ -19,7 +19,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
-import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { mirrorBlockedHashesSql, NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -7053,7 +7053,7 @@ async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
       client.$query<{ hash: string }>`
     SELECT toString(hash) AS hash
     FROM (
-      SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
+      SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
       FROM "blocked_images"
       WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')})
       GROUP BY hash

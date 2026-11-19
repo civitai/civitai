@@ -2,6 +2,7 @@ import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   NEWEST_BLOCKLIST_ROW_SQL,
 } from '@civitai/shared/held-media';
+import { REDACT_LOG_MARKER } from '@civitai/db';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -21,7 +22,7 @@ import { createJob } from './job';
  * Writes only while the Flipt flag is on; off, unknown or unreachable, it logs counts only.
  */
 
-const LISTED_IDS = `ARRAY(SELECT l.id::int FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,9}$')`;
+const LISTED_IDS = `ARRAY(SELECT l.id::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$')`;
 const CSAM_BLOCKED = `ingestion = 'Blocked' AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
 
 export const REPORTED_CANDIDATES_SQL = `SELECT id, "pHash"::text AS "pHash" FROM "Image"
@@ -31,7 +32,8 @@ export const SWEEP_COUNT_SQL = `SELECT count(*)::int AS sweep FROM "Image"
 /** On the primary, right before a write: the ids among $1 still removed for CSAM, with their hash. */
 export const STILL_BLOCKED_SQL = `SELECT id, "pHash"::text AS "pHash" FROM "Image"
   WHERE id = ANY($1::int[]) AND ${CSAM_BLOCKED}`;
-export const PG_CSAM_AMONG_SQL = `SELECT hash::text AS hash FROM "BlockedImage"
+/** Takes hashes as its parameter, so it carries the marker that keeps them out of the slow-query log. */
+export const PG_CSAM_AMONG_SQL = `${REDACT_LOG_MARKER} SELECT hash::text AS hash FROM "BlockedImage"
   WHERE reason = 'CSAM' AND hash = ANY($1::text[]::bigint[])`;
 
 export const HEAL_CAP = 500;
@@ -101,7 +103,13 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
       )
     );
     const ready = batch.filter(({ hash }) => still.has(hash));
-    const entries = ready.filter((b) => !b.copyOnly).map((b) => b.hash);
+    // Read again just before the write: a row that landed since (a newer TOS block, say) wins.
+    const landed = new Set(
+      (await deps.readNewest(ready.filter((b) => !b.copyOnly).map((b) => b.hash))).map(
+        (row) => row.hash
+      )
+    );
+    const entries = ready.filter((b) => !b.copyOnly && !landed.has(b.hash)).map((b) => b.hash);
     const copies = ready.filter((b) => b.copyOnly).map((b) => b.hash);
     if (entries.length) await deps.addEntries(entries);
     if (copies.length) await deps.copyToPg(copies);
@@ -124,6 +132,7 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
 }
 
 async function readNewest(hashes: string[]): Promise<Newest[]> {
+  if (!hashes.length) return [];
   const client = clickhouse;
   if (!client) throw new Error('blocked_images: no ClickHouse client');
   const out: Newest[] = [];
@@ -171,6 +180,15 @@ const deps: HealDeps = {
     }),
 };
 
-export const csamBlocklistSelfHeal = createJob('csam-blocklist-self-heal', '17 * * * *', async () =>
-  healCsamBlocklist({ writes: await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_BLOCKLIST_SELF_HEAL) }, deps)
+export async function runCsamBlocklistSelfHeal() {
+  return healCsamBlocklist(
+    { writes: await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_BLOCKLIST_SELF_HEAL) },
+    deps
+  );
+}
+
+export const csamBlocklistSelfHeal = createJob(
+  'csam-blocklist-self-heal',
+  '17 * * * *',
+  runCsamBlocklistSelfHeal
 );
