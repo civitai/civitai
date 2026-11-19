@@ -319,6 +319,12 @@ describe('getMyEventHats', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('reads the placed covers as signed out without the owner view', async () => {
+    at(LIVE_NOW);
+    await service.getMyEventHats({ event: 'birthday2026', user, asOwner: false });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: undefined }));
+  });
+
   // An unplaced hat has no score row; reading hats from the scores would drop it, and a hat you
   // just bought would not appear until it had earned something.
   it('lists every owned hat, placed or not, with its score and where it is', async () => {
@@ -673,6 +679,18 @@ describe('getPlaceableEventContentPage', () => {
       ...postImages(3, 20, 900).map((i) => i.id),
     ]);
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
+  });
+
+  it('reads the page covers as signed out without the owner view', async () => {
+    await seedImages([{ id: 1, publishedAt: '2026-10-25T00:00:00Z' }], postImages(1, 3, 100));
+    covers.mockClear();
+    await service.getPlaceableEventContentPage({
+      event: 'birthday2026',
+      user,
+      asOwner: false,
+      entityType: 'Image',
+    });
+    expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: undefined }));
   });
 
   // The cursor is still the last image id shown, so a page an older client asked for still lands.
