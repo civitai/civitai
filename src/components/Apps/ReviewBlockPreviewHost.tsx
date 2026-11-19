@@ -70,6 +70,8 @@ export function ReviewBlockPreviewHost({
   // The review page's in-memory console (`ReviewConsole`); `null` in the queue modal, which has
   // none, so the frame's reports there go nowhere, as before.
   const reviewConsole = useReviewConsoleStore();
+  // This frame's own sink, so the console can tell two previews' reports apart.
+  const [consoleFrame] = useState(() => reviewConsole?.openFrame() ?? null);
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Mint the SELF-BOUND, scope-stripped block token (mod-gated mutation). Minted
@@ -279,9 +281,9 @@ export function ReviewBlockPreviewHost({
         reviewRunForReal={runForRealActive}
         // The app's errors, for the page's console only: kept in memory, never sent anywhere.
         // `review-preview` lists `blockErrors:v1`, so an SDK new enough sends non-fatal ones too.
-        onBlockError={reviewConsole?.report}
+        onBlockError={consoleFrame?.report}
         // Which SDK sent BLOCK_READY: the console's "too old to report other errors" notice.
-        onBlockReady={reviewConsole?.ready}
+        onBlockReady={consoleFrame?.ready}
         // Re-mint the block token on an auth-failure Retry, preserving the mode.
         onRetryToken={() => doMint(runForRealActive)}
         // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, gated

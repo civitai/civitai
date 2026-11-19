@@ -8,26 +8,30 @@ import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/comp
 /**
  * The review page's per-image RE-RATE: a moderator's rating picker beside each listing image
  * (icon, cover, screenshots, civitai.red tiles) that calls the EXISTING moderator re-rate,
- * `image.updateImageNsfwLevel`, and then re-reads the two queries that show the level — so the
- * badges AND the approve bar's "approving raises the rating" warning refresh before approve.
+ * `image.updateImageNsfwLevel`, after which the badges AND the approve bar's "approving raises
+ * the rating" warning show the new level before approve.
  *
- * 🔴 THE FAKE SERVER IS STATEFUL, AND THAT IS WHAT MAKES "REFRESHES" OBSERVABLE. Each query hook
- * keeps the answer it last FETCHED; only an `invalidate` of THAT procedure re-reads the server.
- * So a picker that wrote but did not invalidate leaves the warning on screen (red), and one that
- * invalidated only `getListingPreviewForReview` leaves it too — the warning reads `getAssets`.
+ * 🔴 THE FAKE SERVER MODELS A LAGGING READ REPLICA, AND THAT IS WHAT MAKES "REFRESHES" HONEST.
+ * The re-rate writes the PRIMARY (`server.primary`); every query read comes from the REPLICA
+ * (`server.replica`), which this file never advances. So a picker that only invalidated and
+ * refetched would read the OLD level back and leave the warning up (red) — the behaviour the
+ * round-1 audit found. The level must reach the cached answers from the mutation itself.
+ * Each query keeps what it last fetched; only `setData`, or an invalidate that refetches, moves it.
  *
  * Image ids: 101 icon (PG) · 102 cover (R) · 103 screenshot (PG-13) · 104 civitai.red icon
  * (PG-13). The app declares `pg13`, so the R cover alone is what raises the rating.
  */
 
 const server = vi.hoisted(() => ({
-  levels: new Map<number, number>(),
+  replica: new Map<number, number>(),
+  primary: new Map<number, number>(),
   /** Set to make the next re-rate fail with this message. */
   fail: null as string | null,
   rerates: [] as Array<{ id: number; nsfwLevel: number }>,
   reads: { assets: 0, preview: 0 },
-  refetch: { assets: new Set<() => void>(), preview: new Set<() => void>() },
-  invalidated: { assets: 0, preview: 0 },
+  cache: new Map<string, unknown>(),
+  subscribers: new Map<string, Set<() => void>>(),
+  invalidations: [] as Array<{ path: string; refetchType?: string }>,
   moderator: true,
 }));
 
@@ -48,75 +52,104 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const React = await import('react');
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
-  const lv = (id: number) => server.levels.get(id) ?? null;
-  const assetsView = () => ({
-    listingId: 'lst_rerate_1',
-    iconId: 101,
-    coverId: 102,
-    iconNsfwLevel: lv(101),
-    coverNsfwLevel: lv(102),
-    iconScanStatus: 'scanned',
-    coverScanStatus: 'scanned',
-    screenshots: [
-      {
-        id: 'shot_1',
-        imageId: 103,
-        order: 0,
-        caption: null,
-        nsfwLevel: lv(103),
-        scanStatus: 'scanned',
-      },
-    ],
-    hasBlockedAsset: false,
-    hasPendingScan: false,
-    mediaSplitApproved: false,
-    redIconId: 104,
-    redCoverId: null,
-    redIconNsfwLevel: lv(104),
-    redCoverNsfwLevel: null,
-    redIconScanStatus: 'scanned',
-    redCoverScanStatus: null,
-    redSlotsAvailable: true,
-  });
-  const previewView = () => ({
-    media: {
+  const lv = (id: number) => server.replica.get(id) ?? null;
+  const reads = {
+    assets: (input: { listingId: string }) => ({
+      listingId: input.listingId,
+      iconId: 101,
+      coverId: 102,
+      iconNsfwLevel: lv(101),
+      coverNsfwLevel: lv(102),
+      iconScanStatus: 'scanned',
+      coverScanStatus: 'scanned',
       screenshots: [
-        { imageId: 103, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: lv(103), caption: 'Main screen' },
+        {
+          id: 'shot_1',
+          imageId: 103,
+          order: 0,
+          caption: null,
+          nsfwLevel: lv(103),
+          scanStatus: 'scanned',
+        },
       ],
+      hasBlockedAsset: false,
+      hasPendingScan: false,
+      mediaSplitApproved: false,
+      redIconId: 104,
+      redCoverId: null,
+      redIconNsfwLevel: lv(104),
+      redCoverNsfwLevel: null,
+      redIconScanStatus: 'scanned',
+      redCoverScanStatus: null,
+      redSlotsAvailable: true,
+    }),
+    preview: () => ({
+      media: {
+        icon: null,
+        cover: null,
+        redIcon: null,
+        redCover: null,
+        screenshots: [
+          { imageId: 103, url: LOADABLE_IMAGE_DATA_URI, nsfwLevel: lv(103), caption: 'Main' },
+        ],
+      },
+    }),
+  };
+  type Kind = keyof typeof reads;
+  const keyOf = (kind: Kind, input: { listingId: string }) => `${kind}:${input.listingId}`;
+  const notify = (key: string) => {
+    for (const fn of [...(server.subscribers.get(key) ?? [])]) fn();
+  };
+  const fetchInto = (kind: Kind, input: { listingId: string }) => {
+    server.reads[kind] += 1;
+    server.cache.set(keyOf(kind, input), reads[kind](input));
+  };
+  /** A query that keeps what it last fetched (react-query's cache, reduced to what is measured). */
+  const query = (kind: Kind) => (input: { listingId: string }) => {
+    const key = keyOf(kind, input);
+    if (!server.cache.has(key)) fetchInto(kind, input);
+    const [, rerender] = React.useReducer((n: number) => n + 1, 0);
+    React.useEffect(() => {
+      const set = server.subscribers.get(key) ?? new Set<() => void>();
+      set.add(rerender);
+      server.subscribers.set(key, set);
+      return () => {
+        set.delete(rerender);
+      };
+    }, [key]);
+    return { data: server.cache.get(key), isLoading: false, isError: false, error: null };
+  };
+  const procedureUtils = (kind: Kind, path: string) => ({
+    setData: (input: { listingId: string }, updater: (old: unknown) => unknown) => {
+      const key = keyOf(kind, input);
+      if (!server.cache.has(key)) return; // react-query: nothing cached, nothing to update
+      server.cache.set(key, updater(server.cache.get(key)));
+      notify(key);
+    },
+    invalidate: async (_input?: unknown, filters?: { refetchType?: string }) => {
+      server.invalidations.push({ path, refetchType: filters?.refetchType });
+      if (filters?.refetchType === 'none') return;
+      for (const key of [...server.cache.keys()].filter((k) => k.startsWith(`${kind}:`))) {
+        fetchInto(kind, { listingId: key.slice(kind.length + 1) });
+        notify(key);
+      }
     },
   });
-  /** A query that keeps what it last fetched, and re-fetches only when its procedure is invalidated. */
-  const fetched = (key: 'assets' | 'preview', read: () => unknown) => () => {
-    const fetchNow = () => {
-      server.reads[key] += 1;
-      return read();
-    };
-    const [data, setData] = React.useState(fetchNow);
-    React.useEffect(() => {
-      const again = () => setData(fetchNow());
-      server.refetch[key].add(again);
-      return () => {
-        server.refetch[key].delete(again);
-      };
-    }, []);
-    return { data, isLoading: false, isError: false, error: null };
-  };
-  const invalidate = (key: 'assets' | 'preview') => async () => {
-    server.invalidated[key] += 1;
-    for (const again of [...server.refetch[key]]) again();
-  };
   const utils = {
     appListings: {
-      getAssets: { invalidate: invalidate('assets') },
-      getListingPreviewForReview: { invalidate: invalidate('preview') },
+      getAssets: procedureUtils('assets', 'appListings.getAssets'),
+      getListingPreviewForReview: procedureUtils(
+        'preview',
+        'appListings.getListingPreviewForReview'
+      ),
     },
   };
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy(
       {
-        'appListings.getAssets': { useQuery: fetched('assets', assetsView) },
-        'appListings.getListingPreviewForReview': { useQuery: fetched('preview', previewView) },
+        'appListings.getAssets': { useQuery: query('assets') },
+        'appListings.getListingPreviewForReview': { useQuery: query('preview') },
         'image.updateImageNsfwLevel': {
           useMutation: (opts?: { onSuccess?: (data: unknown, vars: unknown) => unknown }) => {
             const [state, setState] = React.useState<{
@@ -132,7 +165,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                   setState({ isPending: false, isError: true, error: { message: server.fail } });
                   return;
                 }
-                server.levels.set(vars.id, vars.nsfwLevel);
+                // The PRIMARY only: the replica every read uses has not caught up.
+                server.primary.set(vars.id, vars.nsfwLevel);
                 void opts?.onSuccess?.({ nsfwLevel: vars.nsfwLevel, applied: true }, vars);
               },
             };
@@ -156,24 +190,33 @@ const REQUEST_MEDIA = {
 };
 
 beforeEach(() => {
-  server.levels = new Map([
+  server.replica = new Map([
     [101, 1],
     [102, 4],
     [103, 2],
     [104, 2],
   ]);
+  server.primary = new Map(server.replica);
   server.fail = null;
   server.rerates = [];
   server.reads = { assets: 0, preview: 0 };
-  server.invalidated = { assets: 0, preview: 0 };
+  server.cache = new Map();
+  server.subscribers = new Map();
+  server.invalidations = [];
   server.moderator = true;
 });
 
+/**
+ * The media card reads listing `lst_media_1`; the approve warning reads the listing the approve
+ * publishes, `lst_approve_2` — distinct, so a re-rate that updated only the card's cache would
+ * leave the warning up.
+ */
 function mount() {
   renderWithProviders(
     <>
       <ReviewListingMediaLive
-        listingId="lst_rerate_1"
+        listingId="lst_media_1"
+        approveListingId="lst_approve_2"
         slug="gen-matrix"
         name="Gen Matrix"
         iconUrl={REQUEST_MEDIA.icon.url}
@@ -181,7 +224,7 @@ function mount() {
         reviewMedia={REQUEST_MEDIA}
         rating="pg13"
       />
-      <OnsiteApproveRatingWarning listingId="lst_rerate_1" declaredRating="pg13" />
+      <OnsiteApproveRatingWarning listingId="lst_approve_2" declaredRating="pg13" />
     </>
   );
 }
@@ -197,32 +240,35 @@ describe('ReviewListingMediaLive — the moderator re-rate picker', () => {
     expect(value('Cover')).toBe('4');
     expect(value('Screenshot 1')).toBe('2');
     expect(value('civitai.red icon')).toBe('2');
-    // The screenshot row is the listing's own, read for this page.
     await expect
       .element(page.getByTestId('apps-review-listing-screenshot-gen-matrix-1'))
       .toBeInTheDocument();
   });
 
-  test('🔴 choosing a rating calls the moderator re-rate, and the approve warning refreshes', async () => {
+  test('🔴 choosing a rating calls the moderator re-rate, and the approve warning refreshes despite a lagging replica', async () => {
     mount();
     // Positive control: the R cover raises the pg13 app's rating, so the warning is up.
-    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
     await expect
       .element(page.getByTestId('apps-onsite-rating-mismatch-assets'))
       .toHaveTextContent('Cover (R)');
 
     await picker('Cover').selectOptions('2');
 
-    // The existing procedure, with the image id and the chosen level — nothing else.
+    // The existing procedure, with the image id and the chosen level, and nothing else.
     expect(server.rerates).toEqual([{ id: 102, nsfwLevel: 2 }]);
-    // The warning is gone because getAssets was RE-READ, not because of local state.
+    // The replica still says R, and the warning is gone anyway: the level reached the
+    // approve listing's cached answer from the mutation, not from a refetch.
+    expect(server.replica.get(102)).toBe(4);
     await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).not.toBeInTheDocument();
-    expect(server.invalidated).toEqual({ assets: 1, preview: 1 });
-    // And the picker shows the level the server now holds.
     await vi.waitFor(() => expect(value('Cover')).toBe('2'));
+    // Both queries are marked stale for the next mount, and neither is refetched now.
+    expect(server.invalidations).toEqual([
+      { path: 'appListings.getAssets', refetchType: 'none' },
+      { path: 'appListings.getListingPreviewForReview', refetchType: 'none' },
+    ]);
   });
 
-  test('a screenshot re-rate goes through the same procedure with ITS image id', async () => {
+  test('a screenshot re-rate goes through the same procedure with ITS image id, and its badge moves', async () => {
     mount();
     await expect.element(picker('Screenshot 1')).toBeInTheDocument();
     await picker('Screenshot 1').selectOptions('8');
@@ -230,6 +276,7 @@ describe('ReviewListingMediaLive — the moderator re-rate picker', () => {
     await expect
       .element(page.getByTestId('apps-onsite-rating-mismatch-assets'))
       .toHaveTextContent('Screenshot 1 (X)');
+    await vi.waitFor(() => expect(value('Screenshot 1')).toBe('8'));
   });
 
   test('🔴 a refused re-rate shows the server’s message, and nothing moves', async () => {
@@ -240,8 +287,9 @@ describe('ReviewListingMediaLive — the moderator re-rate picker', () => {
     await expect
       .element(page.getByTestId('apps-review-listing-cover-rate-gen-matrix-error'))
       .toHaveTextContent('Only moderators can lock an image rating');
-    expect(server.invalidated).toEqual({ assets: 0, preview: 0 });
+    expect(server.invalidations).toEqual([]);
     await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    expect(value('Cover')).toBe('4');
   });
 
   test('a viewer who is not a moderator gets no picker and no extra reads', async () => {
@@ -249,7 +297,6 @@ describe('ReviewListingMediaLive — the moderator re-rate picker', () => {
     mount();
     await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
     expect(page.getByRole('combobox').elements()).toHaveLength(0);
-    // The warning's own read is the only one.
     expect(server.reads.preview).toBe(0);
   });
 });

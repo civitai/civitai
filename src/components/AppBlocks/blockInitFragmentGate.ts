@@ -288,7 +288,9 @@ export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
  * {@link BLOCK_ERRORS_CAPABILITY}? Keyed on the SURFACE, like the storage record below.
  *
  *  - `review-preview` is `true`: the review page keeps them in memory for the moderator's own
- *    session (`ReviewConsole`). Nothing is stored or sent anywhere.
+ *    session (`ReviewConsole`). Nothing is stored or sent anywhere. The same surface also mounts
+ *    the queue modal's preview and the standalone review preview page, which have no console:
+ *    there a new SDK's reports reach the host and are dropped, as every other surface's are.
  *  - `dev-tunnel` is `false` although its host collects them (`useDevPreviewErrorReporter`): the
  *    SDK already sends them there on `storageMode: 'local-preview'`, so listing the capability
  *    too would be a second signal for the same thing.

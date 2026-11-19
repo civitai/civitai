@@ -41,6 +41,12 @@ describe('parseBlockErrorReport', () => {
     expect(
       parseBlockErrorReport({ message: 'x', source: 'eval', stack: 7, at: 'soon' }, 9)
     ).toEqual({ message: 'x', fatal: false, at: 9 });
+    // A finite time past what a Date holds (±8.64e15 ms) is replaced too: it would make
+    // `new Date(at).toISOString()` throw for anyone formatting the report.
+    for (const at of [9e15, -9e15, Number.MAX_VALUE, Infinity, NaN]) {
+      expect(parseBlockErrorReport({ message: 'x', at }, 9)?.at).toBe(9);
+    }
+    expect(parseBlockErrorReport({ message: 'x', at: 8.64e15 }, 9)?.at).toBe(8.64e15);
     for (const raw of [null, 'boom', {}, { message: '' }, { message: '   ' }, { message: 3 }])
       expect(parseBlockErrorReport(raw)).toBeNull();
   });

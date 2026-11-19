@@ -30,7 +30,27 @@ export const REVIEW_CONSOLE_MIN_SDK = {
 /** Entries kept at most. A fatal one is never the one dropped. */
 export const REVIEW_CONSOLE_MAX_ENTRIES = 500;
 
-export type ReviewConsoleEntry = PreviewErrorReport & { id: number };
+export type ReviewConsoleEntry = PreviewErrorReport & {
+  id: number;
+  /**
+   * Which preview frame reported it. The Overview and the Preview tab each run the app in their
+   * own frame, and both stay mounted once visited, so one page can have two runs reporting.
+   */
+  frame: number;
+};
+
+/**
+ * "Preview 2" for an entry, or `null` while only one frame has reported: the label exists to
+ * explain a duplicate, so a page with one run carries none. Numbered in the order frames FIRST
+ * reported, not the order they mounted.
+ */
+export function reviewConsoleFrameLabel(
+  entries: readonly ReviewConsoleEntry[],
+  entry: Pick<ReviewConsoleEntry, 'frame'>
+): string | null {
+  const frames = [...new Set([...entries].sort((a, b) => a.id - b.id).map((e) => e.frame))];
+  return frames.length > 1 ? `Preview ${frames.indexOf(entry.frame) + 1}` : null;
+}
 
 /** What the app's `BLOCK_READY` said about the SDK that sent it. */
 export type ReviewConsoleSdk = { name: string | null; version: string | null };
@@ -129,8 +149,11 @@ export function formatReviewConsoleLog(state: ReviewConsoleState): string {
     `App console: ${ordered.length} error${ordered.length === 1 ? '' : 's'} (SDK: ${sdk})`,
   ];
   for (const entry of ordered) {
+    const frame = reviewConsoleFrameLabel(state.entries, entry);
     lines.push(
-      `[${new Date(entry.at).toISOString()}] ${reviewConsoleEntryLabel(entry)}: ${entry.message}`
+      `[${new Date(entry.at).toISOString()}] ${frame ? `${frame} ` : ''}${reviewConsoleEntryLabel(
+        entry
+      )}: ${entry.message}`
     );
     if (entry.stack) {
       for (const line of entry.stack.split('\n')) lines.push(`    ${line}`);
@@ -142,21 +165,28 @@ export function formatReviewConsoleLog(state: ReviewConsoleState): string {
 export type ReviewConsoleStore = {
   getState(): ReviewConsoleState;
   subscribe(listener: () => void): () => void;
-  /** A `BLOCK_ERROR` payload a preview frame posted (unvalidated). */
+  /** One preview frame's sink: hand its two functions to that frame's host. */
+  openFrame(): ReviewConsoleFrame;
+};
+
+export type ReviewConsoleFrame = {
+  /** A `BLOCK_ERROR` payload the frame posted (unvalidated). */
   report(raw: unknown): void;
-  /** A `BLOCK_READY` payload a preview frame posted (unvalidated). */
+  /** A `BLOCK_READY` payload the frame posted (unvalidated). */
   ready(raw: unknown): void;
 };
 
 /**
- * One console for one page session. `report` and `ready` are stable functions, so they can be
- * handed to the host as props without re-rendering it.
+ * One console for one page session. Each preview frame takes its own `openFrame()` sink, whose
+ * `report` and `ready` are stable functions, so they can be handed to the host as props without
+ * re-rendering it.
  */
 export function createReviewConsoleStore(
   maxEntries = REVIEW_CONSOLE_MAX_ENTRIES
 ): ReviewConsoleStore {
   let state: ReviewConsoleState = { entries: [], sdk: null };
   let nextId = 1;
+  let nextFrame = 1;
   const listeners = new Set<() => void>();
   const set = (next: ReviewConsoleState) => {
     state = next;
@@ -168,19 +198,25 @@ export function createReviewConsoleStore(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    report(raw) {
-      const report = parseBlockErrorReport(raw);
-      if (!report) return;
-      let entries = [...state.entries, { ...report, id: nextId++ }];
-      while (entries.length > maxEntries) {
-        const oldest = entries.findIndex((e) => !e.fatal);
-        if (oldest === -1) break;
-        entries = [...entries.slice(0, oldest), ...entries.slice(oldest + 1)];
-      }
-      set({ ...state, entries });
-    },
-    ready(raw) {
-      set({ ...state, sdk: parseBlockReadySdk(raw) });
+    openFrame() {
+      const frame = nextFrame++;
+      return {
+        report(raw) {
+          const report = parseBlockErrorReport(raw);
+          if (!report) return;
+          let entries = [...state.entries, { ...report, id: nextId++, frame }];
+          while (entries.length > maxEntries) {
+            const oldest = entries.findIndex((e) => !e.fatal);
+            if (oldest === -1) break;
+            entries = [...entries.slice(0, oldest), ...entries.slice(oldest + 1)];
+          }
+          set({ ...state, entries });
+        },
+        ready(raw) {
+          // Every frame runs the same bundle, so the last BLOCK_READY speaks for all of them.
+          set({ ...state, sdk: parseBlockReadySdk(raw) });
+        },
+      };
     },
   };
 }

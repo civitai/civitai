@@ -84,7 +84,7 @@ export function ReviewListingMedia({
   reviewMedia,
   rating,
   screenshots = [],
-  rerate = false,
+  rerateListingIds,
 }: {
   slug: string;
   /** Display name for the viewer's captions and the thumbnails' accessible names. */
@@ -105,10 +105,11 @@ export function ReviewListingMedia({
    */
   screenshots?: ListingReviewPreviewMedia['screenshots'];
   /**
-   * Put a moderator's rating picker (`ReviewImageRatingPicker`) beside every image. Only the
-   * review page sets it, and only with levels it re-reads after a re-rate.
+   * Put a moderator's rating picker (`ReviewImageRatingPicker`) beside every image, naming the
+   * listings whose cached reads a re-rate updates. Only the review page sets it
+   * (`ReviewListingMediaLive`), and only with levels it reads from those same queries.
    */
-  rerate?: boolean;
+  rerateListingIds?: readonly string[];
 }) {
   const [index, setIndex] = useState<number | null>(null);
   const [broken, setBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
@@ -163,11 +164,12 @@ export function ReviewListingMedia({
               rating={rating}
               testId={`apps-review-listing-icon-audience-${slug}`}
             />
-            {rerate && reviewMedia?.icon && (
+            {rerateListingIds && reviewMedia?.icon && (
               <ReviewImageRatingPicker
                 imageId={reviewMedia.icon.imageId}
                 nsfwLevel={reviewMedia.icon.nsfwLevel}
                 label="Icon"
+                listingIds={rerateListingIds}
                 testId={`apps-review-listing-icon-rate-${slug}`}
               />
             )}
@@ -209,11 +211,12 @@ export function ReviewListingMedia({
               rating={rating}
               testId={`apps-review-listing-cover-audience-${slug}`}
             />
-            {rerate && reviewMedia?.cover && (
+            {rerateListingIds && reviewMedia?.cover && (
               <ReviewImageRatingPicker
                 imageId={reviewMedia.cover.imageId}
                 nsfwLevel={reviewMedia.cover.nsfwLevel}
                 label="Cover"
+                listingIds={rerateListingIds}
                 testId={`apps-review-listing-cover-rate-${slug}`}
               />
             )}
@@ -247,11 +250,12 @@ export function ReviewListingMedia({
                 redSlot
                 testId={`apps-review-listing-red-icon-audience-${slug}`}
               />
-              {rerate && (
+              {rerateListingIds && (
                 <ReviewImageRatingPicker
                   imageId={reviewMedia.redIcon.imageId}
                   nsfwLevel={reviewMedia.redIcon.nsfwLevel}
                   label={listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
+                  listingIds={rerateListingIds}
                   testId={`apps-review-listing-red-icon-rate-${slug}`}
                 />
               )}
@@ -279,11 +283,12 @@ export function ReviewListingMedia({
                 redSlot
                 testId={`apps-review-listing-red-cover-audience-${slug}`}
               />
-              {rerate && (
+              {rerateListingIds && (
                 <ReviewImageRatingPicker
                   imageId={reviewMedia.redCover.imageId}
                   nsfwLevel={reviewMedia.redCover.nsfwLevel}
                   label={listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
+                  listingIds={rerateListingIds}
                   testId={`apps-review-listing-red-cover-rate-${slug}`}
                 />
               )}
@@ -329,11 +334,12 @@ export function ReviewListingMedia({
                     rating={rating}
                     testId={`apps-review-listing-screenshot-audience-${slug}-${i + 1}`}
                   />
-                  {rerate && (
+                  {rerateListingIds && (
                     <ReviewImageRatingPicker
                       imageId={shot.imageId}
                       nsfwLevel={shot.nsfwLevel}
                       label={label}
+                      listingIds={rerateListingIds}
                       testId={`apps-review-listing-screenshot-rate-${slug}-${i + 1}`}
                     />
                   )}

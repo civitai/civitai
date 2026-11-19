@@ -64,6 +64,7 @@ export function ReviewOverviewPanel({
           <ReviewListingMediaLive
             // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
             listingId={request.appListingId ?? null}
+            approveListingId={request.approveRating?.listingId ?? null}
             slug={request.slug}
             name={appDisplayName(request.manifest, request.slug)}
             iconUrl={request.iconUrl ?? null}

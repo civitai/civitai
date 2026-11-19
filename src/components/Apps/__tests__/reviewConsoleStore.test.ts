@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
+import { assetsWithImageLevel, previewWithImageLevel } from '~/components/Apps/reviewImageLevels';
 import {
   createReviewConsoleStore,
+  formatReviewConsoleLog,
+  reviewConsoleFrameLabel,
   orderReviewConsoleEntries,
   parseBlockReadySdk,
   REVIEW_CONSOLE_MIN_SDK,
@@ -83,10 +86,11 @@ describe('the SDK notice, pinned whole', () => {
 describe('the store', () => {
   test('keeps at most N entries, dropping the OLDEST non-fatal, never a fatal one', () => {
     const store = createReviewConsoleStore(3);
-    store.report({ message: 'crash', fatal: true, at: 1 });
-    store.report({ message: 'a', fatal: false, at: 2 });
-    store.report({ message: 'b', fatal: false, at: 3 });
-    store.report({ message: 'c', fatal: false, at: 4 });
+    const frame = store.openFrame();
+    frame.report({ message: 'crash', fatal: true, at: 1 });
+    frame.report({ message: 'a', fatal: false, at: 2 });
+    frame.report({ message: 'b', fatal: false, at: 3 });
+    frame.report({ message: 'c', fatal: false, at: 4 });
     expect(store.getState().entries.map((e) => e.message)).toEqual(['crash', 'b', 'c']);
   });
 
@@ -94,20 +98,22 @@ describe('the store', () => {
     const store = createReviewConsoleStore();
     let calls = 0;
     store.subscribe(() => (calls += 1));
-    store.report({ fatal: false });
-    store.report('not an object');
-    store.report({ message: '   ', fatal: false });
+    const frame = store.openFrame();
+    frame.report({ fatal: false });
+    frame.report('not an object');
+    frame.report({ message: '   ', fatal: false });
     expect(store.getState().entries).toEqual([]);
-    store.report({ message: 'kept', fatal: false, at: 5 });
+    frame.report({ message: 'kept', fatal: false, at: 5 });
     expect(calls).toBe(1);
   });
 
   test('display order: fatal first, then the rest, each oldest first', () => {
     const store = createReviewConsoleStore();
-    store.report({ message: 'w2', fatal: false, at: 20 });
-    store.report({ message: 'f2', fatal: true, at: 30 });
-    store.report({ message: 'w1', fatal: false, at: 10 });
-    store.report({ message: 'f1', fatal: true, at: 25 });
+    const frame = store.openFrame();
+    frame.report({ message: 'w2', fatal: false, at: 20 });
+    frame.report({ message: 'f2', fatal: true, at: 30 });
+    frame.report({ message: 'w1', fatal: false, at: 10 });
+    frame.report({ message: 'f1', fatal: true, at: 25 });
     expect(orderReviewConsoleEntries(store.getState().entries).map((e) => e.message)).toEqual([
       'f1',
       'f2',
@@ -127,5 +133,91 @@ describe('which surfaces advertise blockErrors:v1', () => {
       'review-preview': true,
       'private-run': false,
     });
+  });
+});
+
+describe('two preview frames', () => {
+  test('🔴 each report carries its frame, labelled only once a second frame has reported', () => {
+    const store = createReviewConsoleStore();
+    const overview = store.openFrame();
+    const previewTab = store.openFrame();
+    overview.report({ message: 'boom', fatal: false, at: 1_000 });
+    const [first] = store.getState().entries;
+    expect(reviewConsoleFrameLabel(store.getState().entries, first!)).toBeNull();
+    previewTab.report({ message: 'boom', fatal: false, at: 2_000 });
+    const entries = store.getState().entries;
+    expect(entries.map((e) => reviewConsoleFrameLabel(entries, e))).toEqual([
+      'Preview 1',
+      'Preview 2',
+    ]);
+    expect(formatReviewConsoleLog(store.getState())).toBe(
+      [
+        'App console: 2 errors (SDK: not started)',
+        '[1970-01-01T00:00:01.000Z] Preview 1 error: boom',
+        '[1970-01-01T00:00:02.000Z] Preview 2 error: boom',
+      ].join('\n')
+    );
+  });
+
+  test('🔴 a report time no Date can hold is replaced, so the Copy log cannot throw', () => {
+    const store = createReviewConsoleStore();
+    store.openFrame().report({ message: 'crafted', fatal: false, at: 9e15 });
+    expect(() => formatReviewConsoleLog(store.getState())).not.toThrow();
+    expect(Math.abs(store.getState().entries[0]!.at)).toBeLessThanOrEqual(8.64e15);
+  });
+});
+
+describe('a re-rate applied to the cached reads', () => {
+  const assets = {
+    iconId: 1,
+    coverId: 2,
+    iconNsfwLevel: 1,
+    coverNsfwLevel: 4,
+    redIconId: 3,
+    redCoverId: null,
+    redIconNsfwLevel: 8,
+    redCoverNsfwLevel: null,
+    screenshots: [
+      { imageId: 5, nsfwLevel: 2 },
+      { imageId: 2, nsfwLevel: 4 },
+    ],
+  };
+
+  test('🔴 moves every slot that shows the image, and only those', () => {
+    expect(assetsWithImageLevel(assets, 2, 16)).toEqual({
+      ...assets,
+      coverNsfwLevel: 16,
+      screenshots: [
+        { imageId: 5, nsfwLevel: 2 },
+        { imageId: 2, nsfwLevel: 16 },
+      ],
+    });
+    expect(assetsWithImageLevel(assets, 3, 1)).toEqual({ ...assets, redIconNsfwLevel: 1 });
+    expect(assetsWithImageLevel(assets, 99, 1)).toEqual(assets);
+    expect(assetsWithImageLevel(undefined, 2, 1)).toBeUndefined();
+  });
+
+  test('the review preview media, the same way', () => {
+    const preview = {
+      card: { id: 'c' },
+      media: {
+        icon: { imageId: 1, url: 'u1', nsfwLevel: 1 },
+        cover: { imageId: 2, url: 'u2', nsfwLevel: 4 },
+        redIcon: null,
+        redCover: null,
+        screenshots: [{ imageId: 2, url: 'u3', nsfwLevel: 4, caption: null }],
+      },
+    };
+    expect(previewWithImageLevel(preview, 2, 2)).toEqual({
+      card: { id: 'c' },
+      media: {
+        icon: { imageId: 1, url: 'u1', nsfwLevel: 1 },
+        cover: { imageId: 2, url: 'u2', nsfwLevel: 2 },
+        redIcon: null,
+        redCover: null,
+        screenshots: [{ imageId: 2, url: 'u3', nsfwLevel: 2, caption: null }],
+      },
+    });
+    expect(previewWithImageLevel(null, 2, 2)).toBeNull();
   });
 });

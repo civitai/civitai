@@ -6,6 +6,7 @@ import {
   orderReviewConsoleEntries,
   reviewConsoleCounts,
   reviewConsoleEntryLabel,
+  reviewConsoleFrameLabel,
   reviewConsoleSdkNotice,
   type ReviewConsoleEntry,
   type ReviewConsoleState,
@@ -112,7 +113,14 @@ export function ReviewConsoleSummary({ onOpen }: { onOpen?: () => void }) {
   );
 }
 
-function EntryRow({ entry }: { entry: ReviewConsoleEntry }) {
+function EntryRow({
+  entry,
+  frameLabel,
+}: {
+  entry: ReviewConsoleEntry;
+  /** "Preview 2" when more than one preview frame has reported, else `null`. */
+  frameLabel: string | null;
+}) {
   const label = reviewConsoleEntryLabel(entry);
   return (
     <Stack
@@ -137,6 +145,11 @@ function EntryRow({ entry }: { entry: ReviewConsoleEntry }) {
         >
           {label}
         </Badge>
+        {frameLabel && (
+          <Text size="xs" c="dimmed" data-testid="apps-review-console-entry-frame">
+            {frameLabel}
+          </Text>
+        )}
       </Group>
       <Text
         size="sm"
@@ -225,7 +238,11 @@ export function ReviewConsolePanel() {
             </Group>
           )}
           {ordered.map((entry) => (
-            <EntryRow key={entry.id} entry={entry} />
+            <EntryRow
+              key={entry.id}
+              entry={entry}
+              frameLabel={reviewConsoleFrameLabel(state.entries, entry)}
+            />
           ))}
         </Stack>
       )}
