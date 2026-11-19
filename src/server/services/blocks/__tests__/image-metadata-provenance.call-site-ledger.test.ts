@@ -731,7 +731,7 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         .replace(/\s+/g, ' ');
       if (
         // A block also strips the grace-block breadcrumbs (two fixed server keys) off the result.
-        expr !== '${blocking ? withoutGraceMarkersSql(metadataSet) : metadataSet}' ||
+        expr !== '${withoutGraceMarkersSql(metadataSet)}' ||
         metadataSet !==
           // A stored CSAM block keeps the stored value: the rule did not decide it.
           `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`

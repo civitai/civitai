@@ -716,8 +716,8 @@ export async function resolveScanOutcome({
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
-  // A block outlives an account restore (its breadcrumbs go in this write); anything else leaves a
-  // grace-blocked row as it is.
+  // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
+  // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
   let rowsWritten: number | undefined;
@@ -744,7 +744,7 @@ export async function resolveScanOutcome({
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "metadata" = ${blocking ? withoutGraceMarkersSql(metadataSet) : metadataSet},
+      "metadata" = ${withoutGraceMarkersSql(metadataSet)},
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)${axesTerm}

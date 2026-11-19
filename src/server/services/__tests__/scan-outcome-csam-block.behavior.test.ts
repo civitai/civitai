@@ -436,7 +436,8 @@ const graceRow = async (id: number) =>
       breadcrumb: boolean;
     }>(
       `SELECT ingestion, "blockedFor", "nsfwLevel",
-        (metadata -> 'accountDeletionPriorIngestion') IS NOT NULL AS breadcrumb
+        ((metadata -> 'accountDeletionPriorIngestion') IS NOT NULL
+          OR (metadata -> 'accountDeletionPriorBlockedFor') IS NOT NULL) AS breadcrumb
       FROM "Image" WHERE id = $1`,
       [id]
     )
@@ -507,6 +508,20 @@ describe('the account-deletion grace block', () => {
       expect((await graceRow(GRACED)).blockedFor).toBe('CSAM');
     });
 
+    it('from a moderation rule', async () => {
+      vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+      vi.mocked(evaluateRules).mockReturnValue({
+        id: 1,
+        action: ModerationRuleAction.Block,
+        reason: 'rule',
+      } as never);
+
+      await scan(GRACED);
+      await restore();
+
+      expect(await graceRow(GRACED)).toMatchObject({ ingestion: 'Blocked', breadcrumb: false });
+    });
+
     it('from the rating block', async () => {
       await blockImageFromRating({ imageId: GRACED, blockedReason: 'tos' });
       await restore();
@@ -520,10 +535,12 @@ describe('the account-deletion grace block', () => {
     });
 
     it('from a ban, which also keeps every grace-blocked image blocked', async () => {
-      // A reason and level the ban's own block would not write, so keeping them is visible.
-      await holder.db.exec(
-        `UPDATE "Image" SET "blockedFor" = 'tos', "nsfwLevel" = 16 WHERE id = ${CONTROL}`
-      );
+      // A reason and level the ban's own block would not write, so keeping them is visible; and a
+      // metadata value that is not an object, which must not fail the whole statement.
+      await holder.db.exec(`
+        UPDATE "Image" SET "blockedFor" = 'tos', "nsfwLevel" = 16 WHERE id = ${CONTROL};
+        UPDATE "Image" SET metadata = '"x"'::jsonb WHERE id = ${PLAIN};
+      `);
 
       await blockBannedUserImages(OWNER);
       // The ban leaves a grace-blocked row as it was, without its breadcrumbs, and blocks the rest.
@@ -561,10 +578,17 @@ describe('the account-deletion grace block', () => {
         blockedFor: 'moderated',
         nsfwLevel: 32,
       });
-      // Control: the same clean verdict lifts a row that is not grace-blocked.
-      await holder.db.exec(`UPDATE "Image" SET ingestion = 'Rescan' WHERE id = ${PLAIN}`);
+      // Control: the same clean verdict lifts a row that is not grace-blocked, and drops a breadcrumb
+      // it carries, so a later block written over it cannot inherit one.
+      await holder.db.exec(
+        `UPDATE "Image" SET ingestion = 'Rescan', metadata = ${BREADCRUMBS} WHERE id = ${PLAIN}`
+      );
       await scan(PLAIN);
-      expect(await graceRow(PLAIN)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+      expect(await graceRow(PLAIN)).toMatchObject({
+        ingestion: 'Scanned',
+        blockedFor: null,
+        breadcrumb: false,
+      });
     });
 
     it('a clean scan verdict for an image loaded before the grace block', async () => {
@@ -594,6 +618,14 @@ describe('the account-deletion grace block', () => {
       expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
     });
 
+    it('a clean scan verdict for a banned owner, which only keeps the block', async () => {
+      await holder.db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${OWNER}`);
+
+      await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+    });
+
     it('reports the image blocked when the skipped row cannot be read back', async () => {
       const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
       vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
@@ -611,7 +643,8 @@ describe('the account-deletion grace block', () => {
     });
 
     it('a scan error', async () => {
-      // Blocked without breadcrumbs: only the grace block is kept, not every block.
+      // Blocked without breadcrumbs: only the grace block is kept. Pins the existing error write on
+      // other blocked rows, not a judgement on it.
       await holder.db.exec(
         `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${PLAIN}`
       );
