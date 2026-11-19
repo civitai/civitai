@@ -67,8 +67,7 @@ export const reconcileRestrictedImages = createJob(
             'webhooks'
           )
         );
-      // Out of the image queues and every search document showing them; never throws.
-      await reindexRestrictedImages(chunkResult.imageIds, 'reconcile-restricted-images');
+      await reindexRestrictedImages(chunkResult, 'reconcile-restricted-images');
     }
 
     // Reported, never acted on. This is also the recovery query if a model owner

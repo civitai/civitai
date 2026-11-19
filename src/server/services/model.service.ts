@@ -2809,9 +2809,8 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
-  // The images carry the model's minor and poi flags, not sfwOnly: an sfwOnly change on a model that
-  // is not minor leaves each image's own flags as they are. A minor model re-syncs its images.
-  const imageFlagsChanged = after.minor !== before.minor || poiChanged || after.minor;
+  // Images carry minor/poi, not sfwOnly; a minor model always re-syncs (the value guard makes it a no-op).
+  const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2822,7 +2821,7 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
-      const updatedImages = !imageFlagsChanged
+      const updatedImages = !syncImageFlags
         ? []
         : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
@@ -7908,8 +7907,7 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
-    // Its search documents and the collections showing it are rebuilt for that hold. Logged, not
-    // thrown: the model is already Private, and a throw here would send it down the revert below.
+    // Logged, not thrown: the model is already Private, and a throw here would send it down the revert below.
     if (flagsBefore)
       await applyModelFlagSideEffects({ before: flagsBefore, after: result }).catch((error) =>
         logToAxiom({

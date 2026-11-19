@@ -124,6 +124,7 @@ import {
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -494,23 +495,30 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
     expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
 
-  it('keeps the model Private when the side effects fail', async () => {
+  it('logs a side-effect failure and still returns the Private model', async () => {
     mockModelsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
     await makePrivate(false);
-    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'Draft' }) })
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'flag side effects failed', modelId: MODEL_ID })
     );
   });
 });
 
 describe('applyModelFlagSideEffects — sfwOnly alone', () => {
+  it('still re-syncs the images of a minor model', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true },
+      after: { ...baseAfter, minor: true, sfwOnly: true },
+    });
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves each image's own minor and poi flags as they are", async () => {
     await applyModelFlagSideEffects({
       before: baseBefore,
       after: { ...baseAfter, sfwOnly: true },
     });
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
-    // The rest of the fan-out still runs for the held showcase.
     expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
   });
 });

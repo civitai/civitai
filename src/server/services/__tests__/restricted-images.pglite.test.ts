@@ -71,7 +71,7 @@ beforeAll(async () => {
       "imageId" int NOT NULL, "modelVersionId" int NOT NULL, strength real, detected boolean,
       PRIMARY KEY ("imageId", "modelVersionId")
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4);
     -- What get_image_resources() would derive from each image's meta.
     CREATE TABLE detected_resources (
       id int, modelversionid int, name text, hash text, strength real, detected boolean
@@ -162,7 +162,7 @@ describe('createImageResources', () => {
 describe('flagImagesOnRestrictedVersions', () => {
   beforeEach(() =>
     db.exec(`
-      INSERT INTO "Image" VALUES (1, 7, false), (2, 7, false), (3, NULL, false), (4, 8, true);
+      INSERT INTO "Image" VALUES (1, 7, false, 4), (2, 7, false, 1), (3, NULL, false, 4), (4, 8, true, 4);
       INSERT INTO "ImageResourceNew" VALUES
         (1, ${RESTRICTED_VERSION}, NULL, false), (2, ${RESTRICTED_VERSION}, NULL, false),
         (3, ${OPEN_VERSION}, NULL, false), (4, ${RESTRICTED_VERSION}, NULL, false);
@@ -175,7 +175,7 @@ describe('flagImagesOnRestrictedVersions', () => {
       imageIds: [1, 3, 4],
     });
 
-    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1] });
+    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1], matureImageIds: [1] });
     expect(await restrictedIds()).toEqual([1, 4]);
   });
 
@@ -184,7 +184,9 @@ describe('flagImagesOnRestrictedVersions', () => {
       {
         flagged: 2,
         postIds: [7],
-        imageIds: expect.arrayContaining([1, 2]),
+        imageIds: [1, 2],
+        // Image 2 is PG: restricted, but not hidden by the restriction.
+        matureImageIds: [1],
       }
     );
     expect(await restrictedIds()).toEqual([1, 2, 4]);
@@ -205,11 +207,26 @@ describe('flagImagesOnRestrictedVersions', () => {
     });
   });
 
+  it('returns the flag result even when the reindex fails', async () => {
+    const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((...call: unknown[]) =>
+      (call[0] as string[]).join('').includes("'parentId'")
+        ? Promise.reject(new Error('db down'))
+        : real(...(call as Parameters<typeof real>))) as never);
+    const result = await flagImagesOnRestrictedVersions({
+      modelVersionIds: [RESTRICTED_VERSION],
+      imageIds: [1],
+    });
+    dbMock.dbWrite.$queryRaw.mockImplementation(real);
+    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1], matureImageIds: [1] });
+  });
+
   it('leaves images alone when none of the versions are restricted', async () => {
     expect(await flagImagesOnRestrictedVersions({ modelVersionIds: [OPEN_VERSION] })).toEqual({
       flagged: 0,
       postIds: [],
       imageIds: [],
+      matureImageIds: [],
     });
     expect(await restrictedIds()).toEqual([4]);
   });
@@ -219,6 +236,6 @@ describe('flagImagesOnRestrictedVersions', () => {
 
     await expect(
       flagImagesOnRestrictedVersions({ modelVersionIds: [RESTRICTED_VERSION], imageIds: [1] })
-    ).resolves.toEqual({ flagged: 0, postIds: [], imageIds: [] });
+    ).resolves.toEqual({ flagged: 0, postIds: [], imageIds: [], matureImageIds: [] });
   });
 });

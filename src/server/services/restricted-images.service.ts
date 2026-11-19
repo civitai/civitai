@@ -3,21 +3,32 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { chunkIds } from '~/utils/array-helpers';
 
 type Db = Pick<Prisma.TransactionClient, '$queryRaw'>;
-type FlagResult = { flagged: number; postIds: number[]; imageIds: number[] };
+type FlagResult = {
+  flagged: number;
+  postIds: number[];
+  imageIds: number[];
+  matureImageIds: number[];
+};
 
 const IMAGES_PER_REINDEX = 500;
 
 /**
- * After images are newly restricted: take them out of the image queues (cached thumbnails, game
- * pools) and queue every search document that shows them, 500 images at a time. Never throws, and
- * logs counts only: the flags are already committed.
+ * After images are newly restricted: queue every search document that shows them, and take the
+ * mature ones, which the restriction hides, out of the image queues (cached thumbnails, rating
+ * pools), 500 images at a time. Never throws, and logs counts only: the flags are already committed.
  */
-export async function reindexRestrictedImages(imageIds: number[], source: string) {
+export async function reindexRestrictedImages(
+  { imageIds, matureImageIds }: Pick<FlagResult, 'imageIds' | 'matureImageIds'>,
+  source: string
+) {
   if (!imageIds.length) return;
   try {
-    await reindexInBatches(imageIds, source);
+    await reindexInBatches(imageIds, new Set(matureImageIds), source);
   } catch (error) {
     logToAxiom(
       {
@@ -33,20 +44,30 @@ export async function reindexRestrictedImages(imageIds: number[], source: string
   }
 }
 
-async function reindexInBatches(imageIds: number[], source: string) {
-  // Call-site imports: both modules reach this one through image.service.
-  const [{ queueImageSearchIndexUpdate }, { queueDocumentsForImages }] = await Promise.all([
-    import('~/server/services/image.service'),
-    import('~/server/services/image-models-reindex.service'),
-  ]);
+async function reindexInBatches(imageIds: number[], mature: Set<number>, source: string) {
+  // Dynamic: image.service imports this module.
+  const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
   let failedBatches = 0;
-  for (let i = 0; i < imageIds.length; i += IMAGES_PER_REINDEX) {
-    const ids = imageIds.slice(i, i + IMAGES_PER_REINDEX);
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }).catch(
-      () => failedBatches++
-    );
-    await queueDocumentsForImages(ids);
+  for (const ids of chunkIds(imageIds, IMAGES_PER_REINDEX)) {
+    const hidden = ids.filter((id) => mature.has(id));
+    if (hidden.length)
+      await queueImageSearchIndexUpdate({
+        ids: hidden,
+        action: SearchIndexUpdateQueueAction.Delete,
+      }).catch(() => failedBatches++);
+    await queueModelsForImageChildTagChanges({ minorImageIds: ids });
   }
+  logToAxiom(
+    {
+      name: 'restricted-images',
+      type: 'info',
+      message: 'Restricted images reindexed',
+      source,
+      images: imageIds.length,
+      matureImages: mature.size,
+    },
+    'webhooks'
+  );
   if (failedBatches)
     logToAxiom(
       {
@@ -87,7 +108,7 @@ export async function flagRestrictedImages(
   { modelVersionIds, imageIds }: { modelVersionIds: number[]; imageIds?: number[] }
 ): Promise<FlagResult> {
   if (!modelVersionIds.length || (imageIds && !imageIds.length))
-    return { flagged: 0, postIds: [], imageIds: [] };
+    return { flagged: 0, postIds: [], imageIds: [], matureImageIds: [] };
   // 🔴 `EXCEPT` against `idx_image_restricted_true`, not a `modelRestricted` filter on the joined
   // row: the filter runs after a random `Image_pkey` probe per candidate, while the `EXCEPT` is two
   // index-only scans. With `imageIds` the candidates are already a handful of key probes.
@@ -110,18 +131,23 @@ export async function flagRestrictedImages(
               : Prisma.sql`EXCEPT SELECT id FROM "Image" WHERE "modelRestricted" = true`
           }
         )
-      RETURNING i.id, i."postId"
+      RETURNING i.id, i."postId", i."nsfwLevel"
     )
     SELECT
       count(*)::int AS flagged,
       COALESCE(array_agg(DISTINCT "postId") FILTER (WHERE "postId" IS NOT NULL), '{}') AS "postIds",
-      COALESCE(array_agg(id), '{}') AS "imageIds"
+      COALESCE(array_agg(id ORDER BY id), '{}') AS "imageIds",
+      COALESCE(
+        array_agg(id ORDER BY id) FILTER (WHERE ("nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0),
+        '{}'
+      ) AS "matureImageIds"
     FROM updated
   `;
   return {
     flagged: result?.flagged ?? 0,
     postIds: result?.postIds ?? [],
     imageIds: result?.imageIds ?? [],
+    matureImageIds: result?.matureImageIds ?? [],
   };
 }
 
@@ -143,7 +169,7 @@ export async function flagImagesOnRestrictedVersions({
     const restricted = await getRestrictedModelVersionIds(dbWrite, modelVersionIds);
     const result = await flagRestrictedImages(dbWrite, { modelVersionIds: restricted, imageIds });
     // Not awaited: a large version merge flags many images, and the reindex never throws.
-    void reindexRestrictedImages(result.imageIds, 'resource-write');
+    void reindexRestrictedImages(result, 'resource-write');
     return result;
   } catch (error) {
     logToAxiom(
@@ -157,6 +183,6 @@ export async function flagImagesOnRestrictedVersions({
       },
       'webhooks'
     );
-    return { flagged: 0, postIds: [], imageIds: [] };
+    return { flagged: 0, postIds: [], imageIds: [], matureImageIds: [] };
   }
 }

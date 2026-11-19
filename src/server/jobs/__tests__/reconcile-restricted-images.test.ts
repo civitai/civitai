@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type * as BaseModelConstants from '~/shared/constants/basemodel.constants';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -55,6 +56,7 @@ let versionIds: number[] = [1, 2, 3];
 let overhidden = 0;
 let chunkPostIds: number[][] = [];
 let chunkImageIds: number[][] = [];
+let notMature = new Set<number>();
 let collectionsShowing: number[] = [];
 let collectionLookups: unknown[][] = [];
 let articlesShowing: number[] = [];
@@ -76,6 +78,7 @@ beforeEach(() => {
   overhidden = 0;
   chunkPostIds = [];
   chunkImageIds = [];
+  notMature = new Set();
   collectionsShowing = [];
   collectionLookups = [];
   articlesShowing = [];
@@ -85,7 +88,12 @@ beforeEach(() => {
     if (isUpdateQuery(call)) {
       const chunk = executeRaw.mock.calls.length;
       return executeRaw(...call).then((flagged) => [
-        { flagged, postIds: chunkPostIds[chunk] ?? [], imageIds: chunkImageIds[chunk] ?? [] },
+        {
+          flagged,
+          postIds: chunkPostIds[chunk] ?? [],
+          imageIds: chunkImageIds[chunk] ?? [],
+          matureImageIds: (chunkImageIds[chunk] ?? []).filter((id) => !notMature.has(id)),
+        },
       ]);
     }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
@@ -192,7 +200,10 @@ describe('reconcile-restricted-images', () => {
     // The parameters, not the statement text. Every assertion in an earlier draft read
     // only the static strings, so slicing the id list down to one version per chunk
     // passed the whole file while flagging a fraction of what it should.
-    const sent = executeRaw.mock.calls.map(valuesOf);
+    // The level mask that picks the mature images is the one non-version parameter.
+    const sent = executeRaw.mock.calls.map((call) =>
+      valuesOf(call).filter((v) => v !== nsfwBrowsingLevelsFlag)
+    );
     expect(sent.flat()).toEqual(versionIds);
     expect(sent.map((ids) => ids.length)).toEqual([100, 100, 50]);
   });
@@ -283,6 +294,16 @@ describe('reconcile-restricted-images search reindex', () => {
 
     expect(collectionLookups.map((ids) => [...new Set(ids)])).toEqual([[501, 502], [503]]);
     expect(collectionUpdates()).toEqual([77, 77]);
+  });
+
+  it('keeps a restricted image the restriction does not hide in the image queues', async () => {
+    chunkImageIds = [[501, 502]];
+    notMature = new Set([502]);
+    executeRaw.mockResolvedValue(2);
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501]]);
   });
 
   it('also queues the articles whose cover or banner it is', async () => {
