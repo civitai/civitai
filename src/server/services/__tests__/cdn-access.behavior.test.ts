@@ -2887,15 +2887,19 @@ describe('new rows before deferred ones', () => {
     return range(16, 30);
   };
 
-  it('denies a new block in the first run behind 500 deferred rows, and defers its retraction', async () => {
-    await blockRange(1, 515);
-    await syncCdnAccess();
-    expect((await queued()).n).toBe(500);
+  // A small batch (the job runs 500) keeps these fast; its fifth for deferred rows covers the cap of 15.
+  const BATCH = 75;
+  const batched = () => syncCdnAccess({ limit: BATCH });
+
+  it('denies a new block in the first run behind a full batch of deferred rows, and defers its retraction', async () => {
+    await blockRange(1, BATCH + 15);
+    await batched();
+    expect((await queued()).n).toBe(BATCH);
 
     await image(5000);
     await moderatorBlock(5000);
     calls.length = 0;
-    await syncCdnAccess();
+    await batched();
     expect(callsFor(u(5000))).toEqual(['deny']);
     expect(await stateOf(u(5000))).toBe('Denied');
     const queuedRow = await row(5000);
@@ -2903,30 +2907,32 @@ describe('new rows before deferred ones', () => {
     expect(queuedRow?.data.deferred).toEqual(queuedRow?.data.seq);
   });
 
-  it('keeps retracting the oldest deferrals under 400 new blocks a run', async () => {
+  it('keeps retracting the oldest deferrals under a batch of new blocks less its deferred share', async () => {
     const old = await thirtyDeferred();
+    const n = BATCH - BATCH / 5;
     for (const batch of [1, 2]) {
-      await blockRange(batch * 1000, 400);
-      expect(await syncCdnAccess()).toMatchObject({ retracts: 15 });
-      expect(await countIn(range(batch * 1000, 400))).toBe(400);
+      await blockRange(batch * 1000, n);
+      expect(await batched()).toMatchObject({ retracts: 15 });
+      expect(await countIn(range(batch * 1000, n))).toBe(n);
     }
     expect(await countIn(old, 'Retracted')).toBe(30);
   });
 
-  it('keeps retracting the oldest deferrals through a burst of 600 new blocks', async () => {
+  it('keeps retracting the oldest deferrals through a burst of new blocks over the batch', async () => {
     const old = await thirtyDeferred();
-    await blockRange(1000, 600);
-    expect(await syncCdnAccess()).toMatchObject({ queued: 500 });
-    await syncCdnAccess();
+    const n = BATCH + BATCH / 5;
+    await blockRange(1000, n);
+    expect(await batched()).toMatchObject({ queued: BATCH });
+    await batched();
     expect(await countIn(old, 'Retracted')).toBe(30);
-    expect(await countIn(range(1000, 600))).toBe(600);
+    expect(await countIn(range(1000, n))).toBe(n);
   });
 
   it('reads deferred rows even when every run brings a full batch of new blocks', async () => {
     const old = await thirtyDeferred();
     for (const batch of [1, 2]) {
-      await blockRange(batch * 1000, 500);
-      await syncCdnAccess();
+      await blockRange(batch * 1000, BATCH);
+      await batched();
     }
     expect(await countIn(old, 'Retracted')).toBe(30);
   });
