@@ -85,7 +85,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
     decision: 'no-metadata',
     sites: 1,
   },
-  'src/pages/api/admin/temp/migrate-article-images.ts#processBatch': {
+  'src/server/api-routes/admin/temp/migrate-article-images.ts#processBatch': {
     decision: 'no-metadata',
     sites: 1,
   },
@@ -591,7 +591,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
-  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
+  'src/server/api-routes/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
     decision: 'stored-merge-server-keys',
     sites: 1,
   },

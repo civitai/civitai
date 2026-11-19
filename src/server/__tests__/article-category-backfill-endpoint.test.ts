@@ -23,7 +23,7 @@ vi.mock('~/server/services/text-scan/article-category-backfill', () => ({
   runArticleCategoryBackfill: runBackfill,
 }));
 
-const handler = (await import('~/pages/api/admin/temp/article-category-backfill')).default;
+const handler = (await import('~/server/api-routes/admin/temp/article-category-backfill')).default;
 
 async function post(body: unknown) {
   let statusCode = 200;

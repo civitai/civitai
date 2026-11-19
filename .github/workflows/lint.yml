@@ -409,6 +409,10 @@ jobs:
       - name: Moderator hold SQL matches the main app
         run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
 
+      # BLOCKING, on every PR including drafts. A route missing from the generated map is a 404.
+      - name: API route maps are generated
+        run: node scripts/generate-api-routes.mjs --check
+
       # BLOCKING, on every PR including drafts. The `*.schema-drift.test.ts` files pin the published
       # manifest schema (public/schemas/app-block/v1.json) against the code that enforces it (the
       # manifest validator, the scope and category constants), and the files the Go feed service

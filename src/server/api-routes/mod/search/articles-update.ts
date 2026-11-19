@@ -2,10 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { ARTICLES_SEARCH_INDEX } from '../../../../server/common/constants';
-import { updateDocs } from '../../../../server/meilisearch/client';
-import { withRetries } from '../../../../server/utils/errorHandling';
-import { userWithCosmeticsSelect } from '../../../../server/selectors/user.selector';
+import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
+import { updateDocs } from '~/server/meilisearch/client';
+import { withRetries } from '~/server/utils/errorHandling';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;

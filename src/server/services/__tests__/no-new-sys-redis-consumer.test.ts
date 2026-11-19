@@ -33,14 +33,14 @@ const GLOBS = ['src/**/*.{ts,tsx}'];
 const EXEMPT = ['src/server/redis/client.ts'];
 
 const BASELINE: string[] = [
-  'src/pages/api/admin/banking-change-notice.ts',
-  'src/pages/api/admin/klein9b-notice.ts',
+  'src/server/api-routes/admin/banking-change-notice.ts',
+  'src/server/api-routes/admin/klein9b-notice.ts',
   'src/pages/api/download/models/[modelVersionId].ts',
   'src/pages/api/generation/history/callback.ts',
   'src/pages/api/generation/history/index.ts',
   'src/pages/api/internal/redis-sys-usage.ts',
-  'src/pages/api/mod/flip-phases.ts',
-  'src/pages/api/mod/new-order/rate-limit-config.ts',
+  'src/server/api-routes/mod/flip-phases.ts',
+  'src/server/api-routes/mod/new-order/rate-limit-config.ts',
   'src/pages/api/testing/fee-allowance-boost.ts',
   'src/pages/api/testing/redis-cluster.ts',
   'src/pages/api/v1/blocks/dev-token.ts',

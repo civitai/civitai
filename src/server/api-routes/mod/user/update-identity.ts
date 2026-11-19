@@ -16,8 +16,7 @@ export default defineModeratorEndpoint('user.updateIdentity', {
   privileged: 'retoolUpdateIdentity',
   notes: ['At least one of username, email or name must be sent.'],
   rateLimit: { max: 20, windowSeconds: 60 },
-  // A plain ZodObject, not `.refine()`: that returns a ZodEffects, which `specToDoc` cannot project
-  // into params for the docs page. The at-least-one rule is enforced in the handler.
+  // The at-least-one rule is enforced in the handler.
   input: z.object({
     userId,
     username: z.string().trim().min(1).max(64).optional().describe('New username.'),

@@ -83,7 +83,7 @@ Body: WorkflowEvent { workflowId, type, status }
 | `src/server/controllers/model-file.controller.ts`          | Inline `createModelFileScanRequest()` on file create with `preflight: false` (fallback job tombstones if file is missing)                                                           |
 | `src/server/jobs/scan-files.ts`                            | `scanFilesFallbackJob` (cron `*/5 * * * *`) — resubmits stalled/pending files via orchestrator; tombstones permanent `'not-found'`s, resets `scanRequestedAt` on transient failures |
 | `src/pages/api/webhooks/run-jobs/[[...run]].ts`            | Registers `scanFilesFallbackJob`                                                                                                                                                    |
-| `src/pages/api/mod/clean-up.ts`                            | Admin endpoint; submits the full orchestrator workflow per file                                                                                                                     |
+| `src/server/api-routes/mod/clean-up.ts`                            | Admin endpoint; submits the full orchestrator workflow per file                                                                                                                     |
 | `src/server/jobs/retroactive-hash-blocking.ts`             | Imports `unpublishBlockedModel` from `model-file-scan.service.ts`                                                                                                                   |
 | `src/pages/api/testing/model-file-scan.ts`                 | Manual scan-tester for ad-hoc verification                                                                                                                                          |
 

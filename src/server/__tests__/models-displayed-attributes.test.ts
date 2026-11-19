@@ -167,7 +167,7 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // Pin the withheld set itself, for the same reason the display list is pinned below: this list
     // IS the safety record for a privacy boundary, and a membership loop cannot see an entry going
     // MISSING. It shipped missing `flags` — written into this same index by the second writer,
-    // `src/pages/api/mod/search/models-update.ts` — and a review round caught that, not a test.
+    // `src/server/api-routes/mod/search/models-update.ts` — and a review round caught that, not a test.
     // A list that reads as the record while being incomplete is what stops the next person looking.
     // `insight` is the models index's suitability object — the sortable+filterable
     // `insight.qualityScore`, the filter-only meaning axes `insight.role` and
@@ -287,7 +287,7 @@ describe('the writer seam', () => {
       .sort();
 
     expect(writers).toEqual([
-      'pages/api/admin/temp/apply-models-index-displayed-attributes.ts',
+      'server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts',
       'server/search-index/models.search-index.ts',
     ]);
 
@@ -308,7 +308,7 @@ describe('the writer seam', () => {
     // SECOND file was invisible to every guard in the set.
     //
     // 🔴 Measured, not hypothesised. Adding
-    // `src/pages/api/admin/temp/apply-models-index-searchable-attributes.ts` — the exact analogue
+    // `src/server/api-routes/admin/temp/apply-models-index-searchable-attributes.ts` — the exact analogue
     // of the two admin routes already in this tree (`apply-models-index-filterable-attributes.ts`
     // and `apply-models-index-displayed-attributes.ts`) — with
     //     const index = searchClient.index(MODELS_SEARCH_INDEX);

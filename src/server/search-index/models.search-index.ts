@@ -107,7 +107,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   // live in ./displayed-attributes.ts so that this writer and the admin apply route cannot drift.
   // 🔴 This runs ONLY from `reset()`, against `<index>_NEW`, and that job is `UNRUNNABLE_JOB_CRON`,
   // so editing the list does NOT change what a live index returns. To narrow a LIVE index use
-  // `src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts`.
+  // `src/server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts`.
   // 🔴 The module export is passed straight through — no local copy. A local one could be mutated
   // between its declaration and this call, which re-opened the leak once and passed every test.
   // ⚠️ That alone is NOT what makes this safe, and an earlier version of this comment claimed it

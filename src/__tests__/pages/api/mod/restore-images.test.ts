@@ -22,7 +22,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import handler from '~/pages/api/mod/restore-images';
+import handler from '~/server/api-routes/mod/restore-images';
 
 const row = (id: number, blockedFor: string | null) => ({
   id,

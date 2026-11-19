@@ -19,7 +19,7 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/services/child-label-reindex.service', () => ({ runChildLabelReindex }));
 
-const handler = (await import('~/pages/api/admin/temp/child-label-reindex')).default;
+const handler = (await import('~/server/api-routes/admin/temp/child-label-reindex')).default;
 
 async function call(query: Record<string, string>, token = 'test-token') {
   const req = { method: 'POST', query: { token, ...query }, headers: {} } as never;

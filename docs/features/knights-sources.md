@@ -8,7 +8,7 @@ Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see t
 `@civitai/shared/new-order`. An open, Inquisitor or Ruling item for the same question and image makes a new one a duplicate; the partial unique
 index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knights_v2_tables`, applied by hand, which also has the `prediction` column) closes the race.
 
-- `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
+- `POST /api/mod/knights/enqueue` (`src/server/api-routes/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
   `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published, rated, no block marker or review hold, not flagged poi/minor).
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are

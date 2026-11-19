@@ -51,7 +51,10 @@ const repoRoot = path.resolve(__dirname, '../../../..');
  */
 const LEDGER: { file: string; draftingStatements: number }[] = [
   { file: 'src/server/jobs/reset-to-draft-without-requirements.ts', draftingStatements: 1 },
-  { file: 'src/pages/api/admin/temp/backfill-swept-trained-models.ts', draftingStatements: 1 },
+  {
+    file: 'src/server/api-routes/admin/temp/backfill-swept-trained-models.ts',
+    draftingStatements: 1,
+  },
   { file: 'src/server/services/model.service.ts', draftingStatements: 1 },
 ];
 
