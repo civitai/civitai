@@ -158,21 +158,30 @@ export const bucketLevelSql = sql<number>`CASE
   ELSE 0
 END`;
 
+/** Rows the first round of a stage's normal-order scan reads; each later round reads twice as many as the one before. */
+export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
+
 /**
- * One stage's candidates, read in index order: one read of the items escalated within the priority window (skipped at
- * the entry stage, where nothing is escalated), then the stage's normal order (priority, age) per level bucket. Each
- * bucket read stops at `FEED.bucketWindowSize`, so a crowded bucket cannot push the others out of the window; the
- * caller buckets the escalated rows with `itemBucket`. An item whose level has no bucket is read only once escalated.
- * No read includes an image the player has already judged for the question, at any stage or in any earlier item.
+ * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
+ * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
+ * (priority, age, id), so a crowded bucket cannot push the others out of the window. The caller buckets the escalated
+ * rows with `itemBucket`. An item whose level has no bucket is read only once escalated. No read includes an image the
+ * player has already judged for the question, at any stage or in any earlier item.
+ *
+ * The normal order is one scan of the stage in rounds that continue after the last row read, stopping once every bucket
+ * is full or the stage runs out. Most open items can be unservable (a draft or scheduled post, a deleted image), and
+ * only the Image and Post rows tell, so a read per bucket would walk the whole stage once per bucket. A bucket that
+ * cannot fill makes the scan read every candidate of the stage, so the rounds read only what bucketing and the cursor
+ * need, and one more read fetches the served columns of the kept items alone.
  */
-function stageWindow(
+async function stageWindow(
   db: Executor,
   userId: number,
   stage: Rank,
   exclude: number[],
   escalatedSince: Date
 ) {
-  const candidates = () =>
+  const eligible = () =>
     servableItems(db)
       .where('i.minRank', '=', stage)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
@@ -187,48 +196,93 @@ function stageWindow(
               .whereRef('v.questionKey', '=', 'i.questionKey')
           )
         )
-      )
-      .select([
-        'i.id',
-        'q.key as questionKey',
-        'q.kind',
-        'q.prompt',
-        'q.options',
-        'i.priority',
-        'i.createdAt',
-        'i.prediction',
-        'img.url as imageKey',
-        'img.width',
-        'img.height',
-        'img.nsfwLevel as imageLevel',
-      ]);
+      );
+  const candidates = () =>
+    eligible().select([
+      'i.id',
+      'q.key as questionKey',
+      'q.kind',
+      'q.prompt',
+      'q.options',
+      'i.priority',
+      'i.createdAt',
+      'i.prediction',
+      'img.url as imageKey',
+      'img.width',
+      'img.height',
+      'img.nsfwLevel as imageLevel',
+    ]);
 
-  const normal = BUCKET_LEVELS.map((level) =>
-    candidates()
-      .where((eb) => eb(bucketLevelSql, '=', level))
-      .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
-      .orderBy('i.priority', 'asc')
-      .orderBy('i.createdAt', 'asc')
-      .orderBy('i.id', 'asc')
-      .limit(FEED.bucketWindowSize)
-  );
   const escalated =
     stage === ESCALATION_PATH[0]
       ? []
-      : [
-          candidates()
-            .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
-            .where('i.escalatedAt', '>', utc(escalatedSince))
-            .orderBy('i.escalatedAt', 'asc')
-            .orderBy('i.id', 'asc')
-            .limit(FEED.bucketWindowSize * BUCKET_LEVELS.length),
-        ];
-  // Each read is wrapped so its ORDER BY and LIMIT stay its own inside the UNION ALL.
-  const [first, ...rest] = [...escalated, ...normal].map((read) =>
-    db.selectFrom(read.as('w')).selectAll()
-  );
-  return rest.reduce((query, read) => query.unionAll(read), first).execute();
+      : await candidates()
+          .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
+          .where('i.escalatedAt', '>', utc(escalatedSince))
+          .orderBy('i.escalatedAt', 'asc')
+          .orderBy('i.id', 'asc')
+          .limit(FEED.bucketWindowSize * BUCKET_LEVELS.length)
+          .execute();
+
+  const kept: number[] = [];
+  const taken = new Map<LevelBucket | null, number>();
+  let filled = 0;
+  let after: StageScanCursor | null = null;
+  for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
+    const cursor: StageScanCursor | null = after;
+    const rows = await eligible()
+      .select([
+        'i.id',
+        'i.priority',
+        // createdAt is TIMESTAMP(3); this text names the exact stored value whatever the host or session time zone.
+        sql<string>`to_char(i."createdAt", 'YYYY-MM-DD HH24:MI:SS.MS')`.as('createdAtKey'),
+        'i.prediction',
+        'img.nsfwLevel as imageLevel',
+      ])
+      .where((eb) => eb(bucketLevelSql, '!=', 0))
+      // (priority, createdAt, id) is unique and never changes on a row, so a round starts exactly after the last one.
+      // The cursor carries the last row's own values, so it holds even if that row is gone by the next round.
+      .$if(cursor !== null, (qb) => {
+        const c = cursor as StageScanCursor;
+        return qb.where(
+          sql<SqlBool>`(i.priority, i."createdAt", i.id) > (${c.priority}, ${c.createdAt}::timestamp, ${c.id})`
+        );
+      })
+      .orderBy('i.priority', 'asc')
+      .orderBy('i.createdAt', 'asc')
+      .orderBy('i.id', 'asc')
+      .limit(size)
+      .execute();
+    for (const row of rows) {
+      const bucket = itemBucket(row.prediction, row.imageLevel);
+      const count = taken.get(bucket) ?? 0;
+      if (count >= FEED.bucketWindowSize) continue;
+      taken.set(bucket, count + 1);
+      if (count + 1 === FEED.bucketWindowSize) filled++;
+      kept.push(row.id);
+    }
+    if (rows.length < size || filled === BUCKET_LEVELS.length) break;
+    // Annotated so the cursor's type does not depend on the rows its own round read.
+    const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
+    after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
+  }
+
+  // A kept item that stops being a candidate before this read (judged, closed, unservable) is left out, as if the scan
+  // had run a moment later and found it so.
+  const position = new Map(kept.map((id, n) => [id, n]));
+  const normal =
+    kept.length === 0
+      ? []
+      : (
+          await candidates()
+            .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
+            .where('i.id', 'in', kept)
+            .execute()
+        ).sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+  return [...escalated, ...normal];
 }
+
+type StageScanCursor = { priority: number; createdAt: string; id: number };
 
 /**
  * What a player is served next: the highest stage they may judge that has an open item they have not judged,
