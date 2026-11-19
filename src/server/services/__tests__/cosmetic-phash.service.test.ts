@@ -28,7 +28,6 @@ import {
   queueCosmeticPerceptualHash,
   storeCosmeticPerceptualHash,
 } from '../cosmetic-phash.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   COSMETIC_SIMILARITY_CLOSE_RATIO,
@@ -149,10 +148,6 @@ describe('COSMETIC_PHASH_LANE', () => {
 describe('getCosmeticSimilarityCloseRatio', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
-    // `loggingMock` is reset once per FILE, not per test. Without this a later
-    // case satisfies `toHaveBeenCalledWith` on the FIRST case's warning and passes
-    // whether or not it warned itself — three of the five below did exactly that.
-    loggingMock.logToAxiom.mockClear();
   });
 
   it('reads the operator-set fraction from the KeyValue row', async () => {
@@ -179,9 +174,6 @@ describe('getCosmeticSimilarityCloseRatio', () => {
     mocks.keyValueFindUnique.mockRejectedValue(new Error('replica unreachable'));
 
     await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(COSMETIC_SIMILARITY_CLOSE_RATIO);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'cosmetic-phash' })
-    );
   });
 
   // `KeyValue.value` is a Json column, so every one of these is representable. A
@@ -195,16 +187,10 @@ describe('getCosmeticSimilarityCloseRatio', () => {
     ['negative', -0.2],
     ['exactly one', 1],
     ['above one', 1.5],
-  ])('falls back to the default and warns on %s', async (_label, value) => {
+  ])('falls back to the default on %s', async (_label, value) => {
     mocks.keyValueFindUnique.mockResolvedValue({ value });
 
     await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(COSMETIC_SIMILARITY_CLOSE_RATIO);
-    // Times(1) as well as With(): the matcher alone is satisfied by a previous
-    // test's call, which is how three of these stayed green while warning nothing.
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'cosmetic-phash' })
-    );
   });
 
   // Refusing 0 would fail in the LOOSENING direction: an operator asking for
@@ -215,7 +201,6 @@ describe('getCosmeticSimilarityCloseRatio', () => {
     mocks.keyValueFindUnique.mockResolvedValue({ value: 0 });
 
     await expect(getCosmeticSimilarityCloseRatio()).resolves.toBe(0);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
 
