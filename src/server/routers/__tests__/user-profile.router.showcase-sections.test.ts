@@ -5,15 +5,23 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
 });
 
-const { handler, addHandler } = vi.hoisted(() => ({
+const { handler, addHandler, addEntityHandler, isAccountMuted } = vi.hoisted(() => ({
   handler: vi.fn(async () => []),
   addHandler: vi.fn(async () => ({ added: true, sections: [] })),
+  addEntityHandler: vi.fn(async () => ({})),
+  isAccountMuted: vi.fn(async (_userId: number, sessionValue: boolean) => sessionValue),
+}));
+
+vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  isAccountMuted,
 }));
 
 vi.mock('~/server/controllers/user-profile.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof UserProfileController>()),
   setShowcaseSectionsHandler: handler,
   addToShowcaseSectionHandler: addHandler,
+  addEntityToShowcaseHandler: addEntityHandler,
 }));
 
 import { OnboardingComplete } from '~/server/common/enums';
@@ -49,6 +57,8 @@ const section = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   handler.mockClear();
   addHandler.mockClear();
+  addEntityHandler.mockClear();
+  isAccountMuted.mockClear();
 });
 
 describe('userProfile.setShowcaseSections', () => {
@@ -111,5 +121,46 @@ describe('userProfile.addToShowcaseSection', () => {
       flagOn().addToShowcaseSection({ ...input, entityType: 'Model' } as never)
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(addHandler).not.toHaveBeenCalled();
+  });
+});
+
+// A session minted before the mute still says `muted: false`; the stored standing decides.
+describe('showcase writes from an account muted after its session was issued', () => {
+  const mutedSince = () => isAccountMuted.mockResolvedValueOnce(true);
+
+  it.each([
+    [
+      'addEntityToShowcase',
+      () => flagOn().addEntityToShowcase({ entityType: 'Image', entityId: 7 }),
+    ],
+    ['setShowcaseSections', () => flagOn().setShowcaseSections({ sections: [section()] })],
+    [
+      'addToShowcaseSection',
+      () =>
+        flagOn().addToShowcaseSection({ sectionId: 'abc123', entityType: 'Image', entityId: 7 }),
+    ],
+  ])('%s is refused before its handler runs', async (_name, call) => {
+    mutedSince();
+    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(handler).not.toHaveBeenCalled();
+    expect(addHandler).not.toHaveBeenCalled();
+    expect(addEntityHandler).not.toHaveBeenCalled();
+  });
+
+  it('addEntityToShowcase reaches its handler for an unmuted account', async () => {
+    await flagOn().addEntityToShowcase({ entityType: 'Image', entityId: 7 });
+    expect(addEntityHandler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('userProfile.addEntityToShowcase', () => {
+  it('refuses an account flagged for email verification, like userProfile.update', async () => {
+    const caller = userProfileRouter.createCaller(
+      ctxFor({ id: 43, username: 'unverified', meta: { emailVerificationRequired: true } })
+    );
+    await expect(
+      caller.addEntityToShowcase({ entityType: 'Image', entityId: 7 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(addEntityHandler).not.toHaveBeenCalled();
   });
 });
