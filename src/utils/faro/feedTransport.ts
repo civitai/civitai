@@ -2,11 +2,10 @@ import { faro } from '@grafana/faro-web-sdk';
 import type { Operation, TRPCLink } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
 import type { AppRouter } from '~/server/routers';
-import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
 
 /**
- * One Faro `feed_transport` measurement per request of a ported feed procedure
- * (`GO_TRANSPORT_PROCEDURES`): `feed_transport_ms`, context `procedure`, `transport`, `outcome`,
+ * One Faro `feed_transport` measurement per request of a measured ported feed procedure
+ * (`FEED_TRANSPORT_TIMED_PROCEDURES`): `feed_transport_ms`, context `procedure`, `transport`, `outcome`,
  * and `status` on an `http_error` whose status is known.
  *
  * `transport` is STRUCTURAL: `~/utils/trpc` puts this link inside each branch of its
@@ -16,6 +15,18 @@ import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
  * POST (`skip`), which the go arm can never carry. Not recorded: a signed-out request (it can never take the Go path, so it is in
  * neither arm), and an aborted one (a cancel is neither arm's latency).
  */
+
+/**
+ * The Go-transport procedures (`GO_TRANSPORT_PROCEDURES` in `~/utils/trpc-go-transport`) this link
+ * measures; a subset of that set (trpc-feed-transport-timing.test.ts pins it). Kept as its own
+ * literal list because adding a procedure here is itself a production change: the node arm records
+ * every signed-in request of it, its Go-transport flag on or off. `image.getInfinite` has a Go
+ * transport (dark) but is not measured yet; adding it here is a separate, approved step.
+ */
+export const FEED_TRANSPORT_TIMED_PROCEDURES: ReadonlySet<string> = new Set([
+  'image.getImagesAsPostsInfinite',
+  'model.getAll',
+]);
 
 /** Faro measurement type (→ Loki `type=feed_transport`). */
 export const FEED_TRANSPORT_MEASUREMENT = 'feed_transport';
@@ -100,7 +111,7 @@ export function feedTransportTimingLink(options: FeedTransportTimingOptions): TR
       if (
         typeof window === 'undefined' ||
         op.type !== 'query' ||
-        !GO_TRANSPORT_PROCEDURES.has(op.path) ||
+        !FEED_TRANSPORT_TIMED_PROCEDURES.has(op.path) ||
         !signedIn(isAuthed) ||
         skipped(options.skip, op)
       ) {

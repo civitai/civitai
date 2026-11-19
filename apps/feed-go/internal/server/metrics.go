@@ -239,7 +239,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}, []string{EndpointLabel})
 	// A pod that never shed reads 0 rather than an absent series, on each served endpoint.
 	m.ServeInFlight = map[string]prometheus.Gauge{}
-	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll} {
+	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite} {
 		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
 		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
 	}

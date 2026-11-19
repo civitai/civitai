@@ -1,5 +1,5 @@
-// Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s,
-// computed only with ServeModelGetAll), and the internal
+// Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s
+// and `image.getInfinite`'s, computed only with ServeModelGetAll / ServeInfinite), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images`).
 package server
@@ -39,7 +39,8 @@ import (
 // Procedure is the one tRPC path this service answers.
 const Procedure = "image.getImagesAsPostsInfinite"
 
-// ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+// ProcedureInfinite is the tRPC procedure shadowed at /internal/shadow/<it>, and served on the public
+// route only with Server.ServeInfinite (FEED_GO_SERVE_INFINITE, default off).
 const ProcedureInfinite = "image.getInfinite"
 
 // ProcedureModelGetAll is the tRPC procedure shadowed at /internal/shadow/<it>, and served on the public
@@ -51,7 +52,7 @@ const ProcedureModelGetAll = "model.getAll"
 const (
 	EndpointAsPosts     = "as-posts"     // tRPC image.getImagesAsPostsInfinite
 	EndpointV1Images    = "v1-images"    // REST GET /api/v1/images
-	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (shadow only)
+	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (served only with ServeInfinite)
 	EndpointModelGetAll = "model-getall" // tRPC model.getAll (served only with ServeModelGetAll)
 )
 
@@ -101,8 +102,13 @@ type Server struct {
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
-	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
+	// Infinite serves the `image.getInfinite` shadow (and the public route, with ServeInfinite); nil =
+	// every such sample or request falls back.
 	Infinite *feed.InfiniteDeps
+	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
+	// route. Off, every request there is the `infinite-off` fallback (proxied to the Node app) before
+	// anything is computed or a serve slot taken.
+	ServeInfinite bool
 	// Models serves the `model.getAll` shadow (and the public route, with ServeModelGetAll); nil = every
 	// such sample or request falls back.
 	Models *modelfeed.Deps
@@ -116,12 +122,13 @@ type Server struct {
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
-	// dbpool.DefaultMaxConns, never unlimited), across BOTH public routes: the gallery procedure and
-	// model.getAll share one pool of slots, so one route can hold slots the other then sheds for. For
-	// the gallery it stands in for the Node app's `heavy-image` bulkhead; Node has no bulkhead on
-	// model.getAll. A request past it is not computed: it is the `bulkhead` fallback, proxied to the
-	// Node app (feed_go_fallback_total and feed_go_serve_in_flight are per endpoint). Shadow samples
-	// and probes are bounded by their own queues and never take a serve slot.
+	// dbpool.DefaultMaxConns, never unlimited), across EVERY public route: the gallery procedure,
+	// model.getAll and image.getInfinite share one pool of slots, so one route can hold slots another
+	// then sheds for. For the gallery and image.getInfinite it stands in for the Node app's
+	// `heavy-image` bulkhead; Node has no bulkhead on model.getAll. A request past it is not computed:
+	// it is the `bulkhead` fallback, proxied to the Node app (feed_go_fallback_total and
+	// feed_go_serve_in_flight are per endpoint). Shadow samples and probes are bounded by their own
+	// queues and never take a serve slot.
 	MaxInFlight int
 
 	// Tracer starts the request spans (DESIGN.md §10.3); nil = tracing off: no span, no header read or
@@ -276,7 +283,8 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
 // fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
 // procedure (the same middleware runs on both), and so is the cache policy: a signed-out answer
-// carries createContext's public TTL. It is only shadowed here.
+// carries createContext's public TTL. Shadowed, and served on the public route only with
+// ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
 	req, signedOut, err := s.prepareInfinite(ctx, r)
 	if err != nil {
@@ -666,6 +674,25 @@ func (s *Server) ServeModelGetAllHTTP(w http.ResponseWriter, r *http.Request) {
 		fn = s.computeModelsFn
 	}
 	s.serve(w, r, EndpointModelGetAll, ProcedureModelGetAll, off, fn)
+}
+
+// errInfiniteOff is the `infinite-off` fallback: the public image.getInfinite route with
+// ServeInfinite off.
+var errInfiniteOff = fallback.New("infinite-off")
+
+// ServeInfiniteHTTP is the public route of `image.getInfinite`. With ServeInfinite off (the default)
+// every request is the `infinite-off` fallback: nothing is computed and no serve slot is taken, the
+// request is proxied to the Node app as it came.
+func (s *Server) ServeInfiniteHTTP(w http.ResponseWriter, r *http.Request) {
+	var off error
+	if !s.ServeInfinite {
+		off = errInfiniteOff
+	}
+	fn := s.computeInfinite
+	if s.computeInfiniteFn != nil {
+		fn = s.computeInfiniteFn
+	}
+	s.serve(w, r, EndpointInfinite, ProcedureInfinite, off, fn)
 }
 
 // serve is a public route: off (non-nil) is the fallback answered before anything else; then the API

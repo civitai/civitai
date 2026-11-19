@@ -4,7 +4,11 @@
 // One exact source per procedure in `GO_TRANSPORT_PROCEDURES` (src/utils/trpc-go-transport.ts), never
 // a wildcard: a wildcard would make `/api/trpc-go/*` an alias of the whole tRPC API.
 // src/utils/__tests__/trpc-go-transport.test.ts pins that this list and that set agree.
-export const FEED_GO_REWRITE_PROCEDURES = ['image.getImagesAsPostsInfinite', 'model.getAll'];
+export const FEED_GO_REWRITE_PROCEDURES = [
+  'image.getImagesAsPostsInfinite',
+  'model.getAll',
+  'image.getInfinite',
+];
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
