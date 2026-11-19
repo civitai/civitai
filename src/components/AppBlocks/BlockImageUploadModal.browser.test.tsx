@@ -400,6 +400,50 @@ describe('BlockImageUploadModal — an upload the app asked to share', () => {
   });
 });
 
+describe('BlockImageUploadModal — what the dialog says about who sees the image', () => {
+  // Literal, not built from the component's constant: a reword must fail here.
+  const UNSHARED_COPY =
+    'This image is kept private: only you can see it. Civitai scans every image you upload ' +
+    'for an app, shared or not, so it must be safe-for-work. Upload a PNG, JPEG or WebP.';
+  const SHARED_COPY =
+    'Civitai scans every image you upload for an app, shared or not, so it must be ' +
+    'safe-for-work. Upload a PNG, JPEG or WebP.';
+  const SHARE_NOTICE =
+    'This image will be visible to other viewers of Gen App once Civitai has scanned it.';
+
+  const normalised = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  async function visibilityCopy(share?: { blockToken: string; appName: string }) {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({
+      id: 'visibility-copy-test',
+      component: BlockImageUploadModal,
+      props: { onResolved: vi.fn(), ...(share ? { share } : {}) },
+    });
+    await fileInputEl();
+    // Found by role, not by a test id: the dialog's only alert before a pick is this copy.
+    const alerts = document.querySelectorAll('[role="dialog"] [role="alert"]');
+    expect(alerts).toHaveLength(1);
+    return normalised(alerts[0]);
+  }
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  test('🔴 an unshared upload is described as private, never public', async () => {
+    expect(await visibilityCopy()).toBe(UNSHARED_COPY);
+    expect(document.querySelector('[data-testid="block-image-upload-share-notice"]')).toBeNull();
+  });
+
+  test('🔴 a shared upload keeps the share notice and makes no private claim', async () => {
+    expect(await visibilityCopy({ blockToken: 'tok_abc', appName: 'Gen App' })).toBe(SHARED_COPY);
+    expect(
+      normalised(document.querySelector('[data-testid="block-image-upload-share-notice"]'))
+    ).toBe(SHARE_NOTICE);
+  });
+});
+
 describe('BlockImageUploadModal — the BLOCKING path reports the server’s `shared` answer', () => {
   const READY = {
     imageId: 4242,
