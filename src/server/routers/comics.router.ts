@@ -1745,8 +1745,8 @@ export const comicsRouter = router({
 
       // For prefiltered sorts the findMany result came back in arbitrary
       // (id-ordered) order — restore the raw-SQL ranking by matching each
-      // project against its position in `prefilteredIds`. After re-sorting,
-      // trim to `limit` and use the next-in-line item's id as the cursor.
+      // project against its position in `prefilteredIds`. Either way the
+      // page is trimmed to `limit` and the cursor is its last shown item.
       if (prefilteredIds) {
         const orderMap = new Map(prefilteredIds.map((id, i) => [id, i]));
         projects.sort(
