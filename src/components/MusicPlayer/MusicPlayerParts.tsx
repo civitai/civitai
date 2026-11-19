@@ -55,7 +55,8 @@ export function SongArt({
           width={width * 2}
           name="Song cover"
           className="size-full object-cover"
-          wrapperProps={{ className: 'size-full' }}
+          // `width` only sizes the request; EdgeImage's inline maxWidth would stop the cover short of a wider box.
+          style={{ maxWidth: 'none' }}
         />
       ) : (
         <div

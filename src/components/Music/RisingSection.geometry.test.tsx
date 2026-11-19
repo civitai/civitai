@@ -50,6 +50,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 }));
 
 import { RisingSection } from '~/components/Music/MusicLandingSections';
+import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 
 function song(id: number) {
   return {
@@ -118,4 +119,23 @@ test('with 7 songs at 1440 the small tiles follow Pencil `CnGl0`: wide/narrow/mi
   expect(small).toEqual([wide, narrow, mid, narrow, wide, mid]);
   expect(wide).toBeGreaterThan(mid);
   expect(mid).toBeGreaterThan(narrow);
+});
+
+test('a cover fills a wide small tile, past the width its image was requested at', async () => {
+  server.rising = [1, 2, 3];
+  songCovers.reset();
+  songCovers.served = [1, 2, 3].map((songId) => ({
+    songId,
+    id: 1000 + songId,
+    url: `cover-${songId}`,
+    hash: null,
+    nsfwLevel: 1,
+  }));
+  await renderAtViewport(<RisingSection />, DESKTOP);
+  await vi.waitFor(() => expect(tiles()[1].querySelector('img')).not.toBeNull());
+  const tile = tiles()[1].getBoundingClientRect();
+  const img = tiles()[1].querySelector('img')!.getBoundingClientRect();
+  expect(tile.width).toBeGreaterThan(760);
+  expect(img.width).toBeCloseTo(tile.width, 0);
+  songCovers.reset();
 });
