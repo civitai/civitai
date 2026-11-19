@@ -232,6 +232,8 @@ export type RateResult = {
   workflows: number;
   /** Strings with a csam detection in this run. */
   csamHits: number;
+  /** Strings the rater refused in this run. */
+  refused?: number;
 };
 
 /**
@@ -323,6 +325,7 @@ export async function rateComFaceVersionText(
       status: pending.length ? 'partial' : 'complete',
       workflows,
       csamHits: csamHits.length,
+      refused,
     };
 
   if (csamHits.length) {

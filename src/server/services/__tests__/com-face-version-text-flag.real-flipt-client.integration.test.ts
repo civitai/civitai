@@ -39,18 +39,23 @@ function snapshotWith(flags: { key: string; enabled: boolean }[]) {
   };
 }
 
-const { getComVersionTextHideMode } = await import('~/server/services/com-face-version-text-flag');
+const { comVersionTextJobsEnabled, getComVersionTextHideMode } = await import(
+  '~/server/services/com-face-version-text-flag'
+);
 
 const servers: FliptFixtureServer[] = [];
 afterAll(() => Promise.all(servers.map((server) => server.close())));
 
-async function modeServedBy(snapshot: unknown) {
+async function modeServedBy(
+  snapshot: unknown,
+  read: () => Promise<unknown> = getComVersionTextHideMode
+) {
   const server = await startFliptFixtureServer(snapshot);
   servers.push(server);
-  return modeAt(server.url);
+  return modeAt(server.url, read);
 }
 
-async function modeAt(url: string) {
+async function modeAt(url: string, read: () => Promise<unknown> = getComVersionTextHideMode) {
   const { createFliptClient } = await import('@civitai/flipt');
   live.client = createFliptClient({
     url,
@@ -61,7 +66,7 @@ async function modeAt(url: string) {
       throw e;
     },
   });
-  return getComVersionTextHideMode();
+  return read();
 }
 
 describe('getComVersionTextHideMode over the real Flipt client', () => {
@@ -88,5 +93,40 @@ describe('getComVersionTextHideMode over the real Flipt client', () => {
 
   it('reads an unreachable Flipt as on', async () => {
     await expect(modeAt(deadUrl)).resolves.toBe('on');
+  });
+});
+
+describe('comVersionTextJobsEnabled over the real Flipt client', () => {
+  const JOBS = 'com-face-version-text-jobs';
+  let deadUrl: string;
+  beforeAll(async () => {
+    const server = await startFliptFixtureServer({});
+    deadUrl = server.url;
+    await server.close();
+  });
+
+  it('runs the jobs only when the flag is present and enabled', async () => {
+    await expect(
+      modeServedBy(snapshotWith([{ key: JOBS, enabled: true }]), comVersionTextJobsEnabled)
+    ).resolves.toBe(true);
+  });
+
+  it('keeps them off when the flag is present and disabled', async () => {
+    await expect(
+      modeServedBy(snapshotWith([{ key: JOBS, enabled: false }]), comVersionTextJobsEnabled)
+    ).resolves.toBe(false);
+  });
+
+  it('keeps them off when the key is missing', async () => {
+    await expect(
+      modeServedBy(
+        snapshotWith([{ key: 'some-other-flag', enabled: true }]),
+        comVersionTextJobsEnabled
+      )
+    ).resolves.toBe(false);
+  });
+
+  it('keeps them off when Flipt is unreachable', async () => {
+    await expect(modeAt(deadUrl, comVersionTextJobsEnabled)).resolves.toBe(false);
   });
 });

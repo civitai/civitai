@@ -538,10 +538,11 @@ describe('rateComFaceVersionText', () => {
   });
 
   it('a dry run rates and counts csam hits but writes nothing', async () => {
-    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
-    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta'] }] });
+    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }), beta: { status: 'refused' } });
     await expect(rateComFaceVersionText(MODEL_ID, 20, { dryRun: true })).resolves.toMatchObject({
       csamHits: 1,
+      refused: 1,
     });
     expect(applyCsamHold).not.toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();

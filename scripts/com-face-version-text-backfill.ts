@@ -24,8 +24,11 @@ import { runScriptAndExit } from './lib/run-as-script';
  * stays near what one day of runs drains; run it again for the next batch (queued models are skipped).
  *
  * `--rate-dry-run N` rates the first N models of the set (preview workflows, so it spends) and
- * writes nothing: no verdicts, no queue rows, no holds. It prints how many would be held, so that
- * count can be reviewed before `--apply`.
+ * writes nothing: no verdicts, no queue rows, no holds. It prints counts only: how many models would
+ * get a csam hold, how many a forced Model scan for a refusal, and how many pass.
+ *
+ * The rating jobs run only while the `com-face-version-text-jobs` flag is on; rows `--apply` queues
+ * wait until then.
  */
 const DEFAULT_BATCH = 2_000;
 
@@ -48,19 +51,24 @@ async function main() {
     const rows = await dbRead.$queryRaw<{ modelId: number }[]>(
       comVersionTextSweepSql(sample, policy)
     );
-    const wouldHold: number[] = [];
+    let wouldHold = 0;
+    let wouldScan = 0;
+    let passed = 0;
     let incomplete = 0;
     for (const { modelId } of rows) {
       const result = await rateComFaceVersionText(modelId, COM_VERSION_TEXT_WORKFLOWS_PER_RUN, {
         dryRun: true,
       });
-      if (result.csamHits) wouldHold.push(modelId);
+      if (result.csamHits) wouldHold++;
+      else if (result.refused) wouldScan++;
       if (result.status !== 'complete') incomplete++;
+      else if (!result.csamHits && !result.refused) passed++;
     }
     console.log(`rate dry run: ${rows.length} models rated; nothing written`);
-    console.log(
-      `would hold: ${wouldHold.length} models${wouldHold.length ? ` (${wouldHold.join(',')})` : ''}`
-    );
+    // Counts only: model ids of would-be csam holds stay out of script output.
+    console.log(`would place a csam hold: ${wouldHold}`);
+    console.log(`would queue a forced Model scan for a refusal (no hold): ${wouldScan}`);
+    console.log(`fully rated with neither: ${passed}`);
     console.log(`not fully rated in one pass: ${incomplete}`);
     return;
   }

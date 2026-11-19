@@ -696,6 +696,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   COM_FACE_VERSION_TEXT_HIDE = 'com-face-version-text-hide',
+  // On: the com-face-version-text jobs (rating every minute, sweep hourly) run. Off, unknown or
+  // not evaluated: both do nothing. Read only through `comVersionTextJobsEnabled`.
+  // 🔴 BOOLEAN ONLY, global.
+  COM_FACE_VERSION_TEXT_JOBS = 'com-face-version-text-jobs',
   // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
   // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
   // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are

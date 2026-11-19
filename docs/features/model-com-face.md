@@ -123,7 +123,8 @@ Creator Studio's Make Safe can draft a removed face again.
 
 ## Version text verdicts
 
-A second job (`model-com-face-version-text.service.ts`) rates each name and trigger word of a
+A second job (`model-com-face-version-text.service.ts`), which runs only while the
+`com-face-version-text-jobs` flag is on, rates each name and trigger word of a
 faced model's published, non-private versions on its own, after the same owner edits (two minutes
 quiet) and from an hourly sweep for text with no current verdict. Verdicts are kept server-side in
 `KeyValue` rows (`com-face-version-text:v:<versionId>`), never in version `meta`, which clients
