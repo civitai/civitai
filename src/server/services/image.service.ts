@@ -3884,6 +3884,7 @@ type ImageMetricsObject = Record<
     comment: number | null;
     collection: number | null;
     buzz: number | null;
+    play: number | null;
   }
 >;
 
@@ -3924,6 +3925,7 @@ const shapeCachedMetricHash = (
     commentCount: count(hash.commentCount),
     Collection: count(hash.Collection),
     tippedAmount: count(hash.tippedAmount),
+    Play: count(hash.Play),
   });
 };
 
@@ -4084,6 +4086,7 @@ const shapeImageMetrics = (
   comment: m?.commentCount || null,
   collection: m?.Collection || null,
   buzz: m?.tippedAmount || null,
+  play: m?.Play || null,
 });
 
 /**
@@ -4209,6 +4212,24 @@ export const getImageMetricsObjectDirect = async (
     return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
+
+/**
+ * Song play counts by id, through the image metric reader; an id the reader could not answer is
+ * left out. A separate read so `image.getInfinite`'s stats stay as they are.
+ */
+export async function getSongPlayCounts({
+  ids,
+  features,
+}: {
+  ids: number[];
+  features: { music?: boolean };
+}): Promise<Record<number, number>> {
+  if (!features.music || !ids.length) return {};
+  const metrics = await getImageMetricsObject([...new Set(ids)].map((id) => ({ id })));
+  return Object.fromEntries(
+    Object.values(metrics).map((entry) => [entry.imageId, entry.play ?? 0])
+  );
+}
 
 export async function getTagNamesForImages(imageIds: number[]) {
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);

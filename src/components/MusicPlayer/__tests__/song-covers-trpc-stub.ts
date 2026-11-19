@@ -44,6 +44,30 @@ function readSongCovers(input: unknown, options?: { enabled?: boolean }) {
 }
 
 /**
+ * The `image.getSongPlays` read: `served` maps a song id to its play count; `requests` records the
+ * ids of every read.
+ */
+export const songPlays = {
+  served: {} as Record<number, number>,
+  requests: [] as number[][],
+  reset() {
+    songPlays.served = {};
+    songPlays.requests = [];
+  },
+};
+
+function readSongPlays(input: unknown, options?: { enabled?: boolean }) {
+  if (options?.enabled === false) return { data: undefined };
+  const { ids } = getSongCoversSchema.parse(input);
+  songPlays.requests.push(ids);
+  return {
+    data: Object.fromEntries(
+      ids.flatMap((id) => (id in songPlays.served ? [[id, songPlays.served[id]]] : []))
+    ),
+  };
+}
+
+/**
  * The `commentv3.getTimed` read the bar makes for the current song: `served` maps a song id to its
  * timed comments; `requests` records each enabled read's song id.
  */
@@ -63,16 +87,26 @@ function useTimedCommentsQuery(input: { imageId: number }, options?: { enabled?:
 }
 
 /**
- * `trpc` with `image.getSongCovers` (single and through `useQueries`) answered by `songCovers` and
- * `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
+ * `trpc` with `image.getSongCovers` and `image.getSongPlays` (single and through `useQueries`)
+ * answered by `songCovers` and `songPlays`, and `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
  */
 export function withSongCoversStub<T extends object>(trpc: T): T {
   answers = new WeakMap();
-  const image = { getSongCovers: { useQuery: useSongCoversQuery } };
+  const image = {
+    getSongCovers: { useQuery: useSongCoversQuery },
+    getSongPlays: { useQuery: readSongPlays },
+  };
   const commentv3 = { getTimed: { useQuery: useTimedCommentsQuery } };
-  // `trpc.useQueries` for chunked cover reads: each `t.image.getSongCovers(input)` is one read.
+  // `trpc.useQueries` for chunked reads: each `t.image.getSongCovers(input)` is one read.
   const useQueries = (build: (t: unknown) => unknown[]) =>
-    build({ image: { getSongCovers: (input: unknown) => input } }).map(readSongCovers);
+    (
+      build({
+        image: {
+          getSongCovers: (input: unknown) => () => readSongCovers(input),
+          getSongPlays: (input: unknown) => () => readSongPlays(input),
+        },
+      }) as (() => { data: unknown })[]
+    ).map((read) => read());
   return new Proxy(trpc, {
     get: (target, key) =>
       key === 'image'

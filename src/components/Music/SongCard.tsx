@@ -1,10 +1,11 @@
-import { IconMessage, IconThumbUp } from '@tabler/icons-react';
+import { IconHeadphones, IconMessage, IconThumbUp } from '@tabler/icons-react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
   FeedSongMenuItems,
   FeedSongPlayButton,
   useFeedSongCover,
+  useFeedSongPlays,
 } from '~/components/Music/FeedSongList';
 import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
 import { SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
@@ -18,7 +19,7 @@ import clsx from 'clsx';
 
 export const UNTITLED_SONG = 'Untitled song';
 
-function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
+export function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
   return (
     <span className="flex items-center gap-1" aria-label={`${count} ${label}`}>
       {icon}
@@ -32,6 +33,7 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
   const cover = useFeedSongCover(data.id);
+  const plays = useFeedSongPlays(data.id);
   return (
     <div className="flex flex-col gap-2" style={{ height }}>
       <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[14px]">
@@ -96,6 +98,9 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           songTextDimmed
         )}
       >
+        {plays !== undefined && (
+          <SongStat icon={<IconHeadphones size={12} />} count={plays} label="plays" />
+        )}
         <SongStat
           icon={<IconThumbUp size={12} />}
           count={data.stats?.likeCountAllTime ?? 0}

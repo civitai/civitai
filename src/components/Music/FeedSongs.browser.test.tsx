@@ -32,7 +32,8 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   RoutedDialogLink: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 
-import { SongListNameProvider } from '~/components/Music/FeedSongList';
+import { FeedSongsProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
+import { songPlays } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { SongCard } from '~/components/Music/SongCard';
 import { SongRow } from '~/components/Music/SongRow';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
@@ -57,6 +58,7 @@ const realPlayFromList = useMusicPlayerStore.getState().playFromList;
 
 beforeEach(() => {
   useMusicPlayerStore.getState().close();
+  songPlays.reset();
   useMusicPlayheadStore.setState({ currentTime: 0, duration: 0 });
   playFromList.mockReset();
   playFromList.mockImplementation((list) => realPlayFromList(list));
@@ -187,5 +189,29 @@ describe('the Song Card', () => {
     await expect.element(page.getByRole('link', { name: 'artist1' })).toBeInTheDocument();
     await expect.element(page.getByText('Synthwave')).toBeInTheDocument();
     await expect.element(page.getByText('3:05')).toBeInTheDocument();
+  });
+
+  test('shows the play count, read once for the whole feed', async () => {
+    songPlays.served = { 1: 9700, 2: 4 };
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        {songs.map((s) => (
+          <SongCard key={s.id} data={s} height={360} />
+        ))}
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByLabelText('9700 plays')).toHaveTextContent('9.7k');
+    await expect.element(page.getByLabelText('4 plays')).toBeInTheDocument();
+    // Song 3 has no answer: no count rather than a made-up 0.
+    expect(page.getByLabelText(/plays$/).elements()).toHaveLength(2);
+    expect(songPlays.requests).toEqual([[1, 2, 3]]);
+  });
+});
+
+describe('the Song Row', () => {
+  test('shows the play count', async () => {
+    songPlays.served = { 1: 12400 };
+    await renderWithProviders(<SongRow data={songs[0]} index={0} />);
+    await expect.element(page.getByLabelText('12400 plays')).toHaveTextContent('12.4k');
   });
 });

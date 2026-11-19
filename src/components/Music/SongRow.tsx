@@ -1,3 +1,4 @@
+import { IconHeadphones } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { memo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -6,8 +7,9 @@ import {
   FeedSongMenuItems,
   FeedSongPlayButton,
   useFeedSongCover,
+  useFeedSongPlays,
 } from '~/components/Music/FeedSongList';
-import { UNTITLED_SONG } from '~/components/Music/SongCard';
+import { SongStat, UNTITLED_SONG } from '~/components/Music/SongCard';
 import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
 import { Equalizer, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
@@ -31,6 +33,7 @@ export const SongRow = memo(function SongRow({
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
   const cover = useFeedSongCover(data.id);
+  const plays = useFeedSongPlays(data.id);
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === data.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === data.id && s.playing);
   return (
@@ -71,6 +74,11 @@ export const SongRow = memo(function SongRow({
           {genre && ` · ${genre}`}
         </span>
       </div>
+      {plays !== undefined && (
+        <span className={clsx('shrink-0 text-xs tabular-nums', songTextDimmed)}>
+          <SongStat icon={<IconHeadphones size={14} />} count={plays} label="plays" />
+        </span>
+      )}
       <span className={clsx('shrink-0 text-xs tabular-nums', songTextDimmed)}>
         {formatPlaybackTime(track.durationSec)}
       </span>

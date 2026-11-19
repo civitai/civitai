@@ -10,6 +10,7 @@ import {
   useMusicPlayerCovers,
   useSongListCovers,
 } from '~/components/MusicPlayer/useMusicPlayerCover';
+import { useSongListPlays } from '~/components/Music/useSongPlays';
 import type { PlayerSongCover } from '~/server/services/post.service';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -25,24 +26,37 @@ export function SongListNameProvider({ name, children }: { name?: string; childr
 }
 
 const SongCoversContext = createContext<Map<number, PlayerSongCover> | null>(null);
+const SongPlaysContext = createContext<Record<number, number> | null>(null);
 
-export function FeedSongCoversProvider({
+/** One cover read and one play-count read for every song in `images`, shared by its cards. */
+export function FeedSongsProvider({
   images,
   children,
 }: {
   images: { id: number; type: string }[];
   children: ReactNode;
 }) {
-  const covers = useSongListCovers(
-    images.filter((image) => image.type === MediaType.audio).map((image) => image.id)
+  const songIds = images.filter((image) => image.type === MediaType.audio).map((image) => image.id);
+  const covers = useSongListCovers(songIds);
+  const plays = useSongListPlays(songIds);
+  return (
+    <SongCoversContext.Provider value={covers}>
+      <SongPlaysContext.Provider value={plays}>{children}</SongPlaysContext.Provider>
+    </SongCoversContext.Provider>
   );
-  return <SongCoversContext.Provider value={covers}>{children}</SongCoversContext.Provider>;
 }
 
 export function useFeedSongCover(songId: number) {
   const feedCovers = useContext(SongCoversContext);
   const ownCovers = useMusicPlayerCovers(feedCovers ? [] : [songId]);
   return (feedCovers ?? ownCovers).get(songId);
+}
+
+/** The song's play count; undefined until it is known. */
+export function useFeedSongPlays(songId: number): number | undefined {
+  const feedPlays = useContext(SongPlaysContext);
+  const ownPlays = useSongListPlays(feedPlays ? [] : [songId]);
+  return (feedPlays ?? ownPlays)[songId];
 }
 
 /**
