@@ -31,7 +31,6 @@ import {
   ArticleStatus,
   Availability,
   ImageIngestionStatus,
-  ModelModifier,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -418,8 +417,8 @@ const isOwnServableItem = async ({
           deletedAt: null,
           tosViolation: false,
           availability: { not: Availability.Private },
-          // `mode: { not: TakenDown }` would also drop the NULL (no modifier) rows.
-          OR: [{ mode: null }, { mode: ModelModifier.Archived }],
+          // No modifier: the section feed drops Archived, so one would take a slot and never show.
+          mode: null,
         },
         select,
       }));

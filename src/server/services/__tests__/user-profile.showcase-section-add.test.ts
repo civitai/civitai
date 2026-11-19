@@ -259,7 +259,7 @@ describe('addToShowcaseSection', () => {
 describe('addToShowcaseSection — models', () => {
   const models_ = () => section([], 's-model', 'Model');
 
-  it.each(['servable', 'archived', 'unsearchable'] as const)(
+  it.each(['servable', 'unsearchable'] as const)(
     'puts the owner’s %s model first in a Models section',
     async (variant) => {
       store([section([5], 's-model', 'Model'), section([6])]);
@@ -280,6 +280,8 @@ describe('addToShowcaseSection — models', () => {
     'tosViolation',
     'private',
     'takenDown',
+    // The section feed drops Archived models, so one would take a slot and never show.
+    'archived',
   ] as const)('refuses a %s model and writes nothing', async (variant) => {
     store([models_()]);
     await expect(addAs('Model', MODEL[variant], 's-model')).rejects.toMatchObject({
