@@ -102,7 +102,7 @@ function load(
     props?: {
       rendered?: boolean;
       trpcState?: unknown;
-      session?: { user?: { id?: number } } | null;
+      session?: { user?: Record<string, unknown> & { id?: number } } | null;
     };
     redirect?: { destination: string };
   }>;
@@ -346,4 +346,27 @@ describe('the session a page resolver reads', () => {
     await load(recordingPage, { authorization: 'Bearer token' });
     expect(resolverUser.current).toEqual(MEMBER);
   });
+});
+
+describe('the session a page sends to the browser', () => {
+  it('keeps moderator rights for a moderator browser session', async () => {
+    hubSession.current = { user: MODERATOR };
+    const result = await load(openPage);
+    expect(result.props?.session?.user).toEqual(MODERATOR);
+  });
+
+  it('keeps moderator rights for a full-scope personal key', async () => {
+    bearerSession.mockResolvedValue(nonOauthKey('User', TokenScope.Full));
+    const result = await load(openPage, { authorization: 'Bearer personal-full' });
+    expect(result.props?.session?.user).toEqual(MODERATOR);
+  });
+
+  it.each(refusedBearers)(
+    'is the same user without moderator rights for %s',
+    async (_l, session) => {
+      bearerSession.mockResolvedValue(session);
+      const result = await load(openPage, { authorization: 'Bearer token' });
+      expect(result.props?.session?.user).toEqual({ ...MODERATOR, isModerator: false });
+    }
+  );
 });
