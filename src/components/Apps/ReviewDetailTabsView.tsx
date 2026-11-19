@@ -140,14 +140,6 @@ function ReviewDetailTabsViewInner({
     setHash(window.location.hash);
   }, []);
 
-  /**
-   * The page session's app console: the review preview's error reports, in memory only. One per
-   * mount — and `ReviewDetailView` is keyed on the request id, so another submission starts
-   * empty. A STORE rather than state here: a report re-renders only what reads it (the tab's
-   * count, the Overview line, the Console panel), never this memoised tree with its diff tables.
-   */
-  const [reviewConsole] = useState(createReviewConsoleStore);
-
   const rawTab = router.query[REVIEW_DETAIL_TAB_QUERY_KEY];
   const activeTab = useMemo(() => resolveReviewDetailTab(rawTab, { hash }), [rawTab, hash]);
   const visited = useVisitedTabs(activeTab);
@@ -182,64 +174,63 @@ function ReviewDetailTabsViewInner({
   };
 
   return (
-    <ReviewConsoleProvider store={reviewConsole}>
-      <Tabs
-        value={activeTab}
-        onChange={selectTab}
-        variant="outline"
-        // Panels are mounted by `visited` above, so Mantine's own flag is irrelevant here;
-        // pinned explicitly so a later Mantine default change cannot silently re-introduce
-        // mount-everything.
-        keepMounted
-        data-testid="apps-review-detail-tabs"
-      >
-        {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
-        <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
-          {REVIEW_DETAIL_TAB_VALUES.map((tab) => {
-            const Icon = TAB_ICONS[tab];
-            return (
-              <Tabs.Tab
-                key={tab}
-                value={tab}
-                leftSection={<Icon size={14} />}
-                rightSection={tab === 'console' ? <ReviewConsoleCountBadge /> : undefined}
-              >
-                {REVIEW_DETAIL_TAB_LABELS[tab]}
-              </Tabs.Tab>
-            );
-          })}
-        </Tabs.List>
+    <Tabs
+      value={activeTab}
+      onChange={selectTab}
+      variant="outline"
+      // Panels are mounted by `visited` above, so Mantine's own flag is irrelevant here;
+      // pinned explicitly so a later Mantine default change cannot silently re-introduce
+      // mount-everything.
+      keepMounted
+      data-testid="apps-review-detail-tabs"
+    >
+      {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
+      <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
+        {REVIEW_DETAIL_TAB_VALUES.map((tab) => {
+          const Icon = TAB_ICONS[tab];
+          return (
+            <Tabs.Tab
+              key={tab}
+              value={tab}
+              leftSection={<Icon size={14} />}
+              rightSection={tab === 'console' ? <ReviewConsoleCountBadge /> : undefined}
+            >
+              {REVIEW_DETAIL_TAB_LABELS[tab]}
+            </Tabs.Tab>
+          );
+        })}
+      </Tabs.List>
 
-        {/*
+      {/*
         PERMISSIONS — the default tab. `ManifestScopes` already groups SENSITIVE scopes
         first with warning emphasis and renders each scope's developer-supplied
         justification; what changed is that it is now the first thing on screen instead of
         the last thing in the manifest card. `ManifestView` below is passed
         `includeScopes={false}` so this card appears exactly once on the page.
       */}
-        {/*
+      {/*
         OVERVIEW — the default. The decision signals on one screen; every other tab is the
         evidence behind one of them. See `ReviewOverviewPanel`.
       */}
-        <Tabs.Panel value="overview" pt="md">
-          {visited.has('overview') && (
-            <ReviewOverviewPanel selection={selection} onOpenTab={selectTab} />
-          )}
-        </Tabs.Panel>
+      <Tabs.Panel value="overview" pt="md">
+        {visited.has('overview') && (
+          <ReviewOverviewPanel selection={selection} onOpenTab={selectTab} />
+        )}
+      </Tabs.Panel>
 
-        <Tabs.Panel value="permissions" pt="md">
-          {visited.has('permissions') && (
-            <Stack gap="sm">
-              <Text size="xs" c="dimmed">
-                What this version asks to be allowed to do, and the reason its developer gave. The
-                platform does not verify these claims — your judgement is the gate.
-              </Text>
-              <ManifestScopes manifest={manifest} />
-            </Stack>
-          )}
-        </Tabs.Panel>
+      <Tabs.Panel value="permissions" pt="md">
+        {visited.has('permissions') && (
+          <Stack gap="sm">
+            <Text size="xs" c="dimmed">
+              What this version asks to be allowed to do, and the reason its developer gave. The
+              platform does not verify these claims — your judgement is the gate.
+            </Text>
+            <ManifestScopes manifest={manifest} />
+          </Stack>
+        )}
+      </Tabs.Panel>
 
-        {/*
+      {/*
         CODE — the file summary plus the GitHub-shaped line diff, with the per-file list shown
         on ARRIVAL (no "Show code diff" switch).
 
@@ -251,11 +242,11 @@ function ReviewDetailTabsViewInner({
         read until the mod comes here) and each file stays collapsed, so the rows are only
         built for files the mod opens. The modal keeps the switch.
       */}
-        <Tabs.Panel value="code" pt="md">
-          {visited.has('code') && <ReviewFilesSection request={request} autoLoadDiff />}
-        </Tabs.Panel>
+      <Tabs.Panel value="code" pt="md">
+        {visited.has('code') && <ReviewFilesSection request={request} autoLoadDiff />}
+      </Tabs.Panel>
 
-        {/*
+      {/*
         AGENT REPORT — `ReviewAgentSection` carries the whole gate (on-site pending +
         the mod-only `appBlocksAgenticReview` flag, fail-closed), so this tab is simply
         empty for a submission that has no agent surface. An empty state is rendered
@@ -269,12 +260,12 @@ function ReviewDetailTabsViewInner({
         visual grouping to say which is which. The outer bar is `variant="outline"` and the
         inner one is Mantine's default underline, so the two read as different levels.
       */}
-        <Tabs.Panel value="agent" pt="md">
-          {visited.has('agent') && (
-            <ReviewAgentSection
-              selection={selection}
-              fallback={
-                /*
+      <Tabs.Panel value="agent" pt="md">
+        {visited.has('agent') && (
+          <ReviewAgentSection
+            selection={selection}
+            fallback={
+              /*
                 ⚠️ NO KIND WORD IN THIS COPY. The App-store kind label has exactly one
                 source (`STANDALONE_KIND_LABEL`) and the previous generation of words for it
                 is retired — `standaloneWordingCallSites.test.ts` reds on a user-facing
@@ -282,32 +273,32 @@ function ReviewDetailTabsViewInner({
                 The gate's kind clause is not what a mod needs told here anyway: "this
                 submission has no agentic review" is.
               */
-                <Text size="xs" c="dimmed" fs="italic" data-testid="apps-review-agent-empty">
-                  No agentic review on this submission. It runs on a PENDING bundle only, and only
-                  for reviewers it has been enabled for.
-                </Text>
-              }
-            />
-          )}
-        </Tabs.Panel>
+              <Text size="xs" c="dimmed" fs="italic" data-testid="apps-review-agent-empty">
+                No agentic review on this submission. It runs on a PENDING bundle only, and only for
+                reviewers it has been enabled for.
+              </Text>
+            }
+          />
+        )}
+      </Tabs.Panel>
 
-        {/* MANIFEST — the field-level diff, then the full structured manifest WITHOUT its
+      {/* MANIFEST — the field-level diff, then the full structured manifest WITHOUT its
           permissions card (that card is the Permissions tab). */}
-        <Tabs.Panel value="manifest" pt="md">
-          {visited.has('manifest') && (
-            <Stack gap="md">
-              <ReviewManifestDiffSection request={request} />
-              <Stack gap={4}>
-                <Text size="sm" fw={600}>
-                  Manifest
-                </Text>
-                <ManifestView manifest={manifest} includeScopes={false} />
-              </Stack>
+      <Tabs.Panel value="manifest" pt="md">
+        {visited.has('manifest') && (
+          <Stack gap="md">
+            <ReviewManifestDiffSection request={request} />
+            <Stack gap={4}>
+              <Text size="sm" fw={600}>
+                Manifest
+              </Text>
+              <ManifestView manifest={manifest} includeScopes={false} />
             </Stack>
-          )}
-        </Tabs.Panel>
+          </Stack>
+        )}
+      </Tabs.Panel>
 
-        {/*
+      {/*
         PREVIEW — everything a mod LOOKS at: the mod-only review sandbox, the store-listing
         icon/cover, the publisher screenshots from the bundle, and (approved only) the
         marketplace curation controls.
@@ -317,40 +308,36 @@ function ReviewDetailTabsViewInner({
         the submitted ZIP — so a mod approving a first version was approving a store card
         they had not seen. Both belong on this tab; neither replaces the other.
       */}
-        <Tabs.Panel value="preview" pt="md">
-          {visited.has('preview') && (
-            <Stack gap="md">
-              <ReviewPreviewSection
-                selection={selection}
-                frameHeight={REVIEW_PREVIEW_TALL_HEIGHT}
-              />
-              <ReviewListingMediaLive
-                // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
-                listingId={request.appListingId ?? null}
-                slug={request.slug}
-                name={appDisplayName(request.manifest, request.slug)}
-                iconUrl={request.iconUrl ?? null}
-                coverUrl={request.coverUrl ?? null}
-                reviewMedia={request.reviewMedia ?? null}
-                // The app's declared rating — what an on-site listing is rated by, at least.
-                rating={typeof manifest.contentRating === 'string' ? manifest.contentRating : null}
-              />
-              <ScreenshotsReviewPanel publishRequestId={request.id} size="review" />
-              <ReviewCurationSection selection={selection} />
-            </Stack>
-          )}
-        </Tabs.Panel>
+      <Tabs.Panel value="preview" pt="md">
+        {visited.has('preview') && (
+          <Stack gap="md">
+            <ReviewPreviewSection selection={selection} frameHeight={REVIEW_PREVIEW_TALL_HEIGHT} />
+            <ReviewListingMediaLive
+              // The re-rate pickers and live levels (moderators): see `ReviewListingMediaLive`.
+              listingId={request.appListingId ?? null}
+              slug={request.slug}
+              name={appDisplayName(request.manifest, request.slug)}
+              iconUrl={request.iconUrl ?? null}
+              coverUrl={request.coverUrl ?? null}
+              reviewMedia={request.reviewMedia ?? null}
+              // The app's declared rating — what an on-site listing is rated by, at least.
+              rating={typeof manifest.contentRating === 'string' ? manifest.contentRating : null}
+            />
+            <ScreenshotsReviewPanel publishRequestId={request.id} size="review" />
+            <ReviewCurationSection selection={selection} />
+          </Stack>
+        )}
+      </Tabs.Panel>
 
-        {/*
+      {/*
         CONSOLE — what the running preview reported (the Overview and the Preview tab both run
         it), for this session only. Not `visited`-gated: it fetches nothing, and the count on
         its tab must be live before the moderator ever opens it.
       */}
-        <Tabs.Panel value="console" pt="md">
-          <ReviewConsolePanel />
-        </Tabs.Panel>
-      </Tabs>
-    </ReviewConsoleProvider>
+      <Tabs.Panel value="console" pt="md">
+        <ReviewConsolePanel />
+      </Tabs.Panel>
+    </Tabs>
   );
 }
 
@@ -375,4 +362,23 @@ function ReviewDetailTabsViewInner({
  * `selection` is the only prop and it does not change on a tick, so this cuts the tick's
  * blast radius to the two components that actually consume `now`.
  */
-export const ReviewDetailTabsView = memo(ReviewDetailTabsViewInner);
+function ReviewDetailTabsViewWithConsole({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /**
+   * The page session's app console: the review preview's error reports, in memory only. One per
+   * mount — and `ReviewDetailView` is keyed on the request id, so another submission starts
+   * empty. A STORE rather than state: a report re-renders only what reads it (the tab's count,
+   * the Overview line, the Console panel), never the tabs with their diff tables.
+   */
+  const [reviewConsole] = useState(createReviewConsoleStore);
+  return (
+    <ReviewConsoleProvider store={reviewConsole}>
+      <ReviewDetailTabsViewInner selection={selection} />
+    </ReviewConsoleProvider>
+  );
+}
+
+export const ReviewDetailTabsView = memo(ReviewDetailTabsViewWithConsole);

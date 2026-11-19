@@ -10,6 +10,7 @@ import {
   BLOCK_ERRORS_CAPABILITY,
   BLOCK_HOST_ERROR_REPORTS,
 } from '~/components/AppBlocks/blockInitFragmentGate';
+import { reviewConsoleSdkNotice } from '~/components/Apps/reviewConsoleStore';
 
 /**
  * The review console's rules, node-tier: the SDK cut-off for the "too old" notice, the entry cap
@@ -57,6 +58,28 @@ describe('the SDK cut-off', () => {
   });
 });
 
+describe('the SDK notice, pinned whole', () => {
+  test('an @civitai/sdk below the cut-off, or one that names no version, is too old', () => {
+    expect(reviewConsoleSdkNotice({ name: 'sdk', version: '0.28.0' })).toBe(
+      "This app's SDK (@civitai/sdk 0.28.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
+    );
+    expect(reviewConsoleSdkNotice({ name: null, version: null })).toBe(
+      "This app's SDK (an SDK that does not name itself) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
+    );
+  });
+
+  test('🔴 @civitai/blocks-react is not called too old: it forwards none at any version', () => {
+    expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.84.0' })).toBe(
+      'This app uses @civitai/blocks-react 0.84.0, which does not report other errors, so only fatal crashes show here. Apps on @civitai/sdk 0.29.0 or later report every error.'
+    );
+  });
+
+  test('no notice at or above the cut-off, nor before BLOCK_READY', () => {
+    expect(reviewConsoleSdkNotice({ name: 'sdk', version: '0.29.0' })).toBeNull();
+    expect(reviewConsoleSdkNotice(null)).toBeNull();
+  });
+});
+
 describe('the store', () => {
   test('keeps at most N entries, dropping the OLDEST non-fatal, never a fatal one', () => {
     const store = createReviewConsoleStore(3);
@@ -95,12 +118,12 @@ describe('the store', () => {
 });
 
 describe('which surfaces advertise blockErrors:v1', () => {
-  test('🔴 the review preview and the dev tunnel, and nowhere a published app runs', () => {
+  test('🔴 the review preview only: never where a published app runs, nor the dev tunnel (storageMode covers it)', () => {
     expect(BLOCK_ERRORS_CAPABILITY).toBe('blockErrors:v1');
     expect(BLOCK_HOST_ERROR_REPORTS).toEqual({
       'model-slot': false,
       'page-run': false,
-      'dev-tunnel': true,
+      'dev-tunnel': false,
       'review-preview': true,
       'private-run': false,
     });

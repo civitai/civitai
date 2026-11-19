@@ -214,12 +214,14 @@ describe('ReviewConsole — the old-SDK notice', () => {
       );
   });
 
-  test('@civitai/blocks-react (which never forwards them) gets it too', async () => {
+  test('@civitai/blocks-react (which forwards none at any version) gets a notice that says so', async () => {
     await mount();
     sdk.ready('0.62.0', 'blocks-react');
     await expect
       .element(page.getByTestId('apps-review-console-sdk-too-old'))
-      .toHaveTextContent('@civitai/blocks-react 0.62.0');
+      .toHaveTextContent(
+        'This app uses @civitai/blocks-react 0.62.0, which does not report other errors'
+      );
   });
 
   test('the cut-off itself, and anything above it, gets none', async () => {

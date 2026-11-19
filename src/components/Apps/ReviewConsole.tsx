@@ -4,11 +4,9 @@ import { createContext, useContext, useSyncExternalStore, type ReactNode } from 
 import {
   formatReviewConsoleLog,
   orderReviewConsoleEntries,
-  REVIEW_CONSOLE_MIN_SDK,
   reviewConsoleCounts,
   reviewConsoleEntryLabel,
-  sdkForwardsReviewErrors,
-  sdkPackageLabel,
+  reviewConsoleSdkNotice,
   type ReviewConsoleEntry,
   type ReviewConsoleState,
   type ReviewConsoleStore,
@@ -179,7 +177,7 @@ export function ReviewConsolePanel() {
   const state = useReviewConsoleState();
   const ordered = orderReviewConsoleEntries(state.entries);
   const { total } = reviewConsoleCounts(state.entries);
-  const tooOld = state.sdk !== null && !sdkForwardsReviewErrors(state.sdk);
+  const sdkNotice = reviewConsoleSdkNotice(state.sdk);
 
   return (
     <Stack gap="sm" data-testid="apps-review-console">
@@ -204,11 +202,9 @@ export function ReviewConsolePanel() {
         </CopyButton>
       </Group>
 
-      {tooOld && (
+      {sdkNotice && (
         <Alert color="yellow" variant="light" data-testid="apps-review-console-sdk-too-old">
-          This app&apos;s SDK ({state.sdk ? sdkPackageLabel(state.sdk) : ''}) is too old to report
-          other errors, so only fatal crashes show here. Apps report every error from{' '}
-          {REVIEW_CONSOLE_MIN_SDK.packageName} {REVIEW_CONSOLE_MIN_SDK.version}.
+          {sdkNotice}
         </Alert>
       )}
 

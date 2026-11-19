@@ -85,6 +85,20 @@ export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
   return sdk.version ? `${name} ${sdk.version}` : name;
 }
 
+/**
+ * The Console's notice when the app's SDK cannot forward non-fatal errors, or `null` when it can
+ * (or before `BLOCK_READY` says which SDK it is). `@civitai/blocks-react` forwards none at any
+ * version, so it is not called "too old"; every other case is.
+ */
+export function reviewConsoleSdkNotice(sdk: ReviewConsoleSdk | null): string | null {
+  if (!sdk || sdkForwardsReviewErrors(sdk)) return null;
+  const label = sdkPackageLabel(sdk);
+  const min = `${REVIEW_CONSOLE_MIN_SDK.packageName} ${REVIEW_CONSOLE_MIN_SDK.version}`;
+  if (sdk.name === 'blocks-react')
+    return `This app uses ${label}, which does not report other errors, so only fatal crashes show here. Apps on ${min} or later report every error.`;
+  return `This app's SDK (${label}) is too old to report other errors, so only fatal crashes show here. Apps report every error from ${min}.`;
+}
+
 /** Display order: every fatal crash first, then the rest, each group oldest first. */
 export function orderReviewConsoleEntries(entries: ReviewConsoleEntry[]): ReviewConsoleEntry[] {
   const byTime = (a: ReviewConsoleEntry, b: ReviewConsoleEntry) => a.at - b.at || a.id - b.id;

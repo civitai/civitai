@@ -289,15 +289,16 @@ export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
  *
  *  - `review-preview` is `true`: the review page keeps them in memory for the moderator's own
  *    session (`ReviewConsole`). Nothing is stored or sent anywhere.
- *  - `dev-tunnel` is `true`: its host already collects them (`useDevPreviewErrorReporter`), and
- *    the SDK already sends them there on the `storageMode` signal; listing it says the same thing.
+ *  - `dev-tunnel` is `false` although its host collects them (`useDevPreviewErrorReporter`): the
+ *    SDK already sends them there on `storageMode: 'local-preview'`, so listing the capability
+ *    too would be a second signal for the same thing.
  *  - every other surface is `false`: nothing there would receive them, so a published app must
  *    not be asked to send them.
  */
 export const BLOCK_HOST_ERROR_REPORTS: Record<BlockHostSurface, boolean> = {
   'model-slot': false,
   'page-run': false,
-  'dev-tunnel': true,
+  'dev-tunnel': false,
   'review-preview': true,
   'private-run': false,
 };
