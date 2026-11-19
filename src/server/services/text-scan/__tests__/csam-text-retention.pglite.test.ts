@@ -54,7 +54,9 @@ const AUTHOR = 7;
 let pg: PGlite;
 
 const { purgeConfirmedCsamText } = await import('~/server/services/text-scan/csam-text-retention');
-const { referCsamHoldToLead } = await import('~/server/services/text-scan/csam-hold-decision');
+const { markCsamHoldReported, referCsamHoldToLead } = await import(
+  '~/server/services/text-scan/csam-hold-decision'
+);
 
 const ago = (days: number) => `(now() AT TIME ZONE 'UTC') - interval '${days} days'`;
 
@@ -601,5 +603,46 @@ describe('referCsamHoldToLead', () => {
       referCsamHoldToLead({ holdId: pending, textHash: 'other', actor: { id: 7 } })
     ).rejects.toThrow(/already decided, changed or missing/);
     expect((await holdRow(pending)).meta).not.toHaveProperty('needsLeadReview');
+  });
+});
+
+describe('markCsamHoldReported', () => {
+  const hold = async (status: string, label = 'csam') =>
+    (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta")
+         VALUES ('ChatMessage', 1, $2, $1, '{"decision":"remove","reportChoice":"imagery"}') RETURNING id`,
+        [status, label]
+      )
+    ).rows[0].id;
+  const meta = async (id: number) =>
+    (
+      await pg.query<{ meta: Record<string, unknown> }>(
+        `SELECT meta FROM "TextScanHold" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].meta;
+
+  it('records who marked a confirmed hold included in a report, and keeps the decision', async () => {
+    const id = await hold('Confirmed');
+    await markCsamHoldReported({ holdId: id, actor: { id: 7 } });
+    expect(await meta(id)).toMatchObject({
+      decision: 'remove',
+      reportChoice: 'imagery',
+      reportIncluded: { by: 7 },
+    });
+  });
+
+  it('refuses a pending hold, a non-csam hold and a second mark', async () => {
+    const pending = await hold('Pending');
+    const other = await hold('Confirmed', 'minor');
+    const marked = await hold('Confirmed');
+    await markCsamHoldReported({ holdId: marked, actor: { id: 7 } });
+    for (const id of [pending, other, marked])
+      await expect(markCsamHoldReported({ holdId: id, actor: { id: 8 } })).rejects.toThrow(
+        /not confirmed, already marked or missing/
+      );
+    expect(await meta(pending)).not.toHaveProperty('reportIncluded');
+    expect(await meta(marked)).toMatchObject({ reportIncluded: { by: 7 } });
   });
 });

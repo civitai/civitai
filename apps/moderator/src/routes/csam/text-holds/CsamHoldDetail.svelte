@@ -454,6 +454,22 @@
     <p class="m-0 flex items-center gap-1.5 text-sm text-dark-2">
       <IconLock class="size-3.5" aria-hidden="true" /> This hold is already decided.
     </p>
+    {#if row.status === 'Confirmed' && row.reportChoice && isReportableChoice(row.reportChoice)}
+      {#if row.reportIncludedAt}
+        <p class="m-0 text-sm text-dark-2">
+          Marked as included in a report {shortAge(row.reportIncludedAt)} ago.
+        </p>
+      {:else if canDecide}
+        <form
+          method="POST"
+          action={actionHref('markReported')}
+          use:enhance={submit(() => 'Marked as included in a report')}
+        >
+          <input type="hidden" name="holdId" value={row.id} />
+          <Button type="submit" variant="outline" size="sm">Included in a report</Button>
+        </form>
+      {/if}
+    {/if}
   {:else if canDecide}
     <form
       bind:this={formEl}

@@ -193,6 +193,25 @@ async function decideBatch(
 
 type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };
 
+/** The main app records that a confirmed hold's item went into a CSAM report or a supplemental. */
+export async function markCsamHoldReported({
+  holdId,
+}: {
+  holdId: number;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/mark-reported',
+    { holdId },
+    'Mark included in a report'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}
+
 /** "Not sure": the main app marks the pending hold for the Moderation Lead; nothing is decided. */
 export async function referCsamHold({
   holdId,

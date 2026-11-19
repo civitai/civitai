@@ -438,6 +438,30 @@ export async function referCsamHoldToLead({
   return { holdId, status: 'Pending' as const };
 }
 
+/**
+ * A moderator confirms that a confirmed csam hold's item went into a CSAM report or a supplemental
+ * one. `meta.reportIncluded` takes the hold off the "Report not filed" queue: for a hold type whose
+ * text a report never captures, nothing else can. Refused unless the hold is a confirmed csam hold.
+ */
+export async function markCsamHoldReported({
+  holdId,
+  actor,
+}: {
+  holdId: number;
+  actor: { id: number };
+}) {
+  const marked = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('reportIncluded', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
+      AND NOT ("meta" ? 'reportIncluded')
+    RETURNING "id"
+  `;
+  if (!marked.length) throw throwConflictError('Hold not confirmed, already marked or missing.');
+  return { holdId, reportIncluded: true as const };
+}
+
 export const CSAM_HOLD_BATCH_MAX = 50;
 /** A strike or ban belongs to the author once, with the hold the moderator is on, never per hold. */
 const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
@@ -445,6 +469,8 @@ const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
 const holdId = z.coerce.number().int().positive().max(2147483647);
 const textHash = z.string().min(1).max(200);
 const note = z.string().trim().max(500).optional();
+
+export const markCsamHoldReportedInput = z.object({ holdId });
 
 export const referCsamHoldInput = z.object({
   holdId,

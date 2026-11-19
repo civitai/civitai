@@ -298,6 +298,7 @@ export type ModEndpoint =
   | 'strike/void'
   | 'text-scan'
   | 'text-scan/csam-hold/refer'
+  | 'text-scan/csam-hold/mark-reported'
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'

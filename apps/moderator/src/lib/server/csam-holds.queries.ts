@@ -48,6 +48,8 @@ export type CsamHoldRow = {
   reportChoice: string | null;
   /** A pending hold a moderator sent to the Moderation Lead ("Not sure"), with when. */
   leadReviewAt: string | null;
+  /** When a moderator confirmed the held item went into a CSAM report or a supplemental. */
+  reportIncludedAt: string | null;
   /** Held again with new text after a moderator ruled on this entity. */
   redetected: boolean;
   priorHoldId: number | null;
@@ -97,8 +99,9 @@ const STATUS_COLUMN = {
   dismissed: 'Dismissed',
 } as const;
 
-// A report covers a hold when it captured that item's text. Holds whose text a report never captures
-// on its own fall back to any later report on the author.
+// A report covers a hold when it captured that item's text, or a moderator marked the item as included
+// in a report or a supplemental (`meta.reportIncluded`). A report on the author about something else
+// never covers it: a hold type a report never captures waits for the mark.
 const ITEM_SOURCE: Record<string, string> = {
   PostText: 'postText',
   CommentV3: 'comment',
@@ -110,7 +113,7 @@ const itemSourceCase = sql.raw(
     .join(' ')} END`
 );
 const reportCoversHold = sql<boolean>`r."createdAt" >= h."decidedAt" AND CASE
-  WHEN ${itemSourceCase} IS NULL THEN r."userId" = h."userId"
+  WHEN ${itemSourceCase} IS NULL THEN false
   ELSE jsonb_typeof(r.details -> 'contextText') = 'array'
     AND r.details -> 'contextText' @> jsonb_build_array(
       jsonb_build_object('source', ${itemSourceCase}, 'id', h."entityId"))
@@ -135,6 +138,7 @@ const csamHolds = ({
   if (status === 'report-not-filed')
     query = query
       .where(sql<boolean>`h.meta ->> 'reportChoice' IN (${sql.join([...CSAM_REPORTABLE_CHOICES])})`)
+      .where(sql<boolean>`NOT (h.meta ? 'reportIncluded')`)
       .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE ${reportCoversHold})`);
   if (author !== undefined) query = query.where('h.userId', '=', author);
   if (search && 'id' in search)
@@ -265,6 +269,7 @@ export async function listCsamHolds({
       decision,
       reportChoice,
       needsLeadReview,
+      reportIncluded,
       kind,
       priorHoldId,
       messageIds,
@@ -286,6 +291,7 @@ export async function listCsamHolds({
       decision?: unknown;
       reportChoice?: unknown;
       needsLeadReview?: { at?: unknown } | null;
+      reportIncluded?: { at?: unknown } | null;
       kind?: unknown;
       priorHoldId?: unknown;
     };
@@ -311,6 +317,7 @@ export async function listCsamHolds({
       decision: typeof decision === 'string' ? decision : null,
       reportChoice: typeof reportChoice === 'string' ? reportChoice : null,
       leadReviewAt: typeof needsLeadReview?.at === 'string' ? needsLeadReview.at : null,
+      reportIncludedAt: typeof reportIncluded?.at === 'string' ? reportIncluded.at : null,
       ...listVersionTextHits(
         row.entityType,
         { comVersionTextHits, comVersionTextHoldHash },

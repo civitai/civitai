@@ -16,6 +16,7 @@ import {
   getCleanRescans,
   getHoldCoverImages,
   listCsamHolds,
+  markCsamHoldReported,
   referCsamHold,
   type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
@@ -138,6 +139,8 @@ const decideSchema = z
     input.decision === 'dismiss' ? { ...input, reportChoice: undefined } : input
   );
 
+const markReportedSchema = z.object({ holdId: int4Id });
+
 const referSchema = z.object({
   holdId: int4Id,
   textHash: z.string().min(1).max(200),
@@ -180,5 +183,12 @@ export const actions: Actions = {
     const result = await referCsamHold(input);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
     return { success: true, key: input.holdId, referred: true };
+  }),
+  markReported: requiresGrant('csam.report.file', async ({ request }) => {
+    const input = parseForm(markReportedSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await markCsamHoldReported(input);
+    if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
+    return { success: true, key: input.holdId, reportIncluded: true };
   }),
 };

@@ -1278,7 +1278,7 @@ describe('the report-not-filed view matches a report to the held item', () => {
       { source: 'postDescription', id: 999 },
       { source: 'comment', id: 998 },
     ]);
-    expect(await listed()).toEqual([21, 22, 23]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 
   it.each([
@@ -1288,7 +1288,7 @@ describe('the report-not-filed view matches a report to the held item', () => {
   ])('drops hold %i once a later report captured its text (%s %i)', async (id, source, itemId) => {
     await report([{ source, id: itemId }]);
     expect(await listed()).not.toContain(id);
-    expect((await listed()).length).toBe(2);
+    expect((await listed()).length).toBe(3);
   });
 
   it('ignores a report filed before the decision', async () => {
@@ -1296,9 +1296,21 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 
-  it('falls back to any later report on the author for an item a report never captures', async () => {
-    expect(await listed()).toContain(24);
+  it('keeps an item a report never captures listed after any later report on its author', async () => {
     await report(null);
-    expect(await listed()).toEqual([21, 22, 23]);
+    await report([{ source: 'postText', id: 210 }]);
+    expect(await listed()).toContain(24);
+  });
+
+  it.each([24, 21])('drops hold %i once a moderator marks it included in a report', async (id) => {
+    await db.query(
+      `UPDATE "TextScanHold" SET meta = meta || '{"reportIncluded":{"by":11,"at":"2026-09-20T00:00:00Z"}}' WHERE id = $1`,
+      [id]
+    );
+    expect(await listed()).not.toContain(id);
+    const held = (await listCsamHolds({ ...OLDEST_PENDING, status: 'removed' })).items.find(
+      (h) => h.id === id
+    );
+    expect(held?.reportIncludedAt).toBe('2026-09-20T00:00:00Z');
   });
 });
