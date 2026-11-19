@@ -74,15 +74,17 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
   invalidateThumbnails: spies.invalidateThumbnails,
 }));
-// Only the blocklist step runs for real: the rest of a first block's effects are a spy.
-vi.mock('../image-moderation-effects', async (importOriginal) => ({
-  ...(await importOriginal<typeof Effects>()),
-  applyBlockSideEffects: spies.applyBlockSideEffects,
-}));
+// A first block's effects run for real, through a spy that counts them; their own dependencies
+// (ClickHouse, notifications, Redis, Axiom) are the fakes above.
+vi.mock('../image-moderation-effects', async (importOriginal) => {
+  const actual = await importOriginal<typeof Effects>();
+  spies.applyBlockSideEffects.mockImplementation(
+    actual.applyBlockSideEffects as (...args: unknown[]) => Promise<undefined>
+  );
+  return { ...actual, applyBlockSideEffects: spies.applyBlockSideEffects };
+});
 
-const { CsamBlocklistWriteError, writeBlockBlocklistEntry } = await import(
-  '../image-moderation-effects'
-);
+const { CsamBlocklistWriteError } = await import('../image-moderation-effects');
 const { blockImage } = await import('../image-moderation.service');
 
 // Past 2^53, so a copy that went through a JS number would land a different value.
@@ -204,17 +206,6 @@ const failure = (imageId: number) =>
 
 describe('a re-block of a removed, held image', () => {
   it('writes a CSAM entry that its first block failed to write, to both stores', async () => {
-    // The first block's effects as the real blocklist step runs them.
-    spies.applyBlockSideEffects.mockImplementationOnce(async (img, actor) => {
-      const { imageId, actorUserId, removedForCsam } = actor as Parameters<
-        typeof Effects.applyBlockSideEffects
-      >[1];
-      await writeBlockBlocklistEntry(img as Effects.BlockedImageRow, {
-        imageId,
-        actorUserId,
-        csam: !!removedForCsam,
-      });
-    });
     ch.fail = true;
     expect(await failure(FLAGGED)).toBeInstanceOf(CsamBlocklistWriteError);
     expect(blocklistEntries()).toEqual([]);
