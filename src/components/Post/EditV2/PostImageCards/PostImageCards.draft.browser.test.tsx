@@ -188,4 +188,23 @@ describe('PostImageCards: an Add text draft becoming its row', () => {
     expect(node.isConnected).toBe(true);
     expect(node.value).toBe('Last one');
   });
+
+  test('an image followed by a text offers one Add text after them, which opens one card', async () => {
+    // The image sits at index 0 and the text after it takes the same index.
+    store.texts = [{ id: 21, index: 0, content: '<p>First</p>' }];
+    addText.mockReset();
+    renderWithProviders(<PostImageCards />);
+
+    const add = page.getByRole('button', { name: 'Add text' });
+    // Before every item, and after the text: a text added between the image and the text would
+    // sort after the text anyway.
+    await expect.poll(() => add.elements().length).toBe(2);
+    await add.last().click();
+
+    const boxes = page.getByLabelText('Text', { exact: true });
+    await expect.poll(() => boxes.elements().length).toBe(2);
+    const [existing, draft] = boxes.elements() as HTMLTextAreaElement[];
+    expect(existing.value).toBe('<p>First</p>');
+    expect(draft.value).toBe('');
+  });
 });
