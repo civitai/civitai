@@ -75,6 +75,7 @@ const MIGRATIONS = [
   '20261224150100_service_deal_file_attachment',
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -448,6 +449,7 @@ describe('holds', () => {
     for (const userId of [BUYER, SELLER])
       expect(
         await files.resolveServiceDealFileDownload({
+          servableLevels: 31,
           fileId: held.finalId,
           userId,
           isModerator: false,
@@ -471,6 +473,7 @@ describe('holds', () => {
       [attachmentId, true, true],
     ]);
     const download = await files.resolveServiceDealFileDownload({
+      servableLevels: 31,
       fileId: finalId,
       userId: OTHER,
       isModerator: true,

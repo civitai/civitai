@@ -7,7 +7,7 @@
       "kind": "trpc",
       "service": "feed-go",
       "metricEndpoint": "as-posts",
-      "status": "shadow",
+      "status": "ramp",
       "routes": ["/api/trpc/image.getImagesAsPostsInfinite"],
       "nodeEntry": {
         "file": "src/server/routers/image.router.ts",

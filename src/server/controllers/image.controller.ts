@@ -1299,7 +1299,7 @@ export const getEntitiesCoverImageHandler = async ({
     const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),

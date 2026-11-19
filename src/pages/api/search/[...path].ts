@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { restModeratorViewer } from '~/server/auth/rest-viewer';
 import type * as z from 'zod';
 import {
   siteFacetSearchSchema,
@@ -80,7 +81,7 @@ export default MixedAuthEndpoint(
     const features = getFeatureFlagsLazy({ user, req });
     const viewer: SiteSearchViewer = {
       userId: user?.id,
-      isModerator: user?.isModerator,
+      isModerator: restModeratorViewer(req, user)?.isModerator,
       browsingLevelCap: requestDomainBrowsingLevelCap({
         user,
         features,

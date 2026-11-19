@@ -3,6 +3,9 @@ import {
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
+  SERVICE_FINAL_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_FINAL_VIDEO_MAX_SECONDS,
   SERVICE_PREVIEW_ANIMATED_MAX_BYTES,
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
@@ -18,6 +21,28 @@ import type {
   ServiceDealStatus,
   ServicePreviewKind,
 } from '~/shared/utils/prisma/enums';
+
+const VIDEO_LIKE_EXTENSIONS = [
+  'mov',
+  'mkv',
+  'avi',
+  'm4v',
+  'wmv',
+  'mpg',
+  'mpeg',
+  'flv',
+  '3gp',
+  'ts',
+  'mts',
+  'm2ts',
+  'mxf',
+  'f4v',
+  'ogv',
+];
+const isVideoLike = (file: { type?: string }, extension: string) =>
+  !!file.type?.startsWith('video/') ||
+  VIDEO_LIKE_EXTENSIONS.includes(extension) ||
+  (SERVICE_FINAL_VIDEO_EXTENSIONS as readonly string[]).includes(extension);
 
 /** The fields of `creatorServiceDealFile.list` these rules read. */
 export type DealFileFacts = {
@@ -70,10 +95,18 @@ export function uploadRefusal(
   }
   const verb = kind === 'Attachment' ? 'attached' : 'delivered';
   const extension = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
+  const finalVideo = (SERVICE_FINAL_VIDEO_EXTENSIONS as readonly string[]).includes(extension);
+  // A video is never sent to a .zip: one inside an archive is refused.
+  if (kind === 'Attachment' && (finalVideo || isVideoLike(file, extension)))
+    return "Videos can't be attached.";
+  if (!finalVideo && isVideoLike(file, extension))
+    return `Upload a video as .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds.`;
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
     return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
   if (file.size > SERVICE_FINAL_MAX_BYTES)
     return `That file is too large to be ${verb} (max 2 GB).`;
+  if (finalVideo && file.size > SERVICE_FINAL_VIDEO_MAX_BYTES)
+    return `A video cannot be more than ${megabytes(SERVICE_FINAL_VIDEO_MAX_BYTES)}.`;
   return null;
 }
 

@@ -403,12 +403,39 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
   return ids;
 }
 
-/** Earlier captures are kept: a re-filing never replaces text already captured. */
-export function foldContextText(prior: unknown, added: CsamContextText[] | undefined) {
-  const kept = Array.isArray(prior) ? (prior as CsamContextText[]) : [];
-  const key = (c: CsamContextText) => `${c.source}:${c.id}`;
-  const seen = new Set(kept.map(key));
-  const merged = kept.concat((added ?? []).filter((c) => !seen.has(key(c))));
+/**
+ * Merges a filing's captures into a report's. Every earlier capture is kept as it was. A capture is
+ * added as its own entry unless its text equals the item's latest capture, so an item edited, or
+ * edited and changed back, keeps each text in order; `onIdentical` hears once each capture whose text
+ * equals the latest one the report already held.
+ */
+export function foldContextText(
+  prior: unknown,
+  added: CsamContextText[] | undefined,
+  onIdentical?: (capture: CsamContextText) => void
+) {
+  const merged = Array.isArray(prior) ? [...(prior as CsamContextText[])] : [];
+  const item = (c: CsamContextText) => `${c.source}:${c.id}`;
+  const latest = new Map<string, { capture: CsamContextText; stored: boolean }>();
+  const consider = (c: CsamContextText, stored: boolean) => {
+    const current = latest.get(item(c));
+    if (!current || c.capturedAt >= current.capture.capturedAt)
+      latest.set(item(c), { capture: c, stored });
+  };
+  for (const c of merged) consider(c, true);
+  const heard = new Set<string>();
+  for (const c of added ?? []) {
+    const current = latest.get(item(c));
+    if (current && current.capture.text === c.text) {
+      if (current.stored && !heard.has(item(c))) {
+        heard.add(item(c));
+        onIdentical?.(c);
+      }
+      continue;
+    }
+    merged.push(c);
+    consider(c, false);
+  }
   return merged.length ? merged : undefined;
 }
 

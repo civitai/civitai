@@ -54,6 +54,26 @@ describe('getEntitiesCoverImageHandler', () => {
     });
     expect(covers).toHaveBeenCalledWith(expect.objectContaining({ viewer: user }));
   });
+
+  const fullKey = { ...scopedKey, tokenScope: TokenScope.Full };
+  const oauthToken = {
+    apiKeyId: 9,
+    subject: { type: 'oauth', id: 'app' },
+    tokenScope: TokenScope.Full,
+  };
+  it.each([
+    ['a moderator on a session', moderator, {}, moderator],
+    ['a moderator on a full-access key', moderator, fullKey, moderator],
+    ['a moderator on a scoped key', moderator, scopedKey, undefined],
+    ['a moderator on an app token', moderator, oauthToken, undefined],
+    ['an owner on a scoped key', { id: 6, isModerator: false }, scopedKey, undefined],
+  ])('resolves covers for %s as the right viewer', async (_label, user, credential, viewer) => {
+    await getEntitiesCoverImageHandler({
+      input: { entities: [{ entityType: 'Image', entityId: 1 }] },
+      ctx: { user, ...credential } as never,
+    });
+    expect(covers).toHaveBeenLastCalledWith(expect.objectContaining({ viewer }));
+  });
 });
 
 describe('getEntitiesCoverImageHandler on a capped site', () => {

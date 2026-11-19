@@ -1,4 +1,9 @@
-import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import {
+  createRevocationCheck,
+  createSlotTally,
+  createSpokeGuard,
+  type SessionRegistryRedis,
+} from '@civitai/auth';
 import { logToAxiom, safeError } from './axiom';
 import { getSysRedis } from './redis';
 import { isEnvSwitchOn } from '@civitai/shared/env-switch';
@@ -22,4 +27,10 @@ export const isRevoked = createRevocationCheck({
 
 // Training is a normal user feature, so the gate allows ANY authenticated Civitai user — the predicate
 // only asserts a session resolved.
-export const guard = createSpokeGuard({ require: (user) => !!user, isRevoked });
+export const guard = createSpokeGuard({
+  require: (user) => !!user,
+  isRevoked,
+  onSessionSlot: createSlotTally((counts) => {
+    void logToAxiom({ name: 'session-cookie-slot', type: 'info', payload: counts });
+  }),
+});

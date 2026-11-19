@@ -2842,6 +2842,12 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
+  // A sfwOnly-only change leaves image rows alone: they carry no sfwOnly. A minor model re-syncs
+  // its images on every flag write, so an image added since the last one is flagged too.
+  const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
+  // An image's own minor flag (set by a scan or a moderator) is written only by a change to the
+  // model's minor flag or by a minor model: a poi-only change on a non-minor model leaves it.
+  const syncMinor = after.minor !== before.minor || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2852,14 +2858,18 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
-      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+      const updatedImages = !syncImageFlags
+        ? []
+        : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET minor = ${after.minor},
+          SET minor = CASE WHEN ${syncMinor} THEN ${after.minor} ELSE i.minor END,
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
+          AND (${
+            syncMinor ? Prisma.sql`i.minor IS DISTINCT FROM ${after.minor} OR` : Prisma.empty
+          } i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
 
@@ -7771,6 +7781,8 @@ export const privateModelFromTraining = async ({
   // Set when the flow is refused before it wrote anything (a take-down first, or a gate on the locked
   // row), so there is nothing to roll back.
   let takenDown = false;
+  // The flags as the locked row had them, for the side effects of the sfwOnly this flow forces on.
+  let flagsBefore: Parameters<typeof applyModelFlagSideEffects>[0]['before'] | undefined;
 
   try {
     // One transaction: the model row stays locked until its versions are written, so a model
@@ -7794,6 +7806,13 @@ export const privateModelFromTraining = async ({
           takenDown = true;
           throw error;
         }
+        flagsBefore = {
+          poi: locked.poi,
+          minor: locked.minor,
+          sfwOnly: locked.sfwOnly,
+          nsfw: locked.nsfw,
+          gallerySettings: locked.gallerySettings,
+        };
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         const intentMeta = user.isModerator
@@ -7926,6 +7945,17 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
+    // Logged, not thrown: the model is already Private, and a throw here would send it down the revert below.
+    if (flagsBefore)
+      await applyModelFlagSideEffects({ before: flagsBefore, after: result }).catch((error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'flag side effects failed',
+          modelId: id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
     return withoutModeratorOnlyMeta(result);

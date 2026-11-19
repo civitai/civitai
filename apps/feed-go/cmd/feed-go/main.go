@@ -265,6 +265,7 @@ func run(log *slog.Logger) error {
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{
@@ -273,6 +274,7 @@ func run(log *slog.Logger) error {
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   addons,
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,

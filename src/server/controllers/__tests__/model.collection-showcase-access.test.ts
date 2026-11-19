@@ -85,7 +85,7 @@ describe('the showcase collection shown on a model page', () => {
   it('is nothing to a viewer who cannot see a private collection', async () => {
     permissions.mockResolvedValue(noAccess);
     await expect(show({ id: 77 })).resolves.toBeNull();
-    expect(permissions).toHaveBeenCalledWith({ id: SHOWCASE, userId: 77, isModerator: undefined });
+    expect(permissions).toHaveBeenCalledWith({ id: SHOWCASE, userId: 77, isModerator: false });
     expect(getCollectionById).not.toHaveBeenCalled();
   });
 
@@ -97,6 +97,40 @@ describe('the showcase collection shown on a model page', () => {
   it('is shown to a signed-out viewer when the collection is public (control)', async () => {
     permissions.mockResolvedValue({ ...noAccess, read: true });
     await expect(show()).resolves.toMatchObject({ id: SHOWCASE, name: 'Showcase', itemCount: 3 });
+  });
+
+  const moderator = { id: 88, isModerator: true };
+  const key = (tokenScope: bigint) => ({
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope,
+  });
+  it.each([
+    ['a session', {}, true],
+    ['a full-access key', key(33554431n), true],
+    ['a scoped key', key(1n), false],
+    [
+      'an app token',
+      {
+        apiKeyId: 9,
+        apiKeyType: 'Access',
+        subject: { type: 'oauth', id: 'c' },
+        tokenScope: 33554431n,
+      },
+      false,
+    ],
+  ] as const)('asks as a moderator only on %s', async (_label, credential, asModerator) => {
+    permissions.mockResolvedValue(noAccess);
+    await getModelCollectionShowcaseHandler({
+      input: { id: MODEL },
+      ctx: { user: moderator, ...credential } as never,
+    });
+    expect(permissions).toHaveBeenCalledWith({
+      id: SHOWCASE,
+      userId: 88,
+      isModerator: asModerator,
+    });
   });
 });
 

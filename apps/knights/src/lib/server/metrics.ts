@@ -22,6 +22,8 @@ const BUZZ_OUTCOMES = ['paid', 'failed', 'retry'] as const;
 const ESCALATION_REASONS = [
   'next-stage',
   'expired',
+  'unservable',
+  'publishes-after-expiry',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
@@ -80,6 +82,11 @@ const bounded = (value: string, allowed: readonly string[]) =>
 const harvestSkipped = counter(
   'knights_harvest_skipped_rulings_total',
   'Moderator rulings the harvest passed over because they were older than its window when it reached them.'
+);
+const sessionCookieSlot = counter(
+  'knights_session_cookie_slot_total',
+  'Authenticated requests by the session cookie slot they were read from (host | shared).',
+  { slot: ['host', 'shared'] }
 );
 const votes = counter('knights_votes_total', 'Votes written to the ledger, by kind.', {
   kind: VOTE_KINDS,
@@ -162,6 +169,7 @@ function safely(record: () => void) {
 }
 
 export const metrics = {
+  sessionCookieSlot: (slot: 'host' | 'shared') => safely(() => sessionCookieSlot.inc({ slot })),
   vote: (kind: VoteKind) => safely(() => votes.inc({ kind })),
   harvestSkipped: (count: number) =>
     safely(() => {

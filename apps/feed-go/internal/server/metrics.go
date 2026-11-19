@@ -64,6 +64,8 @@ type Metrics struct {
 	JWKSRefresh *prometheus.CounterVec
 	// JWKSStale counts the times the key set was dropped for being older than its maximum staleness.
 	JWKSStale prometheus.Counter
+	// SessionCookieSlot counts resolved sessions by the cookie slot they were read from (auth.CookieSlot).
+	SessionCookieSlot *prometheus.CounterVec
 	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app failed
 	// before a response started, by reason (upstream | canceled). A failure mid-body aborts the
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint.
@@ -222,6 +224,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
 		}),
+		SessionCookieSlot: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_session_cookie_slot_total",
+			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
+		}, []string{"slot"}),
 		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_proxy_errors_total",
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
@@ -277,7 +283,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight,
+		m.SessionCookieSlot)
+	for _, s := range []string{"host", "shared"} {
+		m.SessionCookieSlot.WithLabelValues(s)
+	}
 	return m
 }
 

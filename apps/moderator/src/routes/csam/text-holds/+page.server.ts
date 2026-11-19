@@ -16,8 +16,12 @@ import {
   getCleanRescans,
   getHoldCoverImages,
   listCsamHolds,
+  markCsamHoldReported,
+  setCsamHoldReportChoice,
+  referCsamHold,
   type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
+import { CSAM_REPORT_CHOICES } from '$lib/csam-holds/report-choice';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
 import type { Actions, PageServerLoad } from './$types';
 import { ALSO_MAX } from './hold-author';
@@ -110,17 +114,46 @@ const alsoSchema = z
   .array(z.object({ holdId: int4Id, textHash: z.string().min(1).max(200) }))
   .max(ALSO_MAX);
 
-const decideSchema = z.object({
+const noteField = z
+  .string()
+  .trim()
+  .max(NOTE_MAX_LENGTH, `The note is longer than ${NOTE_MAX_LENGTH} characters.`)
+  .optional()
+  .transform((v) => v || undefined);
+
+const decideSchema = z
+  .object({
+    holdId: int4Id,
+    textHash: z.string().min(1).max(200),
+    decision: z.enum(CSAM_HOLD_DECISIONS),
+    reportChoice: z.enum(CSAM_REPORT_CHOICES).optional(),
+    also: jsonField(alsoSchema).optional(),
+    note: noteField,
+  })
+  .refine((input) => input.decision === 'dismiss' || input.reportChoice !== undefined, {
+    message: 'Pick a report category, or None of these.',
+  })
+  .refine((input) => input.decision !== 'remove_ban_report' || input.reportChoice !== 'none', {
+    message: 'Filing a report needs a reportable category.',
+  })
+  .transform((input) =>
+    input.decision === 'dismiss' ? { ...input, reportChoice: undefined } : input
+  );
+
+const markReportedSchema = z.object({
+  holdId: int4Id,
+  included: z.enum(['true', 'false']).transform((v) => v === 'true'),
+});
+
+const setReportChoiceSchema = z.object({
+  holdId: int4Id,
+  reportChoice: z.enum(CSAM_REPORT_CHOICES),
+});
+
+const referSchema = z.object({
   holdId: int4Id,
   textHash: z.string().min(1).max(200),
-  decision: z.enum(CSAM_HOLD_DECISIONS),
-  also: jsonField(alsoSchema).optional(),
-  note: z
-    .string()
-    .trim()
-    .max(NOTE_MAX_LENGTH, `The note is longer than ${NOTE_MAX_LENGTH} characters.`)
-    .optional()
-    .transform((v) => v || undefined),
+  note: noteField,
 });
 
 export const actions: Actions = {
@@ -151,5 +184,26 @@ export const actions: Actions = {
         })
       : undefined;
     return { success: true, key: input.holdId, ...(others ? { others } : {}) };
+  }),
+  refer: requiresGrant('csam.report.file', async ({ request }) => {
+    const input = parseForm(referSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await referCsamHold(input);
+    if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
+    return { success: true, key: input.holdId, referred: true };
+  }),
+  setReportChoice: requiresGrant('csam.report.file', async ({ request }) => {
+    const input = parseForm(setReportChoiceSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await setCsamHoldReportChoice(input);
+    if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
+    return { success: true, key: input.holdId, reportChoice: input.reportChoice };
+  }),
+  markReported: requiresGrant('csam.report.file', async ({ request }) => {
+    const input = parseForm(markReportedSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await markCsamHoldReported(input);
+    if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
+    return { success: true, key: input.holdId, reportIncluded: input.included };
   }),
 };
