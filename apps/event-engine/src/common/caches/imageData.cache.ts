@@ -218,8 +218,3 @@ export const userCosmetics = createCache<UserCosmeticData>({
   },
   ttl: 60 * 60 * 24, // 24 hours
 });
-
-/**
- * Profile picture data
- */
-
