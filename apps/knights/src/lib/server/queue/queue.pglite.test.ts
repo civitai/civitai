@@ -1677,6 +1677,19 @@ describe('closeModeratorRuledItems', () => {
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
   });
 
+  it('leaves a Blocked consensus waiting on the Inquisitors even when the image carries a moderator lock', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 2 });
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
+  });
+
   it('leaves an Inquisitor item alone while a moderator is ruling on it', async () => {
     await fiveKnights();
     await image(10, 16);
