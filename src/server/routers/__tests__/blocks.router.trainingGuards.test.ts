@@ -27,7 +27,7 @@ const h = vi.hoisted(() => ({
   catalogRate: vi.fn(async () => ({ allowed: true })),
   buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
   trainingStatus: vi.fn(),
-  userSettings: vi.fn(async (): Promise<Record<string, unknown>> => ({})),
+  userSettings: vi.fn(async (_userId?: number): Promise<Record<string, unknown>> => ({})),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({

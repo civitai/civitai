@@ -29,7 +29,7 @@ import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics'
  */
 
 const h = vi.hoisted(() => ({
-  userSettings: vi.fn(async (): Promise<Record<string, unknown>> => ({})),
+  userSettings: vi.fn(async (_userId?: number): Promise<Record<string, unknown>> => ({})),
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   trainingFlag: vi.fn(async () => true),
@@ -1485,10 +1485,10 @@ describe('training SUBMIT — the base model licence', () => {
     return snapshot.trainingQuote.quoteId;
   }
   beforeEach(() => {
-    h.features.mockImplementation(() => ({
-      trainingStepsPricing: true,
-      minimaxh3ImageTraining: true,
-    }));
+    h.features.mockImplementation(
+      () =>
+        ({ aiToolkitSdxl: true, trainingStepsPricing: true, minimaxh3ImageTraining: true } as never)
+    );
   });
 
   it('refuses a MiniMax H3 Image run whose licence is not accepted, reserving nothing', async () => {
