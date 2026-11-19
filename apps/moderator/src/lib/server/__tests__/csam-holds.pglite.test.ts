@@ -66,6 +66,7 @@ let db: PGlite;
 type Seed = {
   id: number;
   entityType?: string;
+  entityId?: number;
   label?: string;
   status?: string;
   userId?: number | null;
@@ -87,7 +88,7 @@ const seed = (rows: Seed[]) =>
         [
           r.id,
           r.entityType ?? 'Post',
-          r.id * 10,
+          r.entityId ?? r.id * 10,
           r.label ?? 'csam',
           `h-${r.id}`,
           r.status ?? 'Pending',
@@ -1321,11 +1322,14 @@ describe('the report-not-filed view matches a report to the held item', () => {
       `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, $2)`,
       [contextText === null ? null : JSON.stringify({ contextText }), createdAt]
     );
+  // Decided 2026-09-13.
+  const after = '2026-09-14T00:00:00.000Z';
+  const before = '2026-09-01T00:00:00.000Z';
 
   it('keeps listing an item when a later report on its author captured something else', async () => {
     await report([
-      { source: 'postDescription', id: 999 },
-      { source: 'comment', id: 998 },
+      { source: 'postDescription', id: 999, capturedAt: after },
+      { source: 'comment', id: 998, capturedAt: after },
     ]);
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
@@ -1334,20 +1338,43 @@ describe('the report-not-filed view matches a report to the held item', () => {
     [21, 'postText', 210],
     [22, 'comment', 220],
     [23, 'postDescription', 230],
-  ])('drops hold %i once a later report captured its text (%s %i)', async (id, source, itemId) => {
-    await report([{ source, id: itemId }]);
+  ])('drops hold %i once a report captured its text (%s %i)', async (id, source, itemId) => {
+    await report([{ source, id: itemId, capturedAt: after }]);
     expect(await listed()).not.toContain(id);
     expect((await listed()).length).toBe(3);
   });
 
   // A filing folds into the author's unsent report, which can predate the decision.
-  it('drops an item a report from before the decision captured', async () => {
-    await report([{ source: 'postText', id: 210 }], '2026-09-01');
+  it('drops an item captured after the decision into a report created before it', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: after }], '2026-09-01');
     expect(await listed()).toEqual([22, 23, 24]);
   });
 
-  it('keeps an item a report from before the decision never captured', async () => {
-    await report([{ source: 'comment', id: 998 }], '2026-09-01');
+  it('keeps an item whose only capture predates the decision, in a report of any date', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: before }], '2026-09-01');
+    await report([{ source: 'postText', id: 210, capturedAt: before }]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
+  it('keeps an item edited and held again when the report captured it for the earlier hold', async () => {
+    await seed([
+      {
+        id: 25,
+        entityType: 'PostText',
+        entityId: 210,
+        createdAt: '2026-09-15',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-16',
+        meta: { decision: 'remove', reportChoice: 'imagery', kind: 'redetected', priorHoldId: 21 },
+      },
+    ]);
+    await report([{ source: 'postText', id: 210, capturedAt: after }]);
+    expect(await listed()).toEqual([22, 23, 24, 25]);
+  });
+
+  it('keeps an item whose captured entry has no capture time', async () => {
+    await report([{ source: 'postText', id: 210 }]);
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 

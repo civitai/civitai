@@ -113,12 +113,20 @@ const itemSourceCase = sql.raw(
     .map(([type, source]) => `WHEN '${type}' THEN '${source}'`)
     .join(' ')} END`
 );
-// At any createdAt: a filing folds into the author's older unsent report, so the row can predate the decision.
+// Judged by the entry's own capture time, not the report's: a filing folds into the author's older
+// unsent report, and a fold keeps the earlier entry for an item, so an entry captured before this
+// decision holds text from before it (an item edited and held again keeps its id).
 const reportCoversHold = sql<boolean>`CASE
   WHEN ${itemSourceCase} IS NULL THEN false
   ELSE jsonb_typeof(r.details -> 'contextText') = 'array'
     AND r.details -> 'contextText' @> jsonb_build_array(
       jsonb_build_object('source', ${itemSourceCase}, 'id', h."entityId"))
+    AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(r.details -> 'contextText') c
+      WHERE c ->> 'source' = ${itemSourceCase} AND c -> 'id' = to_jsonb(h."entityId")
+        AND CASE WHEN c ->> 'capturedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+          THEN (c ->> 'capturedAt')::timestamptz >= h."decidedAt" AT TIME ZONE 'UTC'
+          ELSE false END)
   END`;
 
 const csamHolds = ({
