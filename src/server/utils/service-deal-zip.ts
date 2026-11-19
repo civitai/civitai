@@ -179,20 +179,24 @@ const OGG_AUDIO = ['\x01vorbis', 'OpusHead', '\x7fFLAC', 'Speex   '];
 function isOggAudio(head: Buffer) {
   let offset = 0;
   let streams = 0;
-  while (head.subarray(offset, offset + 4).toString('latin1') === 'OggS') {
-    if (offset + 27 > head.length) return false;
-    if (!(head[offset + 5] & 0x02)) break;
+  // Every page in the bytes read, not only the first: a stream can be opened after another's headers.
+  while (offset + 27 <= head.length) {
+    // Bytes between pages are skipped by a player, which resyncs on the next page.
+    if (head.subarray(offset, offset + 4).toString('latin1') !== 'OggS') return false;
     const segments = head[offset + 26];
     const data = offset + 27 + segments;
-    if (data > head.length) return false;
+    if (data > head.length) break;
     let length = 0;
     for (let i = 0; i < segments; i++) length += head[offset + 27 + i];
-    const packet = head.subarray(data, data + 8).toString('latin1');
-    if (!OGG_AUDIO.some((magic) => packet.startsWith(magic))) return false;
-    streams++;
+    if (head[offset + 5] & 0x02) {
+      if (data + 8 > head.length) return false;
+      const packet = head.subarray(data, data + 8).toString('latin1');
+      if (!OGG_AUDIO.some((magic) => packet.startsWith(magic))) return false;
+      streams++;
+    }
     offset = data + length;
   }
-  return streams > 0 && offset < head.length;
+  return streams > 0;
 }
 
 /** What the first bytes of an entry are, whatever its name says. */
@@ -281,6 +285,27 @@ const openArchive = (source: ZipSource) =>
           : resolve(zipfile)
     );
   });
+
+/** The paths in an archive's directory, nothing read but the directory. */
+export async function listZipPaths(source: ZipSource, max: number) {
+  const zipfile = await openArchive(source);
+  try {
+    const paths: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      zipfile.on('error', (error) => reject(yauzlRefusal(error)));
+      zipfile.on('end', () => resolve());
+      zipfile.on('entry', (entry: yauzl.Entry) => {
+        if (paths.push(entry.fileName) > max)
+          return reject(new ZipRejectedError('The archive has too many files.'));
+        zipfile.readEntry();
+      });
+      zipfile.readEntry();
+    });
+    return paths;
+  } finally {
+    zipfile.close();
+  }
+}
 
 /**
  * Opens the archive and reads its directory, refusing it on anything the headers already show.

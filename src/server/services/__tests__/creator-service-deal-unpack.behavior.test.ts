@@ -712,8 +712,13 @@ describe('judging a file by what it is', () => {
     expect(await unpack.unpackFinals()).toBe(1);
     expect(await entries(doc)).toEqual([]);
     expect((await fileRow(doc)).unpackedAt).not.toBeNull();
-    // A checkpoint is often a zip: a model file is refused only for a picture or a video.
-    const model = await final(dealId, 'm.pt', PK);
+    // A checkpoint saved by torch is a zip in torch's layout; it is taken without being unpacked.
+    const torch = buildZip([
+      { name: 'weights/data.pkl', data: Buffer.from([0x80, 0x02, 0x7d, 0x2e]) },
+      { name: 'weights/data/0', data: Buffer.alloc(64) },
+      { name: 'weights/version', data: Buffer.from('3\n') },
+    ]);
+    const model = await final(dealId, 'm.pt', torch);
     expect(await unpack.unpackFinals()).toBe(1);
     expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending', failReason: null });
     expect(await entries(model)).toEqual([]);
@@ -763,9 +768,14 @@ describe('video by any other name', () => {
   };
 
   it.each(
-    ['weights.safetensors', 'weights.ckpt', 'weights.pt', 'weights.gguf'].flatMap((name) =>
-      VIDEOS.map(([kind, content]) => [name, kind, content] as const)
-    )
+    [
+      'weights.safetensors',
+      'weights.ckpt',
+      'weights.pt',
+      'weights.pth',
+      'weights.gguf',
+      'weights.onnx',
+    ].flatMap((name) => VIDEOS.map(([kind, content]) => [name, kind, content] as const))
   )('refuses %s holding %s', async (name, _kind, content) => {
     expect(await refused(name, content)).toMatchObject({
       scanStatus: 'Failed',
@@ -780,8 +790,63 @@ describe('video by any other name', () => {
     expect((await refused(name, content)).failReason).toMatch(/Video/);
   });
 
+  const ogg = (...pages: Buffer[]) => Buffer.concat(pages);
+  it.each([
+    ['weights.pt', buildZip([{ name: 'clip.mp4', data: MP4_BYTES() }]), /\.pt model/],
+    [
+      'weights.pt',
+      Buffer.concat([Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]), Buffer.alloc(600)]),
+      /\.pt model/,
+    ],
+    [
+      'weights.safetensors',
+      Buffer.concat([
+        Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11]),
+        Buffer.alloc(600),
+      ]),
+      /\.safetensors model/,
+    ],
+    [
+      'weights.gguf',
+      Buffer.concat([Buffer.from([0, 0, 0, 1, 0x67]), Buffer.alloc(600)]),
+      /\.gguf model/,
+    ],
+    [
+      'weights.onnx',
+      Buffer.concat([
+        Buffer.from([0, 0, 0, 0x20]),
+        Buffer.from('moov', 'latin1'),
+        Buffer.alloc(600),
+      ]),
+      /\.onnx model/,
+    ],
+    [
+      'song.mp3',
+      Buffer.concat([Buffer.from([0x30, 0x26, 0xb2, 0x75]), Buffer.alloc(600)]),
+      /\.mp3 audio/,
+    ],
+    ['song.ogg', ogg(vorbis, comments, theora), /Video/],
+    ['song.ogg', ogg(vorbis, Buffer.from([0]), theora), /Video/],
+  ])('refuses %s that is not that format', async (name, content, reason) => {
+    expect((await refused(name, content)).failReason).toMatch(reason);
+  });
+
+  it('counts each refusal by the type it claimed, and nothing else', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await refused('weights.gguf', Buffer.alloc(600, 1));
+    const calls = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { message?: string }).message === 'final is not its claimed format'
+    );
+    expect(calls).toEqual([
+      [expect.objectContaining({ payload: { kind: 'model', extension: 'gguf' } })],
+    ]);
+    expect(JSON.stringify(calls)).not.toMatch(/fileId|dealId|weights/);
+  });
+
   it('refuses a picture named as a model file', async () => {
-    expect((await refused('weights.safetensors', PNG_BYTES())).failReason).toMatch(/image/);
+    expect((await refused('weights.safetensors', PNG_BYTES())).failReason).toBe(
+      "This file doesn't look like a .safetensors model file."
+    );
   });
 
   const safetensors = () => {
@@ -792,9 +857,43 @@ describe('video by any other name', () => {
   };
   const gguf = () =>
     Buffer.concat([Buffer.from('GGUF', 'latin1'), Buffer.from([3, 0, 0, 0]), Buffer.alloc(600)]);
+  /** A safetensors file whose 64 KiB header length starts like an icon (00 00 01 00). */
+  const iconLike = () => {
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64LE(BigInt(65536));
+    return Buffer.concat([size, Buffer.from('{"w":{}}', 'latin1'), Buffer.alloc(600)]);
+  };
+  /** Sync bytes at the first two packet starts only: not a transport stream. */
+  const twoSyncs = () => {
+    const bytes = Buffer.alloc(600, 0x11);
+    bytes[0] = 0x47;
+    bytes[188] = 0x47;
+    return bytes;
+  };
   it.each([
+    ['weights.safetensors', iconLike()],
+    ['notes.txt', twoSyncs()],
     ['weights.safetensors', safetensors()],
     ['weights.gguf', gguf()],
+    ['weights.pt', Buffer.concat([Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00]), Buffer.alloc(600)])],
+    [
+      'weights.onnx',
+      Buffer.concat([
+        Buffer.from([0x08, 0x07, 0x12, 0x07]),
+        Buffer.from('pytorch'),
+        Buffer.alloc(600),
+      ]),
+    ],
+    [
+      'song.mp3',
+      Buffer.concat([
+        Buffer.from('ID3', 'latin1'),
+        Buffer.from([4, 0, 0, 0, 0, 0, 0]),
+        Buffer.alloc(600),
+      ]),
+    ],
+    ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
+    ['song.flac', Buffer.concat([Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
     ['song.ogg', Buffer.concat([vorbis, comments])],
   ])('takes %s as it is', async (name, content) => {
     expect(await refused(name, content)).toMatchObject({ scanStatus: 'Pending', failReason: null });
@@ -1794,7 +1893,10 @@ describe('the finals malware scan', () => {
   });
 
   it('scans every Final, a model file included', async () => {
-    await delivered('weights.safetensors', Buffer.from('not really weights'));
+    await delivered(
+      'weights.safetensors',
+      Buffer.concat([Buffer.from([8, 0, 0, 0, 0, 0, 0, 0]), Buffer.from('{"w":{}}', 'latin1')])
+    );
     expect(orchestrator.submitWorkflow).toHaveBeenCalledTimes(1);
   });
 
