@@ -52,8 +52,8 @@ export function withoutHeldPicture<T>(picture: T | null, needsReview: string | n
 /**
  * A user's `User.image` as a fallback avatar: null when it names `picture` (the user's profile
  * picture, read with its `needsReview`) while that picture is under an owner-hidden review hold.
- * The TS form of `fallbackUserImageColumn` for holds only: its readers do not select the block
- * markers, so a blocked picture's value relies on the clear.
+ * The TS form of `fallbackUserImageColumn` for holds only: it does not handle block markers, so a
+ * blocked picture's value relies on the clear.
  */
 export function fallbackUserImage(
   image: string | null | undefined,
