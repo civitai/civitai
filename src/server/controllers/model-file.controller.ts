@@ -5,8 +5,11 @@ import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
-import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
-import { canViewOwnerOnly, canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import {
+  canViewModelVersionRow,
+  modelVersionViewSelect,
+} from '~/server/common/model-version-visibility';
+import { canViewOwnerOnly } from '~/server/utils/poi-model-visibility';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
@@ -199,30 +202,17 @@ export const getFilesByVersionIdHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // The cached list is every file of the version, for every viewer, so the viewer's rules are
-    // applied here, after the read: a version they may not see reads as one with no files.
+    // The cached list is every file of the version, for every viewer. A version the viewer may not
+    // see returns undefined, as a missing one does, before the cache read; only the per-file
+    // filter below runs on the cached list.
     const version = await dbRead.modelVersion.findUnique({
       where: { id: input.id },
-      select: {
-        status: true,
-        publishedAt: true,
-        model: { select: { userId: true, status: true, poi: true } },
-      },
+      select: modelVersionViewSelect,
     });
     if (!version) return undefined;
     const viewer = ownerOrModeratorViewer(ctx);
     const ownerId = version.model.userId;
-    if (
-      !canViewPoiModel(version.model.poi, ownerId, viewer) ||
-      !canViewModelVersionStatus({
-        viewer,
-        ownerId,
-        modelStatus: version.model.status,
-        versionStatus: version.status,
-        publishedAt: version.publishedAt,
-      })
-    )
-      return undefined;
+    if (!canViewModelVersionRow(version, viewer)) return undefined;
 
     const data = (await getFilesForModelVersionCache([input.id]))[input.id];
     if (!data || canViewOwnerOnly(ownerId, viewer)) return data;

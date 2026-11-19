@@ -40,6 +40,10 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  canViewModelVersionRow,
+  modelVersionViewSelect,
+} from '~/server/common/model-version-visibility';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
@@ -249,12 +253,29 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   return result;
 };
 
+/** The ids in `ids` the viewer may see (`canViewModelVersionRow`); a missing id is left out. */
+export const getViewableModelVersionIds = async (
+  ids: number[],
+  viewer: Parameters<typeof canViewModelVersionRow>[1]
+) => {
+  if (ids.length === 0) return new Set<number>();
+  // One id reads as its owner's own read does, so a version just saved is not missing.
+  const db = ids.length === 1 ? await getDbWithoutLag('modelVersion', ids[0]) : dbRead;
+  const rows = await db.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, ...modelVersionViewSelect },
+  });
+  return new Set(rows.filter((row) => canViewModelVersionRow(row, viewer)).map((row) => row.id));
+};
+
 export const getVersionsByIds = async ({
   ids,
   browsingLevel,
+  viewer,
 }: {
   ids: number[];
   browsingLevel?: number;
+  viewer: Parameters<typeof canViewModelVersionRow>[1];
 }) => {
   if (ids.length === 0) return [];
   const showSfwFace = showsSfwFace(browsingLevel);
@@ -265,6 +286,8 @@ export const getVersionsByIds = async ({
       id: true,
       name: true,
       baseModel: true,
+      status: true,
+      publishedAt: true,
       model: {
         select: {
           id: true,
@@ -272,20 +295,25 @@ export const getVersionsByIds = async ({
           sfwName: true,
           minor: true,
           sfwOnly: true,
+          userId: true,
+          status: true,
+          poi: true,
         },
       },
     },
   });
 
-  return results.map((v) => ({
-    id: v.id,
-    name: v.name,
-    baseModel: v.baseModel,
-    modelId: v.model.id,
-    modelName: resolveModelFace(v.model, showSfwFace).name,
-    minor: v.model.minor,
-    sfwOnly: v.model.sfwOnly,
-  }));
+  return results
+    .filter((v) => canViewModelVersionRow(v, viewer))
+    .map((v) => ({
+      id: v.id,
+      name: v.name,
+      baseModel: v.baseModel,
+      modelId: v.model.id,
+      modelName: resolveModelFace(v.model, showSfwFace).name,
+      minor: v.model.minor,
+      sfwOnly: v.model.sfwOnly,
+    }));
 };
 
 export const getDefaultModelVersion = async ({

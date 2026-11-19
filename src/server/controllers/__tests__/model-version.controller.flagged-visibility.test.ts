@@ -3,9 +3,11 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as VersionChildrenService from '~/server/services/model-version-generation-children.service';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
-const { mockGetVersionById, STOP } = vi.hoisted(() => ({
+const { mockGetVersionById, mockOwnerRow, STOP } = vi.hoisted(() => ({
   mockGetVersionById: vi.fn(),
+  mockOwnerRow: vi.fn(),
   STOP: new Error('reached the coverage read'),
 }));
 
@@ -20,6 +22,11 @@ vi.mock('~/server/services/generation/generation.service', () => ({
   getResourceData: vi.fn(async () => []),
   resolveCanGenerateForVersions: vi.fn(async () => new Map()),
 }));
+// The owner read behind `modelVersion.getOwner`.
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelVersionOwnerWithCosmetics: mockOwnerRow,
+}));
 // The first read after the version is loaded and checked. Reaching it means it was served.
 vi.mock('~/server/services/generation/coverage-source', () => ({
   coverageAudience: vi.fn(async () => {
@@ -28,9 +35,14 @@ vi.mock('~/server/services/generation/coverage-source', () => ({
   coveragePairForUser: vi.fn(() => ({})),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  getExplorationPromptsHandler,
   getModelVersionForEditHandler,
   getModelVersionHandler,
+  getModelVersionOwnerHandler,
+  getModelVersionRunStrategiesHandler,
+  getVersionsByIdsHandler,
 } from '~/server/controllers/model-version.controller';
 
 /** `modelVersion.getById` for a version of a model flagged `poi`: owner and moderators only. */
@@ -197,5 +209,141 @@ describe('getModelVersionForEditHandler, the editor read', () => {
 
   it('refuses the owner on a scoped key', async () => {
     expect(await edit(SCOPED_KEY)).toBe('UNAUTHORIZED');
+  });
+});
+
+/**
+ * The other public reads of one version by id, and the batch read: a version the viewer may not see
+ * (by status or the poi flag) answers as one that does not exist.
+ */
+describe('the public sibling reads of a version', () => {
+  const FULL_KEY = { ...SCOPED_KEY, tokenScope: TokenScope.Full };
+  const row = (
+    id: number,
+    {
+      versionStatus = 'Published',
+      modelStatus = 'Published',
+      poi = false,
+      publishedAt = versionStatus === 'Published' ? new Date(0) : null,
+    }: {
+      versionStatus?: string;
+      modelStatus?: string;
+      poi?: boolean;
+      publishedAt?: Date | null;
+    } = {}
+  ) => ({
+    id,
+    name: `v${id}`,
+    baseModel: 'SD 1.5',
+    status: versionStatus,
+    publishedAt,
+    model: {
+      id: 1,
+      name: 'm',
+      sfwName: null,
+      minor: false,
+      sfwOnly: false,
+      userId: OWNER,
+      status: modelStatus,
+      poi,
+    },
+  });
+  // Every read of these rows goes through `dbRead.modelVersion.findMany` with an id list.
+  const serveRows = (rows: ReturnType<typeof row>[]) =>
+    dbMock.dbRead.modelVersion.findMany.mockImplementation(async (args: any) =>
+      rows.filter((r) => args.where.id.in.includes(r.id))
+    );
+
+  const HIDDEN = [
+    ['a draft version', { versionStatus: 'Draft' }],
+    ['a published version of a draft model', { modelStatus: 'Draft' }],
+    [
+      'a version unpublished for a violation',
+      { versionStatus: 'UnpublishedViolation', modelStatus: 'UnpublishedViolation' },
+    ],
+    ['a version published for a later time', { publishedAt: new Date(Date.now() + 86_400_000) }],
+    ['a version of a flagged model', { poi: true }],
+  ] as const;
+
+  const ctxFor = (viewer: ViewerKey, credential: object = {}) =>
+    ({ user: VIEWERS[viewer], features: {}, ...credential } as never);
+
+  const runStrategies = (viewer: ViewerKey, credential?: object) =>
+    getModelVersionRunStrategiesHandler({ input: { id: 100 }, ctx: ctxFor(viewer, credential) });
+  const prompts = (viewer: ViewerKey, credential?: object) =>
+    getExplorationPromptsHandler({ input: { id: 100 }, ctx: ctxFor(viewer, credential) });
+  const owner = (viewer: ViewerKey, credential?: object) =>
+    getModelVersionOwnerHandler({ input: { id: 100 }, ctx: ctxFor(viewer, credential) }).then(
+      (user) => (user.id === OWNER ? 'served' : user),
+      (e: unknown) => (e instanceof TRPCError ? e.code : e)
+    );
+  const batch = async (viewer: ViewerKey, credential?: object) =>
+    (
+      await getVersionsByIdsHandler({ input: { ids: [100, 101] }, ctx: ctxFor(viewer, credential) })
+    ).map((v) => v.id);
+
+  const STRATEGIES = [{ partnerId: 3 }];
+  const PROMPTS = [{ name: 'p', prompt: 'a cat', index: 0, modelVersionId: 100 }];
+
+  beforeEach(() => {
+    dbMock.dbRead.runStrategy.findMany.mockResolvedValue(STRATEGIES);
+    dbMock.dbRead.modelVersionExploration.findMany.mockResolvedValue(PROMPTS);
+    mockOwnerRow.mockResolvedValue({
+      id: OWNER,
+      username: 'owner',
+      deletedAt: null,
+      image: null,
+      profilePictureId: null,
+      cosmetics: [],
+    });
+  });
+
+  describe.each(HIDDEN)('%s', (_, statuses) => {
+    beforeEach(() => {
+      serveRows([row(100, statuses), row(101)]);
+    });
+
+    it.each<ViewerKey>(['anon', 'other'])('reads as missing to %s', async (viewer) => {
+      expect(await runStrategies(viewer)).toEqual([]);
+      expect(await prompts(viewer)).toEqual([]);
+      expect(await owner(viewer)).toBe('NOT_FOUND');
+      expect(await batch(viewer)).toEqual([101]);
+    });
+
+    it.each<ViewerKey>(['owner', 'moderator'])('is served to %s', async (viewer) => {
+      expect(await runStrategies(viewer)).toEqual(STRATEGIES);
+      expect(await prompts(viewer)).toEqual(PROMPTS);
+      expect(await owner(viewer)).toBe('served');
+      expect(await batch(viewer)).toEqual([100, 101]);
+    });
+
+    it('reads as missing to its owner on a scoped key, as getById does', async () => {
+      expect(await runStrategies('owner', SCOPED_KEY)).toEqual([]);
+      expect(await prompts('owner', SCOPED_KEY)).toEqual([]);
+      expect(await owner('owner', SCOPED_KEY)).toBe('NOT_FOUND');
+      expect(await batch('owner', SCOPED_KEY)).toEqual([101]);
+    });
+
+    it('is served to its owner on a full-access key', async () => {
+      expect(await runStrategies('owner', FULL_KEY)).toEqual(STRATEGIES);
+      expect(await owner('owner', FULL_KEY)).toBe('served');
+      expect(await batch('owner', FULL_KEY)).toEqual([100, 101]);
+    });
+  });
+
+  it('control: a published version is served to a signed-out visitor', async () => {
+    serveRows([row(100), row(101)]);
+    expect(await runStrategies('anon')).toEqual(STRATEGIES);
+    expect(await prompts('anon')).toEqual(PROMPTS);
+    expect(await owner('anon')).toBe('served');
+    expect(await batch('anon')).toEqual([100, 101]);
+  });
+
+  it('a version that does not exist answers the same as a hidden one', async () => {
+    serveRows([row(101)]);
+    expect(await runStrategies('anon')).toEqual([]);
+    expect(await prompts('anon')).toEqual([]);
+    expect(await owner('anon')).toBe('NOT_FOUND');
+    expect(await batch('anon')).toEqual([101]);
   });
 });

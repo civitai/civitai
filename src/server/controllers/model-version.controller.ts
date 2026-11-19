@@ -19,7 +19,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
-import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
+import type {
+  GetModelVersionsByIdsInput,
+  LicensingSourceRejection,
+} from '~/server/schema/model-version.schema';
 import {
   type BaseModel,
   DEPRECATED_BASE_MODELS,
@@ -66,7 +69,10 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
+  getExplorationPromptsById,
+  getViewableModelVersionIds,
   getVersionById,
+  getVersionsByIds,
   getWorkflowIdFromModelVersion,
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
@@ -132,12 +138,47 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
-export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
+// A version the viewer may not see reads as one that does not exist: no rows, or NOT_FOUND.
+const canViewVersion = async (id: number, ctx: Context) =>
+  (await getViewableModelVersionIds([id], ownerOrModeratorViewer(ctx))).has(id);
+
+export const getModelVersionRunStrategiesHandler = async ({
+  input: { id },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
-    return getModelVersionRunStrategies({ modelVersionId: id });
+    if (!(await canViewVersion(id, ctx))) return [];
+    return await getModelVersionRunStrategies({ modelVersionId: id });
   } catch (e) {
     throw throwDbError(e);
   }
+};
+
+export const getVersionsByIdsHandler = ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionsByIdsInput;
+  ctx: Context;
+}) =>
+  getVersionsByIds({
+    ...input,
+    browsingLevel: getRequestBrowsingLevel(ctx),
+    viewer: ownerOrModeratorViewer(ctx),
+  });
+
+export const getExplorationPromptsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  if (!(await canViewVersion(input.id, ctx))) return [];
+  return getExplorationPromptsById(input);
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
@@ -1371,7 +1412,14 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+export async function getModelVersionOwnerHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
+  if (!(await canViewVersion(input.id, ctx))) throw throwNotFoundError();
   // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
   // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =

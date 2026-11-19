@@ -176,7 +176,14 @@ async function handler(
         ) as model
       FROM "ModelVersion" mv
       WHERE mv.id = ${id}
-        ${status ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"` : Prisma.empty}
+        ${
+          status
+            ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"
+              AND EXISTS (
+                SELECT 1 FROM "Model" m WHERE m.id = mv."modelId" AND m.status = ${status}::"ModelStatus"
+              )`
+            : Prisma.empty
+        }
         AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
       LIMIT 1
     `.then((results) => results[0] || null);
