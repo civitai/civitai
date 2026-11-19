@@ -82,9 +82,10 @@ export function metaTrusted(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * `origin`'s headers with each region header replaced by its `meta` key, when that is a string,
- * and the names of the headers so replaced.
+ * and the names of the headers so replaced. Exported for the content-policy shadow
+ * (`policy-shadow.ts`), which sends the service the same values this file judges.
  */
-function regionHeaders(origin: RequestOrigin): {
+export function regionHeaders(origin: RequestOrigin): {
   headers: RequestOrigin['headers'];
   fromMeta: Set<string>;
 } {
@@ -101,8 +102,11 @@ function regionHeaders(origin: RequestOrigin): {
   return { headers, fromMeta };
 }
 
-/** The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. */
-const NO_COUNTRY = new Set(['XX', 'T1']);
+/**
+ * The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. Exported for
+ * scripts/content-policy-go-data.ts, which hands it to the Go content-policy service.
+ */
+export const NO_COUNTRY: ReadonlySet<string> = new Set(['XX', 'T1']);
 
 /**
  * Whether `region` names a country: a two-letter code other than the edge's {@link NO_COUNTRY}

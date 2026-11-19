@@ -1,0 +1,40 @@
+{
+  "levels": {
+    "pg": 1,
+    "pg13": 2,
+    "r": 4,
+    "x": 8,
+    "xxx": 16,
+    "blocked": 32,
+    "public": 1,
+    "sfw": 3,
+    "all": 31
+  },
+  "ratingLadder": [
+    "g",
+    "pg",
+    "pg13",
+    "r",
+    "x"
+  ],
+  "matureRatings": [
+    "r",
+    "x",
+    "xxx"
+  ],
+  "noCountryCodes": [
+    "T1",
+    "XX"
+  ],
+  "regionBlockDefault": [
+    {
+      "region": "GB",
+      "effectiveDate": "2025-07-24"
+    },
+    {
+      "region": "AU",
+      "effectiveDate": "2026-03-15"
+    }
+  ],
+  "regionRestrictionDefault": []
+}
