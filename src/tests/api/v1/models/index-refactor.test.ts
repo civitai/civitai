@@ -45,8 +45,8 @@ vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   isRedCapableHost: (host?: string | null) => host === 'civitai.red',
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  // Passthrough: invoke handler with no session user (the anon public path).
-  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
+  // Passthrough: invoke handler as the request's `testUser` (anonymous when unset).
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.testUser),
   handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),
 }));
 
@@ -201,5 +201,56 @@ describe('/api/v1/models — an explicit sort reaches the Meili pre-step, the sc
     expect(mockResolveModelSearchIds.mock.calls[0][0].sort).toBeUndefined();
     const [input] = mockRunModelSearch.mock.calls[0];
     expect(input.sort).toBe('Highest Rated');
+  });
+});
+
+describe('/api/v1/models moderator view follows the credential', () => {
+  const moderator = { id: 5, isModerator: true };
+  const personalKey = (tokenScope: bigint) => ({
+    tokenScope,
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+  });
+  const FULL = 33554431n;
+  const MODELS_READ = 1n << 4n;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockGetRegion.mockReturnValue('US');
+    mockIsRegionRestricted.mockReturnValue(false);
+  });
+
+  async function searchedAs(context: object | undefined) {
+    const req = {
+      method: 'GET',
+      query: {},
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: moderator,
+      context,
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    return mockRunModelSearch.mock.calls[0][1].user;
+  }
+
+  it.each([
+    ['a session', undefined],
+    ['a full-scope personal key', personalKey(FULL)],
+  ])('keeps the moderator view on %s', async (_label, context) => {
+    expect(await searchedAs(context)).toEqual(moderator);
+  });
+
+  it.each([
+    ['a scoped personal key', personalKey(MODELS_READ)],
+    [
+      'an app token',
+      { tokenScope: FULL, apiKeyId: 9, apiKeyType: 'Access', subject: { type: 'oauth', id: 'c' } },
+    ],
+  ])('searches as an ordinary user on %s', async (_label, context) => {
+    expect(await searchedAs(context)).toEqual({ ...moderator, isModerator: false });
   });
 });

@@ -26,6 +26,8 @@ import {
 } from '~/server/trpc/feed-go-shadow';
 import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 import { requestHoldsScope } from '~/server/auth/session-scope';
+import { getRequestCredential } from '~/server/auth/request-credential';
+import { isSessionOrFullUserKey, withholdsModerator } from '~/server/auth/full-user-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 type Metadata = {
@@ -181,7 +183,7 @@ async function handler(
         // region holds the level to SFW.
         browsingLevel,
         nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
-        user,
+        user: searchViewer(req, user),
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),
       }
@@ -203,4 +205,12 @@ async function handler(
   } finally {
     if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
+}
+
+/** Moderator rights come only from a session or a full-scope personal key, whatever the route's scope mode. */
+function searchViewer(req: NextApiRequest, user: Session['user'] | undefined) {
+  const credential = getRequestCredential(req);
+  if (!user || isSessionOrFullUserKey(credential) || !withholdsModerator(user, credential))
+    return user;
+  return { ...user, isModerator: false };
 }
