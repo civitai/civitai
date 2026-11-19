@@ -195,7 +195,7 @@ describe('clearOrchestratorForGateChange', () => {
       rule({ modelVersionIds: [11] }),
       rule({ modelVersionIds: [12] }),
     ]);
-    expect(cleared).toBe(true);
+    expect(cleared).toEqual({ cleared: true, ecosystemsNotCleared: [] });
     expect(clearedVersions().sort()).toEqual([11, 12]);
   });
 
@@ -205,12 +205,18 @@ describe('clearOrchestratorForGateChange', () => {
       { id: 22, targetId: 99, targetBaseModel: 'Anima' },
       { id: 23, targetId: 98, targetBaseModel: 'SD 1.5' },
     ] as never);
-    await clearOrchestratorForGateChange([rule({ modelVersionIds: [11], ecosystems: ['Anima'] })]);
+    const result = await clearOrchestratorForGateChange([
+      rule({ modelVersionIds: [11], ecosystems: ['Anima'] }),
+    ]);
     expect(clearedVersions().sort()).toEqual([11, 21, 22]);
+    // The ecosystem's own versions can't be cleared yet; the moderator is told which.
+    expect(result.ecosystemsNotCleared).toEqual(['Anima']);
   });
 
   it('reports a failed clear so the moderator can retry', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Boom' });
-    expect(await clearOrchestratorForGateChange([rule({ modelVersionIds: [11] })])).toBe(false);
+    expect((await clearOrchestratorForGateChange([rule({ modelVersionIds: [11] })])).cleared).toBe(
+      false
+    );
   });
 });

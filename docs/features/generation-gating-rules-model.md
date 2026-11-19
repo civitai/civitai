@@ -55,7 +55,9 @@
   generating user when `checkPermission` is true. Mini's `canGenerate` leaves gate
   rules out (`ignoreGateRules`); a version a hidden or disabled rule names (by id,
   ecosystem, or its generation-alias target) answers `checkPermission: true`, the same
-  for every caller (`getGateSubjects` + `gatedVersionIds`). The permission check then
+  for every caller (`getGateSubjects` + `gatedVersionIds`). A kill switch (available to
+  nobody) stays a hard `canGenerate: false`, so an early-access trial can't stand in for the
+  permission it refuses. The permission check then
   refuses anyone outside the rule's audience, from the user's real moderator, tester
   and member status, and trusts the asked-about user only from a caller that may ask
   about them. While a process has never read the rules, mini marks every version gated
@@ -66,7 +68,7 @@
   (`clearOrchestratorForGateChange`). A failed clear is shown to the moderator; saving
   again retries it. Clearing every version of a named ecosystem needs orchestrator
   support and is not done yet, so an ecosystem rule reaches existing cached answers
-  only when the orchestrator next refreshes them.
+  only when the orchestrator next refreshes them; the moderator is told which ecosystems.
 - **Pickers** — `BaseModelInput` / `WorkflowPicker` read one per-item state;
   `FormFooter` resolves the selected ecosystem's state (members-only reuses the
   existing upsell + CTA).

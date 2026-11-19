@@ -164,14 +164,19 @@ export async function gateChangeVersionIds(rules: (GateRule | undefined)[]): Pro
 
 /**
  * Clears the orchestrator's cached answers a gate rule change makes stale, so the change reaches
- * the API at once. False when the clear failed (logged): the moderator is told, and saving the
- * rule again retries it. Ecosystem-wide clearing waits on the orchestrator supporting it.
+ * the API at once. `cleared` is false when the clear failed (logged): the moderator is told, and
+ * saving the rule again retries it. Every version of a named ecosystem can't be cleared until the
+ * orchestrator supports it, so those ecosystems come back for the moderator to see.
  */
-export async function clearOrchestratorForGateChange(rules: (GateRule | undefined)[]) {
-  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return true;
+export async function clearOrchestratorForGateChange(
+  rules: (GateRule | undefined)[]
+): Promise<{ cleared: boolean; ecosystemsNotCleared: string[] }> {
+  const ecosystemsNotCleared = [...new Set(rules.flatMap((rule) => rule?.ecosystems ?? []))];
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN)
+    return { cleared: true, ecosystemsNotCleared: [] };
   try {
     await invalidateOrchestratorVersionsOrThrow(await gateChangeVersionIds(rules));
-    return true;
+    return { cleared: true, ecosystemsNotCleared };
   } catch (error) {
     logToAxiom({
       name: 'gate-rule-orchestrator-clear',
@@ -179,7 +184,7 @@ export async function clearOrchestratorForGateChange(rules: (GateRule | undefine
       message: (error as Error).message,
       ruleIds: rules.flatMap((r) => (r ? [r.id] : [])),
     });
-    return false;
+    return { cleared: false, ecosystemsNotCleared };
   }
 }
 

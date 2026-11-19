@@ -162,15 +162,15 @@ export const generationRouter = router({
   saveGateRule: moderatorProcedure.input(gateRuleSchema).mutation(async ({ input }) => {
     const before = await storedGateRule(input.id);
     const saved = await saveGateRule(input);
-    const orchestratorCacheCleared = await clearOrchestratorForGateChange([before, saved]);
-    return { ...saved, orchestratorCacheCleared };
+    const orchestrator = await clearOrchestratorForGateChange([before, saved]);
+    return { ...saved, orchestrator };
   }),
   deleteGateRule: moderatorProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
       const before = await storedGateRule(input.id);
       await deleteGateRule(input.id);
-      return { orchestratorCacheCleared: await clearOrchestratorForGateChange([before]) };
+      return { orchestrator: await clearOrchestratorForGateChange([before]) };
     }),
   getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
   saveGeneratorMessage: moderatorProcedure

@@ -626,6 +626,15 @@ async function handler(
     ]),
   ]);
   const gateAsksPermission = gatedVersionIds(gateSubjects, gateRuleState).has(modelVersion.id);
+  // A kill switch (available to nobody) refuses everyone, so it stays a hard refusal here: the
+  // permission check's "no" could otherwise fall through to an early-access free trial.
+  const gateRefusesEveryone =
+    gateRuleState.known &&
+    gatedVersionIds(gateSubjects, gateRuleState, {
+      isModerator: true,
+      isMember: true,
+      hasTestingAccess: true,
+    }).has(modelVersion.id);
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
     versionAvailability: modelVersion.availability,
@@ -639,6 +648,7 @@ async function handler(
   });
   const canGenerate =
     !moderationBlocksGeneration(moderation) &&
+    !gateRefusesEveryone &&
     (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge

@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   canGenerate: { value: true },
   // What the gate rules say about this version: gated (any caller), and whether they were readable.
   gated: { value: false },
+  killSwitch: { value: false },
   rulesKnown: { value: true },
   resolveCanGenerate: vi.fn(),
   hubSession: { value: null as unknown },
@@ -29,7 +30,11 @@ vi.mock('~/server/services/generation/generation.service', () => ({
     h.rulesKnown.value ? { known: true, value: [] } : { known: false }
   ),
   getGateSubjects: vi.fn(async () => new Map()),
-  gatedVersionIds: vi.fn(() => new Set(h.gated.value ? [VERSION_ID] : [])),
+  // With an all-access audience only a kill switch (available to nobody) still applies.
+  gatedVersionIds: vi.fn(
+    (_subjects: unknown, _state: unknown, audience?: { isModerator: boolean }) =>
+      new Set((audience?.isModerator ? h.killSwitch.value : h.gated.value) ? [VERSION_ID] : [])
+  ),
   resolveCanGenerateForVersions: h.resolveCanGenerate,
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -205,6 +210,7 @@ beforeEach(() => {
   h.hubSession.value = null;
   h.canGenerate.value = true;
   h.gated.value = false;
+  h.killSwitch.value = false;
   h.rulesKnown.value = true;
   h.resolveCanGenerate.mockImplementation(
     async () => new Map([[VERSION_ID, { canGenerate: h.canGenerate.value }]])
@@ -440,6 +446,13 @@ describe('mini/[id] generation gate rules', () => {
       expect(h.resolveCanGenerate.mock.calls.at(-1)?.[1]).toMatchObject({ ignoreGateRules: true });
     }
   );
+
+  it('refuses outright under a kill switch, so no trial can stand in for permission', async () => {
+    h.gated.value = true;
+    h.killSwitch.value = true;
+    const { body } = await call('Bearer mod-key');
+    expect(body?.canGenerate).toBe(false);
+  });
 
   it('asks for no permission check on an ungated version', async () => {
     const { body } = await call(undefined, { checkPermission: false } as unknown as Partial<Row>);

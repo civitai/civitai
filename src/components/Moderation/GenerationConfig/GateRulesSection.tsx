@@ -26,13 +26,24 @@ import {
   showWarningNotification,
 } from '~/utils/notifications';
 
-// The rule is saved either way; the orchestrator's cached answers just weren't cleared.
-const warnIfNotCleared = ({ orchestratorCacheCleared }: { orchestratorCacheCleared: boolean }) => {
-  if (!orchestratorCacheCleared)
+// The rule is saved either way; these say what the API (orchestrator) may not follow yet.
+const warnIfNotCleared = ({
+  orchestrator,
+}: {
+  orchestrator: { cleared: boolean; ecosystemsNotCleared: string[] };
+}) => {
+  if (!orchestrator.cleared)
     showWarningNotification({
       title: 'Orchestrator not updated',
       message:
         'The rule is saved, but the API may follow the old rule until its cache refreshes. Save the rule again to retry.',
+    });
+  else if (orchestrator.ecosystemsNotCleared.length)
+    showWarningNotification({
+      title: 'Ecosystems reach the API later',
+      message: `Generation through the API follows this rule for ${orchestrator.ecosystemsNotCleared.join(
+        ', '
+      )} as cached models refresh, which can take up to 12 hours.`,
     });
 };
 import { trpc } from '~/utils/trpc';
