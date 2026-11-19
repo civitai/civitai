@@ -951,12 +951,13 @@ export async function setVersionShowcase({
     }),
   ]);
 
-  // A community cover no longer featured anywhere stops being the cover.
-  await afterShowcaseWrite(modelVersionId, version.model.id);
-
+  // Before the refresh, which may throw: a retry finds these rows already saved and notifies no one.
   const before = new Set(existing.map((row) => row.imageId));
   const added = eligible.filter((image) => allowed.has(image.id) && !before.has(image.id));
   await notifyFeaturedAuthors({ version, actorUserId: userId, images: added });
+
+  // A community cover no longer featured anywhere stops being the cover.
+  await afterShowcaseWrite(modelVersionId, version.model.id);
   return { modelVersionId, site };
 }
 

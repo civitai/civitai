@@ -516,6 +516,20 @@ describe('setVersionShowcase: a valid save', () => {
     expect(notify).toHaveBeenCalledTimes(1);
     expect(injected).toBe(1);
   });
+
+  it('notifies before a failed refresh fails the save, since a retry finds the rows saved', async () => {
+    mocks.refreshError = new Error('redis down');
+    await expect(
+      showcase.setVersionShowcase({
+        modelVersionId: VERSION,
+        site: 'red',
+        items: [{ imageId: 77 }],
+        userId: 5,
+        isModerator: false,
+      })
+    ).rejects.toThrow(/redis down/);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('getCoverImages: a community cover on a model card', () => {
@@ -690,7 +704,7 @@ describe('setVersionShowcaseCover: what it refuses', () => {
     });
 
   it('refuses anyone but the creator', async () => {
-    await expect(setCover(9)).rejects.toBeInstanceOf(TRPCError);
+    await expect(setCover(9)).rejects.toThrow(/Only the model’s creator/);
     expect(mocks.updateModelNsfwLevels).not.toHaveBeenCalled();
   });
 
@@ -705,5 +719,19 @@ describe('setVersionShowcaseCover: what it refuses', () => {
       removed: true,
     } as never);
     await expect(setCover()).rejects.toThrow(/Feature this image/);
+  });
+});
+
+describe('hasCuratedShowcase: keeping a curated response out of the shared cache', () => {
+  it('reads a version with showcase rows as curated, and one without as not', async () => {
+    mocks.entry = { modelVersionId: VERSION, rows: [row(1, 'red')], community: [] };
+    expect(await showcase.hasCuratedShowcase([VERSION])).toBe(true);
+    mocks.entry = { modelVersionId: VERSION, rows: [], community: [] };
+    expect(await showcase.hasCuratedShowcase([VERSION])).toBe(false);
+  });
+
+  it('reads a failed read as curated, so the response is not shared', async () => {
+    mocks.fetchError = new Error('redis down');
+    expect(await showcase.hasCuratedShowcase([VERSION])).toBe(true);
   });
 });

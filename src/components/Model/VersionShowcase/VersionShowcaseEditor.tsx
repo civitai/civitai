@@ -26,11 +26,11 @@ import {
   VERSION_SHOWCASE_LIMIT,
   type VersionShowcaseSite,
 } from '~/shared/constants/version-showcase.constants';
-import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import {
   buildShowcaseItems,
+  canBeCover,
   inheritedSite,
   parseImageId,
   siteLabel,
@@ -104,14 +104,6 @@ export default function VersionShowcaseEditor({
     setItems((current) => [...current, { imageId, source: 'Community', excluded: false }]);
     setLink('');
   };
-
-  // A featured image becomes a cover only once saved in this site's own showcase.
-  const canBeCover = (item: Item) =>
-    !!data?.isLatestPublished &&
-    !item.excluded &&
-    !!item.url &&
-    !(item.source === 'Community' && !!data && !!inheritedSite(data, site)) &&
-    (site !== 'com' || item.nsfwLevel === undefined || isComSafeLevel(item.nsfwLevel));
 
   return (
     <Modal {...dialog} title="Edit showcase" size="xl">
@@ -204,7 +196,7 @@ export default function VersionShowcaseEditor({
                         )}
                       </Group>
                       <Group gap={4} className="absolute bottom-1 right-1">
-                        {canBeCover(item) && item.imageId !== cover && (
+                        {canBeCover(data, site, item) && item.imageId !== cover && (
                           <Tooltip label="Make this the cover">
                             <ActionIcon
                               size="sm"

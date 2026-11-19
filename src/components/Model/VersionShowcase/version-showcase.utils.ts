@@ -30,6 +30,24 @@ export function inheritedSite(
   return !curated(site) && curated(other) ? other : null;
 }
 
+/**
+ * Whether "Make cover" is offered: an image showing on the latest published version, rated for the
+ * site, and, if featured, saved in this site's own showcase (the server accepts no other).
+ */
+export function canBeCover(
+  data: Pick<EditorData, 'rows' | 'isLatestPublished'>,
+  site: VersionShowcaseSite,
+  item: Item
+) {
+  return (
+    data.isLatestPublished &&
+    !item.excluded &&
+    !!item.url &&
+    !(item.source === 'Community' && inheritedSite(data, site)) &&
+    (site !== 'com' || item.nsfwLevel === undefined || isComSafeLevel(item.nsfwLevel))
+  );
+}
+
 /** The site's list as the carousel orders it: positioned items, then the rest in today's order. */
 export function buildShowcaseItems(data: EditorData, site: VersionShowcaseSite): Item[] {
   const source = inheritedSite(data, site) ?? site;
