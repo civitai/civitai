@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { isDev } from '~/env/other';
@@ -787,6 +788,11 @@ export const addTagVotes = async ({
   const tagMatch = isTagIds
     ? Prisma.sql`"id" = ANY(${tags as number[]}::int[])`
     : Prisma.sql`"name" = ANY(${tags as string[]}::text[])`;
+  // An image's owner can't vote a child browsing tag off their own image.
+  const ownerDownvoteExclusion =
+    type === 'image' && isCreator && !isModerator && vote < 0
+      ? Prisma.sql`AND "id" != ALL(${childBrowsingTagIds}::int[])`
+      : Prisma.empty;
   const voteTable = type === 'model' ? 'TagsOnModelsVote' : 'TagsOnImageVote';
   await dbWrite.$executeRaw(Prisma.sql`
     INSERT INTO "${Prisma.raw(voteTable)}" ("userId", "tagId", "${Prisma.raw(type)}Id", "vote")
@@ -795,7 +801,7 @@ export const addTagVotes = async ({
            ${id},
            ${vote}
     FROM "Tag"
-    WHERE ${tagMatch}
+    WHERE ${tagMatch} ${ownerDownvoteExclusion}
     ON CONFLICT ("userId", "tagId", "${Prisma.raw(type)}Id") DO UPDATE SET "vote"      = ${vote},
                                                                "createdAt" = NOW()
   `);

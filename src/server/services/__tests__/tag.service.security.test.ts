@@ -1,5 +1,6 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 
 // The db and redis clients come from the canonical shared mocks.
 //
@@ -106,5 +107,63 @@ describe('tag.service SQL injection guards', () => {
     const arg = executeRaw.mock.calls[0][0];
     expect(sqlTextOf(arg)).toContain('int[]');
     expect(valuesOf(arg)).toContainEqual([7, 8]);
+  });
+});
+
+describe('addTagVotes — the image owner downvoting a child browsing tag (PGlite)', () => {
+  const OWNER = 1; // dbRead.image.findFirst resolves { userId: 1 } above
+  const CHILD_TAG = 5351;
+  const OTHER_TAG = 900;
+
+  let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
+  beforeAll(async () => {
+    harness = await startPglitePrisma(`
+      CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL, type text NOT NULL);
+      CREATE TABLE "TagsOnImageVote" (
+        "userId" int, "tagId" int, "imageId" int, vote int NOT NULL,
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+        PRIMARY KEY ("userId", "tagId", "imageId")
+      );
+      INSERT INTO "Tag" VALUES (${CHILD_TAG}, 'child', 'Label'), (${OTHER_TAG}, 'other', 'Label');
+    `);
+    const { prisma } = harness;
+    executeRaw.mockImplementation(((...args: Parameters<typeof prisma.$executeRaw>) =>
+      prisma.$executeRaw(...args)) as never);
+  }, 60_000);
+  afterAll(async () => {
+    executeRaw.mockImplementation((async () => 0) as never);
+    await harness.stop();
+  });
+  beforeEach(() => harness.pg.exec('DELETE FROM "TagsOnImageVote";'));
+
+  const votes = async () =>
+    (
+      await harness.pg.query<{ userId: number; tagId: number; vote: number }>(
+        'SELECT "userId", "tagId", vote FROM "TagsOnImageVote" ORDER BY "userId", "tagId"'
+      )
+    ).rows;
+
+  it('records no downvote from the owner on a child tag, and keeps the rest', async () => {
+    await addTagVotes({
+      userId: OWNER,
+      type: 'image',
+      id: 42,
+      tags: [CHILD_TAG, OTHER_TAG],
+      isModerator: false,
+      vote: -1,
+    });
+    expect(await votes()).toEqual([{ userId: OWNER, tagId: OTHER_TAG, vote: -3 }]);
+  });
+
+  it("records a moderator's downvote on a child tag", async () => {
+    await addTagVotes({
+      userId: OWNER,
+      type: 'image',
+      id: 42,
+      tags: ['child'],
+      isModerator: true,
+      vote: -1,
+    });
+    expect(await votes()).toEqual([{ userId: OWNER, tagId: CHILD_TAG, vote: -10 }]);
   });
 });

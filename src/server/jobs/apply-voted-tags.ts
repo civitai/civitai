@@ -1,4 +1,5 @@
 import { uniqBy } from 'lodash-es';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
@@ -99,10 +100,10 @@ async function applyDownvotes() {
   // --------------------------------------------
   const [lastApplied, setLastApplied] = await getJobDate('last-tags-disabled');
 
-  // Delete tags under the threshold (not moderation)
+  // Delete tags under the threshold (not moderation, not child browsing tags)
   // --------------------------------------------
   const toDelete = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    -- Delete downvoted tags (not moderation)
+    -- Delete downvoted tags (not moderation, not child browsing tags)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
@@ -127,11 +128,12 @@ async function applyDownvotes() {
         "imageId"
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type != 'Moderation';
+      WHERE t.type != 'Moderation'
+        AND t.id != ALL(${childBrowsingTagIds}::int[]);
   `;
   await deleteTagsOnImageNew(toDelete);
 
-  // Disable tags under the threshold (moderation) where voted by moderator
+  // Disable tags under the threshold (moderation and child browsing tags) where voted by moderator
   // --------------------------------------------
   const toDisable = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Disable downvoted moderation tags if voted by mod
@@ -157,7 +159,8 @@ async function applyDownvotes() {
     SELECT ut."imageId", ut."tagId"
     FROM under_threshold ut
     JOIN "Tag" t ON t.id = ut."tagId"
-    WHERE t.type = 'Moderation' AND ut."heavyVotes" > 0;
+    WHERE (t.type = 'Moderation' OR t.id = ANY(${childBrowsingTagIds}::int[]))
+      AND ut."heavyVotes" > 0;
   `;
 
   // Add "Needs Review" to tags under the threshold (moderation)
