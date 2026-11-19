@@ -12,7 +12,8 @@ trust model, caching and how a caller migrates are in [DESIGN.md](DESIGN.md).
 POST /v1/decide  {"context":"registry-subscription","userId":7,"country":"GB"}
 → {"ratings":["g","pg","pg13"],"unknownRating":false,"browsingLevel":3,"regionHold":"blocked",
    "reason":"region-blocked","context":"registry-subscription","policyVersion":"…","fallback":false}
-GET  /healthz  /readyz  /metrics
+GET  /healthz  /readyz          (8080, beside /v1/decide)
+GET  /metrics                   (9090, its own listener)
 ```
 
 Today it runs in shadow for the registry adapter (`REGISTRY_ADAPTER_POLICY_URL`,
@@ -25,7 +26,7 @@ Today it runs in shadow for the registry adapter (`REGISTRY_ADAPTER_POLICY_URL`,
 | `cmd/content-policy-go`    | the binary: config, the database pool, the HTTP server                                  |
 | `internal/policy`          | the decision: the port of the Node rules, the context rules, `policydata.json`          |
 | `internal/users`           | the one user settings read, and its in-process cache                                    |
-| `internal/api`             | `POST /v1/decide`, `/healthz`, `/readyz`, `/metrics`; the fail-closed fallback          |
+| `internal/api`             | `POST /v1/decide`, `/healthz`, `/readyz`; `/metrics` alone; the fail-closed fallback    |
 | `internal/config`          | the environment (`.env.example`)                                                        |
 | `internal/dbpool`          | feed-go's bounded read-replica pool                                                     |
 | `internal/metrics`         | the Prometheus series                                                                   |
@@ -58,4 +59,5 @@ docker build -f apps/content-policy-go/Dockerfile -t civitai-content-policy-go a
 pnpm run release:content-policy-go   # bumps package.json and cuts content-policy-go-vX.Y.Z
 ```
 
-The image listens on 8080 (`CONTENT_POLICY_ADDR`) and needs a database URL; see `.env.example`.
+The image listens on 8080 (`CONTENT_POLICY_ADDR`: the API and the probes) and 9090
+(`CONTENT_POLICY_METRICS_ADDR`: `/metrics` only), and needs a database URL; see `.env.example`.

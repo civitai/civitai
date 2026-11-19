@@ -191,7 +191,10 @@ SFW fallback.
 
 ## Metrics
 
-`/metrics`; no label is named `endpoint`.
+`/metrics`, on its own listener (`CONTENT_POLICY_METRICS_ADDR`, default `:9090`), which serves nothing
+else; the API listener does not serve it. So a deployment's network policy admits Prometheus to the
+metrics port only, never to `POST /v1/decide` ([Trust model](#trust-model)). No label is named
+`endpoint`.
 
 - `content_policy_decisions_total{context, reason, region_hold}`: every answer. `reason=error`,
   `reason=invalid-input` and `reason=missing-input` are the fallback (seeded at 0).
