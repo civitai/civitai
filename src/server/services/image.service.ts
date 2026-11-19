@@ -5515,7 +5515,6 @@ export const getEntityCoverImage = async ({
   // A mature image on a restricted base model is its uploader's alone.
   const baseModelAllowed = imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null });
 
-  // A taken-down model's images are its owner's and moderators' alone.
   const modelNotWithheld = modelNotWithheldSql({
     mode: Prisma.raw('m.mode'),
     ownerId: Prisma.raw('m."userId"'),
