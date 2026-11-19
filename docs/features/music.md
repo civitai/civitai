@@ -13,6 +13,33 @@ surfaces below change anything.
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
   `src/server/common/image-visibility.ts`), which for a song includes the verdict on its lyrics text.
 
+## Discovery
+
+The surfaces where people find songs, all hidden with the flag off (`/music` and `/user/<name>/music`
+are not found, and no music nav entry, chip or tab shows).
+
+| Surface                    | Behaviour                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/music` (`MusicFeedPage`) | Title, genre chips, then the "All music" feed: the image feed (`ImagesInfinite`) with `types: ['audio']`, so sort, period and the Filters panel are the images feed's (and share its saved choices). Linked from the header's content nav.                                                                                                |
+| Genre chips                | "All" plus each genre of `SONG_GENRES` that has its mirrored tag (`songGenreTagName`); a genre no song was published under has no tag yet and gets no chip. Single-select, writing `?tags=<tag id>` (ids from `image.getSongGenreTags`); "All" clears it. A `?tags=` link that is not one genre lights no chip and "All" still clears it. |
+| Card / list view           | A grid / list switch beside the sort, kept per browser. Card: the Song Card. List: a Song Row per song (index, cover, title, "creator · genre", length, menu).                                                                                                                                                                            |
+| Song Card (`SongCard`)     | Any song in an image feed renders as one: cover, play button, length, title, creator, genre, likes and comments.                                                                                                                                                                                                                          |
+| Media filter               | The Filters panel's Media type section offers Audio beside Image and Video.                                                                                                                                                                                                                                                               |
+| Profile music tab          | `/user/<name>/music` lists the creator's songs, with the song count on the profile's Music tab; the owner keeps the Published / Draft toggle.                                                                                                                                                                                             |
+
+Playing a song from a list starts it with `playFromList` and the list's songs loaded at that moment,
+in display order, so Up next shows the ones after it as "Next from <name>". A page loaded afterwards
+is not added.
+
+| Played from                                        | Up next name                       |
+| -------------------------------------------------- | ---------------------------------- |
+| `/music`                                           | "All music", or the selected genre |
+| A profile's music tab                              | The creator's username             |
+| A collection                                       | The collection's name              |
+| Any other image feed (Audio picked in its filters) | "Images"                           |
+
+"Rising this week" and "Recently played" on `/music` come later.
+
 ## Song detail view
 
 A song opens in the image detail view (`/images/[id]`, `ImageDetail2`); there is no separate route. The
