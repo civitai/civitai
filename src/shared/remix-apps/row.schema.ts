@@ -36,7 +36,7 @@ export const REMIX_APP_ICONS = [
 
 export const REMIX_CODE_APP_SLUGS = ['pick-of-four'] as const;
 
-const ASPECT_RATIOS = [
+export const REMIX_ASPECT_RATIOS = [
   '21:9',
   '16:9',
   '3:2',
@@ -98,7 +98,7 @@ const choiceAsk = z.strictObject({
 const imageStep = z.strictObject({
   kind: z.literal('image'),
   prompt: text(2000),
-  aspectRatio: z.enum(['source', ...ASPECT_RATIOS]),
+  aspectRatio: z.enum(['source', ...REMIX_ASPECT_RATIOS]),
   quantity: z.union([z.literal(1), z.literal(2), z.literal(4)]),
   /** `previous`: the first image the step before returned. */
   input: z.enum(['source', 'previous']),
@@ -124,6 +124,20 @@ const codeSpec = z.strictObject({
   code: z.enum(REMIX_CODE_APP_SLUGS),
 });
 
+export const REMIX_USER_SOURCE_MAX_BYTES = 32 * 1024;
+
+/** An app whose `run` is the author's JavaScript module, run in the sandbox, never in-process. */
+const userSpec = z.strictObject({
+  icon: z.enum(REMIX_APP_ICONS),
+  engine: z.strictObject({ safe: engine, mature: engine.optional() }),
+  source: z
+    .string()
+    .min(1)
+    .refine((source) => new TextEncoder().encode(source).length <= REMIX_USER_SOURCE_MAX_BYTES, {
+      message: `At most ${REMIX_USER_SOURCE_MAX_BYTES / 1024} KiB`,
+    }),
+});
+
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 
 export function placeholdersOf(prompt: string) {
@@ -134,7 +148,7 @@ export function placeholdersOf(prompt: string) {
  * Where `spec` names an engine other than today's remix edit engine for its tier. Checked on save
  * only: a stored row keeps serving after an engine version bump moves the allowlist on.
  */
-export function remixEngineIssues(spec: RemixAppSpec) {
+export function remixEngineIssues(spec: RemixAppSpec | RemixStoredSpec) {
   if ('code' in spec) return [];
   const issues: { path: (string | number)[]; message: string }[] = [];
   for (const tier of ['safe', 'mature'] as const) {
@@ -152,9 +166,11 @@ export function remixEngineIssues(spec: RemixAppSpec) {
   return issues;
 }
 
-/** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
-const storedSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec, ctx) => {
-  if ('code' in spec) return;
+function checkWiring(
+  spec: z.infer<typeof declarativeSpec> | z.infer<typeof codeSpec> | z.infer<typeof userSpec>,
+  ctx: z.RefinementCtx
+) {
+  if (!('steps' in spec)) return;
   const issue = (path: (string | number)[], message: string) =>
     ctx.addIssue({ code: 'custom', path, message });
 
@@ -186,15 +202,23 @@ const storedSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec,
     for (const name of placeholdersOf(step.prompt))
       if (!names.get(name)) issue(['steps', s, 'prompt'], `{{${name}}} is not an ask or fragment`);
   });
-});
+}
 
-/** What a save must satisfy: the stored shape, on today's engines. */
-export const remixAppSpecSchema = storedSpecSchema.superRefine((spec, ctx) => {
-  for (const { path, message } of remixEngineIssues(spec))
-    ctx.addIssue({ code: 'custom', path, message });
-});
+/** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
+const storedSpecSchema = z.union([declarativeSpec, codeSpec, userSpec]).superRefine(checkWiring);
+
+/** What a mod save must satisfy: a declarative or code spec, on today's engines. */
+export const remixAppSpecSchema = z
+  .union([declarativeSpec, codeSpec])
+  .superRefine(checkWiring)
+  .superRefine((spec, ctx) => {
+    for (const { path, message } of remixEngineIssues(spec))
+      ctx.addIssue({ code: 'custom', path, message });
+  });
 
 export type RemixAppSpec = z.infer<typeof remixAppSpecSchema>;
+export type RemixStoredSpec = z.infer<typeof storedSpecSchema>;
+export type RemixUserSpec = z.infer<typeof userSpec>;
 export type RemixDeclarativeSpec = Extract<RemixAppSpec, { steps: unknown }>;
 export type RemixCodeSpec = Extract<RemixAppSpec, { code: unknown }>;
 
@@ -217,14 +241,35 @@ export const remixAppInputSchema = z.object({
 });
 export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
 
-/** The manifest stored on the row. `version` mirrors `app_blocks.version`. */
-export const remixManifestSchema = z.object({
-  kind: z.literal('remix'),
-  name: text(40),
-  description: z.string().max(200).optional(),
-  /** `<run version>.0.0`: semver like every block's, with the run version as its major. */
-  version: z.string().regex(/^[1-9][0-9]*\.0\.0$/),
-  targets: z.tuple([z.object({ slotId: z.enum(REMIX_SLOT_IDS) })]),
-  remix: storedSpecSchema,
-});
+export const REMIX_REVIEW_STATES = ['submitted', 'rejected', 'approved'] as const;
+
+/** A user app's slug starts with its author's id, so no author can write another's or a system app. */
+export const userRemixSlugPrefix = (authorId: number) => `u${authorId}-`;
+export const USER_REMIX_SLUG = /^u[1-9][0-9]*-/;
+
+/**
+ * The manifest stored on the row. `version` mirrors `app_blocks.version`. `author` and `review`
+ * mark a user app; only the server writes them, and no input schema accepts them.
+ */
+export const remixManifestSchema = z
+  .object({
+    kind: z.literal('remix'),
+    name: text(40),
+    description: z.string().max(200).optional(),
+    /** `<run version>.0.0`: semver like every block's, with the run version as its major. */
+    version: z.string().regex(/^[1-9][0-9]*\.0\.0$/),
+    targets: z.tuple([z.object({ slotId: z.enum(REMIX_SLOT_IDS) })]),
+    remix: storedSpecSchema,
+    author: z.strictObject({ userId: z.number().int().positive() }).optional(),
+    review: z.enum(REMIX_REVIEW_STATES).optional(),
+  })
+  .superRefine((manifest, ctx) => {
+    const user = 'source' in manifest.remix;
+    if (user !== !!manifest.author || user !== !!manifest.review)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['author'],
+        message: 'A user app has source, an author and a review state; any other app has none',
+      });
+  });
 export type RemixManifest = z.infer<typeof remixManifestSchema>;
