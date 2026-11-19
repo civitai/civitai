@@ -250,8 +250,11 @@ describe('the turf write keeps the feed indexes', () => {
   it('a stale write changes no index', async () => {
     const image = await imageWith(1, 0);
     await sync(image);
-    // A later ticket already landed for the image.
-    redis.setHash(keys.stamp, { [`Image:${image}`]: String(Number.MAX_SAFE_INTEGER) });
+    // A later ticket already landed for the image: the counter and the image's stamp are past the
+    // ticket this sync took before it.
+    const newer = String(clock + 1_000_000);
+    redis.setHash(keys.stamp, { [`Image:${image}`]: newer, '#ticket': newer });
+    redisMock.redis.hIncrBy.mockResolvedValueOnce((clock += 1) as never);
     await sticker(image, 2);
     await sync(image);
     expect(total()).toEqual({ [image]: turfRankScore(1, image) });
