@@ -205,10 +205,12 @@ export function appSearchEntity(endpoint: string): Entity {
 }
 
 /**
- * `REGISTRY_ADAPTER_APP_SEARCH_URL`: the app search endpoint to publish, or undefined when it is
+ * `REGISTRY_ADAPTER_APP_SEARCH_URL`: the app search endpoint to publish, normalized (the URL
+ * parser's `href`: surrounding whitespace dropped, host lower-cased), or undefined when it is
  * unset or empty (nothing is published). Anything else must be an absolute `https:` URL with no
- * credentials in it; otherwise this throws, so a misconfigured adapter refuses to start rather
- * than advertise an endpoint a browser app cannot call.
+ * credentials, query or fragment (a consumer appends its own query to the endpoint); otherwise
+ * this throws, so a misconfigured adapter refuses to start rather than advertise an endpoint a
+ * browser app cannot call.
  */
 export function parseAppSearchUrl(raw: string | undefined): string | undefined {
   if (raw === undefined || raw === '') return undefined;
@@ -224,7 +226,10 @@ export function parseAppSearchUrl(raw: string | undefined): string | undefined {
   if (url.username !== '' || url.password !== '') {
     throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry credentials');
   }
-  return raw;
+  if (url.search !== '' || url.hash !== '' || /[?#]/.test(url.href)) {
+    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry a query string or fragment');
+  }
+  return url.href;
 }
 
 /**

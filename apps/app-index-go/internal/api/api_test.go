@@ -285,3 +285,71 @@ func TestSearchCORS(t *testing.T) {
 		}
 	}
 }
+
+func headers(t *testing.T, method, u string) (int, http.Header, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, u, nil) //nolint:noctx // test: u is the test server URL
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, res.Header, b
+}
+
+// Only a 200 from /search may be cached (a shared cache then absorbs repeated searches); errors
+// and every other route are no-store, so a cache never holds a 503 or a stale readiness answer.
+func TestSearchCacheControl(t *testing.T) {
+	ready := newServer(t, readyStore(t, app("a", "Apple", "onsite", "generation")))
+	notReady := newServer(t, store.NewMemory())
+	failing := newServer(t, failingStore{store.NewMemory()})
+	for _, c := range []struct {
+		url  string
+		code int
+		want string
+	}{
+		{ready.URL + "/search?q=app", http.StatusOK, "public, max-age=30"},
+		{ready.URL + "/search?q=zzz", http.StatusOK, "public, max-age=30"},
+		{ready.URL + "/search?kind=web", http.StatusBadRequest, "no-store"},
+		{failing.URL + "/search", http.StatusInternalServerError, "no-store"},
+		{notReady.URL + "/search?q=a", http.StatusServiceUnavailable, "no-store"},
+		{ready.URL + "/metrics", http.StatusOK, "no-store"},
+		{ready.URL + "/readyz", http.StatusOK, "no-store"},
+		{ready.URL + "/healthz", http.StatusOK, "no-store"},
+	} {
+		code, h, _ := headers(t, http.MethodGet, c.url)
+		if code != c.code || h.Get("Cache-Control") != c.want {
+			t.Errorf("%s: %d Cache-Control %q, want %d %q", c.url, code, h.Get("Cache-Control"), c.code, c.want)
+		}
+	}
+}
+
+// A browser preflight of /search gets a 204 that allows a GET from any origin; no other route
+// answers one.
+func TestSearchPreflight(t *testing.T) {
+	s := newServer(t, readyStore(t, app("a", "Apple", "onsite", "generation")))
+	code, h, body := headers(t, http.MethodOptions, s.URL+"/search")
+	if code != http.StatusNoContent || len(body) != 0 {
+		t.Fatalf("OPTIONS /search: %d %q, want 204 and no body", code, body)
+	}
+	for k, want := range map[string]string{
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "GET",
+		"Access-Control-Max-Age":       "86400",
+	} {
+		if got := h.Get(k); got != want {
+			t.Errorf("OPTIONS /search %s = %q, want %q", k, got, want)
+		}
+	}
+	for _, path := range []string{"/metrics", "/readyz", "/healthz"} {
+		code, h, _ := headers(t, http.MethodOptions, s.URL+path)
+		if code == http.StatusNoContent || h.Get("Access-Control-Allow-Origin") != "" ||
+			h.Get("Access-Control-Allow-Methods") != "" {
+			t.Errorf("OPTIONS %s: %d %v, want no preflight answer", path, code, h)
+		}
+	}
+}

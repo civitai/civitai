@@ -25,7 +25,11 @@ no other sort and no paging. `/search` answers 503 until the index is ready.
 
 Every `/search` response, success or error, carries `Access-Control-Allow-Origin: *`, so an app
 in a sandboxed iframe can call it from the browser: it answers only public listings and takes no
-credentials. `/healthz`, `/readyz` and `/metrics` send no CORS header.
+credentials. `OPTIONS /search` answers a CORS preflight (204, `GET`, `Access-Control-Max-Age`).
+`/healthz`, `/readyz` and `/metrics` send no CORS header.
+
+A 200 from `/search` is `Cache-Control: public, max-age=30`, so a shared cache in front of the
+service can absorb repeated searches; every other response, errors included, is `no-store`.
 
 ## Following the stream
 

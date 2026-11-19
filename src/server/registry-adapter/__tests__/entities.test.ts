@@ -326,12 +326,16 @@ describe('parseAppSearchUrl (REGISTRY_ADAPTER_APP_SEARCH_URL)', () => {
     expect(parseAppSearchUrl(raw)).toBeUndefined();
   });
 
-  it.each(['https://search.invalid/search', 'https://search.invalid:8443/v1/search?x=1'])(
-    '%s: published as given',
-    (raw) => {
-      expect(parseAppSearchUrl(raw)).toBe(raw);
-    }
-  );
+  it.each([
+    ['https://search.invalid/search', 'https://search.invalid/search'],
+    ['https://search.invalid:8443/v1/search', 'https://search.invalid:8443/v1/search'],
+    // Normalized: the parser's href, not the raw text.
+    ['  https://search.invalid/search\n', 'https://search.invalid/search'],
+    ['https://SEARCH.invalid/search', 'https://search.invalid/search'],
+    ['https://search.invalid', 'https://search.invalid/'],
+  ])('%j: published as %s', (raw, href) => {
+    expect(parseAppSearchUrl(raw)).toBe(href);
+  });
 
   it.each([
     ['http://search.invalid/search', /must be an https: URL, got http:/],
@@ -341,6 +345,10 @@ describe('parseAppSearchUrl (REGISTRY_ADAPTER_APP_SEARCH_URL)', () => {
     ['/search', /is not a URL/],
     [' ', /is not a URL/],
     ['https://user:pw@search.invalid/search', /must not carry credentials/],
+    ['https://search.invalid:8443/v1/search?x=1', /must not carry a query string or fragment/],
+    ['https://search.invalid/search?', /must not carry a query string or fragment/],
+    ['https://search.invalid/search#top', /must not carry a query string or fragment/],
+    ['https://search.invalid/search#', /must not carry a query string or fragment/],
   ])('%s: refused at startup', (raw, message) => {
     expect(() => parseAppSearchUrl(raw)).toThrow(message);
   });
