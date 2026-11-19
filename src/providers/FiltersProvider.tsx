@@ -186,7 +186,9 @@ const videoFilterSchema = imageFilterSchema;
 
 // /music: the image feed's filters, saved apart from /images so neither feed narrows the other.
 type MusicFilterSchema = z.infer<typeof musicFilterSchema>;
-const musicFilterSchema = imageFilterSchema;
+const musicFilterSchema = imageFilterSchema.extend({
+  types: z.array(z.enum(MediaType)).default([MediaType.audio]),
+});
 
 type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
 const threadFilterSchema = z.object({

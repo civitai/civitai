@@ -94,7 +94,7 @@ vi.mock('~/components/Filters/useSortAvailability', () => ({
 }));
 
 import { MusicFeedPage } from '~/components/Music/MusicFeedPage';
-import { FiltersProvider } from '~/providers/FiltersProvider';
+import { FiltersProvider, getInitialLocalStorageValues } from '~/providers/FiltersProvider';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 
 const render = () =>
@@ -137,6 +137,10 @@ describe('the /music page', () => {
     await expect.element(feed).toHaveAttribute('data-period', 'Month');
     await expect.element(feed).toHaveAttribute('data-base-models', '');
     await expect.element(feed).toHaveAttribute('data-types', 'audio');
+  });
+
+  test('saves songs as its media type by default', () => {
+    expect(getInitialLocalStorageValues({ isRed: false }).music.types).toEqual(['audio']);
   });
 
   test('shows the title, the genre chips and the audio feed named "All music"', async () => {
