@@ -4,24 +4,19 @@ import { IconDownload, IconFileTypePdf, IconFileZip } from '@tabler/icons-react'
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
-import { buildChapterCbz } from '~/components/Comics/comic-info.utils';
+import { buildChapterCbz, type ChapterComicInfo } from '~/components/Comics/comic-info.utils';
 import { downloadBlob } from '~/utils/file-utils';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { slugitOr } from '~/utils/string-helpers';
 
 interface ChapterExportButtonProps {
   projectName: string;
   chapterName: string;
   panels: { imageUrl: string | null }[];
-  /** Required so no download path ships a CBZ without its ComicInfo.xml. */
-  comicInfo: ChapterComicInfo;
-}
-
-interface ChapterComicInfo {
-  projectId: number;
-  writer: string | null;
-  chapterPosition: number;
-  chapterNsfwLevel: number;
+  /** Required: every download path must emit ComicInfo.xml. */
+  comicInfo: Pick<
+    ChapterComicInfo,
+    'projectId' | 'writer' | 'chapterPosition' | 'chapterNsfwLevel'
+  >;
 }
 
 async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
@@ -108,18 +103,11 @@ export function useChapterExport({
       if (images.length === 0) {
         return;
       }
-      const number = comicInfo.chapterPosition + 1;
-      const content = await buildChapterCbz(images, {
-        title: chapterName,
-        series: projectName,
-        number,
-        writer: comicInfo.writer,
-        web: `${window.location.origin}/comics/${comicInfo.projectId}/${slugitOr(
-          projectName,
-          'comic'
-        )}/${number}/${slugitOr(chapterName, 'chapter')}`,
-        nsfwLevel: comicInfo.chapterNsfwLevel,
-      });
+      const content = await buildChapterCbz(
+        images,
+        { ...comicInfo, projectName, chapterName },
+        window.location.origin
+      );
       downloadBlob(content, `${filename}.cbz`);
       showSuccessNotification({ message: 'CBZ file downloaded' });
     } catch (err) {

@@ -1,7 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
+import { slugitOr } from '~/utils/string-helpers';
 
-// ComicInfo.xml (https://anansi-project.github.io/docs/comicinfo/intro): the metadata file comic
-// readers (Komga, Kavita, ComicRack...) read from the root of a CBZ.
+// https://anansi-project.github.io/docs/comicinfo/intro
 
 export type ComicInfoAgeRating =
   | 'Rating Pending'
@@ -43,15 +43,39 @@ export type ComicInfo = {
   nsfwLevel: number;
 };
 
+export type ChapterComicInfo = {
+  projectId: number;
+  projectName: string;
+  chapterName: string;
+  chapterPosition: number;
+  chapterNsfwLevel: number;
+  writer: string | null;
+};
+
 /** The chapter as a CBZ: pages `001.ext`, `002.ext`, ... then ComicInfo.xml, all at the root. */
 export async function buildChapterCbz(
   images: { blob: Blob; ext: string }[],
-  info: Omit<ComicInfo, 'pageCount'>
+  chapter: ChapterComicInfo,
+  origin: string
 ) {
   const JSZip = (await import('jszip')).default;
   const zip = new JSZip();
   images.forEach(({ blob, ext }, i) => zip.file(`${String(i + 1).padStart(3, '0')}.${ext}`, blob));
-  zip.file('ComicInfo.xml', buildComicInfoXml({ ...info, pageCount: images.length }));
+  const number = chapter.chapterPosition + 1;
+  const projectSlug = slugitOr(chapter.projectName, 'comic');
+  const chapterSlug = slugitOr(chapter.chapterName, 'chapter');
+  zip.file(
+    'ComicInfo.xml',
+    buildComicInfoXml({
+      title: chapter.chapterName,
+      series: chapter.projectName,
+      number,
+      writer: chapter.writer,
+      web: `${origin}/comics/${chapter.projectId}/${projectSlug}/${number}/${chapterSlug}`,
+      pageCount: images.length,
+      nsfwLevel: chapter.chapterNsfwLevel,
+    })
+  );
   return zip.generateAsync({ type: 'blob' });
 }
 
@@ -70,9 +94,10 @@ export function buildComicInfoXml(info: ComicInfo) {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
-    ...fields
-      .filter(([, value]) => value != null && value !== '')
-      .map(([tag, value]) => `  <${tag}>${escapeXml(String(value))}</${tag}>`),
+    ...fields.flatMap(([tag, value]) => {
+      const text = value == null ? '' : escapeXml(String(value));
+      return text ? [`  <${tag}>${text}</${tag}>`] : [];
+    }),
     '</ComicInfo>',
     '',
   ].join('\n');

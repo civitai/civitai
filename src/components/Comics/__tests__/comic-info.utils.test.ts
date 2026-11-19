@@ -63,13 +63,25 @@ describe('buildComicInfoXml', () => {
     expect(root.getElementsByTagName('Publisher')[0].textContent).toBe('Civitai');
   });
 
+  it('keeps emoji and drops a value that is only illegal characters', () => {
+    const root = parse(buildComicInfoXml({ ...info, title: 'Ghost 👻', writer: '\u0001\u0002' }));
+    expect(root.getElementsByTagName('Title')[0].textContent).toBe('Ghost 👻');
+    expect(root.getElementsByTagName('Writer')).toHaveLength(0);
+  });
+
   it('keeps hostile user strings as text, not markup', () => {
     // `&lt;` decodes to `<` if `&` goes unescaped, which a lenient parser would not report.
     const hostile = `A & &lt; <b>"x"</b> ']]> <!-- `;
-    const root = parse(
-      buildComicInfoXml({ ...info, title: hostile, series: hostile, writer: hostile + '\u0001' })
-    );
+    const xml = buildComicInfoXml({
+      ...info,
+      title: hostile,
+      series: hostile,
+      writer: hostile + '\u0001',
+    });
+    const root = parse(xml);
     expect(root.children).toHaveLength(8);
+    // happy-dom accepts a raw `]]>` in text, so pin the escape on the string itself.
+    expect(xml).not.toContain(']]>');
     for (const tag of ['Title', 'Series', 'Writer']) {
       expect(root.getElementsByTagName(tag)[0].textContent).toBe(hostile);
     }
@@ -77,13 +89,24 @@ describe('buildComicInfoXml', () => {
 });
 
 describe('buildChapterCbz', () => {
-  it('puts ComicInfo.xml at the archive root, counting the pages it zipped', async () => {
+  it('puts ComicInfo.xml at the root, numbered, linked and rated from the chapter it is given', async () => {
     const page = { blob: new Blob([new Uint8Array([1, 2, 3])]), ext: 'png' };
-    const { pageCount: _, ...rest } = info;
-    const cbz = await buildChapterCbz([page, page], rest);
+    const chapter = {
+      projectId: 7,
+      projectName: 'My Comic',
+      chapterName: 'Chapter One',
+      chapterPosition: 2,
+      chapterNsfwLevel: NsfwLevel.X,
+      writer: 'creator',
+    };
+    const cbz = await buildChapterCbz([page, page], chapter, 'https://civitai.com');
     const zip = await JSZip.loadAsync(await cbz.arrayBuffer());
     expect(Object.keys(zip.files).sort()).toEqual(['001.png', '002.png', 'ComicInfo.xml']);
     const root = parse(await zip.file('ComicInfo.xml')!.async('string'));
-    expect(root.getElementsByTagName('PageCount')[0].textContent).toBe('2');
+    const text = (tag: string) => root.getElementsByTagName(tag)[0]?.textContent;
+    expect(text('Number')).toBe('3');
+    expect(text('Web')).toBe('https://civitai.com/comics/7/my-comic/3/chapter-one');
+    expect(text('PageCount')).toBe('2');
+    expect(text('AgeRating')).toBe('Adults Only 18+');
   });
 });
