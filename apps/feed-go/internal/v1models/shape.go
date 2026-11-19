@@ -401,8 +401,7 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 		version.Set("images", outImages)
 		version.Set("downloadUrl", dl)
 		version = removeEmpty(version)
-		// removeEmpty drops empty arrays, but the docs promise images is [] when every image is left
-		// out. Set keeps a non-empty one in place and appends an empty one, as the Node route does.
+		// removeEmpty drops empty arrays, but the docs promise images is [] when every image is left out.
 		version.Set("images", outImages)
 		return version, nil
 	}
