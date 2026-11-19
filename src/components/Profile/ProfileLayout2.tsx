@@ -189,7 +189,7 @@ export function ProfileLayout2({
         notFound={!user || !user.username}
         left={
           blockedByThem || deferredShell ? null : (
-            <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6">
+            <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none">
               <ProfileSidebar username={username} />
             </div>
           )
