@@ -167,6 +167,14 @@ describe('the count of what a scan newly sets after a moderator review', () => {
     expect(writtenMinor()).toBe(true);
   });
 
+  it('does not count a minor flag the image already had', async () => {
+    reviewed(true);
+    await resolveScanOutcome({ image: { ...image, minor: true }, workflowId: 'wf' });
+    await settle();
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0].payload).toMatchObject({ newlyMinor: false });
+  });
+
   it('logs nothing for an unreviewed image outside the sample', async () => {
     reviewed(false);
     await resolveScanOutcome({ image: { ...image, id: 7 }, workflowId: 'wf' });

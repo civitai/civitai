@@ -535,20 +535,6 @@ function isBlockKeptByHold(imageId: number) {
   );
 }
 
-/**
- * Resolve and persist the final state of the image row, returning the bits the
- * post-update side effects need. Three terminal shapes:
- *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
- *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
- *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
- *    image is under appeal, or the block is CSAM.
- *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
- *    moderation rules re-block.
- *  - `audit.blockedFor` (prompt TOS/CSAM): block.
- *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
- *    takes precedence over the audit decision.
- */
 /** One image in this many is logged without a prior review, so the line's volume shows it runs. */
 const SCAN_AFTER_REVIEW_SAMPLE = 100;
 
@@ -582,10 +568,24 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
       payload: { priorReview, sampled, ...newlySet },
     });
   } catch {
-    // Counting is best effort.
+    /* empty */
   }
 }
 
+/**
+ * Resolve and persist the final state of the image row, returning the bits the
+ * post-update side effects need. Three terminal shapes:
+ *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
+ *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
+ *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
+ *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
+ *    image is under appeal, or the block is CSAM.
+ *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
+ *    moderation rules re-block.
+ *  - `audit.blockedFor` (prompt TOS/CSAM): block.
+ *  - otherwise: Scanned, with moderation rules applied last so a rule Block/Hold
+ *    takes precedence over the audit decision.
+ */
 export async function resolveScanOutcome({
   image,
   blocked,
