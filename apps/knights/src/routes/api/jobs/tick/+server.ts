@@ -15,6 +15,7 @@ import { metrics, type TickFailureStep } from '$lib/server/metrics';
 import {
   applyPendingResolutions,
   closeModeratorRuledItems,
+  closeUnservableItems,
   escalateExpired,
 } from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
@@ -37,13 +38,17 @@ async function settle<T>(step: string, run: () => Promise<T>) {
 export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
 
-  // `escalated`, `toInquisitor`, `extended` and `expired` (unvoted items closed) go straight into the response.
+  // `escalated`, `toInquisitor`, `extended`, `expired` (items closed undecided) and `rerated` go straight into the response.
   const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
   );
   const moderatorRuled = await settle('moderator-ruled sweep', () =>
     closeModeratorRuledItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
+  const unservable = await settle('unservable sweep', () =>
+    closeUnservableItems(db, { now: new Date() })
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
@@ -105,6 +110,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !escalation.ok ||
     !writeBacks.ok ||
     !moderatorRuled.ok ||
+    !unservable.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -138,6 +144,8 @@ export const POST: RequestHandler = async ({ request }) => {
     ...escalation.value,
     ...writeBacks.value,
     moderatorRuled: moderatorRuled.value.closed,
+    unservable: unservable.value.unservable,
+    publishesAfterExpiry: unservable.value.publishesAfterExpiry,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

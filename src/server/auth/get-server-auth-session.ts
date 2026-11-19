@@ -18,6 +18,7 @@ import { applySessionScope, type SessionScope } from './session-scope';
 import { refuseModerationAccountSession } from './moderation-account';
 import { decodePreviewSessionCookie, previewCookieSignInEnabled } from './preview-session-cookie';
 import { getHubSession, maybeRollHubCookie } from './session-client';
+import { observeSessionCookieSlot } from './session-metrics';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -97,6 +98,7 @@ async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Sess
     req.context.session = hub;
     const host = req.headers.host;
     const civ = readSessionToken(req.cookies, { host });
+    if (civ) observeSessionCookieSlot(host, civ.slot);
     const slot = civ && rollSlot(civ, sessionCookieMode(host));
     const device = readDeviceId(req.cookies, { host })?.value;
     if (civ && slot) {

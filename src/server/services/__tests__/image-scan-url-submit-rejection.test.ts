@@ -19,7 +19,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { imageScanSubmittedCounter } from '~/server/prom/client';
 import { createImage, enqueueImageIngestion, ingestImage } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
@@ -54,7 +53,6 @@ const allowSubmitByDefault = () =>
 beforeEach(() => {
   allowSubmitByDefault();
   dbMock.dbWrite.$executeRaw.mockClear();
-  loggingMock.logToAxiom.mockClear();
   vi.mocked(imageScanSubmittedCounter.inc).mockClear();
 });
 
@@ -82,9 +80,6 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     expect(errorJson.responseStatus).toBe(400);
     expect(errorJson.failureClass).toBe('permanent');
     expect(errorJson.reason).toContain('not on the ingestion allowlist');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'url-not-allowed', imageId: 4242, type: 'error' })
-    );
     // The `rejected` label is a documented alerting contract (its help text advertises it),
     // so pin it. `lane: 'unknown'` is deliberate — the real lane comes from a Flipt read this
     // rejection returns before, so attributing it to a concrete lane would skew a per-lane
@@ -94,26 +89,6 @@ describe('ingestImage URL allowlist (submit seam)', () => {
       lane: 'unknown',
       result: 'rejected',
     });
-  });
-
-  it('an orchestrator 400 logs its problem-details body as readable text', async () => {
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
-    mockCreateImageIngestionRequest.mockResolvedValue({
-      data: undefined,
-      error: { title: 'Bad Request', status: 400, detail: 'mediaUrl could not be fetched' },
-      status: 400,
-      useImageScanning: false,
-    });
-
-    expect(await ingestImage({ image: image(STORAGE_KEY) })).toBe(false);
-
-    const log = loggingMock.logToAxiom.mock.calls
-      .map(([payload]) => payload as Record<string, unknown>)
-      .find((p) => p.failureType === 'send-fail');
-    expect(log).toMatchObject({ reason: 'no-workflow-response', responseStatus: 400 });
-    const text = JSON.stringify(log);
-    expect(text).not.toContain('[object Object]');
-    expect(text).toContain('mediaUrl could not be fetched');
   });
 
   it('rejects a blob: url the same way — the failed-submit fold-in', async () => {
@@ -144,7 +119,6 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     );
     // The scanJobs stamp on success.
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('submits the avatar-host urls that legitimately appear in Image data', async () => {

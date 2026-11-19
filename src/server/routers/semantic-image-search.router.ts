@@ -107,6 +107,7 @@ export const semanticImageSearchRouter = router({
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
         refuseNarrowing: !!ownImagesOf,
+        tagMatchesFirst: !!ownImagesOf,
       }).catch(async (error) => {
         if (ownImagesOf) await holdOwnImages(started);
         throw error;

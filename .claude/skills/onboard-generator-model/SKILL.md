@@ -22,6 +22,7 @@ The reasoning behind the order is in [docs/features/generator-model-onboarding.m
 | 4 | `generation-gate-rules` | Hide it from everyone except moderators |
 | 5 | `add-generation-support` | Wire it into both generator lanes |
 | 6 | `add-prompt-enhancement-guide` | Prompt-enhancement guide for a new ecosystem |
+| 6b | `covers.mjs` (this skill) | Launch covers made by the new version itself |
 | 7, 8 | `generator-launch` | Readiness check, then the post-deploy instructions |
 
 Supporting skills: `deploy-status` (the deploy stops), `postgres-query` (used by `generation-coverage`), `mod-actions` (the API key every script uses).
@@ -37,9 +38,9 @@ Then work out the **case**:
 | Case | Phases | Deploys |
 | --- | --- | --- |
 | **A.** New ecosystem | 1 → deploy → 2–7 → deploy → 8 | 2 |
-| **B.** New base model in an existing ecosystem | 1 → deploy → 2–5, 7 → deploy → 8 | 2 |
-| **C.** New model, existing base model | 2–5, 7 → deploy → 8 | 1 |
-| **D.** New version of an existing official model | 2–5, 7 → deploy → 8 | 1 |
+| **B.** New base model in an existing ecosystem | 1 → deploy → 2–5, 6b, 7 → deploy → 8 | 2 |
+| **C.** New model, existing base model | 2–5, 6b, 7 → deploy → 8 | 1 |
+| **D.** New version of an existing official model | 2–5, 6b, 7 → deploy → 8 | 1 |
 
 ### Choosing the case: new ecosystem, new base model, or neither
 
@@ -83,6 +84,19 @@ Show the user the case, the kind, the phases and where the run will stop, for de
 
 6. **Prompt enhancement (A only, image and video).** Run `add-prompt-enhancement-guide`.
 
+6b. **Launch covers (every case).** Generate cover media with each new version itself, straight
+   through the orchestrator, so it needs no deploy. `covers.mjs` reads `ORCHESTRATOR_*` from the root
+   `.env` and saves to `~/Downloads/launch-covers/<Version name> (<versionId>)/<name>-<n>.<ext>`.
+   - **Aspect ratio: 1:1 whenever the model offers it; otherwise portrait, and landscape only when
+     there is no portrait option.** Use the largest size the version supports at that ratio.
+   - Write a spec with one entry per version per prompt (`main` and `alt`, `quantity: 2` each). Build
+     each `input` the way the new handler does (same engine, model, variant fields); prompts should
+     show what the model is good at, and a model known for text rendering gets its own name in the
+     image. Video versions take `"stepType": "videoGen"`.
+   - Run `covers.mjs whatif <spec>` and tell the user the Buzz total, then `covers.mjs submit <spec>`.
+   - Look at the results (text spelled right, nothing broken) before handing them over; regenerate a
+     bad one rather than passing it on.
+
 7. **Ship and test.**
    - Run the typecheck and the tests that cover the change (named in `add-generation-support`).
    - Open a PR when the user asks.
@@ -101,4 +115,4 @@ community finetunes can cite them.
 - **Ask before every `--writable` call.** Each one writes to production.
 - **Never continue past a deploy stop on the assumption that the deploy has probably landed.** Check.
 - **Never publish.**
-- **End the run by listing every production write it made:** models and versions created, descriptions written, coverage rows, and gate-rule changes.
+- **End the run by listing every production write it made:** models and versions created, descriptions written, coverage rows, gate-rule changes, and the Buzz spent on covers.

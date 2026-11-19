@@ -362,7 +362,7 @@ const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 function retractionFor(id: number) {
   const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
   if (!call) return undefined;
-  return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
+  return Boolean((call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
 beforeEach(() => {

@@ -3,7 +3,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 redisMock.redis.packed.set.mockImplementation(async () => undefined);
 redisMock.redis.set.mockImplementation(async () => undefined);
-redisMock.redis.scanIterator.mockImplementation(async function* () {});
+redisMock.redis.scanIterator.mockImplementation(async function* () {
+  // no cached keys to scan
+});
 const mockDbRead = dbMock.dbRead;
 
 /**
@@ -42,7 +44,10 @@ vi.mock('@prisma/client', () => {
     }
     return { __sql: out, sql: out, toString: () => out } as unknown as { sql: string };
   }
-  return { Prisma: { sql } };
+  function raw(text: string) {
+    return { __sql: text, sql: text, toString: () => text } as unknown as { sql: string };
+  }
+  return { Prisma: { sql, raw } };
 });
 
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));

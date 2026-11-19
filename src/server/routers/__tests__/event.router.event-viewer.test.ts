@@ -235,6 +235,31 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
   }
 );
 
+const PLACEMENT: [route: string, fn: string][] = [
+  ['getMyHats', 'getMyEventHats'],
+  ['getPlaceableContent', 'getPlaceableEventContent'],
+  ['getPlaceableContentPage', 'getPlaceableEventContentPage'],
+];
+const lastAsOwner = (fn: string) =>
+  (fnOf(fn).mock.calls.at(-1)?.[0] as { asOwner?: boolean } | undefined)?.asOwner;
+
+describe.each([
+  ['a session', credentials.session, true],
+  [
+    'a full-access personal key',
+    { ...credentials['a scoped personal key'], tokenScope: TokenScope.Full },
+    true,
+  ],
+  ['a scoped personal key', credentials['a scoped personal key'], false],
+  ['an OAuth token', credentials['an OAuth token'], false],
+] as const)('the caller on %s', (_label, credential, asOwner) => {
+  it.each(PLACEMENT)('event.%s shows the own hidden covers: %s', async (route, fn) => {
+    service.getViewerEventAccess.mockResolvedValue('open');
+    await run(route, ctxFor(credential));
+    expect(lastAsOwner(fn)).toBe(asOwner);
+  });
+});
+
 // Control: without it, the scoped-token answers above would also pass if moderators were dropped
 // everywhere.
 describe('a moderator on a session', () => {

@@ -6,13 +6,14 @@ import {
   GO_TRANSPORT_PROCEDURES,
   GO_TRANSPORT_URL,
   setFeedGoTransportEnabled,
+  setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 
 /**
- * WIRE-LEVEL coverage for the `feedGoTransport` flag: with it on, a signed-in browser sends
- * `image.getImagesAsPostsInfinite` to `/api/trpc-go/…` instead of `/api/trpc/…`; everything else is
- * unchanged. Drives the real `trpcVanilla` link chain over a stubbed `fetch` and asserts on the URL it
+ * WIRE-LEVEL coverage for the Go-transport flags (`feedGoTransport`, `feedGoTransportModelGetAll`,
+ * `feedGoTransportInfinite`): with one on, a signed-in browser sends THAT procedure to
+ * `/api/trpc-go/…` instead of `/api/trpc/…`; everything else is unchanged. Drives the real `trpcVanilla` link chain over a stubbed `fetch` and asserts on the URL it
  * actually requested, as trpc-block-token-transport.test.ts does.
  */
 
@@ -25,12 +26,15 @@ const ORDINARY = 'model.getById';
 const ORDINARY_INPUT = { id: 1 };
 const MODELS = 'model.getAll';
 const MODELS_INPUT = { sort: 'Newest', limit: 20, browsingLevel: 1 };
+const IMAGES = 'image.getInfinite';
+const IMAGES_INPUT = { limit: 50, browsingLevel: 1, period: 'Week' };
 
 beforeEach(() => {
   sent = [];
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   delete (globalThis as { window?: unknown }).window;
   vi.stubGlobal(
     'fetch',
@@ -48,6 +52,7 @@ afterEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   delete (globalThis as { window?: unknown }).window;
   vi.unstubAllGlobals();
 });
@@ -71,6 +76,16 @@ const signIn = () => {
 // `/api/trpc-go/<procedure>` to the Go service, so this constant must stay that literal.
 it('GO_TRANSPORT_URL is the edge route prefix /api/trpc-go', () => {
   expect(GO_TRANSPORT_URL).toBe('/api/trpc-go');
+});
+
+// Literal: each of these has its own flag and its own exact edge route; a procedure added or dropped
+// here without its route (or route without it) must be a visible change.
+it('the Go-transport procedures are exactly these three', () => {
+  expect([...GO_TRANSPORT_PROCEDURES].sort()).toEqual([
+    'image.getImagesAsPostsInfinite',
+    'image.getInfinite',
+    'model.getAll',
+  ]);
 });
 
 it('every Go-transport procedure is also never batched (a batched path cannot be routed)', () => {
@@ -114,6 +129,16 @@ describe('the /api/trpc-go rewrite', () => {
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${FEED},${ORDINARY}`)).toBeUndefined();
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${MODELS},${ORDINARY}`)).toBeUndefined();
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/model.getAllPagedSimple`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${IMAGES},${ORDINARY}`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/image.getInfiniteImages`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/image.get`)).toBeUndefined();
+  });
+
+  it('sends /api/trpc-go/image.getInfinite back to /api/trpc/image.getInfinite (literal paths)', async () => {
+    const rewrites = await loadRewrites();
+    expect(rewriteFor(rewrites, '/api/trpc-go/image.getInfinite')?.destination).toBe(
+      '/api/trpc/image.getInfinite'
+    );
   });
 
   it('sends /api/trpc-go/model.getAll back to /api/trpc/model.getAll (literal paths)', async () => {
@@ -124,6 +149,65 @@ describe('the /api/trpc-go rewrite', () => {
     expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
       '/api/trpc/image.getImagesAsPostsInfinite'
     );
+  });
+
+  // Local dev: `pnpm dev` (scripts/dev-feed-go/launcher.mjs) sets FEED_GO_LOCAL_URL to its loopback
+  // proxy in front of a local feed-go. `rewrites()` reads it per call, so each case sets it first.
+  describe('with FEED_GO_LOCAL_URL (local dev feed-go)', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it('sends each procedure to <local>/api/trpc/<procedure> (literal paths)', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://127.0.0.1:43123');
+      const rewrites = await loadRewrites();
+      expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
+        'http://127.0.0.1:43123/api/trpc/image.getImagesAsPostsInfinite'
+      );
+      expect(rewriteFor(rewrites, '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://127.0.0.1:43123/api/trpc/model.getAll'
+      );
+      expect(rewriteFor(rewrites, '/api/trpc-go/image.getInfinite')?.destination).toBe(
+        'http://127.0.0.1:43123/api/trpc/image.getInfinite'
+      );
+      // Still exact sources: no other procedure is aliased to feed-go.
+      expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${ORDINARY}`)).toBeUndefined();
+    });
+
+    it('is ignored in production (a built app never carries it)', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://127.0.0.1:43123');
+      const rewrites = await loadRewrites();
+      expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
+        '/api/trpc/image.getImagesAsPostsInfinite'
+      );
+    });
+
+    it('is ignored unless it is a bare loopback http origin', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      for (const url of [
+        'http://feed-go.example.com:8080',
+        'https://127.0.0.1:43123',
+        'http://127.0.0.1',
+        'http://127.0.0.1:43123/elsewhere',
+        'http://user:pw@127.0.0.1:43123',
+        'not a url',
+      ]) {
+        vi.stubEnv('FEED_GO_LOCAL_URL', url);
+        const rewrites = await loadRewrites();
+        expect(rewriteFor(rewrites, '/api/trpc-go/model.getAll')?.destination, url).toBe(
+          '/api/trpc/model.getAll'
+        );
+      }
+      // Positive control in the same loop shape: localhost and [::1] are honoured.
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://localhost:43124/');
+      expect(rewriteFor(await loadRewrites(), '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://localhost:43124/api/trpc/model.getAll'
+      );
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://[::1]:43125');
+      expect(rewriteFor(await loadRewrites(), '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://[::1]:43125/api/trpc/model.getAll'
+      );
+    });
   });
 });
 
@@ -280,5 +364,91 @@ describe('feedGoTransportModelGetAll', () => {
     expect(sent).toHaveLength(2);
     expect(sent[0].url).toContain('/api/trpc/model.getAll?');
     expect(sent[1].url).toContain('/api/trpc-go/image.getImagesAsPostsInfinite?'); // positive control
+  });
+});
+
+/**
+ * `feedGoTransportInfinite`: the same transport for `image.getInfinite`, behind its OWN flag. Literal
+ * paths, so a change to the shared constants cannot move these expectations with them.
+ */
+describe('feedGoTransportInfinite', () => {
+  it('OFF (the default): image.getInfinite goes to /api/trpc as before', async () => {
+    signIn();
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('GET');
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON, signed in: image.getInfinite goes to /api/trpc-go/image.getInfinite as a GET', async () => {
+    signIn();
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('GET');
+    expect(sent[0].url).toContain('/api/trpc-go/image.getInfinite?');
+    expect(sent[0].url).toContain('input=');
+  });
+
+  it('ON, signed in, in the batch cohort: still unbatched on the Go path', async () => {
+    signIn();
+    setTrpcBatchingEnabled(true);
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc-go/image.getInfinite?');
+    expect(sent[0].url).not.toContain('batch=1');
+  });
+
+  it('ON, signed out: image.getInfinite stays on /api/trpc (edge-cacheable path)', async () => {
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON, signed in: an input too large for a GET stays on /api/trpc as POST', async () => {
+    signIn();
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(IMAGES, {
+      ...IMAGES_INPUT,
+      excludedTagIds: Array.from({ length: 800 }, (_, i) => i),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('POST');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON: the gallery feed and model.getAll are not moved (each has its own flag)', async () => {
+    signIn();
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(FEED, FEED_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(IMAGES, IMAGES_INPUT);
+
+    expect(sent).toHaveLength(3);
+    expect(sent[0].url).toContain('/api/trpc/image.getImagesAsPostsInfinite?');
+    expect(sent[1].url).toContain('/api/trpc/model.getAll?');
+    expect(sent[2].url).toContain('/api/trpc-go/image.getInfinite?'); // positive control
+  });
+
+  it('the gallery and model.getAll flags ON do not move image.getInfinite', async () => {
+    signIn();
+    setFeedGoTransportEnabled(true);
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(IMAGES, IMAGES_INPUT);
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+    expect(sent[1].url).toContain('/api/trpc-go/model.getAll?'); // positive control
   });
 });

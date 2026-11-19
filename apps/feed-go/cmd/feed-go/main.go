@@ -36,7 +36,11 @@ import (
 )
 
 func main() {
+	if printVersion(os.Args[1:], os.Stdout) {
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log.Info("feed-go", "version", version)
 	if err := run(log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)
@@ -61,8 +65,9 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
 // (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
-// primary database, used (and opened) only with write-back on. The tag-ids lookup's browsing gate
-// reads blocked and addons, the blocked-tag list and addons the procedures read.
+// primary database, used (and opened) only when FEED_GO_CACHE_WRITEBACK lists a cache whose lookup
+// reads it (hydrate.PrimaryCaches). The tag-ids lookup's browsing gate reads blocked and addons, the
+// blocked-tag list and addons the procedures read.
 func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int),
 	blocked *feed.BlockedTags, addons func(context.Context) []browsing.Addon) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
@@ -70,10 +75,22 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
 		TagGate: feed.ImageTagGate(blocked, addons)}
-	if cfg.CacheWriteBack {
+	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
 	return c
+}
+
+// attachWriteObservers hands c (the miss computation, nil when off) the cache-write counter and log
+// (FEED_GO_CACHE_WRITE_LOG_PER_MIN), and seeds the counter for the written-back caches, so a cache
+// that has written nothing reads 0 rather than an absent series.
+func attachWriteObservers(cfg *config.Config, c *hydrate.MissCompute, metrics *server.Metrics, log *slog.Logger) {
+	if c == nil {
+		return
+	}
+	c.ObserveWrite = metrics.ObserveCacheWrite
+	c.WriteLog = &hydrate.WriteLog{Log: log, PerMinute: cfg.CacheWriteLogPerMinute}
+	metrics.SeedCacheWrites(cfg.CacheWriteBack.Names())
 }
 
 // metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
@@ -114,7 +131,15 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 	return err
 }
 
-// primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
+// opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
+// on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
+// allowlist (e.g. metrics,tag-ids) never opens it.
+func opensPrimary(cfg *config.Config) bool {
+	return cfg.ComputeMisses && cfg.CacheWriteBack.NeedsPrimary()
+}
+
+// primaryMaxConns bounds the primary pool, used only by the written-back miss lookups that read it
+// (hydrate.PrimaryCaches; DESIGN.md §3.1).
 const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
@@ -178,7 +203,7 @@ func run(log *slog.Logger) error {
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
 	var primary hydrate.Querier
-	if cfg.ComputeMisses && cfg.CacheWriteBack {
+	if opensPrimary(cfg) {
 		primaryCfg, err := dbpool.Config(cfg.PrimaryDatabaseURL, dbpool.Settings{MaxConns: primaryMaxConns})
 		if err != nil {
 			return err
@@ -197,12 +222,14 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
+	attachWriteObservers(cfg, sources.Compute, metrics, log)
 	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
-	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
+	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack.Names(),
+		"primary_db", primary != nil, "FEED_GO_CACHE_WRITE_LOG_PER_MIN", cfg.CacheWriteLogPerMinute,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,
 		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_METRICS_LOCK_WAIT_MS", cfg.MetricsLockWait.Milliseconds(),
 		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
@@ -238,6 +265,7 @@ func run(log *slog.Logger) error {
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames,
+		OnSlot:              func(slot string) { metrics.SessionCookieSlot.WithLabelValues(slot).Inc() },
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{
@@ -246,6 +274,7 @@ func run(log *slog.Logger) error {
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   addons,
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
@@ -326,6 +355,7 @@ func run(log *slog.Logger) error {
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
+		ServeInfinite:    cfg.ServeInfinite,
 		Hosts:            cfg.Hosts,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
@@ -361,6 +391,7 @@ func run(log *slog.Logger) error {
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
+	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)

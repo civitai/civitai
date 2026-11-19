@@ -608,11 +608,9 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
-        <Icon name="book-open" size={16} />Guide
-      </button>
-    {/if}
+    <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+      <Icon name="book-open" size={16} />Guide
+    </button>
     {@render soundToggle()}
   </div>
 {/snippet}
@@ -830,9 +828,9 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        {#if !yesNo}
-          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-        {/if}
+        <span class="rowtool">
+          <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
+        </span>
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
@@ -867,6 +865,7 @@
 {#if guideOpen}
   <GuideDialog
     guide={data.ratingGuide}
+    scrollToRules={yesNo}
     first={data.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}

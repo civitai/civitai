@@ -13,7 +13,7 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending','Scanned','Error','Blocked','NotFound','PendingManualAssignment','Rescan');
-    CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL);
+    CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, metadata jsonb);
   `);
 });
 

@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 
 import type { PrismaClient } from '@prisma/client';
@@ -240,7 +241,7 @@ export async function hydrateSubListingCards(
   if (ids.length === 0) return new Map();
   const rows = await db.$queryRaw<SubListingHydrateRow[]>(Prisma.sql`
     SELECT s.id, s.title, s.tagline, s.sub_path, s.content_rating, s.author_user_id,
-           u.username AS author_username, u.image AS author_image,
+           u.username AS author_username, ${Prisma.raw(fallbackUserImageColumn)} AS author_image,
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
            al.kind AS parent_kind, al.category AS parent_category,
            al.content_rating AS parent_content_rating,

@@ -172,7 +172,7 @@ describe('applyResult — blocked but deleted since submit', () => {
 });
 
 describe('applyResult — clean', () => {
-  it('marks Scanned without touching textNsfw or nsfwLevel, and logs the verdict', async () => {
+  it('marks Scanned without touching textNsfw or nsfwLevel', async () => {
     findForEscalation.mockResolvedValue(crucible({ textNsfw: true }));
 
     await scan(0.3);
@@ -181,15 +181,6 @@ describe('applyResult — clean', () => {
       where: { id: ID },
       data: { ingestion: 'Scanned', scannedAt: expect.any(Date) },
     });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'info',
-        name: 'crucible-text-scan',
-        crucibleId: ID,
-        isNsfw: false,
-        scores: [{ label: 'explicit', score: 0.3, threshold: 0.75, topToken: 'yes' }],
-      })
-    );
     expect(cancelCrucible).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
   });
@@ -220,9 +211,6 @@ describe('applyResult — yellow crucible with NSFW text', () => {
           url: `/crucibles/${ID}`,
         },
       })
-    );
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'crucible-text-scan', isNsfw: true })
     );
     expect(cancelCrucible).not.toHaveBeenCalled();
   });

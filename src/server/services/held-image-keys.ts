@@ -3,8 +3,11 @@ import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import {
   blockMarkerText,
   clearHeldUserImagesStatement,
-  dropStaleHeldImageMarkersStatement,
-  restoreClearedUserImagesStatement,
+  clearUserImageKeysStatement,
+  pictureUserIdsStatement,
+  userImageKeyPlanStatement,
+  type ClearedUserImageKeyRow,
+  type UserImageKeyPlanRow,
 } from '@civitai/db-queries/profile-picture-clear';
 import { type RawQueryClient } from '~/server/services/profile-picture.sql';
 
@@ -33,20 +36,28 @@ export async function anyImageHeldOrBlocked(db: RawQueryClient, keys: string[]) 
 /**
  * `clearHeldUserImagesStatement` from `@civitai/db-queries/profile-picture-clear`, the statement the
  * moderator app runs too: the users whose profile picture is held or blocked, with any `User.image`
- * naming it cleared and marked for `restoreClearedUserImages`.
+ * naming it (or another held or blocked own image) cleared.
  */
 export async function clearHeldUserImages(db: RawUnsafeQueryClient, userIds: number[]) {
   return runStatement(db, clearHeldUserImagesStatement(userIds));
 }
 
-/** `restoreClearedUserImagesStatement` from `@civitai/db-queries/profile-picture-clear`, which the moderator app runs too. */
-export async function restoreClearedUserImages(db: RawUnsafeQueryClient, userIds: number[]) {
-  return runStatement(db, restoreClearedUserImagesStatement(userIds));
+/** `pictureUserIdsStatement` from `@civitai/db-queries/profile-picture-clear`. */
+export async function getPictureUserIds(db: RawUnsafeQueryClient, imageIds: number[]) {
+  return runStatement(db, pictureUserIdsStatement(imageIds));
 }
 
-/** `dropStaleHeldImageMarkersStatement` from `@civitai/db-queries/profile-picture-clear`. */
-export async function dropStaleHeldImageMarkers(db: RawUnsafeQueryClient, userIds: number[]) {
-  await runStatement(db, dropStaleHeldImageMarkersStatement(userIds));
+/** `userImageKeyPlanStatement` from `@civitai/db-queries/profile-picture-clear`. */
+export async function userImageKeyPlan(db: RawUnsafeQueryClient, limit: number) {
+  const { sql, parameters } = userImageKeyPlanStatement(limit);
+  return db.$queryRawUnsafe<UserImageKeyPlanRow[]>(sql, ...parameters);
+}
+
+/** `clearUserImageKeysStatement` from `@civitai/db-queries/profile-picture-clear`. */
+export async function clearUserImageKeys(db: RawUnsafeQueryClient, userIds: number[]) {
+  const { sql, parameters, empty } = clearUserImageKeysStatement(userIds);
+  if (empty) return [];
+  return db.$queryRawUnsafe<ClearedUserImageKeyRow[]>(sql, ...parameters);
 }
 
 async function runStatement(

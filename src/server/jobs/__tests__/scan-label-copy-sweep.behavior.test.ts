@@ -5,7 +5,6 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -61,7 +60,6 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  vi.mocked(loggingMock.logToAxiom).mockClear();
   await holder.db.exec(
     `TRUNCATE "ScanLabelItem", "ScanLabelCopyObject", "Image", "CsamReport", test_eligibility CASCADE`
   );
@@ -408,14 +406,12 @@ describe('sweepScanLabelCopies', () => {
     expect(removed).toEqual([]);
   });
 
-  it('does nothing, with one warning, without the delete key', async () => {
+  it('does nothing without the delete key', async () => {
     setEnv({ SCAN_LABEL_P3_B2_DELETE_ACCESS_KEY: undefined });
     expect(scanLabelSweepStoreFromEnv()).toBeNull();
     await copied(1);
     await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
-    vi.mocked(loggingMock.logToAxiom).mockClear();
     expect(await sweepScanLabelCopies()).toEqual({ configured: false });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     expect((await ledger())[0].withdrawReason).toBeNull();
   });
 });

@@ -238,8 +238,8 @@ export async function resolveComFaceIntent(
   let verdict: ComFaceIntentVerdict;
   if (stored)
     verdict = stored.detected
-      ? { status: 'detected', reason: stored.reason }
-      : { status: 'allowed' };
+      ? { status: 'detected', reason: stored.reason, promptId: stored.promptId }
+      : { status: 'allowed', promptId: stored.promptId };
   else {
     verdict = await checkComFaceIntentVerdict(listing);
     if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;
@@ -279,6 +279,14 @@ export async function resolveComFaceIntent(
     });
     return false;
   });
+  // Counted per prompt version beside 'allowed'; ids and the reason stay in the database.
+  if (locked)
+    logToAxiom({
+      type: 'info',
+      name: 'model-com-face-intent',
+      message: 'locked',
+      payload: { promptId: verdict.promptId },
+    });
   return { ...verdict, disputable: locked };
 }
 
@@ -294,13 +302,12 @@ export async function assertComFaceAllowed(
   if (verdict.status === 'unavailable')
     throw throwBadRequestError(COM_FACE_CHECK_UNAVAILABLE_MESSAGE);
   if (verdict.status === 'detected') {
-    // For moderators: the owner is told which fields were read, never why.
+    // Counted per prompt version; ids and the reason stay in the database (meta.comFaceIntent).
     logToAxiom({
       type: 'info',
       name: 'model-com-face-intent',
       message: 'refused at save',
-      modelId: args.modelId,
-      reason: verdict.reason,
+      payload: { promptId: verdict.promptId },
     });
     throw throwBadRequestError(
       verdict.disputable ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE

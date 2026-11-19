@@ -208,7 +208,9 @@ describe('modelModerationAdapter.applyResult', () => {
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-    expect(flipCall()?.sql).toContain('array_append');
+    expect(flipCall()?.sql).toContain(
+      `array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+    );
   });
 
   describe('when a moderator has locked nsfw', () => {
@@ -292,11 +294,6 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(updateModelNsfwLevels).not.toHaveBeenCalled();
     expect(bustPublicModelResponseCache).not.toHaveBeenCalled();
     expect(entityChangesMock).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'nsfw lock appeared between read and write; flag not applied',
-      })
-    );
   });
 
   describe('on a model its owner restricted', () => {

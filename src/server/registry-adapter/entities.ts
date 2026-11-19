@@ -40,6 +40,7 @@ export const SERVED_SCHEMAS = [
 ] as const;
 
 export const RUNTIME_URN = registryUrn({ kind: 'runtime', name: 'iframe', major: 1 });
+export const APP_SEARCH_URN = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
 
 /** One listed app, as the catalog read found it. */
 export type CatalogApp = {
@@ -71,7 +72,8 @@ export type CatalogApp = {
 };
 
 /**
- * The content rating an app entity publishes: the listing's if known ({@link isKnownRating}),
+ * The content rating an app entity publishes: the listing's if known ({@link isKnownRating},
+ * `xxx` included, so a listing rated `xxx` is published as `xxx` and never as its block's rating),
  * else the block's if known, else whichever is set (null if neither), which `audienceAdmits`
  * fails closed on. A shared document has none of its own (`doc-streams.ts`).
  */
@@ -91,7 +93,7 @@ export type EntitySets = Map<string, Entity[]>;
  * audience (`audience.ts` describes how). The schema stream ({@link JSON_SCHEMA_DIALECT}) is one:
  * beside the fixed entity schemas it holds every collection schema,
  * whose URN names its app and whose body is that app's declared schema. The one schema left out,
- * `service`, is the runtime record, which belongs to no app.
+ * `service`, holds the runtime record and the app search service, which belong to no app.
  */
 export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
   APP_SCHEMA,
@@ -182,6 +184,56 @@ export function runtimeEntity(baseUrl: string): Entity {
 }
 
 /**
+ * The app search service: the app index's `GET {endpoint}?q=&kind=&category=&limit=`, answering
+ * over the app entities anyone may read. The text describes what that endpoint does, so a change
+ * to its matching, filters or defaults changes this body too.
+ */
+export function appSearchEntity(endpoint: string): Entity {
+  return entity(APP_SEARCH_URN, SERVICE_SCHEMA, {
+    name: 'App search',
+    kind: 'search',
+    description:
+      'Finds Civitai apps by name, slug, tagline or creator: every word of q must be a prefix of a word of one of them. SFW apps only. Answers JSON: { results: [{ urn, slug, name, tagline, kind, category, rating, iconUrl, creator }] }, best match first.',
+    reads: APP_SCHEMA,
+    endpoint,
+    parameters: {
+      q: "Words to look for; each must start a word of the app's name, slug, tagline or creator. Every app, by name, unless given.",
+      kind: 'onsite or offsite. Both unless given.',
+      category: 'Only apps of this category.',
+      limit: 'How many results at most, 1 to 50. 20 unless given.',
+    },
+  });
+}
+
+/**
+ * `REGISTRY_ADAPTER_APP_SEARCH_URL`: the app search endpoint to publish, normalized (the URL
+ * parser's `href`: surrounding whitespace dropped, host lower-cased), or undefined when it is
+ * unset or empty (nothing is published). Anything else must be an absolute `https:` URL with no
+ * credentials, query or fragment (a consumer appends its own query to the endpoint); otherwise
+ * this throws, so a misconfigured adapter refuses to start rather than advertise an endpoint a
+ * browser app cannot call.
+ */
+export function parseAppSearchUrl(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL is not a URL: ${JSON.stringify(raw)}`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error(`REGISTRY_ADAPTER_APP_SEARCH_URL must be an https: URL, got ${url.protocol}`);
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry credentials');
+  }
+  if (url.search !== '' || url.hash !== '' || /[?#]/.test(url.href)) {
+    throw new Error('REGISTRY_ADAPTER_APP_SEARCH_URL must not carry a query string or fragment');
+  }
+  return url.href;
+}
+
+/**
  * The URN, or null when a segment is out of bounds (the store does not bound every name the
  * URN grammar does). One bad row then drops only its own entity, never the whole catalog.
  */
@@ -198,11 +250,15 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
  * `features` is the platform's live switch: a collection's schema entities, and its entry in a
  * release's `collections`, are published only while it is exported ({@link exportedCollections},
  * the rule the document streams use). With `registryExport` off, no collection schema is.
+ *
+ * `appSearchUrl` is the public app search endpoint; the app search service entity is published
+ * only when it is set ({@link appSearchEntity}).
  */
 export function buildEntities(
   apps: readonly CatalogApp[],
   opts: {
     baseUrl: string;
+    appSearchUrl?: string;
     onSkip?: (reason: string) => void;
     features?: Readonly<Record<AppStorageFeature, boolean>>;
   }
@@ -217,6 +273,7 @@ export function buildEntities(
   // The schemas the entities below claim, published by this source whatever the catalog holds.
   for (const doc of ENTITY_SCHEMA_DOCUMENTS) addSchema(doc.$id as string, doc);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
+  if (opts.appSearchUrl) add(SERVICE_SCHEMA, appSearchEntity(opts.appSearchUrl));
 
   for (const app of apps) {
     const { listing, block } = app;

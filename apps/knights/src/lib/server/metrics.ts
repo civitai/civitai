@@ -22,6 +22,9 @@ const BUZZ_OUTCOMES = ['paid', 'failed', 'retry'] as const;
 const ESCALATION_REASONS = [
   'next-stage',
   'expired',
+  'unservable',
+  'publishes-after-expiry',
+  'no-consensus-rerate',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
@@ -33,6 +36,7 @@ const REFUSAL_REASONS = [
   'bad-answer',
   'bad-block-reason',
   'already-voted',
+  'own-image',
   'no-weight',
   'reset-pending',
   'limited',
@@ -81,6 +85,11 @@ const harvestSkipped = counter(
   'knights_harvest_skipped_rulings_total',
   'Moderator rulings the harvest passed over because they were older than its window when it reached them.'
 );
+const sessionCookieSlot = counter(
+  'knights_session_cookie_slot_total',
+  'Authenticated requests by the session cookie slot they were read from (host | shared).',
+  { slot: ['host', 'shared'] }
+);
 const votes = counter('knights_votes_total', 'Votes written to the ledger, by kind.', {
   kind: VOTE_KINDS,
 });
@@ -106,7 +115,7 @@ const buzzGrants = counter(
 );
 const escalations = counter(
   'knights_escalations_total',
-  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason; expired counts unvoted items closed instead.',
+  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason; expired counts unvoted items closed instead, no-consensus-rerate items re-rated to their most-voted level instead.',
   { reason: ESCALATION_REASONS }
 );
 const itemsResolved = counter(
@@ -162,6 +171,7 @@ function safely(record: () => void) {
 }
 
 export const metrics = {
+  sessionCookieSlot: (slot: 'host' | 'shared') => safely(() => sessionCookieSlot.inc({ slot })),
   vote: (kind: VoteKind) => safely(() => votes.inc({ kind })),
   harvestSkipped: (count: number) =>
     safely(() => {

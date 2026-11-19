@@ -80,7 +80,7 @@ beforeAll(async () => {
       "profilePictureId" int, settings jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, ingestion text, "nsfwLevel" int, url text, "needsReview" text
+      id int PRIMARY KEY, ingestion text, "nsfwLevel" int, url text, "needsReview" text, "blockedFor" text
     );
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
     CREATE TABLE "Model" (

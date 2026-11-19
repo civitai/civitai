@@ -12,8 +12,10 @@ import {
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionForEditHandler,
   getModelVersionHandler,
+  getExplorationPromptsHandler,
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
+  getVersionsByIdsHandler,
   getVersionLicenseHandler,
   modelVersionDonationGoalHandler,
   modelVersionEarlyAccessPurchaseHandler,
@@ -50,11 +52,9 @@ import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   deleteExplorationPrompt,
-  getExplorationPromptsById,
   getLicensingRoots,
   getModelVersionsByModelType,
   getVersionById,
-  getVersionsByIds,
   addLinkedComponent,
   linkOfficialFileByHash,
   setLinkedComponents,
@@ -85,7 +85,6 @@ import {
 import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 const versionFileUrlsForOwner = ownerOnlyFileUrls<
   Awaited<ReturnType<typeof getModelVersionHandler>>
@@ -196,9 +195,7 @@ export const modelVersionRouter = router({
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)
-    .query(({ input, ctx }) =>
-      getVersionsByIds({ ...input, browsingLevel: getRequestBrowsingLevel(ctx) })
-    ),
+    .query(getVersionsByIdsHandler),
   getLicensingRoots: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getLicensingRootsSchema)
@@ -206,7 +203,7 @@ export const modelVersionRouter = router({
   getExplorationPromptsById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
-    .query(({ input }) => getExplorationPromptsById(input)),
+    .query(getExplorationPromptsHandler),
   getUserEarlyAccessVersions: protectedProcedure.query(({ ctx }) =>
     getUserEarlyAccessModelVersions({ userId: ctx.user.id })
   ),

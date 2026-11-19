@@ -11,11 +11,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // the env and submodule stubs image.service needs to import at all.
 
 const capturedInserts: Array<{ table: string; values: any[] }> = [];
+/** Each insert's `clickhouse_settings`, in insert order. */
+const insertSettings: unknown[] = [];
 const capturedQueries: string[] = [];
 let queryResult: any[] = [];
 /** What the CSAM-entry lookup returns; every other query gets `queryResult`. */
 let csamQueryResult: any[] = [];
 let csamLookupFails = false;
+let csamLookupMessage = 'Socket hang up';
+/** The unblock's live-row read fails, quoting its query, as `$query` does. */
+let liveReadFails = false;
+let insertMessage = 'clickhouse down';
 let clientAbsent = false;
 /** When set, an insert it matches throws, as a failed ClickHouse write. */
 let insertFails: ((args: { table: string; values: any[] }) => boolean) | undefined;
@@ -71,17 +77,21 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 fakeClickhouse.client = makePermissive({
-  insert: async (args: { table: string; values: any[] }) => {
-    if (insertFails?.(args)) throw new Error('clickhouse down');
+  insert: async (args: { table: string; values: any[]; clickhouse_settings?: unknown }) => {
+    if (insertFails?.(args)) throw new Error(insertMessage);
     capturedInserts.push({ table: args.table, values: args.values });
+    insertSettings.push(args.clickhouse_settings);
   },
   $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
     const query = Array.isArray(strings)
       ? strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '')
       : String(strings);
     capturedQueries.push(query);
-    if (!query.includes("= 'CSAM'")) return Promise.resolve(queryResult);
-    if (csamLookupFails) return Promise.reject(new Error('Socket hang up'));
+    if (!query.includes("= 'CSAM'"))
+      return liveReadFails
+        ? Promise.reject(new Error(`ClickHouse query failed: timeout\nQuery: ${query}`))
+        : Promise.resolve(queryResult);
+    if (csamLookupFails) return Promise.reject(new Error(csamLookupMessage));
     if (tableRows) return Promise.resolve(liveCsamHashes(tableRows, query));
     return Promise.resolve(csamQueryResult);
   },
@@ -112,8 +122,13 @@ function liveCsamHashes(rows: TableRow[], query: string) {
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { dbMock } = await import('~/__tests__/mocks/db.mock');
-const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages, HeldMediaCopyError } =
-  await import('../image.service');
+const {
+  addBlockedImage,
+  BlocklistStoreError,
+  bulkAddBlockedImages,
+  bulkRemoveBlockedImages,
+  HeldMediaCopyError,
+} = await import('../image.service');
 
 // A real 64-bit pHash: past 2^53, and one whose rounded form is visibly different so a
 // revert prints the wrong value beside the right one rather than timing out.
@@ -170,6 +185,10 @@ describe('a hash with a CSAM entry keeps it', () => {
     queryResult = [];
     csamQueryResult = [];
     csamLookupFails = false;
+    csamLookupMessage = 'Socket hang up';
+    liveReadFails = false;
+    insertMessage = 'clickhouse down';
+    insertFails = undefined;
     clientAbsent = false;
     tableRows = undefined;
     vi.mocked(logToAxiom).mockClear();
@@ -260,6 +279,20 @@ describe('a hash with a CSAM entry keeps it', () => {
     expect(capturedInserts).toHaveLength(0);
   });
 
+  it('a CSAM row is inserted synchronously and a TOS row keeps the async default', async () => {
+    insertSettings.length = 0;
+
+    await bulkAddBlockedImages({
+      data: [
+        { hash: HASH, reason: 'CSAM' as any },
+        { hash: OTHER, reason: 'TOS' as any },
+      ],
+    });
+
+    expect(capturedInserts.map(({ values }) => values[0]?.reason)).toEqual(['CSAM', 'TOS']);
+    expect(insertSettings).toEqual([{ async_insert: 0 }, undefined]);
+  });
+
   it('a CSAM block still lands on it', async () => {
     csamEntryOn(HASH);
 
@@ -284,10 +317,52 @@ describe('a hash with a CSAM entry keeps it', () => {
           step: 'unblock',
           imageIds: [9],
           actorUserId: 2,
-          hashes: [OTHER.toString()],
+          hashCount: 1,
         }),
       })
     );
+  });
+
+  // A driver message can quote the statement and its hashes ($query appends the query); none of it
+  // reaches a log or a thrown error.
+  it('logs and throws no hash when a call fails with a message quoting it', async () => {
+    csamLookupFails = true;
+    csamLookupMessage = `ClickHouse query failed: timeout\nQuery: ... IN (${OTHER})`;
+    await bulkAddBlockedImages({ data: [{ hash: OTHER, reason: 'TOS' as any }] });
+    insertFails = () => true;
+    insertMessage = `Cannot parse input: {"hash":${HASH}}`;
+    const thrown = await bulkAddBlockedImages({
+      data: [{ hash: HASH, reason: 'CSAM' as any }],
+    }).then(
+      () => expect.unreachable('the CSAM write reported success'),
+      (e: unknown) => e as Error
+    );
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'blocklist-insert-skipped' })
+    );
+    const seen = JSON.stringify([vi.mocked(logToAxiom).mock.calls, thrown.message, thrown.cause]);
+    expect(seen).not.toContain(OTHER.toString().replace('-', ''));
+    expect(seen).not.toContain(HASH.toString().replace('-', ''));
+  });
+
+  it('an unblock logs and throws no hash when its read or its write fails', async () => {
+    liveReadFails = true;
+    await bulkRemoveBlockedImages([OTHER], { step: 'unblock', imageIds: [9], actorUserId: 2 });
+    liveReadFails = false;
+    queryResult = [{ hash: OTHER.toString(), reason: 'TOS' }];
+    insertFails = () => true;
+    insertMessage = `Cannot parse input: {"hash":${OTHER}}`;
+    const thrown = await bulkRemoveBlockedImages([OTHER]).then(
+      () => expect.unreachable('the disable reported success'),
+      (e: unknown) => e as Error
+    );
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'blocklist-disable-refused' })
+    );
+    const seen = JSON.stringify([vi.mocked(logToAxiom).mock.calls, thrown.message, thrown.cause]);
+    expect(seen).not.toContain(OTHER.toString());
   });
 
   it('a failed lookup leaves the TOS block unwritten and logged, after the CSAM row lands', async () => {
@@ -313,7 +388,7 @@ describe('a hash with a CSAM entry keeps it', () => {
           step: 'block',
           imageIds: [9],
           actorUserId: 2,
-          hashes: [OTHER.toString()],
+          hashCount: 1,
           reasons: ['TOS'],
         }),
       })
@@ -364,6 +439,10 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
     queryResult = [];
     csamQueryResult = [];
     csamLookupFails = false;
+    csamLookupMessage = 'Socket hang up';
+    liveReadFails = false;
+    insertMessage = 'clickhouse down';
+    insertFails = undefined;
     clientAbsent = false;
     tableRows = undefined;
     vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockReset();
@@ -479,7 +558,7 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
             { hash: OTHER_HASH, reason: 'TOS' as any },
           ],
         })
-      ).rejects.toThrow('clickhouse down');
+      ).rejects.toBeInstanceOf(BlocklistStoreError);
     } finally {
       insertFails = undefined;
     }
