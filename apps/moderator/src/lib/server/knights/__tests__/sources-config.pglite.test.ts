@@ -55,6 +55,7 @@ const {
   getSourcesContext,
   getSourcesSettings,
   saveGameSettings,
+  saveRuleGuide,
   saveSourcesConfig,
   SOURCES_AUDIT_ACTIVITY,
 } = await import('../sources-config.service');
@@ -480,6 +481,63 @@ describe('saveGameSettings harvest fields', () => {
     redisStore.set(KEY, JSON.stringify({ ...stored, game }));
     await saveSourcesConfig({ enabled: false, sfwRate: 0.4, nsfwRate: 0.2 }, MOD);
     expect(JSON.parse(redisStore.get(KEY)!).game).toEqual(game);
+  });
+});
+
+describe('saveRuleGuide', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { shopDisabled: true },
+  };
+  const guide = {
+    intro: 'Why we ask',
+    sets: [
+      { title: 'First set', notes: 'A note', points: ['Point one'] },
+      { title: 'Notes only', notes: 'Just a line.', points: [] },
+    ],
+  };
+
+  it('stores the guide and carries every other stored field over', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveRuleGuide(guide, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({ ...stored, ruleGuide: guide });
+  });
+
+  it('records nothing when the guide saved is the one stored', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    expect(await saveRuleGuide(guide, MOD)).toEqual({ ok: true, changed: false });
+    expect(await activity()).toHaveLength(0);
+  });
+
+  it('removes the guide when it is cleared', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    expect(await saveRuleGuide(null, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it.each([
+    ['a blank point', { sets: [{ title: 'T', points: ['One', ' '] }] }, 'point 2'],
+    ['a set with neither notes nor points', { sets: [{ title: 'T', points: [] }] }, 'notes or'],
+    ['a set with no title', { sets: [{ title: '', points: ['One'] }] }, 'title'],
+    ['a point over the limit', { sets: [{ title: 'T', points: ['x'.repeat(301)] }] }, 'point 1'],
+    ['an intro over the limit', { intro: 'x'.repeat(601), sets: guide.sets }, 'intro'],
+  ])('refuses %s, naming what is wrong, and writes nothing', async (_, input, word) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    const outcome = await saveRuleGuide(input, MOD);
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.error.toLowerCase()).toContain(word);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it('keeps the guide when the sources or game settings are saved', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, ruleGuide: guide }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.1, nsfwRate: 0.1 }, MOD);
+    await saveGameSettings({ shopDisabled: false }, MOD, { killSwitchesConfirmed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).ruleGuide).toEqual(guide);
   });
 });
 
