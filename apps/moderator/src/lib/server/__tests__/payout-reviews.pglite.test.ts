@@ -177,6 +177,7 @@ describe('what settlement does with each row (resolveHolds in hold.ts)', () => {
   it('leaves out banned and program-banned creators, as settlement does', async () => {
     await db.exec(`UPDATE "User" SET "bannedAt" = '2026-11-01' WHERE id = 7`);
     await db.exec(`UPDATE "User" SET onboarding = 32 + 1 WHERE id = 8`);
+    await db.exec(`UPDATE "User" SET onboarding = 1 WHERE id = 1`);
     await review(7, 'cleared', '2026-11-18');
     await review(8, 'cleared', '2026-11-18');
 

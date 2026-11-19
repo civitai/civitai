@@ -199,16 +199,15 @@ export async function listPayoutReviews(
 
   // The clear that releases a creator can land on any of their reviews, but settlement pays on the
   // latest one, so this view is per creator.
+  // Not limited: a creator dropped below (held, banned) would otherwise keep a slot until the 15th.
   const recent = await dbWrite
     .selectFrom('CreatorProgramPayoutReview')
     .select('userId')
     .distinct()
     .where('status', '=', 'cleared')
     .where('decidedAt', '>', lastSettlementAt(now))
-    .orderBy('userId')
-    .limit(limit + 1)
     .execute();
-  const userIds = recent.slice(0, limit).map((r) => r.userId);
+  const userIds = recent.map((r) => r.userId);
   if (!userIds.length) return { items: [], hasMore: false };
 
   const [rows, users] = await Promise.all([
@@ -238,5 +237,5 @@ export async function listPayoutReviews(
     )
     .map((row) => toRow(row, state))
     .sort((a, b) => (b.decidedAt?.getTime() ?? 0) - (a.decidedAt?.getTime() ?? 0));
-  return { items, hasMore: recent.length > limit };
+  return { items: items.slice(0, limit), hasMore: items.length > limit };
 }
