@@ -226,7 +226,7 @@ async function stageWindow(
   let filled = 0;
   let after: number | null = null;
   for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
-    const cursor = after;
+    const cursor: number | null = after;
     const rows = await candidates()
       .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
       .where((eb) => eb(bucketLevelSql, '!=', 0))
