@@ -8,6 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
 import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
+import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -21,6 +22,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import classes from './ProfileHeader.module.scss';
 import clsx from 'clsx';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 
 export function ProfileHeader({ username }: { username: string }) {
@@ -28,6 +30,7 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
+  const features = useFeatureFlags();
   const {
     announcements,
     isLoading: announcementsLoading,
@@ -137,19 +140,38 @@ export function ProfileHeader({ username }: { username: string }) {
     );
   };
 
+  const renderAnnouncements = () => (
+    <>
+      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+      <CreatorAnnouncementsEntry
+        userId={user.id}
+        userMuted={user.muted}
+        announcementCount={announcements.length}
+        announcementsLoading={announcementsLoading}
+        announcementsErrored={announcementsErrored}
+        className="container"
+      />
+      {renderMessage()}
+    </>
+  );
+
+  if (isMobile && features.profileRedesign) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className={classes.profileSection}>
+          <ProfileSidebar username={username} />
+        </div>
+        {renderCoverImage()}
+        <ProfileNavigation username={username} />
+        {renderAnnouncements()}
+      </div>
+    );
+  }
+
   if (isMobile) {
     return (
       <div className="flex flex-col gap-3">
-        {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
-        <CreatorAnnouncementsEntry
-          userId={user.id}
-          userMuted={user.muted}
-          announcementCount={announcements.length}
-          announcementsLoading={announcementsLoading}
-          announcementsErrored={announcementsErrored}
-          className="container"
-        />
-        {renderMessage()}
+        {renderAnnouncements()}
         <div className="flex flex-col">
           {renderCoverImage()}
           <div
@@ -167,16 +189,7 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
-      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
-      <CreatorAnnouncementsEntry
-        userId={user.id}
-        userMuted={user.muted}
-        announcementCount={announcements.length}
-        announcementsLoading={announcementsLoading}
-        announcementsErrored={announcementsErrored}
-        className="container"
-      />
-      {renderMessage()}
+      {renderAnnouncements()}
     </Stack>
   );
 }
