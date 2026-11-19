@@ -54,6 +54,12 @@ Fails instead of reporting: 0 captured rows, fewer usable rows than `--count`/`-
 where no request was answered 200 by every arm, a NaN latency or CPU figure, or a parity pair that
 compared nothing.
 
+**Parity** counts, per arm against the reference, `bytesEqual` (identical bytes), `jsonEqual`
+(identical parsed JSON, key order ignored) and `valueEqual` (identical after each superjson envelope
+is decoded as the client decodes it: an undefined member written as `null` plus an `["undefined"]`
+annotation equals an omitted one; other annotations compared as sets). `examples` are the decoded
+diffs' paths. `valueEqual` is the one that says whether the client sees the same response.
+
 Latency is compared only over the requests every arm answered 200 in that round (`commonOk`): a
 feed-go fallback (it proxies a shape it does not port) or an error on one arm removes that request
 from all three. `allOkLatency` keeps each arm's own 200s. Container CPU cannot be split by request,

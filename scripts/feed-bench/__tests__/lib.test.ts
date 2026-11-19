@@ -205,7 +205,13 @@ describe('compareBodies (parity)', () => {
   });
 
   it('positive control: the same bytes are equal both ways', () => {
-    expect(lib.compareBodies(body, body)).toEqual({ bytesEqual: true, jsonEqual: true, diffs: [] });
+    expect(lib.compareBodies(body, body)).toEqual({
+      bytesEqual: true,
+      jsonEqual: true,
+      diffs: [],
+      valueEqual: true,
+      valueDiffs: [],
+    });
   });
 
   it('key order differs: JSON-equal, not byte-equal (kills: bytes-only compare)', () => {
@@ -221,6 +227,8 @@ describe('compareBodies (parity)', () => {
       bytesEqual: false,
       jsonEqual: true,
       diffs: [],
+      valueEqual: true,
+      valueDiffs: [],
     });
   });
 
@@ -231,6 +239,8 @@ describe('compareBodies (parity)', () => {
       bytesEqual: false,
       jsonEqual: false,
       diffs: [{ path: '$.result.data.json.items[0].images[0].id', a: 8, b: 9 }],
+      valueEqual: false,
+      valueDiffs: [{ path: '$.result.data.json.items[0].images[0].id', a: 8, b: 9 }],
     });
   });
 
@@ -249,6 +259,8 @@ describe('compareBodies (parity)', () => {
       bytesEqual: false,
       jsonEqual: false,
       diffs: [{ path: '$' }],
+      valueEqual: false,
+      valueDiffs: [{ path: '$' }],
     });
   });
 
@@ -256,6 +268,118 @@ describe('compareBodies (parity)', () => {
     const a = JSON.stringify({ a: 1, b: 1, c: 1 });
     const b = JSON.stringify({ a: 2, b: 2, c: 2 });
     expect(lib.compareBodies(a, b, { maxDiffs: 2 }).diffs).toHaveLength(2);
+  });
+});
+
+describe('compareBodies: decoded (superjson) parity', () => {
+  // One arm writes an undefined member as `null` + an ["undefined"] annotation (superjson.serialize),
+  // the other omits the member. Both decode to the same object under superjson.deserialize.
+  const nodeShape =
+    '{"result":{"data":{"json":{"a":1,"tags":null},"meta":{"values":{"tags":["undefined"]}}}}}';
+  const goShape = '{"result":{"data":{"json":{"a":1}}}}';
+
+  it('null + undefined annotation vs omitted: raw unequal, valueEqual true, and the pair tallies as value-equal with no example (kills: no decode, raw-diff examples)', () => {
+    expect(lib.compareBodies(nodeShape, goShape)).toEqual({
+      bytesEqual: false,
+      jsonEqual: false,
+      diffs: [
+        { path: '$.result.data.json.tags', a: null, b: undefined },
+        {
+          path: '$.result.data.meta',
+          a: { values: { tags: ['undefined'] } },
+          b: undefined,
+        },
+      ],
+      valueEqual: true,
+      valueDiffs: [],
+    });
+    const p = { compared: 0, bytesEqual: 0, jsonEqual: 0, valueEqual: 0, skipped: 0, examples: [] };
+    lib.tallyParity(p, lib.compareBodies(nodeShape, goShape));
+    expect(p).toEqual({
+      compared: 1,
+      bytesEqual: 0,
+      jsonEqual: 0,
+      valueEqual: 1,
+      skipped: 0,
+      examples: [],
+    });
+  });
+
+  it('the same in a batched (array) response', () => {
+    const r = lib.compareBodies(`[${nodeShape}]`, `[${goShape}]`);
+    expect(r.jsonEqual).toBe(false);
+    expect(r.valueEqual).toBe(true);
+    expect(r.valueDiffs).toEqual([]);
+  });
+
+  it('a literal null with NO annotation vs omitted is still a diff, at its path (kills: every null treated as undefined)', () => {
+    const node =
+      '{"result":{"data":{"json":{"a":1,"review":null,"tags":null},"meta":{"values":{"review":["undefined"]}}}}}';
+    const go = '{"result":{"data":{"json":{"a":1}}}}';
+    const r = lib.compareBodies(node, go);
+    expect(r.valueEqual).toBe(false);
+    expect(r.valueDiffs).toEqual([{ path: '$.result.data.json.tags', a: null, b: undefined }]);
+    const p = { compared: 0, bytesEqual: 0, jsonEqual: 0, valueEqual: 0, skipped: 0, examples: [] };
+    lib.tallyParity(p, r);
+    expect(p).toEqual({
+      compared: 1,
+      bytesEqual: 0,
+      jsonEqual: 0,
+      valueEqual: 0,
+      skipped: 0,
+      examples: [['$.result.data.json.tags']],
+    });
+  });
+
+  it('a real value difference is still reported when undefined annotations are present (kills: annotations short-circuit the compare)', () => {
+    const node =
+      '{"result":{"data":{"json":{"a":1,"tags":null,"items":[{"id":8}]},"meta":{"values":{"tags":["undefined"]}}}}}';
+    const go = '{"result":{"data":{"json":{"a":2,"items":[{"id":9}]}}}}';
+    expect(lib.compareBodies(node, go).valueDiffs).toEqual([
+      { path: '$.result.data.json.a', a: 1, b: 2 },
+      { path: '$.result.data.json.items[0].id', a: 8, b: 9 },
+    ]);
+  });
+
+  it('a nested array path annotation (items.0.images.1.thumbnailUrl) decodes at that index only', () => {
+    const node =
+      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2,"thumbnailUrl":null}]}]},"meta":{"values":{"items.0.images.1.thumbnailUrl":["undefined"]}}}}}';
+    const go =
+      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2}]}]}}}}';
+    const r = lib.compareBodies(node, go);
+    expect(r.jsonEqual).toBe(false);
+    expect(r.valueEqual).toBe(true);
+    expect(r.valueDiffs).toEqual([]);
+  });
+
+  it('an annotation at the wrong index does not hide the null, and undefines the member it names (kills: index ignored)', () => {
+    const node =
+      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2,"thumbnailUrl":null}]}]},"meta":{"values":{"items.0.images.0.thumbnailUrl":["undefined"]}}}}}';
+    const go =
+      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2}]}]}}}}';
+    expect(lib.compareBodies(node, go).valueDiffs).toEqual([
+      { path: '$.result.data.json.items[0].images[0].thumbnailUrl', a: undefined, b: 'u1' },
+      { path: '$.result.data.json.items[0].images[1].thumbnailUrl', a: null, b: undefined },
+    ]);
+  });
+
+  it('an escaped dot in an annotation path names one key (kills: split on every dot)', () => {
+    const node =
+      '{"result":{"data":{"json":{"a.b":null},"meta":{"values":{"a\\\\.b":["undefined"]}}}}}';
+    const go = '{"result":{"data":{"json":{}}}}';
+    expect(lib.compareBodies(node, go).valueDiffs).toEqual([]);
+  });
+
+  it('a Date annotation on one side only is a diff; referentialEqualities is ignored (kills: annotation sets not compared)', () => {
+    const a =
+      '{"result":{"data":{"json":{"createdAt":"2024-01-02T03:04:05.000Z"},"meta":{"values":{"createdAt":["Date"]},"referentialEqualities":{"x":["y"]}}}}}';
+    const b = '{"result":{"data":{"json":{"createdAt":"2024-01-02T03:04:05.000Z"}}}}';
+    expect(lib.compareBodies(a, b).valueDiffs).toEqual([
+      { path: '$.result.data.meta.values["createdAt"]', a: ['Date'], b: undefined },
+    ]);
+    const c =
+      '{"result":{"data":{"json":{"createdAt":"2024-01-02T03:04:05.000Z"},"meta":{"values":{"createdAt":["Date"]}}}}}';
+    expect(lib.compareBodies(a, c).valueEqual).toBe(true);
   });
 });
 
