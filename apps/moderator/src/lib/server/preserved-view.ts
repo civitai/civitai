@@ -72,7 +72,8 @@ export function requirePreservedReviewer(locals: App.Locals): {
   if (!locals.user) error(403, 'Not signed in.');
   if (!canAccess(locals.user, PRESERVED_VIEW_PAGE))
     error(403, 'You do not have access to this page.');
-  if (!config.reviewerIds.has(locals.user.id)) error(403, 'You are not the reviewer for these files.');
+  if (!config.reviewerIds.has(locals.user.id))
+    error(403, 'You are not the reviewer for these files.');
   return { config, reviewerId: locals.user.id };
 }
 
@@ -208,7 +209,12 @@ export async function recordPreservedVerdict(
       .executeTakeFirst();
     if (existing) return 'already';
     await insertModActivity(
-      { userId: reviewerId, entityType: ENTITY_TYPE, entityId: n, activity: VERDICT_ACTIVITY[verdict] },
+      {
+        userId: reviewerId,
+        entityType: ENTITY_TYPE,
+        entityId: n,
+        activity: VERDICT_ACTIVITY[verdict],
+      },
       trx
     );
     return 'recorded';

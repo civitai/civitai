@@ -28,7 +28,9 @@ const insertModActivity = vi.hoisted(() =>
 const modActivityRowExists = vi.hoisted(() => vi.fn(async (_id: number) => state.rowExists));
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 const recordPreservedVerdict = vi.hoisted(() =>
-  vi.fn(async (_reviewer: number, _n: number, _verdict: string) => 'recorded' as 'recorded' | 'already')
+  vi.fn(
+    async (_reviewer: number, _n: number, _verdict: string) => 'recorded' as 'recorded' | 'already'
+  )
 );
 
 vi.mock('$lib/server/db', async () => {
@@ -52,6 +54,7 @@ const { actions, load } = await import('../../../routes/csam/preserved-view/+pag
 const { createPreservedObjectStore, OversizeObjectError, UnlistedKeyError } = await import(
   '../preserved-object-store'
 );
+const { openPreservedFiles, readPreservedViewConfig } = await import('../preserved-view');
 
 const PAGE = '/csam/preserved-view';
 const REVIEWER = { id: 501, roles: ['moderator:preserved-review'] };
@@ -159,7 +162,9 @@ describe('serving a file', () => {
   });
 
   it('refuses a request that names a key, before touching the store', async () => {
-    expect((await get('1', { search: `?key=${encodeURIComponent(FILE_KEYS[2])}` })).status).toBe(404);
+    expect((await get('1', { search: `?key=${encodeURIComponent(FILE_KEYS[2])}` })).status).toBe(
+      404
+    );
     expect(send).not.toHaveBeenCalled();
     expect(insertModActivity).not.toHaveBeenCalled();
   });
@@ -190,14 +195,21 @@ describe('serving a file', () => {
     expect(status).toBe(409);
     expect(await res!.text()).toBe('');
     expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'preserved-file-serve', n: 1, status: 409, sha256Match: false })
+      expect.objectContaining({
+        name: 'preserved-file-serve',
+        n: 1,
+        status: 409,
+        sha256Match: false,
+      })
     );
     if (what === 'size') expect(logToAxiom.mock.calls[0][0].sizeMatch).toBe(false);
   });
 
   it('refuses bytes that are not an image it renders', async () => {
     const text = new TextEncoder().encode('<svg onload=alert(1)>');
-    const entries = ENTRIES.map((e, i) => (i === 0 ? { ...e, size: text.byteLength, sha256: sha(text) } : e));
+    const entries = ENTRIES.map((e, i) =>
+      i === 0 ? { ...e, size: text.byteLength, sha256: sha(text) } : e
+    );
     const manifest = manifestBytes(entries);
     objects.set(MANIFEST_KEY, manifest);
     objects.set(FILE_KEYS[0], text);
@@ -317,15 +329,14 @@ describe('the page', () => {
     expect(await verdict({ n: '1', verdict: 'not' })).toMatchObject({ status: 409 });
   });
 
-  it.each([
-    [{ n: '1', verdict: 'maybe' }],
-    [{ n: '4', verdict: 'not' }],
-    [{ verdict: 'not' }],
-  ])('refuses %o', async (fields) => {
-    state.served = new Set([1, 4]);
-    expect(await verdict(fields)).toMatchObject({ status: expect.any(Number) });
-    expect(recordPreservedVerdict).not.toHaveBeenCalled();
-  });
+  it.each([[{ n: '1', verdict: 'maybe' }], [{ n: '4', verdict: 'not' }], [{ verdict: 'not' }]])(
+    'refuses %o',
+    async (fields) => {
+      state.served = new Set([1, 4]);
+      expect(await verdict(fields)).toMatchObject({ status: expect.any(Number) });
+      expect(recordPreservedVerdict).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a verdict from an admin who is not the reviewer', async () => {
     state.served = new Set([1]);
@@ -350,6 +361,21 @@ describe('the object store', () => {
     expect(send).not.toHaveBeenCalled();
     expect(await store.read(FILE_KEYS[0], 1024)).toEqual(FILES[0]);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads only the keys the verified manifest names', async () => {
+    objects.set('fixture/other.png', FILES[0]);
+    const opened = await openPreservedFiles(readPreservedViewConfig()!);
+    send.mockClear();
+    const stray = {
+      n: 1,
+      key: 'fixture/other.png',
+      size: FILES[0].byteLength,
+      sha256: sha(FILES[0]),
+    };
+    await expect(opened.read(stray)).rejects.toBeInstanceOf(UnlistedKeyError);
+    expect(send).not.toHaveBeenCalled();
+    expect(await opened.read(opened.files[0])).toEqual(FILES[0]);
   });
 
   it('refuses an object over the cap', async () => {

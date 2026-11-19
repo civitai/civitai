@@ -57,10 +57,6 @@ export function createPreservedObjectStore(
       }
       const body = res.Body as Body | undefined;
       if (!body) throw new Error('The store answered with no body.');
-      if ((res.ContentLength ?? 0) > maxBytes) {
-        body.destroy?.();
-        throw new OversizeObjectError();
-      }
       return readCapped(body, maxBytes);
     },
   };

@@ -48,7 +48,8 @@ export const actions: Actions = {
     const form = await request.formData();
     const n = parseFileNumber(String(form.get('n') ?? ''));
     const verdict = form.get('verdict');
-    if (!n || !isPreservedVerdict(verdict)) return fail(400, { error: 'Pick a file and a verdict.' });
+    if (!n || !isPreservedVerdict(verdict))
+      return fail(400, { error: 'Pick a file and a verdict.' });
     if (!(await filesOf(config)).some((f) => f.n === n))
       return fail(404, { error: 'There is no such file.' });
     if (!(await servedTo(reviewerId)).has(n))

@@ -66,7 +66,7 @@ describe('verdicts', () => {
     );
   });
 
-  it('counts only this feature\'s verdict rows', async () => {
+  it("counts only this feature's verdict rows", async () => {
     await db.exec(`
       INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId") VALUES
         (1, 'preservedFile:verdict-not', 'image', 3),

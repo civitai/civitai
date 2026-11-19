@@ -37,7 +37,8 @@ export const GET: RequestHandler = async ({ params, locals, request, url }) => {
   if (!opened) error(502, 'Could not reach storage.');
   const file = opened.files.find((f) => f.n === n);
   if (!file) error(404, 'Not found.');
-  if ((await preservedVerdicts()).has(n)) error(410, 'This file has a verdict and is no longer served.');
+  if ((await preservedVerdicts()).has(n))
+    error(410, 'This file has a verdict and is no longer served.');
 
   if (!(await auditServe(reviewerId, n))) error(503, 'Could not record this view.');
 
