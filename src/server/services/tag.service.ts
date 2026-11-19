@@ -788,7 +788,7 @@ export const addTagVotes = async ({
   const tagMatch = isTagIds
     ? Prisma.sql`"id" = ANY(${tags as number[]}::int[])`
     : Prisma.sql`"name" = ANY(${tags as string[]}::text[])`;
-  // An image's owner can't vote a child browsing tag off their own image.
+  // Child browsing tags keep an image out of mature browsing; its owner must not vote one off.
   const ownerDownvoteExclusion =
     type === 'image' && isCreator && !isModerator && vote < 0
       ? Prisma.sql`AND "id" != ALL(${childBrowsingTagIds}::int[])`

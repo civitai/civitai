@@ -155,6 +155,30 @@ describe('addTagVotes — the image owner downvoting a child browsing tag (PGlit
     expect(await votes()).toEqual([{ userId: OWNER, tagId: OTHER_TAG, vote: -3 }]);
   });
 
+  it("records the owner's upvote on a child tag", async () => {
+    await addTagVotes({
+      userId: OWNER,
+      type: 'image',
+      id: 42,
+      tags: [CHILD_TAG],
+      isModerator: false,
+      vote: 1,
+    });
+    expect(await votes()).toEqual([{ userId: OWNER, tagId: CHILD_TAG, vote: 3 }]);
+  });
+
+  it("records another user's downvote on a child tag", async () => {
+    await addTagVotes({
+      userId: 2,
+      type: 'image',
+      id: 42,
+      tags: [CHILD_TAG],
+      isModerator: false,
+      vote: -1,
+    });
+    expect(await votes()).toEqual([{ userId: 2, tagId: CHILD_TAG, vote: -1 }]);
+  });
+
   it("records a moderator's downvote on a child tag", async () => {
     await addTagVotes({
       userId: OWNER,

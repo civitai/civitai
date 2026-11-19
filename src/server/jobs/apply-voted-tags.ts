@@ -103,7 +103,6 @@ async function applyDownvotes() {
   // Delete tags under the threshold (not moderation, not child browsing tags)
   // --------------------------------------------
   const toDelete = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    -- Delete downvoted tags (not moderation, not child browsing tags)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
@@ -136,7 +135,7 @@ async function applyDownvotes() {
   // Disable tags under the threshold (moderation and child browsing tags) where voted by moderator
   // --------------------------------------------
   const toDisable = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    -- Disable downvoted moderation tags if voted by mod
+    -- Disable downvoted moderation and child browsing tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
