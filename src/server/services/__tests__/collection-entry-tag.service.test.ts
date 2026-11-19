@@ -21,7 +21,9 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
-const { saveItemInCollections } = await import('~/server/services/collection.service');
+const { bulkSaveItems, saveItemInCollections } = await import(
+  '~/server/services/collection.service'
+);
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -199,5 +201,79 @@ describe('a collection that reviews entries', () => {
     mockDbRead.collectionItem.findMany.mockResolvedValue([]);
     await resave(OTHER_ID, TAG_B);
     expect(createNotification).toHaveBeenCalled();
+  });
+});
+
+describe('a system tag on a new entry', () => {
+  const OTHER_COLLECTION_ID = 99;
+
+  it('refuses a new entry tagged with a system tag', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    await expect(resave(OTHER_ID, SYSTEM_TAG)).rejects.toMatchObject({
+      message: 'Provided tag is not part of this collection',
+    });
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses it when the item holds that tag in another collection only', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      {
+        id: 8,
+        collectionId: OTHER_COLLECTION_ID,
+        tagId: SYSTEM_TAG,
+        addedById: AUTHOR_ID,
+        note: null,
+      },
+    ]);
+    await expect(resave(AUTHOR_ID, SYSTEM_TAG)).rejects.toMatchObject({
+      message: 'Provided tag is not part of this collection',
+    });
+  });
+
+  it("accepts a re-save that sends the entry's own system tag back", async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: SYSTEM_TAG, addedById: AUTHOR_ID, note: null },
+    ]);
+    await resave(AUTHOR_ID, SYSTEM_TAG);
+    expect(writtenTag()).toBe(SYSTEM_TAG);
+  });
+});
+
+describe('bulkSaveItems and a system tag', () => {
+  const NEW_IMAGE = 43;
+  const PERMISSIONS = { isContributor: true, isOwner: false, manage: false, write: true } as never;
+  const bulk = (tagId: number, imageIds: number[]) =>
+    bulkSaveItems({
+      input: { collectionId: COLLECTION_ID, imageIds, tagId, userId: AUTHOR_ID } as never,
+      permissions: PERMISSIONS,
+    });
+
+  beforeEach(() => {
+    mockDbRead.collection.findUnique.mockResolvedValue(collectionRow());
+    mockDbRead.collection.findFirst.mockResolvedValue(collectionRow());
+    mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 });
+    // Only IMAGE_ID is already in the collection.
+    mockDbRead.collectionItem.findMany.mockImplementation((async (args: any) =>
+      args?.where?.imageId?.in?.includes(IMAGE_ID) ? [{ imageId: IMAGE_ID }] : []) as never);
+  });
+
+  it('refuses a new image tagged with a system tag, as when a post edit adds one', async () => {
+    await expect(bulk(SYSTEM_TAG, [IMAGE_ID, NEW_IMAGE])).rejects.toMatchObject({
+      message: 'The tag provided is not allowed in this collection',
+    });
+    expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+  });
+
+  it('accepts a re-save whose items are all in the collection already', async () => {
+    await bulk(SYSTEM_TAG, [IMAGE_ID]);
+    expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalledWith({ data: [] });
+  });
+
+  it('writes a new image with a category tag (control)', async () => {
+    await bulk(TAG_B, [IMAGE_ID, NEW_IMAGE]);
+    expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ imageId: NEW_IMAGE, tagId: TAG_B })],
+    });
   });
 });

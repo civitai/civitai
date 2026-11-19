@@ -1242,6 +1242,16 @@ export const saveItemInCollections = async ({
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
+        // A system tag (filterableOnly) is set by the platform, never chosen for a new entry. A
+        // re-save may send this collection's entry its own current tag back, as the pickers offer it.
+        if (
+          tagId &&
+          !inputTags.some((t) => t.tag.id === tagId) &&
+          existingItemsByCollection.get(collectionId)?.tagId !== tagId
+        ) {
+          throw throwBadRequestError('Provided tag is not part of this collection');
+        }
+
         // Use batched permissions instead of individual query
         const permission = permissionsMap.get(collectionId);
         if (!permission) {
@@ -3906,6 +3916,12 @@ export const bulkSaveItems = async ({
         postId,
         ...baseData,
       }));
+  }
+
+  // A system tag (filterableOnly) is never written to a new entry; items already in the collection
+  // are skipped above, so a re-save carrying their current system tag still passes.
+  if (data.length > 0 && tagId && !inputTags.some((t) => t.tag.id === tagId)) {
+    throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
