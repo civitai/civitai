@@ -3653,8 +3653,8 @@ const REDIS_KEYS_UNPREFIXED = {
      */
     MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
     /*
-      Use: category calls the retry job sent per article, capped so a call that keeps failing is not
-      billed forever. Lost on eviction, an article gets up to one more round of retries.
+      Use: attempts the retry job has made per article; past the cap it sends nothing, so a call that
+      keeps failing is not billed forever. Lost on eviction, an article gets up to one more round of retries.
       Structure: integer (INCRBY), TTL 31d, key = `text-scan:category-retries:${articleId}`.
      */
     CATEGORY_RETRIES: 'text-scan:category-retries',
