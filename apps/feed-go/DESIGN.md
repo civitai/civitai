@@ -521,7 +521,10 @@ That holds even when the app's deploy runs ahead of this service's.
   both and zod strips both. For `image.getInfinite` only, also `view`, `section`, `query` and
   `similarTo` (`strippedURLKeys`): the keys of `imagesQueryParamSchema`, the images feeds' URL query,
   that `getInfiniteImagesSchema` lacks. The site merges that query into the filter-store input, so
-  they arrive and zod strips them (the exception below). For REST, `token` (the API key, which then
+  they arrive and zod strips them (the exception below). Also for `image.getInfinite` only, `useIndex`
+  and `search` (`strippedLegacyKeys`): sent by clients the site no longer ships, keys the fallback log
+  names under `input-unknown-key`; zod strips both and nothing else in the procedure's chain reads
+  them, so they are ignored under the same exception. For REST, `token` (the API key, which then
   falls back as `bearer-token`). Every other input key the web client sends is a schema key. Every
   query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
   which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
@@ -538,6 +541,10 @@ That holds even when the app's deploy runs ahead of this service's.
   `getInfiniteImagesSchema` gains any of the four, which happens on the web PR that adds the key
   (it regenerates `schemas.json`); the feed-go change that reads the key must ship first. A key
   added to `imagesQueryParamSchema` alone is not detected and falls back as `input-unknown-key`.
+  `TestStrippedLegacyKeysAreStrippedByZod` is the same guard for `useIndex` and `search`. Any other
+  key outside the schema still falls back: which keys arrive is read from the fallback log's safe
+  detail (the first unknown key in sorted order), so a key that only ever travels beside one of these
+  shows up once they are ignored.
 
 ## 6. How traffic reaches it
 
@@ -1635,7 +1642,8 @@ domain cap.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column (`input-<key>`); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `baseModels` (below); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); `include` values Node never reads (`count`, `report`: answered as the list without them); the stripped keys of §5.1 (`view`, `section`, `query`, `similarTo`, `useIndex`, `search`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column but `baseModels` (`input-<key>`); `include` holding `tags` (the votable tags: `imageTagsCache`, its lookup over the `ImageTag` view and the viewer's `TagsOnImageVote` rows) or `metaSelect` (`input-include`, the entry in the safe detail); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| `baseModels` | `z.string().array()`, read as sent (no list of names is consulted: the schema has no enum, and the match is on `ModelVersion."baseModel"` text). Feed path: the non-empty names, in order with repeats, as the feed query's `baseModels` after the POI exclusion (`.map(String).filter(Boolean)`, written as URLSearchParams writes it); the hydrate, and every Postgres read, binds the whole list into getAllImages' `EXISTS (… "ModelVersion" mv RIGHT JOIN "ImageResourceNew" ir … WHERE mv."baseModel" = ANY(…))`; the cache policy is unchanged (Node does not mark it personalized). `image-resource-use-write` would send these reads to the primary in Node; it is not mirrored (§8) | not a list, or an entry that is not a string (`input-invalid`: Node's BAD_REQUEST) |
 | `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`) | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone (`prioritized-system-user`: one more read, then an `IIF` order over every creator); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`) |
 | `pending` | no published-before-now clause; a moderator's view `(nsfwLevel & level) != 0 OR nsfwLevel = 0`, a signed-in viewer's `pendingViewerImageSql` (no `reviewCollectionId`: server-set), signed out the reviewed view; the pending view is never cached; on the feed path the mapper's empty page (`flag:pending`) | |
 | `include` without `cosmetics` | no user-cosmetic, frame or cosmetic read (nor their miss lookups): `user.cosmetics` `[]`, `cosmetic` `null`; the probe checks the same keys | (the gallery still falls back: `input-include-no-cosmetics`) |

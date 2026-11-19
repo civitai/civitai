@@ -2,11 +2,16 @@ import { TRPCError } from '@trpc/server';
 import { createPostWithImagesHandler } from '~/server/controllers/post.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import {
+  claimIdempotencyKey,
+  IdempotencyUnavailableError,
+  type IdempotencyClaim,
+} from '~/server/services/idempotency-key.service';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
 import { createRemixGallerySubmission } from '~/server/services/remix-gallery.service';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
+import { throwServiceUnavailableError } from '~/server/utils/errorHandling';
 
 /**
  * One-click posting: generation outputs to a post, with no editor. Each image goes through
@@ -38,11 +43,6 @@ export type HeadlessPostResult = {
 };
 
 export type HeadlessPostSurface = 'remix-app';
-
-const IDEMPOTENCY_TTL_SECONDS = 7 * 24 * 60 * 60;
-/** Longer than a post with a few images takes to ingest, so a slow first tap is not posted twice. */
-const PENDING_TTL_SECONDS = 5 * 60;
-const PENDING = 'pending';
 
 const GALLERY_PREFIX = /^remix gallery: /;
 
@@ -76,19 +76,25 @@ export async function createHeadlessPost({
     surface: 'post',
   });
 
-  const key =
-    `${REDIS_SYS_KEYS.HEADLESS_POST.IDEMPOTENCY}:${ctx.user.id}:${idempotencyKey}` as const;
-  const fresh = await sysRedis.set(key, PENDING, { NX: true, EX: PENDING_TTL_SECONDS });
-  if (fresh === null) {
-    const stored = await sysRedis.get(key);
-    if (!stored || stored === PENDING)
+  const claim = await claimIdempotencyKey(
+    'headless-post',
+    `${ctx.user.id}:${idempotencyKey}`
+  ).catch((error) => {
+    // The key store is on but unusable (its table not applied, or Postgres down): post nothing,
+    // rather than post without a guard. The tap fails and can be retried.
+    if (error instanceof IdempotencyUnavailableError)
+      throw throwServiceUnavailableError('Posting is unavailable right now. Try again.', error);
+    throw error;
+  });
+  if (claim.status !== 'claimed') {
+    if (claim.status !== 'done' || !claim.result)
       throw new TRPCError({ code: 'CONFLICT', message: 'This is already being posted.' });
-    const first = JSON.parse(stored) as HeadlessPostResult;
+    const first = JSON.parse(claim.result) as HeadlessPostResult;
     // A gallery asked for on the repeat, or refused the first time. Safe to send again: the gallery
     // takes one image once (`Placement_surface_target_image_live_key`), and refuses before it charges.
     if (remixGallery && !first.gallery?.submitted) {
       first.gallery = await submitToGallery(ctx, remixGallery, first.imageIds[0]);
-      await storeResult(key, first);
+      await storeResult(claim, first);
     }
     return { ...first, deduped: true };
   }
@@ -123,18 +129,18 @@ export async function createHeadlessPost({
     });
     result = { postId: post.id, imageIds: post.imageIds };
   } catch (error) {
-    await sysRedis.del(key).catch(() => undefined);
+    await claim.release().catch(() => undefined);
     throw error;
   }
 
   // Recorded before any charge. A repeat after the pending key lapses would post again, so a
   // post the key cannot vouch for is never sent to a paid gallery.
-  const recorded = await storeResult(key, result);
+  const recorded = await storeResult(claim, result);
   if (remixGallery)
     result.gallery = recorded
       ? await submitToGallery(ctx, remixGallery, result.imageIds[0])
       : { submitted: false, reason: GALLERY_NOT_SENT };
-  if (result.gallery) await storeResult(key, result);
+  if (result.gallery) await storeResult(claim, result);
   logToAxiom({
     name: 'headless-post',
     type: 'info',
@@ -148,13 +154,10 @@ export async function createHeadlessPost({
 const GALLERY_NOT_SENT = 'It was not sent to the Remix gallery. Post again to send it.';
 
 /** The result for repeats of `key`; false when it could not be stored. */
-async function storeResult(
-  key: `${typeof REDIS_SYS_KEYS.HEADLESS_POST.IDEMPOTENCY}:${string}`,
-  result: HeadlessPostResult
-) {
+async function storeResult(claim: IdempotencyClaim, result: HeadlessPostResult) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const stored = await sysRedis
-      .set(key, JSON.stringify(result), { EX: IDEMPOTENCY_TTL_SECONDS })
+    const stored = await claim
+      .store(JSON.stringify(result))
       .then(() => true)
       .catch(() => false);
     if (stored) return true;

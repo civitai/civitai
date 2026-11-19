@@ -80,11 +80,21 @@ export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | nu
 type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
 
 /** The picture fields `fallbackUserImage` compares a row's `User.image` against. */
-export const heldPictureOf = (
-  row: Pick<CreatorRow, 'profilePictureUrl' | 'profilePictureNeedsReview'>
+export const fallbackPictureOf = (
+  row: Pick<
+    CreatorRow,
+    | 'profilePictureUrl'
+    | 'profilePictureNeedsReview'
+    | 'profilePictureIngestion'
+    | 'profilePictureNsfwLevel'
+    | 'profilePictureBlockedFor'
+  >
 ) => ({
   url: row.profilePictureUrl,
   needsReview: row.profilePictureNeedsReview,
+  ingestion: row.profilePictureIngestion,
+  nsfwLevel: row.profilePictureNsfwLevel,
+  blockedFor: row.profilePictureBlockedFor,
 });
 
 /**
@@ -144,7 +154,7 @@ export async function readUserCreatorViaKysely(
 
   const user = {
     id: row.id,
-    image: fallbackUserImage(row.image, heldPictureOf(row)),
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     username: row.username,
     muted: row.muted,
     bannedAt: row.bannedAt,
@@ -180,7 +190,8 @@ export async function readUserCreatorViaKysely(
     profilePicture: servableProfilePicture(
       profilePictureOf(row),
       row.profilePictureNeedsReview,
-      row.profilePictureModelRestricted
+      row.profilePictureModelRestricted,
+      row.profilePictureBlockedFor
     ),
   };
 

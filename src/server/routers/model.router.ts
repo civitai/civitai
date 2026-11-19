@@ -358,7 +358,7 @@ export const modelRouter = router({
     .use(rateLimit({ limit: 300, period: CacheTTL.hour }))
     .mutation(({ input, ctx }) => checkSfwFace({ ...input, userId: ctx.user.id })),
   getCoverCandidates: protectedProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
+    .meta({ requiredScope: TokenScope.ModelsRead, requireFullUserCredential: true })
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .query(({ input }) => getCoverCandidates({ modelId: input.id })),

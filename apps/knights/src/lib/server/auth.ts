@@ -1,4 +1,5 @@
 import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import { metrics } from './metrics';
 import { getSysRedis } from './redis';
 
 export const isRevoked = createRevocationCheck({
@@ -6,4 +7,8 @@ export const isRevoked = createRevocationCheck({
   onError: (err) => console.warn('[knights] sysredis-fail-open', err),
 });
 
-export const guard = createSpokeGuard({ require: (user) => !!user, isRevoked });
+export const guard = createSpokeGuard({
+  require: (user) => !!user,
+  isRevoked,
+  onSessionSlot: metrics.sessionCookieSlot,
+});

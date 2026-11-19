@@ -47,7 +47,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 26
 	goldenMinV1       = 36
-	goldenMinInfinite = 23
+	goldenMinInfinite = 30
 	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -246,6 +246,8 @@ type goldenDB struct {
 	ModelVersions []struct {
 		ID      int `json:"id"`
 		ModelID int `json:"modelId"`
+		// BaseModel is the version's `baseModel` (only in a fixture whose query filters by `baseModels`).
+		BaseModel string `json:"baseModel"`
 	} `json:"modelVersions"`
 	Models []struct {
 		ID           int             `json:"id"`
@@ -559,6 +561,7 @@ var (
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
 	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
+	goldenReBaseMdl   = regexp.MustCompile(`WHERE mv\."baseModel" = ANY\(\$(\d+)::text\[\]\)`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
 	goldenReOffset    = regexp.MustCompile(`OFFSET (\d+)\s+LIMIT`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
@@ -621,12 +624,14 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, tools, the minor exclusion, published-before-now, order, cursor, offset,
-// limit).
+// excluded creators, types, tools, base models, the minor exclusion, published-before-now, order,
+// cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
+	versionBase := map[int]string{}
 	for _, v := range fx.DB.ModelVersions {
 		versionModel[v.ID] = v.ModelID
+		versionBase[v.ID] = v.BaseModel
 	}
 	ids, hasIDs := goldenArg(args, goldenReIDs, sql)
 	postIDs, hasPostIDs := goldenArg(args, goldenRePostIDs, sql)
@@ -640,6 +645,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
 	tags, hasTags := goldenArg(args, goldenReTags, sql)
 	tools, hasTools := goldenArg(args, goldenReTools, sql)
+	baseModels, hasBaseModels := goldenArg(args, goldenReBaseMdl, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
@@ -693,6 +699,22 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				holdsAll = holdsAll && goldenHas(img.Tools, t)
 			}
 			if !holdsAll {
+				continue
+			}
+		}
+		if hasBaseModels {
+			// EXISTS (ModelVersion RIGHT JOIN ImageResourceNew … WHERE mv."baseModel" = ANY(<names>)): a
+			// resource row whose version exists and carries one of the names.
+			names, _ := baseModels.([]string)
+			matched := false
+			for _, r := range img.Resources {
+				if b, ok := versionBase[r.ModelVersionID]; ok {
+					for _, n := range names {
+						matched = matched || n == b
+					}
+				}
+			}
+			if !matched {
 				continue
 			}
 		}

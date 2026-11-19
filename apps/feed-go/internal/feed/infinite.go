@@ -47,14 +47,18 @@ type InfiniteInput struct {
 	// a signed-in viewer, applies the pending visibility instead of the reviewed one. The feed path's
 	// mapper refuses it (an empty page).
 	Pending bool
+	// BaseModels is `baseModels`, as sent (order, repeats and empty names kept); matched as text,
+	// never against a list.
+	BaseModels []string
 }
 
 // infiniteUnsupported are the input keys this port falls back on when present: the gallery's list
 // without the inputs image.getInfinite answers here (userId, username, postId, tags,
-// prioritizedUserIds, pending).
+// prioritizedUserIds, pending, baseModels).
 var infiniteUnsupported = func() []string {
 	ported := map[string]bool{
 		"userId": true, "username": true, "postId": true, "tags": true, "prioritizedUserIds": true, "pending": true,
+		"baseModels": true,
 	}
 	out := make([]string, 0, len(unsupportedKeys))
 	for _, k := range unsupportedKeys {
@@ -76,14 +80,23 @@ var infiniteUnsupported = func() []string {
 // exception to the unknown-key fallback, with a deploy-gap risk: see DESIGN.md §5.1.
 var strippedURLKeys = []string{"query", "section", "similarTo", "view"}
 
+// strippedLegacyKeys are keys outside getInfiniteImagesSchema that legacy clients still send to
+// image.getInfinite. zod strips them and nothing downstream reads them, so Node answers as if they
+// were absent. Same deploy-gap exception as strippedURLKeys (DESIGN.md §5.1);
+// TestStrippedLegacyKeysAreStrippedByZod fails when the schema gains one.
+var strippedLegacyKeys = []string{"search", "useIndex"}
+
 // infiniteAbsentKeys are the keys outside getInfiniteImagesSchema that ParseInfinite reads as absent:
-// the tRPC client's own and strippedURLKeys.
+// the tRPC client's own, strippedURLKeys and strippedLegacyKeys.
 var infiniteAbsentKeys = func() map[string]bool {
-	out := make(map[string]bool, len(trpcTransportKeys)+len(strippedURLKeys))
+	out := make(map[string]bool, len(trpcTransportKeys)+len(strippedURLKeys)+len(strippedLegacyKeys))
 	for k := range trpcTransportKeys {
 		out[k] = true
 	}
 	for _, k := range strippedURLKeys {
+		out[k] = true
+	}
+	for _, k := range strippedLegacyKeys {
 		out[k] = true
 	}
 	return out
@@ -104,7 +117,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(m, infiniteUnsupported, infiniteAbsentKeys)
+	base, err := parseInput(withoutUnreadIncludes(m), infiniteUnsupported, infiniteAbsentKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +160,62 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		}
 		in.Pending = b
 	}
+	if v, ok := m["baseModels"]; ok {
+		if in.BaseModels, err = baseModelNames(v); err != nil {
+			return nil, err
+		}
+	}
 	return in, nil
+}
+
+// baseModelNames reads `baseModels` (z.string().array()): a list of strings, kept as sent (order,
+// repeats and empty strings included: getAllImages binds the whole list, the feed query drops the
+// empty ones). A present value that is not a list (a literal null included: the field is
+// `.optional()`, not `.nullish()`), or an entry that is not a string, is the schema's BAD_REQUEST
+// (input-invalid). The caller skips an absent key, which is no filter.
+func baseModelNames(v any) ([]string, error) {
+	list, ok := v.([]any)
+	if !ok {
+		return nil, fallback.NewfSafe("input-invalid", "baseModels", "baseModels: %T", v)
+	}
+	out := make([]string, 0, len(list))
+	for _, e := range list {
+		s, ok := e.(string)
+		if !ok {
+			return nil, fallback.NewfSafe("input-invalid", "baseModels", "baseModels entry: %T", e)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// unreadIncludes are imageInclude values getAllImagesUncaptured never reads: an `include` holding them
+// is answered as the same list without them (with no 'cosmetics' left, as the list without cosmetics
+// is). Only image.getInfinite: the posts gallery still falls back on them.
+var unreadIncludes = map[string]bool{"count": true, "report": true}
+
+// withoutUnreadIncludes is m with unreadIncludes removed from its `include` list (a copy; m itself when
+// there is none). Any other value, a non-string entry included, is left for parseInput to judge.
+func withoutUnreadIncludes(m map[string]any) map[string]any {
+	list, ok := m["include"].([]any)
+	if !ok {
+		return m
+	}
+	kept := make([]any, 0, len(list))
+	for _, e := range list {
+		if s, isStr := e.(string); !isStr || !unreadIncludes[s] {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(list) {
+		return m
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	out["include"] = kept
+	return out
 }
 
 // prioritized is getAllImages' prioritizeUser: a non-empty prioritizedUserIds.
@@ -558,6 +626,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
 		Pending:        in.Pending,
 		Tools:          in.Tools,
+		BaseModels:     in.BaseModels,
 	}
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
@@ -596,6 +665,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
 		Tools:                 in.Tools,
+		BaseModels:            in.BaseModels,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -635,7 +705,8 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 	if len(ans.IDs) == 0 {
 		return page([]any{}, next, true), nil
 	}
-	// feedHydrateQuery: the request's filters without its paging, period or model scope.
+	// feedHydrateQuery: the request's filters (baseModels included) without its paging, period or
+	// model scope.
 	hq := q
 	hq.IDs, hq.Limit = ans.IDs, len(ans.IDs)
 	hq.Cursor, hq.ModelID, hq.ModelVersionID, hq.Period = 0, 0, 0, "AllTime"

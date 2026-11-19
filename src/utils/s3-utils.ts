@@ -1270,6 +1270,8 @@ type GetObjectOptions = {
   expiresIn?: number;
   fileName?: string;
   bucket?: string;
+  /** Sign a specific object version (getGetUrlByKey only). */
+  versionId?: string;
 };
 
 const s3Host = new URL(env.S3_UPLOAD_ENDPOINT).host;
@@ -1370,7 +1372,7 @@ export async function getGetUrl(
 
 export async function getGetUrlByKey(
   key: string,
-  { s3, expiresIn = DOWNLOAD_EXPIRATION, fileName, bucket }: GetObjectOptions = {}
+  { s3, expiresIn = DOWNLOAD_EXPIRATION, fileName, bucket, versionId }: GetObjectOptions = {}
 ) {
   if (!s3) s3 = getS3Client();
 
@@ -1378,6 +1380,7 @@ export async function getGetUrlByKey(
   const command: GetObjectCommandInput = {
     Bucket: bucket,
     Key: key,
+    ...(versionId ? { VersionId: versionId } : {}),
   };
   if (fileName) command.ResponseContentDisposition = attachmentContentDisposition(fileName);
 

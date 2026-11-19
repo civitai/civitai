@@ -1,6 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -125,12 +126,7 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import {
-  canSeeCollectionDetails,
-  getCollectionById,
-  getCollectionItemCount,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
+import { getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -2590,17 +2586,13 @@ export async function getModelCollectionShowcaseHandler({
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    const permissions = await getUserCollectionPermissionsById({
-      id: modelMeta.showcaseCollectionId,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
-    });
-    if (!canSeeCollectionDetails(permissions)) return null;
+    const { permissions, collection: read } = await readCollectionForViewer(
+      ctx,
+      modelMeta.showcaseCollectionId
+    );
+    if (!read) return null;
 
-    const { coverHidden: _coverHidden, ...found } = await getCollectionById({
-      input: { id: modelMeta.showcaseCollectionId },
-      viewer: ctx.user,
-    });
+    const { coverHidden: _coverHidden, ...found } = read;
     // The cover as collection lists show it to this viewer: within their browsing level and rules.
     const coverShown =
       !!found.image &&
