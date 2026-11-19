@@ -35,8 +35,8 @@ describe('the refresh-step alert', () => {
   it('limits each step on its own (control)', () => {
     const { alert, send } = setup();
     alert('picture-cache');
-    alert('event-engine-cache');
-    expect(send.mock.calls.map(([step]) => step)).toEqual(['picture-cache', 'event-engine-cache']);
+    alert('basic-cache');
+    expect(send.mock.calls.map(([step]) => step)).toEqual(['picture-cache', 'basic-cache']);
   });
 
   it('🔴 never throws or rejects into the step when the alert itself fails', async () => {
