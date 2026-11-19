@@ -24,8 +24,9 @@ describe('isFeaturedResourceCompatible', () => {
     expect(isFeaturedResourceCompatible(checkpoint, 'Pony', 'LORA')).toBe(expected);
   });
 
-  it('passes a type no cross-ecosystem rule describes', () => {
+  it('judges a type the rules do not list by model family alone', () => {
     expect(isFeaturedResourceCompatible('Pony', 'SDXL 1.0', 'Controlnet')).toBe(true);
+    expect(isFeaturedResourceCompatible('Flux.1 D', 'SD 1.5', 'Hypernetwork')).toBe(false);
   });
 
   it('passes a base model the table does not know, or the catch-all Other', () => {
@@ -34,17 +35,18 @@ describe('isFeaturedResourceCompatible', () => {
     expect(isFeaturedResourceCompatible('Other', 'Pony', 'LORA')).toBe(true);
   });
 
-  // The helper re-states getGenerationSupport's same-ecosystem + crossEcosystemRules lookup without
-  // its on-site gates. Wherever on-site generation IS enabled for the checkpoint's ecosystem and
-  // the model type, the two must agree, so a new cross-ecosystem rule cannot reach one and not the
-  // other. If this fails after a basemodel.constants change, fix the helper, not this test.
+  // For the types the cross-ecosystem rules list, the helper re-states getGenerationSupport's
+  // same-ecosystem + crossEcosystemRules lookup without its on-site gates. Wherever on-site
+  // generation IS enabled, the two must agree, so a new rule cannot reach one and not the other.
+  // Other types (ControlNet…) deliberately differ; keep them out of this loop. If this fails after a
+  // basemodel.constants change, fix the helper, not this test.
   it('agrees with getGenerationSupport wherever on-site generation is enabled', () => {
     const sampleBaseModel = new Map<number, string>();
     for (const record of baseModelRecords) {
       if (!sampleBaseModel.has(record.ecosystemId))
         sampleBaseModel.set(record.ecosystemId, record.name);
     }
-    const types: ModelType[] = ['LORA', 'TextualInversion', 'Checkpoint'];
+    const types: ModelType[] = ['LORA', 'LoCon', 'DoRA', 'TextualInversion', 'VAE', 'Checkpoint'];
     let compared = 0;
     for (const checkpointEco of ecosystems) {
       const support = getEcosystemSupport(checkpointEco.id, 'generation');

@@ -15,8 +15,9 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
  * says no when the site does not generate with an ecosystem or model type (Krea 3 LoRAs, say),
  * which would refuse an off-site entry that is perfectly compatible.
  *
- * A base model the table does not know, the catch-all 'Other', or a type no cross-ecosystem rule
- * describes (ControlNet, Upscaler…) passes: the rule refuses only a mismatch it can prove.
+ * A base model the table does not know, or the catch-all 'Other', passes: the rule refuses only a
+ * mismatch it can prove. So does a type the rules do not list (ControlNet…) within one model
+ * family (an SDXL ControlNet on a Pony checkpoint); across families it is refused.
  */
 export function isFeaturedResourceCompatible(
   checkpointBaseModel: string,
@@ -28,9 +29,10 @@ export function isFeaturedResourceCompatible(
   if (!checkpoint || !resource) return true;
   if (isOther(checkpoint.ecosystemId) || isOther(resource.ecosystemId)) return true;
   if (checkpoint.ecosystemId === resource.ecosystemId) return true;
-  if (!ruledModelTypes.has(resourceType)) return true;
 
   const rootId = getRootEcosystem(checkpoint.ecosystemId).id;
+  if (!ruledModelTypes.has(resourceType))
+    return rootId === getRootEcosystem(resource.ecosystemId).id;
   return crossEcosystemRules.some(
     (rule) =>
       rule.supportType === 'generation' &&
@@ -40,8 +42,7 @@ export function isFeaturedResourceCompatible(
   );
 }
 
-// The cross-ecosystem rules list LoRA-family types, embeddings, VAEs and checkpoints; for any other
-// type they say nothing about compatibility, so they cannot prove a mismatch.
+// The types the cross-ecosystem rules list: LoRA-family, embeddings, VAEs and checkpoints.
 const ruledModelTypes = new Set<ModelType>(crossEcosystemRules.flatMap((r) => r.modelTypes ?? []));
 
 function isOther(ecosystemId: number) {

@@ -114,7 +114,7 @@ Transitions are date/job-driven and enforced at the application layer only (no D
    - **Unknown passes** — no detected checkpoint (an off-site run on a checkpoint Civitai does not host), a base model the table does not know, or the catch-all `Other` all pass: the rule refuses only a mismatch it can prove. So metadata that names the featured resource but no checkpoint passes.
    - **No retro-reject** — entries already `ACCEPTED` when the rule shipped keep counting toward participation prizes; they are dropped only from the winner pick.
 
-   Types no cross-ecosystem rule describes (ControlNet, Upscaler, …) pass. Enforced at submit (before the entry fee), in `checkImageEligibility` ("Incompatible base model"), at promotion, and in `getJudgedEntries`, so an entry accepted before the rule cannot place. The submit modal's image cards check on the client and do not show it (the image feed carries no checkpoint base model), so the entrant sees the refusal at submit.
+   A type the rules do not list (ControlNet, …) passes within one model family (an SDXL ControlNet on a Pony checkpoint) and is refused across families. Enforced at submit (before the entry fee), in `checkImageEligibility` ("Incompatible base model"), at promotion, and in `getJudgedEntries`, so an entry accepted before the rule cannot place. The submit modal's image cards check on the client and do not show it (the image feed carries no checkpoint base model), so the entrant sees the refusal at submit.
 3. **Recency** — image `createdAt` ≥ challenge `startsAt`.
 
 **AI scoring** — each accepted entry is scored 0–10 per judging dimension. The LLM also returns a `reaction`, a `comment` (posted to the image), and a `summary`. Score/summary are stored on `CollectionItem.note`.
