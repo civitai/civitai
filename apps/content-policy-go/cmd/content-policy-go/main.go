@@ -58,28 +58,45 @@ func run(log *slog.Logger) error {
 	m := metrics.New(reg)
 	m.Info.WithLabelValues(engine.PolicyVersion()).Set(1)
 
-	srv := &http.Server{
-		Addr: cfg.Addr,
-		Handler: (&api.Server{
-			Engine:        engine,
-			Users:         &users.Cache{Source: users.Postgres{DB: pool}, TTL: cfg.CacheTTL, MaxEntries: cfg.CacheMax},
-			Metrics:       m,
-			Gatherer:      reg,
-			Log:           log.With("component", "api"),
-			LookupTimeout: cfg.LookupTimeout,
-			Ready:         pool.Ping,
-		}).Handler(),
+	apiSrv := &api.Server{
+		Engine:        engine,
+		Users:         &users.Cache{Source: users.Postgres{DB: pool}, TTL: cfg.CacheTTL, MaxEntries: cfg.CacheMax},
+		Metrics:       m,
+		Gatherer:      reg,
+		Log:           log.With("component", "api"),
+		LookupTimeout: cfg.LookupTimeout,
+		Ready:         pool.Ping,
+	}
+	// Two listeners: the API (POST /v1/decide and the probes) and /metrics alone, so a network
+	// policy can admit Prometheus to the metrics port without admitting it to the decision API.
+	srv := newServer(cfg.Addr, apiSrv.Handler())
+	metricsSrv := newServer(cfg.MetricsAddr, apiSrv.MetricsHandler())
+	log.Info("content-policy-go starting", "addr", cfg.Addr, "metrics_addr", cfg.MetricsAddr,
+		"policy_version", engine.PolicyVersion(),
+		"restricted_regions", len(cfg.Restricted), "blocked_regions", len(cfg.Blocked),
+		"cache_ttl", cfg.CacheTTL.String(), "lookup_timeout", cfg.LookupTimeout.String())
+	return serve(ctx, stop, srv, metricsSrv)
+}
+
+func newServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
-	log.Info("content-policy-go starting", "addr", cfg.Addr, "policy_version", engine.PolicyVersion(),
-		"restricted_regions", len(cfg.Restricted), "blocked_regions", len(cfg.Blocked),
-		"cache_ttl", cfg.CacheTTL.String(), "lookup_timeout", cfg.LookupTimeout.String())
+}
 
-	served := make(chan error, 1)
-	go func() { served <- srv.ListenAndServe() }()
+// serve runs every server until ctx ends or any of them stops (a failed listen included), then
+// shuts all of them down. It returns the first error that is not a clean close.
+func serve(ctx context.Context, stop context.CancelFunc, srvs ...*http.Server) error {
+	served := make(chan error, len(srvs))
+	for _, srv := range srvs {
+		go func() { served <- srv.ListenAndServe() }()
+	}
+	var err error
 	select {
 	case <-ctx.Done():
 	case err = <-served:
@@ -87,7 +104,9 @@ func run(log *slog.Logger) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx) //nolint:contextcheck // shutdown must outlive the cancelled run context
+	for _, srv := range srvs {
+		_ = srv.Shutdown(shutdownCtx) //nolint:contextcheck // shutdown must outlive the cancelled run context
+	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
