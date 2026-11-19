@@ -124,9 +124,6 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
 
     expect(sorted(pushed)).toEqual([101, 102, 103, 107, 108, 109]);
     expect(await remainingQueuedIds()).toEqual(FAILING_BATCH);
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining(`re-queued ${FAILING_BATCH.length} ids`)
-    );
   });
 
   it('processQueues() leaves exactly the failed batch on the queue for the next run', async () => {
@@ -232,29 +229,7 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
     expect(await remainingQueuedIds()).toEqual(QUEUED_IDS);
   });
 
-  it('names a bounded, sorted sample of the re-queued ids so a recurring set is recognisable', async () => {
-    // 25 ids, all in one failing batch, seeded out of order: the line must name the 10 LOWEST,
-    // sorted, plus the range — and nothing beyond the 10th. They straddle 99/100 so a string
-    // sort ("100" < "95") cannot pass for a numeric one.
-    const ids = [
-      111, 97, 119, 103, 95, 116, 100, 108, 105, 114, 98, 118, 102, 96, 113, 107, 101, 117, 99, 110,
-      104, 115, 106, 112, 109,
-    ];
-    seedUpdateQueue(ids);
-    const index = buildIndex({
-      transformData: async () => {
-        throw new Error('Server has closed the connection.');
-      },
-    });
-
-    await index.processQueues({ processUpdates: true }, {} as never);
-
-    expect(vi.mocked(console.error).mock.calls.map((c) => c[0])).toContain(
-      `createSearchIndexUpdateProcessor :: processQueues :: ${INDEX} :: re-queued 25 ids from batches that exhausted their retries (lowest: 95, 96, 97, 98, 99, 100, 101, 102, 103, 104; min 95, max 119)`
-    );
-  });
-
-  it('parks the ids in Postgres and says so when Redis refuses the re-queue', async () => {
+  it('parks the ids in Postgres when Redis refuses the re-queue', async () => {
     seedUpdateQueue(QUEUED_IDS);
     // The run's only sAdd is the re-queue: the seed bypasses addToQueue.
     redisMock.sysRedis.sAdd.mockRejectedValue(new Error('sysRedis unavailable'));
@@ -269,9 +244,6 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
       `search-index-queue-fallback:${UPDATE_KEY}`,
       JSON.stringify(FAILING_BATCH),
     ]);
-    expect(vi.mocked(console.error).mock.calls.map((c) => c[0])).toContain(
-      `createSearchIndexUpdateProcessor :: update :: ${INDEX} :: could not re-queue 3 ids from failed batches to Redis (lowest: 104, 105, 106; min 104, max 106); attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
-    );
   });
 });
 

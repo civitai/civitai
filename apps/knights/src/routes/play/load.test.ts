@@ -19,7 +19,10 @@ const queueDeps = vi.hoisted(() => ({
 }));
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
-vi.mock('$lib/server/db', () => ({ db: {} }));
+// Distinct objects, so a read that takes the primary instead of the replica (or the reverse) fails `toBe`.
+const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
+const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
+vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
@@ -58,8 +61,6 @@ vi.mock('$lib/server/yesno/cadence', () => ({
 }));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
-const storedRules = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
-vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => storedRules.value }));
 vi.mock('$lib/server/apprenticeship/runtime', () => ({
   apprenticeDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
@@ -431,7 +432,7 @@ describe('play load feed', () => {
       yesNoSettings.share = 0.7;
     }
 
-    expect(getFeed).toHaveBeenCalledWith(expect.anything(), 7, { limit: 1, exclude: [3] });
+    expect(getFeed).toHaveBeenCalledWith(REPLICA, 7, { limit: 1, exclude: [3] });
     expect(pickHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ exclude: [5] })
@@ -440,6 +441,19 @@ describe('play load feed', () => {
       expect.anything(),
       expect.objectContaining({ exclude: [8] })
     );
+  });
+
+  it('reads the feed from the replica, and the player, their pace and their served history from the primary', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
+    lockoutFor.mockResolvedValue(null);
+
+    await run();
+
+    expect(getFeed).toHaveBeenCalledTimes(1);
+    expect(getFeed.mock.calls[0][0]).toBe(REPLICA);
+    expect(getPlayerStatus.mock.calls[0][0]).toBe(PRIMARY);
+    expect(lockoutFor.mock.calls[0][0]).toBe(PRIMARY);
+    expect(servedHistory.mock.calls[0][0]).toBe(PRIMARY);
   });
 
   it('serves no hidden check when the queue is empty', async () => {
@@ -641,15 +655,6 @@ describe('play load notices', () => {
     expect(page.showGuide).toBe(true);
     expect(page.progress).toBeNull();
     expect(page.ratingGuide.map((g: { level: number }) => g.level)).toEqual([1, 2, 4, 8, 16, 32]);
-  });
-
-  it('carries the saved question rules with the guide, and null when none are saved', async () => {
-    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
-    expect((await run()).ruleGuide).toBeNull();
-    const ruleGuide = { sets: [{ title: 'T', points: ['Point one'] }] };
-    storedRules.value = { ruleGuide };
-    expect((await run()).ruleGuide).toEqual(ruleGuide);
-    storedRules.value = {};
   });
 });
 

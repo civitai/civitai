@@ -36,7 +36,11 @@ import (
 )
 
 func main() {
+	if printVersion(os.Args[1:], os.Stdout) {
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log.Info("feed-go", "version", version)
 	if err := run(log); err != nil {
 		log.Error("exit", "err", err)
 		os.Exit(1)

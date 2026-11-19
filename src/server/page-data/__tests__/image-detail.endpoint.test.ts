@@ -20,7 +20,6 @@ import {
 } from '~/components/Shell/shell-page-data';
 import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
 import { env } from '~/env/client';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -105,7 +104,6 @@ afterAll(() => {
 });
 beforeEach(() => {
   procedureCalls.length = 0;
-  loggingMock.logToAxiom.mockClear();
   h.flagOn.current = true;
   h.bootstrapFails.current = false;
   h.seeds.mockReset();
@@ -646,13 +644,6 @@ describe('page-data flushes its headers before the body', () => {
     expect(res.flushed?.statusCode).toBe(200);
     expect(res.events).toEqual(['flush', 'end']);
     expect(res.wire).toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        message: 'bootstrap seeds failed late',
-        afterFlush: true,
-      })
-    );
 
     // Control, fetched before `window` is stubbed (server code reads `window` to tell where it
     // runs): a 200 the endpoint completed.

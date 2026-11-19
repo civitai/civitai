@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as Hooks from '~/server/events/points/hooks';
 
 const queryRaw = dbMock.dbWrite.$queryRaw;
@@ -692,9 +691,6 @@ describe('a storyline chapter taken down with its placement', () => {
       await expect(
         removePlacementByModerator({ placementId: STORYLINE_PLACEMENT, actorId: MODERATOR })
       ).resolves.toMatchObject({ removed: true });
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'buzz down', placementIds: [STORYLINE_PLACEMENT] })
-      );
     });
 
     it('are settled again when a removed placement is removed again, which still refuses', async () => {

@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import type { Kysely } from 'kysely';
+import type { Kysely, KyselyPlugin } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
@@ -23,6 +23,7 @@ import {
   type QueueDeps,
   bucketLevelSql,
   servableItems,
+  STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
 
@@ -93,6 +94,57 @@ async function item(
     },
     NOW
   );
+}
+
+/**
+ * Open priority-1 Knight items, one per level given (each on its own published image), all enqueued at the same instant,
+ * which has milliseconds, so only the id orders them and a scan cursor must carry that instant exactly. Returns the item
+ * ids in serving order.
+ */
+async function sameAgeStage(levels: number[], firstImage = 100_000) {
+  const params = [`{${levels.join(',')}}`, firstImage];
+  const rows = `unnest($1::int[]) WITH ORDINALITY AS t(level, n)`;
+  await pg.query(
+    `INSERT INTO "Post" ("id","publishedAt") SELECT $2::int + n, '2020-01-01'::timestamp FROM ${rows}`,
+    params
+  );
+  await pg.query(
+    `INSERT INTO "Image" ("id","url","nsfwLevel","postId")
+     SELECT $2::int + n, 'key-' || ($2::int + n), level, $2::int + n FROM ${rows}`,
+    params
+  );
+  const items = await pg.query<{ id: number }>(
+    `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","priority","createdAt","updatedAt")
+     SELECT $3::text, $2::int + n, 'test', 'Knight', 5, 1, '2026-12-15 11:00:00.123'::timestamp, '2026-12-15 11:00:00.123'::timestamp
+     FROM ${rows} ORDER BY n RETURNING id`,
+    [...params, Q]
+  );
+  return items.rows.map((r) => r.id).sort((a, b) => a - b);
+}
+
+/**
+ * `db`, recording the ids each read returns: `rounds` for the stage-scan rounds (the rows carrying a `createdAtKey`),
+ * `fullReads` for the reads of served columns (rows carrying an `imageKey`). A read that returns no rows is not seen.
+ * `onRound` runs after each round's rows come back and before the next round starts.
+ */
+function watchFeedReads(onRound?: (ids: number[]) => Promise<void>) {
+  const rounds: number[][] = [];
+  const fullReads: number[][] = [];
+  const plugin: KyselyPlugin = {
+    transformQuery: ({ node }) => node,
+    async transformResult({ result }) {
+      const rows = result.rows as Record<string, unknown>[];
+      const ids = rows.map((r) => r.id as number);
+      if (rows.some((r) => 'createdAtKey' in r)) {
+        rounds.push(ids);
+        await onRound?.(ids);
+      } else if (rows.some((r) => 'imageKey' in r)) {
+        fullReads.push(ids);
+      }
+      return result;
+    },
+  };
+  return { db: db.withPlugin(plugin), rounds, fullReads };
 }
 
 const itemRow = async (id: number) =>
@@ -279,6 +331,57 @@ describe('getFeed', () => {
 
     const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
     expect(served.filter((id) => nsfw.includes(id)).length).toBeGreaterThan(0);
+  });
+
+  it('serves a bucket whose first item sits behind a whole scan round of another bucket', async () => {
+    await player(1, 'Knight');
+    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round. Every
+    // item shares a priority and enqueue time, so only the id puts the X item after the round's last row.
+    for (let n = 0; n < STAGE_SCAN_FIRST_ROUND; n++) {
+      await image(1000 + n, 1);
+      await item(1000 + n, { priority: 1 });
+    }
+    await image(5000, 8);
+    const x = await item(5000, { priority: 1 });
+
+    const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+  });
+
+  it('scans a stage whose buckets cannot fill in doubling rounds, and fetches the full rows of the kept items only', async () => {
+    await player(1, 'Knight');
+    // 350 PG items then one X item: only the PG bucket can fill, so the scan reads the whole stage. 351 rows overshoot
+    // the first two rounds (100, then 200), so the third round (400) is the partial one that ends the scan.
+    const ids = await sameAgeStage([...Array<number>(350).fill(1), 8]);
+    const x = ids[350];
+    const watched = watchFeedReads();
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+    expect(STAGE_SCAN_FIRST_ROUND).toBe(100);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 51]);
+    // Each round starts right after the last row of the one before: every row once, in serving order.
+    expect(watched.rounds.flat()).toEqual(ids);
+    // The served columns are read once, for the first 10 PG items and the X item, not for the 340 PG items left out.
+    expect(watched.fullReads.map((r) => [...r].sort((a, b) => a - b))).toEqual([
+      [...ids.slice(0, 10), x],
+    ]);
+  });
+
+  it('continues the scan after the last row read even when that row is gone by the next round', async () => {
+    await player(1, 'Knight');
+    const ids = await sameAgeStage([...Array<number>(150).fill(1), 8]);
+    const x = ids[150];
+    const watched = watchFeedReads(async (round) => {
+      if (round.length === STAGE_SCAN_FIRST_ROUND) {
+        await pg.query(`DELETE FROM "KnightsQueueItem" WHERE id = $1`, [round[round.length - 1]]);
+      }
+    });
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 51]);
+    expect(watched.rounds[1][0]).toBe(ids[100]);
+    expect(served).toContain(x);
   });
 
   it('reads each level bucket by the same rule as itemBucket', async () => {

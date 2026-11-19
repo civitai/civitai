@@ -334,11 +334,5 @@ export function changeSummary(
       )}`
     );
   }
-  const beforeRules = JSON.stringify(before?.ruleGuide ?? null);
-  const afterRules = JSON.stringify(after.ruleGuide ?? null);
-  if (beforeRules !== afterRules)
-    parts.push(
-      `Question rules: ${!after.ruleGuide ? 'cleared' : before?.ruleGuide ? 'edited' : 'saved'}`
-    );
   return parts.length ? parts.join('; ') : 'No change';
 }
