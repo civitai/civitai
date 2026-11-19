@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import type { NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 
@@ -17,4 +18,17 @@ export function refuseWhileImpersonating(
   if (session?.impersonatedBy == null) return false;
   res.status(403).json(IMPERSONATION_REFUSED);
   return true;
+}
+
+/** The tRPC form: throws FORBIDDEN, with `message`, when the caller's session is an impersonation. */
+export function assertNotImpersonating(
+  ctx: { impersonatedBy?: number | null },
+  message: string = IMPERSONATION_REFUSED.message
+): void {
+  if (ctx.impersonatedBy == null) return;
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message,
+    cause: new Error(IMPERSONATION_REFUSED.error),
+  });
 }

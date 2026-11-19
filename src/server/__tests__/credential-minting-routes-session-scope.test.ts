@@ -302,20 +302,17 @@ describe('the minted credential is still returned to an allowed caller', () => {
 describe('an impersonation, through the real AuthedEndpoint', () => {
   const assistantRoutes = routes.filter((r) => r.path.startsWith('/api/apps/assistant/'));
 
-  it.each(assistantRoutes.filter((r) => r.path !== '/api/apps/assistant/runner-viewer-token'))(
-    '$name mints nothing for an impersonation',
-    async (route) => {
-      hubSession.current = { user: USER, impersonatedBy: 9 };
-      const { status, body } = await call(route);
-      expect(status).toBe(403);
-      expect(body).toMatchObject({ error: 'impersonation_refused' });
-      expect(route.minted()).not.toHaveBeenCalled();
-      // Control: the same session without the impersonation mints.
-      hubSession.current = { user: USER };
-      expect((await call(route)).status).toBe(200);
-      expect(route.minted()).toHaveBeenCalledTimes(1);
-    }
-  );
+  it.each(assistantRoutes)('$name mints nothing for an impersonation', async (route) => {
+    hubSession.current = { user: USER, impersonatedBy: 9 };
+    const { status, body } = await call(route);
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'impersonation_refused' });
+    expect(route.minted()).not.toHaveBeenCalled();
+    // Control: the same session without the impersonation mints.
+    hubSession.current = { user: USER };
+    expect((await call(route)).status).toBe(200);
+    expect(route.minted()).toHaveBeenCalledTimes(1);
+  });
 
   it('apps/assistant/token POST writes no consent for an impersonation', async () => {
     hubSession.current = { user: USER, impersonatedBy: 9 };
