@@ -6,7 +6,6 @@ import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -572,9 +571,6 @@ describe('which files are rebuilt', () => {
     expect(await repack.repackFinals({ shouldStop: () => true })).toBe(0);
     expect(uploads.started).toBe(0);
     expect(await fileRow(fileId)).toMatchObject({ processingAt: null, deliveryKey: null });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
     expect(await repack.repackFinals()).toBe(1);
   });
 

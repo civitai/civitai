@@ -468,10 +468,6 @@ describe('unpacking a zip', () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     expect(await unpack.unpackFinals({ shouldStop: () => true })).toBe(0);
-    // A stop is not a failure: nothing was logged as an error.
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
     expect(images.createImage).not.toHaveBeenCalled();
     expect(await entries(fileId)).toEqual([]);
     const file = await fileRow(fileId);

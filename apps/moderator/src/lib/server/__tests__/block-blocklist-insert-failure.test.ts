@@ -54,6 +54,12 @@ const block = () =>
     { imageId: 7, actorUserId: 9, heldImage: true, removedForCsam: true }
   );
 
+/** Every log call, errors with their message and cause, as one string. */
+const serialisedLogs = () =>
+  JSON.stringify([logToAxiom.mock.calls, logAxiomError.mock.calls], (_key, value) =>
+    value instanceof Error ? { message: value.message, cause: value.cause } : value
+  );
+
 const blocklistInserts = () =>
   insert.mock.calls.filter(([args]) => args.table === 'blocked_images');
 
@@ -148,6 +154,23 @@ describe('the blocklist check on a non-CSAM block', () => {
     expect(blocklistInserts()).toHaveLength(1);
   });
 
+  // A driver message can quote the statement and its hashes; none of it reaches a log.
+  it('logs no hash when the insert or the check fails with a message quoting it', async () => {
+    insert.mockImplementation(async ({ table }) => {
+      if (table === 'blocked_images') throw new Error(`Cannot parse input: {"hash":${HASH}}`);
+    });
+    await tosBlock();
+    insert.mockReset();
+    query.mockRejectedValueOnce(new Error(`ClickHouse query failed. Query: ... IN (${HASH})`));
+    await tosBlock();
+
+    expect(logAxiomError).toHaveBeenCalled();
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'blocklist-insert-skipped' })
+    );
+    expect(serialisedLogs()).not.toContain(HASH.slice(1));
+  });
+
   it('completes the action when the check fails, writes nothing, and logs it', async () => {
     query.mockRejectedValueOnce(new Error('Socket hang up'));
 
@@ -161,7 +184,7 @@ describe('the blocklist check on a non-CSAM block', () => {
           step: 'block',
           imageId: 7,
           actorUserId: 9,
-          hashes: [HASH],
+          hashCount: 1,
         }),
       })
     );
