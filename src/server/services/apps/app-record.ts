@@ -21,9 +21,10 @@
  *   - `body`:   small structured data, at most {@link APP_RECORD_BODY_MAX_BYTES}. Large content is
  *               a URL reference inside the body, never inline.
  *
- * 🔴 SWITCHED OFF, AND NOTHING CALLS IT. {@link toAppRecord} takes an {@link AppRecordConfig},
- * and the only way to get one is {@link appRecordConfig}, which returns null unless
- * `APP_RECORD_CORE_ENABLED` is on. No live path imports this module yet.
+ * 🔴 SWITCHED OFF BY DEFAULT. {@link toAppRecord} takes an {@link AppRecordConfig}, and the only
+ * way to get one is {@link appRecordConfig}, which returns null unless `APP_RECORD_CORE_ENABLED`
+ * is on. What the switch turns on: the record export (`appStorage.exportMine`,
+ * `doc-store-viewer-usage.service.ts`), its only caller. Off, that route is NOT_FOUND.
  *
  * Pure: no database, no clock, no env read (the caller passes the env value in).
  */

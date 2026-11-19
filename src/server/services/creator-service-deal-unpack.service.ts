@@ -1,5 +1,6 @@
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, type GetObjectCommandOutput } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
@@ -12,9 +13,12 @@ import {
 import {
   createScanImage,
   fileExtension,
+  isFinalVideoName,
   readObject,
   recordFinalScanResult,
 } from '~/server/services/creator-service-deal-file.service';
+import { probeVideoDimensions } from '~/server/services/video-dimensions';
+import { readVideoLengths } from '~/server/utils/video-lengths';
 import { buildEntryScanCopy, PreviewRejectedError } from '~/server/utils/service-deal-preview';
 import {
   openZip,
@@ -32,7 +36,13 @@ import {
   type ZipEntry,
 } from '~/server/utils/service-deal-zip';
 import {
+  SERVICE_FINAL_OVER_LEVEL_REASON,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
+  SERVICE_FINAL_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR,
+  SERVICE_FINAL_VIDEO_MAX_SECONDS,
+  SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
   SERVICE_FINAL_SCAN_RETRY_MS,
   SERVICE_FINAL_SCAN_STALE_MS,
@@ -42,7 +52,13 @@ import {
   SERVICE_ZIP_MAX_IMAGE_BYTES,
   SERVICE_ZIP_MODEL_EXTENSIONS,
 } from '~/shared/constants/creator-services.constants';
-import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-utils';
+import {
+  deleteObject,
+  getBucket,
+  getImageUploadBackend,
+  getS3Client,
+  uploadImageBufferToStore,
+} from '~/utils/s3-utils';
 
 /**
  * Unpacks the Finals of a deal and sends every image in them through the normal image scan.
@@ -71,6 +87,7 @@ type ClaimedFinal = {
   s3Key: string;
   fileName: string;
   size: number;
+  kind: string;
   /** Who uploaded the file: the image scan copies are created as theirs. */
   uploaderId: number;
 };
@@ -95,7 +112,7 @@ function claimFinal() {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size",
+    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size", f."kind"::text AS "kind",
       CASE WHEN f."kind"::text = 'Attachment' THEN d."buyerId" ELSE d."sellerId" END
         AS "uploaderId"`;
 }
@@ -363,7 +380,14 @@ const isModelName = (name: string) =>
 async function isImageByContent(file: ClaimedFinal) {
   const head = await readHead(file);
   const kind = sniffEntry(head);
-  if (kind === 'video') throw new ZipRejectedError('Video cannot be delivered yet.');
+  if (kind === 'video')
+    throw new ZipRejectedError(
+      file.kind === 'Attachment'
+        ? "Videos can't be attached."
+        : `A video must be uploaded as the video file itself (${SERVICE_FINAL_VIDEO_EXTENSIONS.map(
+            (e) => `.${e}`
+          ).join(' or ')}).`
+    );
   const extension = fileExtension(file.fileName);
   if (isModelName(file.fileName)) {
     const format = MODEL_FORMATS[extension];
@@ -400,6 +424,96 @@ async function unpackImage(file: ClaimedFinal) {
   }
 }
 
+const VIDEO_UNREADABLE =
+  "This video could not be read, or carries extra tracks or data that can't be checked (subtitles, cover art, chapters, transparency, embedded metadata, a second video). Export it again as a plain MP4 or WebM with one video track, without transparency or metadata.";
+/** Header, samples and probe may differ by about a frame; more is a file claiming one length and holding another. */
+const VIDEO_LENGTH_TOLERANCE_SECONDS = 1;
+
+/**
+ * A video Final has a single entry: the video itself, scanned whole. The scan copy is the exact
+ * version of the held object the buyer will be served, and that version's ETag is recorded on the
+ * file, so a download can refuse bytes the scan did not see. A video longer than the scan covers is
+ * refused before its copy is scanned.
+ */
+async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDimensions) {
+  if (file.size > SERVICE_FINAL_VIDEO_MAX_BYTES)
+    throw new ZipRejectedError('That video is too large to deliver.');
+  await dbWrite.$executeRaw`
+    INSERT INTO "ServiceDealFileEntry" ("fileId", "dealId", "entryIndex", "path", "size")
+    VALUES (${file.id}::int, ${file.dealId}::int, 0, ${file.fileName}::text, ${file.size}::int)
+    ON CONFLICT ("fileId", "entryIndex") DO NOTHING`;
+  const [entry] = await dbWrite.$queryRaw<EntryRow[]>`
+    SELECT "id", "dealId", "path", "size", "imageId", "scanKey", "scanStatus"::text AS "scanStatus"
+    FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int AND "entryIndex" = 0`;
+  if (!entry || entry.imageId || entry.scanStatus !== 'Pending') return;
+
+  const object: GetObjectCommandOutput = await getS3Client().send(
+    new GetObjectCommand({ Bucket: await getBucket(), Key: file.s3Key })
+  );
+  if (!object.Body || !object.ETag) throw new Error('Video read returned no body or ETag');
+  // A view over the bytes read, not a copy: one video's size in memory, not two.
+  const read = await object.Body.transformToByteArray();
+  const original = Buffer.from(read.buffer, read.byteOffset, read.byteLength);
+  if (sniffEntry(original.subarray(0, 16)) !== 'video')
+    throw new ZipRejectedError(VIDEO_UNREADABLE);
+  // The header's length is the writer's claim; the samples are what plays. Both are measured.
+  const lengths = readVideoLengths(original);
+  if (!lengths) throw new ZipRejectedError(VIDEO_UNREADABLE);
+
+  const mimeType = fileExtension(file.fileName) === 'webm' ? 'video/webm' : 'video/mp4';
+  let scanKey = entry.scanKey;
+  if (!scanKey) {
+    ({ key: scanKey } = await uploadImageBufferToStore(original, { contentType: mimeType }));
+    await dbWrite.$executeRaw`
+      UPDATE "ServiceDealFileEntry" SET "scanKey" = ${scanKey}::text WHERE "id" = ${entry.id}::int`;
+  }
+  const dropCopy = async () => {
+    const store = await getImageUploadBackend();
+    await deleteObject(store.bucket, scanKey!, store.s3).catch(() => null);
+  };
+  const probed = await probeVideo(scanKey);
+  // No answer from the probe is retried; an answer with no length is a video the scan cannot be
+  // shown to cover.
+  if (!probed) throw new Error('Video probe returned nothing');
+  if (!probed.duration) {
+    await dropCopy();
+    await failEntry(file.id, 0, VIDEO_UNREADABLE);
+    throw new ZipRejectedError(VIDEO_UNREADABLE);
+  }
+  const all = [probed.duration, ...lengths];
+  const refusal =
+    Math.max(...all) > SERVICE_FINAL_VIDEO_MAX_SECONDS
+      ? SERVICE_FINAL_VIDEO_TOO_LONG
+      : Math.max(...all) - Math.min(...all) > VIDEO_LENGTH_TOLERANCE_SECONDS
+      ? SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR
+      : undefined;
+  if (refusal) {
+    await dropCopy();
+    await failEntry(file.id, 0, refusal);
+    throw new ZipRejectedError(refusal);
+  }
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "scannedEtag" = ${object.ETag}::text, "scannedVersionId" = ${object.VersionId ?? null}::text
+    WHERE "id" = ${file.id}::int`;
+  // A crash after the Image was made leaves it to be found, so it is never ingested twice.
+  const [existing] = entry.scanKey
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`
+    : [];
+  const imageId =
+    existing?.id ??
+    (
+      await createScanImage(
+        scanKey,
+        { mimeType, width: probed.width, height: probed.height, data: original, type: 'video' },
+        file.uploaderId
+      )
+    ).id;
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFileEntry" SET "imageId" = ${imageId}::int WHERE "id" = ${entry.id}::int`;
+}
+
 /**
  * Step 1: unpack one Final that has not been. A problem with the file itself fails it with a
  * reason the seller can read; anything else (a dropped connection) leaves it to be retried.
@@ -407,7 +521,8 @@ async function unpackImage(file: ClaimedFinal) {
  */
 export async function unpackFinals({
   shouldStop = () => false,
-}: { shouldStop?: () => boolean } = {}) {
+  probeVideo = probeVideoDimensions,
+}: { shouldStop?: () => boolean; probeVideo?: typeof probeVideoDimensions } = {}) {
   const [file] = await claimFinal();
   if (!file) return 0;
   const began = Date.now();
@@ -418,6 +533,8 @@ export async function unpackFinals({
         await release(file.id);
         return 0;
       }
+    } else if (file.kind === 'Final' && isFinalVideoName(file.fileName)) {
+      await unpackVideo(file, probeVideo);
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);
     } else if (await isImageByContent(file)) {
@@ -474,7 +591,25 @@ export async function settleEntryScans() {
       AND (i."ingestion" = 'Blocked'::"ImageIngestionStatus"
         OR (i."ingestion" = 'Scanned'::"ImageIngestionStatus"
           AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor"
-            OR i."nsfwLevel" NOT BETWEEN 1 AND ${MAX_LEVEL})))`;
+            OR i."nsfwLevel" NOT BETWEEN 1 AND ${NsfwLevel.XXX}::int)))`;
+  // Only the rating is above the deal's level: the seller is told that, and nothing else.
+  const overLevel = await dbWrite.$queryRaw<{ fileId: number | null }[]>`
+    UPDATE "ServiceDealFileEntry" e
+    SET "scanStatus" = 'Failed'::"ServiceDealFileScanStatus", "nsfwLevel" = i."nsfwLevel",
+      "failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
+    FROM "Image" i, "ServiceDeal" d
+    WHERE i."id" = e."imageId" AND d."id" = e."dealId" AND ${waiting}
+      AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
+      AND i."nsfwLevel" > ${MAX_LEVEL} AND i."nsfwLevel" <= ${NsfwLevel.XXX}::int
+    RETURNING e."fileId"`;
+  // The seller of a Final is told why; an Attachment's uploader keeps the plain reason.
+  const overLevelFiles = overLevel.flatMap(({ fileId }) => (fileId ? [fileId] : []));
+  if (overLevelFiles.length)
+    await dbWrite.$executeRaw`
+      UPDATE "ServiceDealFile" SET "failReason" = ${SERVICE_FINAL_OVER_LEVEL_REASON}
+      WHERE "id" IN (${Prisma.join(overLevelFiles)}) AND "kind" = 'Final'::"ServiceDealFileKind"
+        AND "failReason" IS NULL`;
   const unchecked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" e
     SET "scanStatus" = 'Failed'::"ServiceDealFileScanStatus",
@@ -488,7 +623,7 @@ export async function settleEntryScans() {
       "failReason" = 'An image in this file could not be checked.'
     WHERE ${waiting}
       AND e."createdAt" < now() - (${SERVICE_FINAL_SCAN_GIVE_UP_MS}::int * interval '1 millisecond')`;
-  return { passed, rejected, unchecked, timedOut };
+  return { passed, rejected: rejected + overLevel.length, unchecked, timedOut };
 }
 
 const WAITING_FOR_MALWARE_SCAN = Prisma.sql`

@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_STAGE_MAX_HOURS,
   KNIGHTS_STAGE_TTL_HOURS,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   type KnightsEscalationReason,
@@ -1041,7 +1042,7 @@ export async function escalateExpired(
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
     // twice within that): one that sat that long with no vote is not coming back, and must not wait here forever (the one
     // player who could serve it may have judged it already).
-    const enteredSince = addHours(now, -2 * KNIGHTS_STAGE_TTL_HOURS);
+    const enteredSince = addHours(now, -KNIGHTS_STAGE_MAX_HOURS);
     const extend = (item: (typeof due)[number]) =>
       !voted.has(item.id) &&
       staffed.has(item.minRank) &&
@@ -1089,6 +1090,90 @@ export async function escalateExpired(
     return counts;
   });
   for (let i = 0; i < result.expired; i++) metrics.escalation('expired');
+  return result;
+}
+
+/** `reason` of an item closed because its image, or the image's post, is gone (`closeUnservableItems`). */
+export const UNSERVABLE_REASON = 'unservable';
+/** `reason` of an item closed because its post publishes only after the item would have expired (`closeUnservableItems`). */
+export const PUBLISHES_AFTER_EXPIRY_REASON = 'publishes-after-expiry';
+
+const hours = (n: number) => sql`${sql.lit(`${n} hours`)}::interval`;
+
+/**
+ * `knightsLatestStageEnd` (`@civitai/shared/new-order`) in SQL, for an item at its first stage (entered at `createdAt`); change
+ * them together. Expects `KnightsQueueItem as i` with a non-null `expiresAt`.
+ */
+const latestStageEndSql = sql<Date>`CASE
+  WHEN "i"."expiresAt" >= "i"."createdAt" + ${hours(KNIGHTS_STAGE_MAX_HOURS)} THEN "i"."expiresAt"
+  WHEN "i"."expiresAt" >= "i"."createdAt" + ${hours(KNIGHTS_STAGE_TTL_HOURS)}
+    THEN "i"."expiresAt" + ${hours(KNIGHTS_STAGE_TTL_HOURS)}
+  ELSE "i"."createdAt" + ${hours(KNIGHTS_STAGE_MAX_HOURS + KNIGHTS_STAGE_TTL_HOURS)}
+END`;
+
+/**
+ * Closes open rating items Knights can never serve, so they stop filling the queue until they expire. Each closes like `expired`:
+ * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
+ * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back.
+ * - `publishes-after-expiry`: the post is scheduled to publish after the latest moment the item could still be open
+ *   (`latestStageEndSql`), so it would close as `expired` before any player could be served it. Only for an item still at the
+ *   stage it was queued at (never escalated, `minRank` Knight, where nobody serving the stage means nobody serves any stage, so
+ *   it expires instead of being handed up) with no counted vote there (a voted item is handed up, not expired). A draft has no
+ *   date and is left alone, as is an item that never expires.
+ * Hidden checks and yes/no items are never touched. At most `limit` items per call; rows another transaction holds are skipped.
+ */
+export async function closeUnservableItems(
+  db: Kysely<DB>,
+  { now, limit = 200 }: { now: Date; limit?: number }
+): Promise<{ unservable: number; publishesAfterExpiry: number }> {
+  const result = await db.transaction().execute(async (trx) => {
+    // Primary-key lookups into Image and Post from the open items: never a scan of either table.
+    const due = await trx
+      .selectFrom('KnightsQueueItem as i')
+      .leftJoin('Image as img', 'img.id', 'i.imageId')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select(['i.id', sql<boolean>`"p"."id" IS NULL`.as('gone')])
+      .where('i.status', '=', 'Open')
+      .where('i.isHiddenCheck', '=', false)
+      .where('i.audience', 'is', null)
+      .where((eb) =>
+        eb.or([
+          // Also true when the image is gone: the Post join then has nothing to match.
+          eb('p.id', 'is', null),
+          eb.and([
+            eb('i.minRank', '=', 'Knight'),
+            eb('i.escalatedAt', 'is', null),
+            eb('i.expiresAt', 'is not', null),
+            eb('p.publishedAt', '>', latestStageEndSql),
+            // The vote `escalateExpired` counts: one at the item's stage with weight.
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('KnightsVote as v')
+                  .select(sql`1`.as('one'))
+                  .whereRef('v.itemId', '=', 'i.id')
+                  .whereRef('v.stage', '=', 'i.minRank')
+                  .where('v.weight', '>', 0)
+              )
+            ),
+          ]),
+        ])
+      )
+      .orderBy('i.id', 'asc')
+      .limit(limit)
+      .forUpdate('i')
+      .skipLocked()
+      .execute();
+
+    const gone = due.filter((item) => item.gone).map((item) => item.id);
+    const late = due.filter((item) => !item.gone).map((item) => item.id);
+    if (gone.length > 0) await closeItems(trx, gone, now, UNSERVABLE_REASON);
+    if (late.length > 0) await closeItems(trx, late, now, PUBLISHES_AFTER_EXPIRY_REASON);
+    return { unservable: gone.length, publishesAfterExpiry: late.length };
+  });
+  for (let i = 0; i < result.unservable; i++) metrics.escalation(UNSERVABLE_REASON);
+  for (let i = 0; i < result.publishesAfterExpiry; i++)
+    metrics.escalation(PUBLISHES_AFTER_EXPIRY_REASON);
   return result;
 }
 

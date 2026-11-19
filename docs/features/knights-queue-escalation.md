@@ -22,6 +22,15 @@ An item at a stage nobody can serve is not extended. It is handed up as rule 1 s
 
 The tick response carries `escalated`, `toInquisitor`, `extended` and `expired`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
 
+## Items Knights can never serve
+
+The tick closes open rating items (not hidden checks, not yes/no items) that no player could ever be served before they expire (`closeUnservableItems`, before `settleFinalItems`, at most 200 per tick, rows another transaction holds are skipped). Each closes like `expired`: status `Closed`, no label, no write-back, the image keeps its level, and any leftover vote becomes `inconclusive` and settles unpaid. The feed serves only `servableImage`, so these items can no longer be served. An image or post can be deleted after players have already voted on its item, though, and those votes end inconclusive and unpaid, the same outcome `expired` would give them.
+
+- `reason = 'unservable'`: the image row is gone, or the image's post is (`Image.post` is `onDelete: SetNull`). At any stage.
+- `reason = 'publishes-after-expiry'`: the post is scheduled to publish after the latest moment the item could still be open (`knightsLatestStageEnd` in `@civitai/shared/new-order`, the same rule in SQL: the current window's end once it reaches two stage windows after queueing, else one more window after it). Only for an item still at the stage it was queued at (Knight, never escalated) with no counted vote there, and one that expires. Drafts are left alone.
+
+The main app refuses to queue the second kind in the first place (`publishes-after-expiry`, see [Knights queue sources](knights-sources.md)). The tick response carries `unservable` and `publishesAfterExpiry`; each close also counts as `knights_escalations_total{reason}` with its reason.
+
 ## An open item a moderator has since ruled on
 
 When a moderator locks an image's level after its item was queued, the tick closes the open item instead of letting players keep judging it (`closeModeratorRuledItems`, before `settleFinalItems`). The rule is the one the write-back applies to a settled item (`moderatorRuling` in `resolution.ts`): a lock other than Knights' own (`KNIGHTS_VOTE_NSFW_LEVEL_REASON`) at a level. The item becomes `Closed`, `reason = 'moderator-ruled'`, `resolvedValue` = the moderator's level, and its votes are graded and paid against that level through the write-back's own path (`reroute`). It acts only on an item still `Open` under its row lock, so an item a vote, the escalation or the Inquisitors moved first is left alone; `Resolved`, `Closed` and `Inquisitor` items are never regraded. A blocked image, or a lock without a level, is left to the other paths. The tick response carries `moderatorRuled` (items closed); an item that fails is retried next tick and counted as `knights_tick_item_failures_total{step="moderator_ruled"}`.

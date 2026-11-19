@@ -1,5 +1,8 @@
 import { readFileSync } from 'fs';
-import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-services.constants';
+import {
+  SERVICE_FINAL_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_OVER_LEVEL_REASON,
+} from '~/shared/constants/creator-services.constants';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -145,6 +148,7 @@ const MIGRATIONS = [
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
   '20271118230000_service_deal_file_purge',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -244,7 +248,7 @@ const list = (dealId: number, userId: number, isModerator = false) =>
   files.listServiceDealFiles({ dealId, userId, isModerator, servableLevels: 31 });
 
 const download = (fileId: number, userId: number, isModerator = false) =>
-  files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
+  files.resolveServiceDealFileDownload({ servableLevels: 31, fileId, userId, isModerator });
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -391,16 +395,7 @@ describe('requesting an upload', () => {
 
   it('refuses a final type we cannot inspect, and archives other than zip', async () => {
     const dealId = await accepted();
-    for (const name of [
-      'a.rar',
-      'a.7z',
-      'a.tar.gz',
-      'a.exe',
-      'a.mp4',
-      'a.webm',
-      'noextension',
-      'a.zip.exe',
-    ])
+    for (const name of ['a.rar', 'a.7z', 'a.tar.gz', 'a.exe', 'a.mov', 'noextension', 'a.zip.exe'])
       await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
       });
@@ -914,12 +909,43 @@ describe('who can download what', () => {
     expect(await download(finalId, MOD, true)).toMatchObject({ key: row.s3Key });
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
         delivered: true,
       })
     ).toMatchObject({ key: DELIVERY_KEY });
+  });
+
+  it('refuses a video Final over the video size cap, whatever the client allowed', async () => {
+    const dealId = await accepted();
+    const video = { kind: 'Final', fileName: 'clip.mp4', mimeType: 'video/mp4' };
+    await expect(
+      upload(dealId, { ...video, size: SERVICE_FINAL_VIDEO_MAX_BYTES + 1 })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/video cannot be more/),
+    });
+    await expect(
+      upload(dealId, { ...video, size: SERVICE_FINAL_VIDEO_MAX_BYTES })
+    ).resolves.toBeTruthy();
+  });
+
+  it('serves a video preview as before: only video Finals carry the scanned-version gate', async () => {
+    const dealId = await accepted('Video');
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.mp4',
+      mimeType: 'video/mp4',
+      size: 500,
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+    expect(await download(fileId, SELLER)).toMatchObject({ fileName: 'p.mp4' });
+    expect(await download(fileId, MOD, true)).toMatchObject({ fileName: 'p.mp4' });
   });
 
   it('never gives the buyer a zip that has no built archive, even a Passed one', async () => {
@@ -929,6 +955,7 @@ describe('who can download what', () => {
     expect(await download(finalId, BUYER)).toBeNull();
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1761,6 +1788,7 @@ describe('recording who took a file', () => {
       const { finalId } = await completedDeal();
       await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [finalId]);
       const target = await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1804,6 +1832,7 @@ describe('recording who took a file', () => {
     const { finalId } = await completedDeal();
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: BUYER,
         isModerator: true,
@@ -1818,6 +1847,7 @@ describe('recording who took a file', () => {
     await take(await download(finalId, SELLER));
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,

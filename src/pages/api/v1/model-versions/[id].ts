@@ -54,6 +54,7 @@ import {
   resolveVersionHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
 import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
+import { restModeratorViewer, restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -72,7 +73,7 @@ async function handler(
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
-  const status = user?.isModerator ? undefined : ModelStatus.Published;
+  const status = restModeratorViewer(req, user)?.isModerator ? undefined : ModelStatus.Published;
 
   const allowedBrowsingLevels = apiBrowsingLevel(req);
 
@@ -180,7 +181,9 @@ async function handler(
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion, async () => user);
+    await resModelVersionDetails(req, res, modelVersion, async () =>
+      restOwnerOrModeratorViewer(req, user)
+    );
   } catch (e) {
     const error = e as Error;
     logToAxiom({

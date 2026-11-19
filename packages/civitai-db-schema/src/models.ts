@@ -7265,6 +7265,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
   attestedAt: Date | null;
   removedAt: Date | null;
   createdAt: Date;

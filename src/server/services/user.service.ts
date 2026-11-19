@@ -205,6 +205,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -1656,9 +1657,8 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
   // later restore would un-block CSAM-blocked content.
   //
-  // Account-wide here, unlike the ban branch in `toggleBan`: the UPDATE above carries no
-  // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
-  // block's scope are the same set, which is what makes the wide form correct in this one place.
+  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
+  // user owns, and the clear's scope is the block's.
   await clearAccountDeletionImageMarkers({ userId: id });
   await refreshProfilePicturesForUsers([id]);
   await refreshOwnModelShowcases(id);
@@ -2968,17 +2968,26 @@ export class AlreadyBannedError extends Error {
   }
 }
 
-/** The ban's media block: every image of the user not already Blocked. Keeps an existing CSAM reason. */
+/**
+ * The ban's media block: every image of the user not already Blocked, as 'moderated' unless it holds
+ * a CSAM reason. The block outlives an account restore: the grace-block breadcrumbs come off every
+ * image of the user in the same write, including one already grace-blocked, which keeps its state.
+ */
 export async function blockBannedUserImages(userId: number) {
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       ingestion = 'Blocked'::"ImageIngestionStatus",
-      "nsfwLevel" = ${NsfwLevel.Blocked},
-      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
-        ELSE ${BlockedReason.Moderated} END,
+      "nsfwLevel" = CASE WHEN ingestion = 'Blocked'::"ImageIngestionStatus" THEN "nsfwLevel"
+        ELSE ${NsfwLevel.Blocked} END,
+      "blockedFor" = CASE
+        WHEN ingestion = 'Blocked'::"ImageIngestionStatus" OR "blockedFor" = ${BlockedReason.CSAM}
+        THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+      "metadata" = ${withoutGraceMarkersSql()},
       "updatedAt" = NOW()
-    WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+    WHERE "userId" = ${userId}
+      AND (ingestion <> 'Blocked'::"ImageIngestionStatus"
+        OR ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)
   `;
   await refreshOwnModelShowcases(userId);
 }
@@ -3197,53 +3206,7 @@ export const toggleBan = async ({
         (reasonCode !== undefined && banReasonsAlwaysRemovingMedia.includes(reasonCode)));
     if (shouldRemoveMedia) {
       try {
-        // The rows this ban is about to block that still carry account-deletion grace
-        // breadcrumbs. Read BEFORE the UPDATE: afterwards they are indistinguishable from the
-        // rows the grace pass itself blocked, because both end up `ingestion = 'Blocked'` with
-        // `blockedFor = 'moderated'`.
-        //
-        // 🔴 NOT `clearAccountDeletionImageMarkers({ userId: id })`, and do not "simplify" it back
-        // to that. Both of `remove-deleted-user-images`'s statements write the breadcrumb only on
-        // a row they leave `ingestion = 'Blocked'` — one sets it in the same UPDATE, the other
-        // requires it — and the UPDATE below only touches rows that are NOT Blocked. So for every
-        // row the grace pass marked, an account-wide clear here strips a breadcrumb off a row
-        // this ban provably did not touch. Lift the ban, restore the
-        // account, and `countPendingAccountDeletionImageRestores` (which keys on the breadcrumb)
-        // reads 0: `restoreUser` never queues the account, `restore-user-images` never runs, and
-        // the library stays Blocked with the recorded prior `ingestion` values gone — silent in
-        // the row and silent in the `imagesPendingRestore` the moderator is shown.
-        //
-        // This set is normally EMPTY. It is non-empty only for a row that was breadcrumbed and
-        // then un-blocked during the grace period — `handleUnblockImages` sets
-        // `ingestion = 'Scanned'` without stripping the breadcrumb — which is exactly the row a
-        // later account restore would otherwise un-block back out of this ban.
-        // Its own catch: this read is new, and the media block is the part of a ban that must not
-        // be able to fail because of it. Falling back to an empty set degrades the clear to what
-        // shipped before the breadcrumbs existed, which is the recoverable direction; letting it
-        // escape into the outer catch would skip the block and leave a banned account's media up.
-        let graceMarked: { id: number }[] = [];
-        try {
-          graceMarked = await dbWrite.$queryRaw<{ id: number }[]>`
-            SELECT id FROM "Image"
-            WHERE "userId" = ${id}
-              AND ingestion <> 'Blocked'::"ImageIngestionStatus"
-              AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
-          `;
-        } catch (error) {
-          logToAxiom({
-            type: 'error',
-            name: 'ban-user-grace-marker-scan',
-            message: (error as Error).message,
-            error,
-          });
-        }
-
         await blockBannedUserImages(id);
-
-        // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
-        // actually blocked rather than to the account: a ban outranks a grace block, so the
-        // restore breadcrumbs come off the rows it hid.
-        await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
         await refreshProfilePicturesForUsers([id]);
       } catch (error) {
         logToAxiom({

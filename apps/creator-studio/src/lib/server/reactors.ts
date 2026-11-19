@@ -89,12 +89,13 @@ export const preLaunchImageReactionListed = (viewerId: number) => sql`
     )))`;
 
 /**
- * Only a scanned, safe-level profile picture, never one under an owner-hidden review hold (as the
- * main app's `servableProfilePictureSql`); the legacy User.image is unmoderated. Reads alias `p` (Image).
+ * Only a scanned, safe-level profile picture with no block reason, never one under an owner-hidden
+ * review hold (as the main app's `servableProfilePictureSql`); the legacy User.image is unmoderated.
+ * Reads alias `p` (Image).
  */
 export const safeProfilePictureUrl = () => sql`
   CASE
-    WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
+    WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0 AND p."blockedFor" IS NULL
       AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0
       AND (p."needsReview" IS NULL OR p."needsReview" <> ALL(${sql.lit(`{${OWNER_HIDDEN_REVIEWS.join(',')}}`)}::text[])) THEN p.url
   END`;
