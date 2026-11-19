@@ -58,7 +58,7 @@ function SubmittedApp({ row }: { row: SubmittedRow }) {
           <Title order={4}>{seen.name}</Title>
           <Badge color={REVIEW_COLOR[user.review]}>{user.review}</Badge>
           <Text size="sm" c="dimmed">
-            {row.slug} · author {user.authorId}
+            {row.slug} · author {user.authorId} · icon {seen.icon}
           </Text>
         </Group>
         <Switch
@@ -71,7 +71,14 @@ function SubmittedApp({ row }: { row: SubmittedRow }) {
       {changed && (
         <Alert color="yellow">
           The author changed this app after you opened it.{' '}
-          <Button size="compact-xs" variant="light" onClick={() => setSeen(user)}>
+          <Button
+            size="compact-xs"
+            variant="light"
+            onClick={() => {
+              setSeen(user);
+              setMature(user.mature);
+            }}
+          >
             Show the new version
           </Button>
         </Alert>
