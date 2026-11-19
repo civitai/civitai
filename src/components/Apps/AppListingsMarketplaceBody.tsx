@@ -162,6 +162,11 @@ export function AppListingsMarketplaceBody() {
     if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
 
+  // With `app-index-search` on, the debounced search goes to the server, which may answer it from
+  // the app index (a page marked `search: 'index'`) or fall back to the plain grid, which the
+  // client-side filter below then narrows as before. Off, the query is never sent.
+  const serverQuery = features.appIndexSearch ? debouncedSearch.trim() || undefined : undefined;
+
   const {
     data,
     isLoading,
@@ -176,6 +181,7 @@ export function AppListingsMarketplaceBody() {
       kind,
       category: category ?? undefined,
       sort,
+      query: serverQuery,
       // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
       // the old four-column maximum; at the FIVE columns the grid now reaches on a
       // 2560 monitor it is under five, so a viewer on the widest screen the container
@@ -246,17 +252,19 @@ export function AppListingsMarketplaceBody() {
     () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
     [data]
   );
+  // A page the app index answered already holds the search's results, in its order.
+  const indexAnswered = data?.pages[0]?.search === 'index';
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return gridItems;
+    if (!q || indexAnswered) return gridItems;
     return gridItems.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
     );
-  }, [gridItems, debouncedSearch]);
+  }, [gridItems, debouncedSearch, indexAnswered]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts

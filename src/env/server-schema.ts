@@ -633,6 +633,9 @@ export const serverSchema = z
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
+    // The app index service (apps/app-index-go): `/apps` store text search reads its `/search`
+    // when the `app-index-search` flag is on for the viewer. Unset = the store's database search.
+    APP_INDEX_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
