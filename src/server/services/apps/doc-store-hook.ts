@@ -34,6 +34,7 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import {
   recordStorageHookCall,
   type StorageHookCallOutcome,
@@ -257,7 +258,10 @@ export async function callHookRunner(
         [HOOK_RUNNER_SIG_HEADER]: hmacHex(config.secret, body),
       },
       body,
-      signal: AbortSignal.timeout(hookClientTimeoutMs(call.timeoutMs)),
+      // The repo's outbound deadline (`fetch-timeout.ts`). With its off-switch thrown the call has
+      // no deadline of ours: a black-holed runner then waits for the HTTP client's own header
+      // timeout, and that error is still `unavailable` below. Slower, never open.
+      signal: fetchTimeoutSignal(hookClientTimeoutMs(call.timeoutMs)),
     });
     status = res.status;
     sig = res.headers.get(HOOK_RUNNER_SIG_HEADER);
