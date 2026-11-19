@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
   list: vi.fn(),
   start: vi.fn(),
 }));
-// Apart from `h`, whose every entry the first test expects one call of.
+// Kept out of `h`: the first test expects exactly one call of every `h` mock.
 const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn() }));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({

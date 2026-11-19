@@ -30,6 +30,7 @@ import {
   type RemixUserSpec,
   type RemixAppSubmitInput,
   remixAppSlugSchema,
+  REMIX_USER_APPS_PER_AUTHOR,
 } from '~/shared/remix-apps/row.schema';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
@@ -448,6 +449,17 @@ export async function submitUserRemixApp({
   if (existing && (!REMIX_STATUSES.includes(existing.status) || !isUserRow(existing.manifest)))
     throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
 
+  if (!existing) {
+    // primary: the cap guards this create.
+    const held = await dbWrite.appBlock.count({
+      where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
+    });
+    if (held >= REMIX_USER_APPS_PER_AUTHOR)
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: `You can have up to ${REMIX_USER_APPS_PER_AUTHOR} remix apps`,
+      });
+  }
   const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);

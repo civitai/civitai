@@ -50,6 +50,8 @@ const remixAppBuilderProcedure = remixAppProcedure
 
 const imageId = z.number().int().positive();
 
+/** Each submit rewrites the shared registry cache. */
+const submitRateLimit = rateLimit({ limit: 20, period: CacheTTL.hour });
 /** Each uncached quote is an orchestrator what-if. */
 const quoteRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 /** Called on every image view; it only reaches a what-if for an image the viewer can team-remix. */
@@ -146,6 +148,7 @@ export const remixAppRouter = router({
   admin: remixAppAdminRouter,
   /** Creates or replaces the caller's own app, which waits for a mod's review out of menus. */
   submit: remixAppBuilderProcedure
+    .use(submitRateLimit)
     .input(remixAppSubmitSchema)
     .mutation(({ ctx, input }) => submitUserRemixApp({ ...input, authorId: ctx.user.id })),
   list: remixAppProcedure

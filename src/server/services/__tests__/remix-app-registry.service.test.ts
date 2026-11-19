@@ -549,6 +549,23 @@ describe('user apps: submit, review and enable', () => {
     });
   });
 
+  it('refuses a new app past the per-author cap, and still takes an edit there', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.appBlock.count.mockResolvedValue(10);
+    await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(dbMock.dbWrite.appBlock.count.mock.calls[0][0]).toEqual({
+      where: { blockId: { startsWith: 'remix-u7-' } },
+    });
+    expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
+
+    // CONTROL: an edit of an app the author already has is not a new row.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('approved') as never);
+    await submitUserRemixApp({ ...submission, authorId: 7 });
+    expect(dbMock.dbWrite.appBlock.update).toHaveBeenCalledTimes(1);
+  });
+
   it('will not take over a block id a system app holds', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(stored(pixelArt, 1) as never);
     await expect(submitUserRemixApp({ ...submission, authorId: 7 })).rejects.toMatchObject({
@@ -579,6 +596,26 @@ describe('user apps: submit, review and enable', () => {
       manifest: { review: 'approved', remix: { engine: DEFAULT_ENGINE } },
     });
     expect(data).not.toHaveProperty('status');
+  });
+
+  it('rejects by taking the app out of menus, without the mature engine', async () => {
+    const row = userRow('approved', SOURCE, 'remix');
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+
+    await reviewUserRemixApp({
+      slug: 'u7-probe',
+      sha256: hashOf(row),
+      decision: 'rejected',
+      mature: true,
+    });
+
+    const { data } = dbMock.dbWrite.appBlock.updateMany.mock.calls[0][0] as {
+      data: { status?: string; manifest: { review: string; remix: { engine: object } } };
+    };
+    expect(data.status).toBe('remix_disabled');
+    expect(data.manifest.review).toBe('rejected');
+    expect(data.manifest.remix.engine).not.toHaveProperty('mature');
   });
 
   it('refuses a review of a source other than the one stored, and one that lost a race', async () => {

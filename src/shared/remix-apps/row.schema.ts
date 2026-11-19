@@ -245,6 +245,9 @@ export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
 
 export const REMIX_REVIEW_STATES = ['submitted', 'rejected', 'approved'] as const;
 
+/** Apps one author may hold: each row's source is read into the shared registry cache. */
+export const REMIX_USER_APPS_PER_AUTHOR = 10;
+
 /** What an author submits. The server sets the engine, the author and the review state. */
 export const remixAppSubmitSchema = z.object({
   /** The slug after `u<authorId>-`. */
