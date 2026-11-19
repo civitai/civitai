@@ -329,18 +329,17 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number) {
         .orderBy('messageId', 'asc')
         .orderBy('id', 'asc')
         .execute();
+      const editsOf = new Map<number, Omit<(typeof edits)[number], 'messageId'>[]>();
+      for (const { messageId, ...edit } of edits) {
+        const list = editsOf.get(messageId) ?? [];
+        list.push(edit);
+        editsOf.set(messageId, list);
+      }
       for (const row of page)
         yield {
           ...row,
           isReportedUser: row.userId === userId,
-          previousVersions: edits
-            .filter((e) => e.messageId === row.id)
-            .map(({ id, editorId, previousContent, createdAt }) => ({
-              id,
-              editorId,
-              previousContent,
-              createdAt,
-            })),
+          previousVersions: editsOf.get(row.id) ?? [],
         };
     }
   }

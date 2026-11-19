@@ -213,6 +213,7 @@ beforeEach(async () => {
     ...OWNED.map((o) => o.table),
     'UserProfile',
     'TextScanHold',
+    'ChatMessageEdit',
     'ChatMember',
     'ChatMessage',
   ];
@@ -328,12 +329,12 @@ describe('the archive text sections', () => {
       await pg.query(`INSERT INTO "UserProfile" ("userId", bio) VALUES ($1, NULL)`, [ME]);
       await pg.query(
         `INSERT INTO "TextScanHold" (id, "entityType", "entityId", status, "decidedAt", meta) VALUES
+           (46, 'UserProfile', $1, 'Confirmed', NULL, '{}'),
            (41, 'UserProfile', $1, 'Confirmed', '2026-10-05 12:00', '{"decision":"remove_ban"}'),
            (42, 'UserProfile', $1, 'Dismissed', '2026-10-06 12:00', '{"decision":"dismiss"}'),
            (43, 'UserProfile', $2, 'Confirmed', '2026-10-07 12:00', '{"decision":"remove"}'),
            (44, 'Post', $1, 'Confirmed', '2026-10-08 12:00', '{"decision":"remove"}'),
-           (45, 'UserProfile', $1, 'Pending', NULL, NULL),
-           (46, 'UserProfile', $1, 'Confirmed', NULL, '{}')`,
+           (45, 'UserProfile', $1, 'Pending', NULL, NULL)`,
         [ME, OTHER]
       );
       // A confirmed hold of another kind does not clear the profile.
@@ -460,6 +461,14 @@ describe('the archive text sections', () => {
         expect.objectContaining({ id: 33, previousContent: 'their draft' }),
       ]);
       expect(rows.find((r) => r.id === 1)?.previousVersions).toEqual([]);
+      for (const row of rows)
+        for (const version of row.previousVersions as Record<string, unknown>[])
+          expect(Object.keys(version).sort()).toEqual([
+            'createdAt',
+            'editorId',
+            'id',
+            'previousContent',
+          ]);
       expect(JSON.stringify(rows)).not.toContain('not in scope');
       for (const row of rows)
         expect(Object.keys(row).sort()).toEqual(
