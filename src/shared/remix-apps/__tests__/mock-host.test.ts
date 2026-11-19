@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dryRunRemixApp, remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import type { RemixAsk } from '~/shared/remix-apps/define';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
-import { replayRemixApp } from '~/shared/remix-apps/replay';
+import { replayRemixApp, type RemixReplayer } from '~/shared/remix-apps/replay';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS, pickOfFour } from '~/shared/remix-apps/system-apps';
 
@@ -56,7 +56,7 @@ describe('remixOptionEffects', () => {
     if (choice.type !== 'ask' || choice.spec.kind !== 'choice') throw new Error('not a choice');
     const picked = trace[0].type === 'workflow' ? trace[0].result.images[1] : undefined;
 
-    const replay = (s: typeof source, l: typeof log) => replayRemixApp(pickOfFour, s, l);
+    const replay: RemixReplayer = (s, l) => replayRemixApp(pickOfFour, s, l);
     expect(await remixOptionEffects(replay, source, log, choice.spec)).toEqual([
       {
         value: 'upscale',
