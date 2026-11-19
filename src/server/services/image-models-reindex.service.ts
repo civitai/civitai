@@ -12,13 +12,11 @@ type ImageMinorChanges = {
 };
 
 /**
- * Queue a search-index rewrite for the models whose posts hold these images (after re-reading their
- * cached tags and showcase images from the primary), for the articles and comics using them as a
- * cover or banner, and for the collections and bounties whose documents show them. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
- * an image's minor flag or nsfwLevel reaches its model documents only through here.
- * Never throws: it runs after the level or minor-flag write has committed. A failed attempt is retried once;
- * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
- * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
+ * Queue a rewrite of every search document showing these images. The models sync re-picks a model
+ * only when `Model.updatedAt` moves, so a change to an image's minor flag or nsfwLevel reaches its
+ * documents only through here. Never throws: it runs after the write has committed. A failed attempt
+ * is retried once; a second failure is logged and the requeue is dropped. The queue call does not
+ * throw when Redis refuses the ids; past that, ids are lost only if the queue's own fallback fails.
  */
 export async function queueDocumentsForImageMinorChanges({
   minorImageIds = [],

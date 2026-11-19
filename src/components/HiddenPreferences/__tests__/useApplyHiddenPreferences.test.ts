@@ -493,26 +493,37 @@ describe("filterPreferences — 'comics' applies the system hidden tags to the c
     userId: 77,
     coverImageTagIds,
   });
-  const run = (systemTags: number[]) =>
+  const ids = (r: { items: unknown[] }) => (r.items as { id: number }[]).map((c) => c.id);
+  const asMap = (ids: number[]) => new Map(ids.map((id): [number, boolean] => [id, true]));
+  const run = (systemTags: number[], o: { userTags?: number[]; viewerId?: number } = {}) =>
     filterPreferences({
       type: 'comics',
       data: [comic(1, [5, SYSTEM_TAG]), comic(2, [5])],
       hiddenPreferences: {
         ...emptyPrefs(),
-        systemHiddenTags: new Map(systemTags.map((id): [number, boolean] => [id, true])),
+        hiddenTags: asMap(o.userTags ?? []),
+        systemHiddenTags: asMap(systemTags),
       },
       browsingLevel: 31,
-      currentUser: null as never,
+      currentUser: (o.viewerId ? { id: o.viewerId } : null) as never,
       canViewNsfw: true,
     });
 
   it('hides a comic whose cover carries a system-hidden tag, keeping the control', () => {
-    const { items, hidden } = run([SYSTEM_TAG]);
-    expect(items.map((c) => c.id)).toEqual([2]);
-    expect(hidden.tags).toBe(1);
+    const result = run([SYSTEM_TAG]);
+    expect(ids(result)).toEqual([2]);
+    expect(result.hidden.tags).toBe(1);
   });
 
   it('shows both when the add-on hides no tags', () => {
-    expect(run([]).items.map((c) => c.id)).toEqual([1, 2]);
+    expect(ids(run([]))).toEqual([1, 2]);
+  });
+
+  it('shows the owner their own comic despite a system-hidden cover tag', () => {
+    expect(ids(run([SYSTEM_TAG], { viewerId: 77 }))).toEqual([1, 2]);
+  });
+
+  it("hides a comic whose cover carries one of the viewer's own hidden tags, even for the owner", () => {
+    expect(ids(run([], { userTags: [SYSTEM_TAG], viewerId: 77 }))).toEqual([2]);
   });
 });

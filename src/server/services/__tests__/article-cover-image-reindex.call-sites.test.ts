@@ -92,7 +92,7 @@ describe('a scan result, which writes the minor flag', () => {
   it.each([
     ['stays unflagged', false, false],
     ['stays flagged', true, true],
-  ])('leaves an image whose flag %s to the child-tag check (control)', async (_, before, after) => {
+  ])('leaves an image whose flag %s to the level path (control)', async (_, before, after) => {
     await scan(before, after);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledTimes(1);
     expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
