@@ -13,7 +13,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both pass `requirePost`: an image with no post is refused (`no-post`), and so is one whose post is
   scheduled to publish after the item would close unvoted (`publishes-after-expiry`: later than `knightsLatestStageEnd` in `@civitai/shared/new-order`,
-  144 h after queueing with the default window, two `KNIGHTS_STAGE_TTL_HOURS`), since Knights could never serve it. Drafts have no date and still queue. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
+  144 h after queueing with the default window, two `KNIGHTS_STAGE_TTL_HOURS`), since Knights could never serve it. Drafts have no date and still queue; the Knights tick closes a scan sample whose post is still a draft 24 h later (`unpublished-draft`), and nothing re-queues it if the post publishes afterwards. An owner rating on a draft stays queued. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
   **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
   deploy needed.
@@ -26,7 +26,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
   removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
   the [game settings](#game-settings).
-- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
+- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant), tabbed Blocked, Pushed down and Write-back conflict; a rating with no consensus never comes here, Knights re-rates it ([queue escalation](knights-queue-escalation.md#rule-4-a-split-at-the-end-of-the-path-is-re-rated)). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
   A triage page: J/K move, 1 to 5 rate PG to XXX, 6 is Blocked, which asks for a reason from the Knights' list (`KNIGHTS_BLOCK_REASONS`, picked by
   digit) and records it on the image as `metadata.nsfwLevelReason` (`Inquisitor ruling: <reason>`); other levels record no reason.
@@ -41,8 +41,8 @@ The game-tuning variables Knights read from its environment can also be saved un
 `hiddenCheckRate` (`KNIGHTS_HIDDEN_CHECK_RATE`, 0-1, 0 stops serving skill checks), `hiddenCheckFailureWindowHours` (`>0`),
 `hiddenCheckSevereDistance` (whole number `>0`), `hiddenCheckSettleDelayMinutes` (`>=0`), `hiddenCheckRetireMinAnswers` (whole number
 `>0`), `hiddenCheckRetireFailureRate` (`>0` to 1), `yesNoStretch` (whole number `>0`), `yesNoMaxAgeDays` (`>0`), and the booleans
-`apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`) and `conversionDisabled`
-(`KNIGHTS_CONVERSION_DISABLED`), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
+`apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`), `conversionDisabled`
+(`KNIGHTS_CONVERSION_DISABLED`) and `signalsDisabled` (`KNIGHTS_SIGNALS_DISABLED`, [live updates](knights-live-updates.md)), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
 saved value runs the harvest when unset, `on`, `true` or `1`) and `harvestHiddenCheckShare` (`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, 0-1).
 The harvest job reads both per run. The list, its ranges (the same as the Knights environment readers) and the reader are
 `KNIGHTS_GAME_SETTINGS` / `readKnightsSourcesConfig` in `@civitai/shared/new-order`; a stored field that is out of range is dropped

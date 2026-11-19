@@ -53,18 +53,14 @@ type LiveProps = Omit<
  * `ReviewListingMedia` on the review PAGE, where a moderator can re-rate each image.
  *
  * 🔴 THE LEVELS ARE RE-READ, NOT TAKEN FROM THE PAGE'S REQUEST. `request.reviewMedia` comes from
- * `blocks.getPublishRequest`, which is fetched once and deliberately never invalidated (the page
- * memoises on its identity). So after a re-rate the badges and reveals read the level from
- * `appListings.getAssets` — the same read the approve bar's rating warning uses, and the one
- * `ReviewImageRatingPicker` updates after a re-rate — and the screenshots from
- * `appListings.getListingPreviewForReview`. Until those answer, the request's own levels show.
+ * `blocks.getPublishRequest`, which is never invalidated (the page memoises on its identity), so
+ * its levels go stale after a re-rate. They show only until the listing's own reads answer.
  *
  * Without a listing, or for a viewer who is not a moderator, this is plain `ReviewListingMedia`:
  * no reads, no pickers.
  */
 export function ReviewListingMediaLive({ listingId, approveListingId, ...props }: LiveProps) {
-  // No listing, no hooks at all: a review render without one reads no session (and so needs no
-  // session provider), exactly as before this component existed.
+  // Stays hook-free: a review render without a listing has no session provider.
   if (!listingId) return <ReviewListingMedia {...props} />;
   const listingIds = [
     listingId,

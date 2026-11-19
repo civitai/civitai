@@ -1,3 +1,4 @@
+import type { MultiSelectProps } from '@mantine/core';
 import { MultiSelect } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useState } from 'react';
@@ -11,11 +12,13 @@ export function TagMultiPicker({
   placeholder,
   value,
   onChange,
+  comboboxProps,
 }: {
-  label: string;
+  label?: string;
   placeholder: string;
   value: PickedTag[];
   onChange: (tags: PickedTag[]) => void;
+  comboboxProps?: MultiSelectProps['comboboxProps'];
 }) {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -39,6 +42,7 @@ export function TagMultiPicker({
       searchable
       clearable
       maxValues={20}
+      comboboxProps={comboboxProps}
     />
   );
 }

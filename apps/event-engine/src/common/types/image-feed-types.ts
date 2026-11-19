@@ -218,7 +218,6 @@ export type PopulatedImage = Omit<ImageDocument, 'postedToId'> & {
     image: string | null;
     deletedAt: Date | null;
     cosmetics: any[];
-    profilePicture: any | null;
   };
 
   // Reactions (user-specific)
@@ -336,7 +335,6 @@ export type ImageQueryInput = {
     'report' |
     'meta' |
     'tagIds' |
-    'profilePictures' |
     'metaSelect'
   >;
 };
