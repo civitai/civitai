@@ -13,6 +13,7 @@ import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -446,7 +447,8 @@ export async function blockImageFromRating({
   pHash?: bigint;
   blockedReason?: string | null;
 }) {
-  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it.
+  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it. The block outlives an
+  // account restore: the grace-block breadcrumbs go in the same write.
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -457,7 +459,8 @@ export async function blockImageFromRating({
       "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
     blockedReason === undefined
   }
-        THEN "blockedFor" ELSE ${blockedReason ?? null} END
+        THEN "blockedFor" ELSE ${blockedReason ?? null} END,
+      "metadata" = ${withoutGraceMarkersSql()}
     WHERE id = ${imageId}
   `;
 }
