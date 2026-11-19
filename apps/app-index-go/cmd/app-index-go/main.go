@@ -24,6 +24,7 @@ import (
 	"github.com/civitai/civitai/apps/app-index-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-index-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-index-go/internal/store"
+	"github.com/civitai/civitai/apps/app-index-go/internal/token"
 )
 
 func main() {
@@ -78,6 +79,17 @@ func run(log *slog.Logger) error {
 		Metrics: m,
 		Backoff: index.Backoff{Base: cfg.BackoffBase, Max: cfg.BackoffMax},
 	}
+	auth := "anonymous"
+	if cfg.RegistryToken != "" {
+		auth = "static_token"
+	}
+	if cl := cfg.Client; cl != nil {
+		src := token.New(token.Config{URL: cl.TokenURL, ClientID: cl.ID, ClientSecret: cl.Secret,
+			Resource: cl.Resource, Scope: cl.Scope}, nil)
+		src.OnFetch = m.TokenFetched
+		consumer.Tokens = src
+		auth = "client_credentials"
+	}
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: (&api.Server{Store: st, Metrics: m, Gatherer: reg, Log: log.With("component", "api"),
@@ -87,7 +99,7 @@ func run(log *slog.Logger) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
-	log.Info("app-index-go starting", "addr", cfg.Addr, "schema", cfg.Schema, "authenticated", cfg.RegistryToken != "")
+	log.Info("app-index-go starting", "addr", cfg.Addr, "schema", cfg.Schema, "authenticated", auth != "anonymous", "auth", auth)
 
 	consumed := make(chan struct{})
 	go func() {

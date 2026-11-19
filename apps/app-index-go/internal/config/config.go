@@ -15,9 +15,13 @@ import (
 type Config struct {
 	// RegistryURL is the registry the index subscribes to (APP_INDEX_REGISTRY_URL, required).
 	RegistryURL string
-	// RegistryToken is sent as a bearer token when set (APP_INDEX_REGISTRY_TOKEN). Unset, the
-	// subscription is anonymous: the registry serves the audience anyone may read.
+	// RegistryToken is sent as a bearer token when set (APP_INDEX_REGISTRY_TOKEN). Unset, and no
+	// client below, the subscription is anonymous: the registry serves the audience anyone may read.
 	RegistryToken string
+	// Client is the index's own OAuth client, whose client-credentials token every subscription
+	// carries (APP_INDEX_CLIENT_ID, APP_INDEX_CLIENT_SECRET, APP_INDEX_TOKEN_URL, and optionally
+	// APP_INDEX_TOKEN_RESOURCE and APP_INDEX_TOKEN_SCOPE). Nil when APP_INDEX_CLIENT_ID is unset.
+	Client *Client
 	// Schema is the subscribed schema (APP_INDEX_SCHEMA, default the app entity schema).
 	Schema string
 	// DatabaseURL is the index's own Postgres database (APP_INDEX_DATABASE_URL, required).
@@ -32,6 +36,11 @@ type Config struct {
 	BackoffBase, BackoffMax time.Duration
 	// SearchTimeout bounds one search query (APP_INDEX_SEARCH_TIMEOUT_MS, default 2000).
 	SearchTimeout time.Duration
+}
+
+// Client is the index's OAuth client for the client credentials grant.
+type Client struct {
+	ID, Secret, TokenURL, Resource, Scope string
 }
 
 // DefaultSchema is the app entity schema of the civitai registry adapter
@@ -59,13 +68,20 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, errors.New("APP_INDEX_DATABASE_URL is required")
 	}
+	client, err := clientFromEnv(getenv)
+	if err != nil {
+		return nil, err
+	}
+	if client != nil && c.RegistryToken != "" {
+		return nil, errors.New("set APP_INDEX_REGISTRY_TOKEN or APP_INDEX_CLIENT_ID, not both")
+	}
+	c.Client = client
 	if c.Schema == "" {
 		c.Schema = DefaultSchema
 	}
 	if c.Addr == "" {
 		c.Addr = ":8080"
 	}
-	var err error
 	ms := func(name string, def int) time.Duration {
 		if err != nil {
 			return 0
@@ -89,6 +105,32 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	}
 	c.DBMaxConns = int32(conns) //nolint:gosec // bounded to [2, 64] above
 	return c, nil
+}
+
+// clientFromEnv reads the client credentials settings: all unset is nil; APP_INDEX_CLIENT_ID set
+// needs the secret and an http(s) token URL; any of the others without the id is an error, so a
+// half-configured client never silently falls back to an anonymous subscription.
+func clientFromEnv(getenv func(string) string) (*Client, error) {
+	cl := &Client{
+		ID:       getenv("APP_INDEX_CLIENT_ID"),
+		Secret:   getenv("APP_INDEX_CLIENT_SECRET"),
+		TokenURL: getenv("APP_INDEX_TOKEN_URL"),
+		Resource: getenv("APP_INDEX_TOKEN_RESOURCE"),
+		Scope:    getenv("APP_INDEX_TOKEN_SCOPE"),
+	}
+	if cl.ID == "" {
+		if cl.Secret != "" || cl.TokenURL != "" || cl.Resource != "" || cl.Scope != "" {
+			return nil, errors.New("APP_INDEX_CLIENT_ID is required with any other APP_INDEX_CLIENT_* or APP_INDEX_TOKEN_* setting")
+		}
+		return nil, nil
+	}
+	if cl.Secret == "" {
+		return nil, errors.New("APP_INDEX_CLIENT_SECRET is required with APP_INDEX_CLIENT_ID")
+	}
+	if u, err := url.Parse(cl.TokenURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("APP_INDEX_TOKEN_URL must be an http(s) URL with APP_INDEX_CLIENT_ID")
+	}
+	return cl, nil
 }
 
 func intEnv(getenv func(string) string, name string, def, lo, hi int) (int, error) {

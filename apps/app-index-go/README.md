@@ -11,12 +11,12 @@ viewer (`src/server/services/blocks/app-index-search.service.ts`, `APP_INDEX_URL
 
 ## HTTP
 
-| Route          | What                                                                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Route          | What                                                                                                                                                            |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search`  | `q`, `kind` (`onsite` / `offsite`), `category`, `limit` (1-50, default 20) → `{results:[{urn, slug, name, tagline, kind, category, rating, iconUrl, creator}]}` |
-| `GET /healthz` | the process is up                                                                                                                                                                       |
-| `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                                          |
-| `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                                              |
+| `GET /healthz` | the process is up                                                                                                                                               |
+| `GET /readyz`  | 200 once a generation is serving (the first `Live`), 503 before                                                                                                 |
+| `GET /metrics` | Prometheus (`app_index_*`)                                                                                                                                      |
 
 `q` matches word by word: every word must be a prefix of a word of the app's name, slug, tagline or
 creator. Results are in relevance order, Postgres `ts_rank` (name above slug and tagline above
@@ -56,8 +56,31 @@ once it treats the path as cacheable: the TTL lives here, and the CDN rule only 
   Writes to a generation also check that this process still owns it (`Postgres.Claim` says exactly
   what that guarantees).
 
-The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` is set, so the registry serves it the
-audience anyone may read: SFW apps only.
+The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` or a client is set, so the registry
+serves it the audience anyone may read: SFW apps only.
+
+### Subscribing as itself (client credentials)
+
+With `APP_INDEX_CLIENT_ID`, `APP_INDEX_CLIENT_SECRET` and `APP_INDEX_TOKEN_URL` set, the index gets
+its own access token from the auth hub with the OAuth client credentials grant (`internal/token`)
+and sends it on every subscription. `APP_INDEX_TOKEN_RESOURCE` and `APP_INDEX_TOKEN_SCOPE`, when set,
+are sent as the token request's `resource` and `scope`. The token is kept until 30 s before it
+expires.
+
+- A stream that ends with `invalid_token` (the token expired or was revoked) drops the token and
+  subscribes again from the stored cursor, never an empty one, with a new token. This waits the
+  ordinary backoff, which grows while the registry keeps refusing.
+- A token that cannot be fetched opens no subscription and is retried with the same backoff
+  (`app_index_reconnects_total{reason="token"}`). The stored cursor and the serving generation are
+  kept.
+- `app_index_token_fetches_total{outcome}` counts calls to the token endpoint.
+
+The token only changes what the index reads once the registry's origin maps the index's client to
+an audience: until then the origin refuses it, and the index keeps retrying with backoff. Set a
+client only once the origin lists it, and only once search filters mature apps per viewer.
+Unset, nothing changes: no token is fetched and no `Authorization` header is sent. Setting a client
+together with `APP_INDEX_REGISTRY_TOKEN`, or any of these settings without `APP_INDEX_CLIENT_ID`,
+refuses to start.
 
 ## Configuration
 
