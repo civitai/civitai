@@ -165,7 +165,8 @@ describePg('app-token mint vs a suspension, on two real connections', () => {
       `INSERT INTO app_blocks VALUES ('b2', $1, 'approved'), ('b1', $1, 'approved')`,
       [CLIENT]
     );
-    // The main app's writers lock every row of the client FOR UPDATE in id order: here it holds b1.
+    // As the main app's suspending writers do through lockAppBlockClientRows (FOR UPDATE, id order),
+    // the suspension takes b1 first.
     await suspender.query('BEGIN');
     await suspender.query(`SELECT id FROM app_blocks WHERE id = 'b1' FOR UPDATE`);
 
