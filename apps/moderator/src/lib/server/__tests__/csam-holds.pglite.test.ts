@@ -1392,17 +1392,70 @@ describe('the report-not-filed view matches a report to the held item', () => {
         ]
       );
 
-    it('after the decision covers the item', async () => {
-      await refiled('postText:210', after);
+    it.each([
+      ['postText:210', 21],
+      ['comment:220', 22],
+      ['postDescription:230', 23],
+    ])('after the decision covers the item (%s)', async (item, id) => {
+      await refiled(item, after);
+      expect(await listed()).not.toContain(id);
+      expect(await listed()).toHaveLength(3);
+    });
+
+    it('at the decision instant covers the item', async () => {
+      await refiled('postText:210', '2026-09-13T00:00:00.000Z');
       expect(await listed()).toEqual([22, 23, 24]);
     });
 
-    it('before the decision, or for another item, or with no ISO time, does not', async () => {
-      await refiled('postText:210', before);
-      await refiled('comment:210', after);
-      await refiled('postText:211', after);
-      await refiled('postText:210', '2026-09-14');
+    it.each([
+      ['before the decision', 'postText:210', before],
+      ['the same id under another source', 'comment:210', after],
+      ['another item', 'postText:211', after],
+      ['a date with no time', 'postText:210', '2026-09-14'],
+      ['an impossible month', 'postText:210', '2026-19-14T00:00:00.000Z'],
+      // Read as a date this would throw and fail the whole queue.
+      ['a day the month does not have', 'postText:210', '2026-02-31T00:00:00.000Z'],
+      ['no milliseconds', 'postText:210', '2026-09-14T00:00:00Z'],
+    ])('does not cover for a re-file %s', async (_, item, at) => {
+      await refiled(item, at);
       expect(await listed()).toEqual([21, 22, 23, 24]);
+    });
+
+    it.each([
+      ['not an array', { identicalRefiles: 'x' }],
+      ['scalar elements', { identicalRefiles: ['x', null, 3] }],
+      ['an element with no item or time', { identicalRefiles: [{ filedById: 11 }] }],
+    ])(
+      'keeps the queue working, and the item listed, when the record is %s',
+      async (_, details) => {
+        await db.query(
+          `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, '2026-09-14')`,
+          [JSON.stringify(details)]
+        );
+        expect(await listed()).toEqual([21, 22, 23, 24]);
+      }
+    );
+
+    it('does not cover an item edited and held again after the re-file', async () => {
+      await seed([
+        {
+          id: 25,
+          entityType: 'PostText',
+          entityId: 210,
+          createdAt: '2026-09-15',
+          status: 'Confirmed',
+          decidedById: 11,
+          decidedAt: '2026-09-16',
+          meta: {
+            decision: 'remove',
+            reportChoice: 'imagery',
+            kind: 'redetected',
+            priorHoldId: 21,
+          },
+        },
+      ]);
+      await refiled('postText:210', after);
+      expect(await listed()).toEqual([22, 23, 24, 25]);
     });
   });
 

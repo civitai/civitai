@@ -117,10 +117,12 @@ const itemSourceCase = sql.raw(
 // a capture or re-file from before this decision can sit in a report created after it, and an item
 // edited and held again keeps its id. A filing whose text equals the item's latest capture adds no
 // entry and is recorded in `identicalRefiles` instead, so a re-file after the decision covers too.
-const afterDecision = (
-  iso: RawBuilder<unknown>
-) => sql<boolean>`CASE WHEN ${iso} ~ '^[0-9]{4}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]([.][0-9]+)?Z$'
-  THEN (${iso})::timestamptz >= h."decidedAt" AT TIME ZONE 'UTC' ELSE false END`;
+// Compared as text against the decision in the same form, so a malformed time can never throw and
+// fail the whole queue: the writer stores `toISOString()`, and anything else covers nothing.
+const afterDecision = (iso: RawBuilder<unknown>) => sql<boolean>`CASE
+  WHEN ${iso} ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{3}Z$'
+  THEN ${iso} >= to_char(h."decidedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ELSE false END`;
 const reportCoversHold = sql<boolean>`CASE
   WHEN ${itemSourceCase} IS NULL THEN false
   ELSE (jsonb_typeof(r.details -> 'contextText') = 'array'
