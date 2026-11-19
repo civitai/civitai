@@ -591,6 +591,31 @@ describe('the account-deletion grace block', () => {
       });
     });
 
+    it('a clean scan verdict, which still keeps the image hash', async () => {
+      await resolveScanOutcome({
+        image: await loaded(GRACED),
+        pHash: BigInt(77),
+        workflowId: 'wf',
+        prompt: 'a landscape',
+      });
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      const { rows } = await holder.db.query<{ pHash: string | null }>(
+        `SELECT "pHash"::text AS "pHash" FROM "Image" WHERE id = ${GRACED}`
+      );
+      expect(rows[0].pHash).toBe('77');
+    });
+
+    it('a clean scan verdict on a grace block whose recorded state is JSON null', async () => {
+      await holder.db.exec(
+        `UPDATE "Image" SET metadata = '{"accountDeletionPriorIngestion": null}' WHERE id = ${GRACED}`
+      );
+
+      await scan(GRACED);
+
+      expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+    });
+
     it('a clean scan verdict for an image loaded before the grace block', async () => {
       const stale = {
         ...(await loaded(GRACED)),
@@ -619,11 +644,20 @@ describe('the account-deletion grace block', () => {
     });
 
     it('a clean scan verdict for a banned owner, which only keeps the block', async () => {
-      await holder.db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${OWNER}`);
+      await holder.db.exec(`
+        UPDATE "User" SET "bannedAt" = now() WHERE id = ${OWNER};
+        UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = 'moderated' WHERE id = ${PLAIN};
+      `);
 
       await scan(GRACED);
+      await scan(PLAIN);
 
       expect(await graceRow(GRACED)).toEqual(GRACE_BLOCK);
+      // Control: the ban branch did fire, keeping the block on a row that is not grace-blocked.
+      expect(await graceRow(PLAIN)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+      });
     });
 
     it('reports the image blocked when the skipped row cannot be read back', async () => {

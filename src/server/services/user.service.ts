@@ -1657,9 +1657,8 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
   // later restore would un-block CSAM-blocked content.
   //
-  // Account-wide here, unlike the ban branch in `toggleBan`: the UPDATE above carries no
-  // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
-  // block's scope are the same set, which is what makes the wide form correct in this one place.
+  // Account-wide: the UPDATE above carries no `ingestion` predicate, so it blocked EVERY image this
+  // user owns, and the clear's scope is the block's.
   await clearAccountDeletionImageMarkers({ userId: id });
   await refreshProfilePicturesForUsers([id]);
   await refreshOwnModelShowcases(id);

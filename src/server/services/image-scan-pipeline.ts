@@ -754,7 +754,11 @@ export async function resolveScanOutcome({
     axesTarget
   );
   if (!blocking && rowsWritten === 0) {
-    // Skipped as grace-blocked: the outcome is the row as it stands, so no Scanned effects run.
+    // Skipped as grace-blocked: the hash is still kept (a later block reads it), and the outcome is
+    // the row as it stands, so no Scanned effects run.
+    await dbWrite.$executeRaw`
+      UPDATE "Image" SET "pHash" = COALESCE(${pHash ?? null}, "pHash") WHERE id = ${image.id}
+    `.catch(() => 0);
     const rows = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
