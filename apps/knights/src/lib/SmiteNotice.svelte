@@ -34,7 +34,7 @@
 
 <style>
   .smitten {
-    margin: 0 0 1.5rem;
+    margin: 0;
     padding: 1.25rem 1.5rem;
     border: 1px solid var(--io-crimson);
     border-radius: 6px;
