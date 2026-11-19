@@ -1373,15 +1373,22 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect(await listed()).toEqual([22, 23, 24, 25]);
   });
 
-  it('keeps an item whose captured entry has no capture time', async () => {
+  it('covers an item captured at the decision instant, not one captured after the hold was created but before it was decided', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: '2026-09-13T00:00:00.000Z' }]);
+    await report([{ source: 'comment', id: 220, capturedAt: '2026-09-12T12:00:00.000Z' }]);
+    expect(await listed()).toEqual([22, 23, 24]);
+  });
+
+  it('keeps an item whose captured entry has no capture time, or one not in ISO form', async () => {
+    await report([{ source: 'comment', id: 220, capturedAt: '2026-09-14' }]);
     await report([{ source: 'postText', id: 210 }]);
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 
   it('keeps an item a report never captures listed after any later report on its author', async () => {
     await report(null);
-    await report([{ source: 'postText', id: 210 }]);
-    expect(await listed()).toContain(24);
+    await report([{ source: 'postText', id: 210, capturedAt: after }]);
+    expect(await listed()).toEqual([22, 23, 24]);
   });
 
   it.each([24, 21])('drops hold %i once a moderator marks it included in a report', async (id) => {
