@@ -217,6 +217,20 @@ describe('a re-block of a removed, held image', () => {
     expect(await pgRows()).toEqual([{ hash: HASH, reason: 'CSAM' }]);
   });
 
+  it('a re-block with no hash on the row still succeeds, writes no entry, and logs only its id and step', async () => {
+    await pg.query('UPDATE "Image" SET "pHash" = NULL WHERE id = $1', [REMOVED]);
+
+    expect(await reblock(REMOVED)).toEqual({ skipped: true });
+
+    expect(blocklistEntries()).toEqual([]);
+    expect(
+      logToAxiom.mock.calls
+        .map(([e]) => e as { name?: string; payload?: unknown })
+        .filter((e) => e.name === 'csam-blocklist-no-hash')
+        .map((e) => e.payload)
+    ).toEqual([{ imageId: REMOVED, step: 'block' }]);
+  });
+
   it('adds no Postgres row when retried again, and appends the same ClickHouse entry', async () => {
     await reblock(REMOVED);
     await reblock(REMOVED);

@@ -320,15 +320,21 @@ export async function addImagesToBlocklist(
       hash: i.pHash,
       reason: i.csam ? 'CSAM' : nonCsamReason(i.blockedFor ?? i.needsReview),
     }));
-  const write = async (values: typeof candidates) => {
+  const write = async (values: typeof candidates, sync = false) => {
     if (values.length)
       await blocklistCall(() =>
-        getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' })
+        getClickhouse().insert({
+          table: 'blocked_images',
+          values,
+          format: 'JSONEachRow',
+          // Synchronous: the async default acknowledges before the flush, hiding a flush-time loss.
+          ...(sync && { clickhouse_settings: { async_insert: 0 } }),
+        })
       );
   };
 
   const csamRows = candidates.filter((v) => v.reason === 'CSAM');
-  await write(csamRows);
+  await write(csamRows, true);
   // The Postgres copy review routing reads; it throws like the write above. Twin: the main app's
   // bulkAddBlockedImages.
   await mirrorCsamEntries(
@@ -675,6 +681,16 @@ export async function writeBlockBlocklistEntry(
   img: BlockableImage,
   { imageId, actorUserId, csam }: { imageId: number; actorUserId: number; csam: boolean }
 ): Promise<void> {
+  if (csam && !img.pHash) {
+    // The block itself succeeds. Twin: the main app's logCsamBlocklistNoHash.
+    void logToAxiom({
+      type: 'warning',
+      name: 'csam-blocklist-no-hash',
+      message: 'a CSAM removal had no hash to write to the blocklist',
+      payload: { imageId, step: 'block' },
+    });
+    return;
+  }
   const write = () =>
     addImagesToBlocklist(
       [{ pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor, csam }],

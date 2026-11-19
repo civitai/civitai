@@ -366,6 +366,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
   // either can be thrown without the other.
   POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
+  // Lets the hourly CSAM blocklist self-heal write. DEFAULT-OFF: while off (or Flipt is
+  // unreachable) each run logs its counts and writes nothing.
+  CSAM_BLOCKLIST_SELF_HEAL = 'csam-blocklist-self-heal',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.

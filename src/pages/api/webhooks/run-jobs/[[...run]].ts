@@ -151,6 +151,7 @@ import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nu
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { csamBlocklistSelfHeal } from '~/server/jobs/csam-blocklist-self-heal';
 import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
@@ -345,6 +346,7 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   minorHashSweep,
   poiHashSweep,
+  csamBlocklistSelfHeal,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,
