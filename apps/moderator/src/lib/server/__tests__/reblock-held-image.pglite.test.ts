@@ -668,6 +668,28 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       expect(notifiedImages()).toEqual([]);
     });
 
+    it.each(['accept', 'block'] as const)(
+      'once its owner is banned, %s leaves it blocked and closes its report unpaid',
+      async (action) => {
+        await db.query(
+          `INSERT INTO "User" ("id", "bannedAt") VALUES (8, now()) ON CONFLICT DO NOTHING`
+        );
+        await db.query(`UPDATE "Image" SET "userId" = 8 WHERE id = $1`, [RULE_BLOCKED]);
+
+        await verdict(action, RULE_BLOCKED);
+
+        expect(await row(RULE_BLOCKED)).toMatchObject({
+          ingestion: 'Blocked',
+          blockedFor: 'moderated',
+        });
+        expect(setReportStatus).toHaveBeenCalledWith(
+          expect.objectContaining({ id: report(RULE_BLOCKED), status: 'Actioned', noReward: true })
+        );
+        expect(notifiedImages()).toEqual([]);
+        expect(blocklistReasons()).toEqual({});
+      }
+    );
+
     it('Remove writes a real block: the owner notice and a TOS blocklist entry', async () => {
       const result = await imageQueueActions.block(
         event({
