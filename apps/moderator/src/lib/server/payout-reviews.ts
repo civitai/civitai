@@ -1,4 +1,5 @@
 import { OnboardingStep, hasOnboardingStep } from '$lib/onboarding';
+import { settlementState } from '$lib/payout-review';
 import { dbWrite } from './db';
 
 export const HOLDING_STATUSES = ['open', 'escalated', 'withheld'] as const;
@@ -106,25 +107,6 @@ export function decisionHistory(raw: unknown): PayoutReviewDecisionEntry[] {
       ground: str(e.ground),
     };
   });
-}
-
-type SettlementRow = { userId: number; period: string; status: string; hold: boolean };
-
-/** `resolveHolds` in src/server/services/creator-program-prepayout-review/hold.ts, which settlement
- *  reads: an open or escalated review holds in any period while `hold` is set, but a withhold or a
- *  clear counts only on the creator's latest period. */
-export function settlementState(rows: SettlementRow[]) {
-  const latest = new Map<number, string>();
-  for (const r of rows) {
-    const seen = latest.get(r.userId);
-    if (!seen || r.period > seen) latest.set(r.userId, r.period);
-  }
-  const isLatest = (r: SettlementRow) => latest.get(r.userId) === r.period;
-  const holds = (r: SettlementRow) =>
-    (r.hold && (r.status === 'open' || r.status === 'escalated')) ||
-    (r.status === 'withheld' && isLatest(r));
-  const heldUserIds = new Set(rows.filter(holds).map((r) => r.userId));
-  return { latest, isLatest, holds, heldUserIds };
 }
 
 const reviewColumns = [

@@ -49,6 +49,7 @@ describe('decide action', () => {
 
     const result = await actions.decide(formEvent(GRANTED, FIELDS));
 
+    expect(decidePayoutReview).toHaveBeenCalledTimes(1);
     expect(decidePayoutReview).toHaveBeenCalledWith({
       id: 7,
       userId: 990100034,
