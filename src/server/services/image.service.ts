@@ -1532,11 +1532,9 @@ export async function handleBlockImages({
       });
     }
 
-    // A moderator's removal settles the images' open TOS reports and pays their reporters, as the
-    // reports queue does. Held images and those under the review flag keep theirs for the CSAM queue.
-    // Only for images a moderator chose: an account-wide removal pays no reporter. Last, and a failure
-    // here leaves the reports Pending for the queue rather than failing a removal that has already
-    // notified the owners.
+    // A moderator's removal settles the images' open TOS reports, as the reports queue does. Held
+    // images and those under the review flag keep theirs for the CSAM queue; an account-wide removal
+    // moves none. Last, so a failure cannot fail a removal that has already notified the owners.
     if (moderatorId && !!imageIds?.length)
       await actionPendingTosReports(
         ids.filter((id) => !held.has(id) && !underReview.has(id)),
@@ -1544,7 +1542,8 @@ export async function handleBlockImages({
       ).catch((e: unknown) =>
         logToAxiom({
           type: 'error',
-          // Raised before any report moved, so they are all still Pending.
+          // Only the reads before the status UPDATE can throw: the rewards after it are allSettled and
+          // the resolved-marker write catches its own error. So every report is still Pending.
           name: 'block-images-reports-not-settled',
           imageIds: ids,
           error: safeError(e),

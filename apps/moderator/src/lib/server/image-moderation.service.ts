@@ -423,6 +423,17 @@ export async function isHeldImage(imageId: number): Promise<boolean> {
   return !!row?.held;
 }
 
+/** A banned owner's image blocked for anything but CSAM, whose report closes unpaid. Read before a
+ *  block, which clears the grace breadcrumbs. */
+export async function isBannedOwnerBlocked(imageId: number) {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select(sql<boolean>`${BANNED_OWNER_BLOCKED}`.as('blocked'))
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return !!row?.blocked;
+}
+
 export async function blockImage({
   imageId,
   userId,
