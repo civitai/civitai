@@ -322,7 +322,7 @@ const VIDEO_UNREADABLE = 'This video could not be read. Upload an MP4 or WebM fi
  * file, so a download can refuse bytes the scan did not see. A video longer than the scan covers is
  * refused before its copy is scanned.
  */
-async function unpackVideo(file: ClaimedFinal) {
+async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDimensions) {
   if (file.size > SERVICE_FINAL_VIDEO_MAX_BYTES)
     throw new ZipRejectedError('That video is too large to deliver.');
   await dbWrite.$executeRaw`
@@ -353,7 +353,7 @@ async function unpackVideo(file: ClaimedFinal) {
     const store = await getImageUploadBackend();
     await deleteObject(store.bucket, scanKey!, store.s3).catch(() => null);
   };
-  const probed = await probeVideoDimensions(scanKey);
+  const probed = await probeVideo(scanKey);
   // A length that cannot be read is a video the scan cannot be shown to cover.
   if (!probed?.duration) {
     await dropCopy();
@@ -385,7 +385,8 @@ async function unpackVideo(file: ClaimedFinal) {
  */
 export async function unpackFinals({
   shouldStop = () => false,
-}: { shouldStop?: () => boolean } = {}) {
+  probeVideo = probeVideoDimensions,
+}: { shouldStop?: () => boolean; probeVideo?: typeof probeVideoDimensions } = {}) {
   const [file] = await claimFinal();
   if (!file) return 0;
   const began = Date.now();
@@ -397,7 +398,7 @@ export async function unpackFinals({
         return 0;
       }
     } else if (isFinalVideoName(file.fileName)) {
-      await unpackVideo(file);
+      await unpackVideo(file, probeVideo);
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);
     } else if (!isModelName(file.fileName) && (await isImageByContent(file))) {

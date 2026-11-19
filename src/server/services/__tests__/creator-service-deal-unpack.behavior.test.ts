@@ -76,6 +76,7 @@ const s3 = vi.hoisted(() => ({
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getBucket: async () => 'bucket',
+  getImageUploadBackend: async () => ({ s3: { send: s3.send }, bucket: 'image-store' }),
   getS3Client: () => ({ send: s3.send }),
   getPutUrl: s3.getPutUrl,
   headObject: s3.headObject,
@@ -590,8 +591,16 @@ describe('what stops an archive', () => {
       () => [{ name: 'weights.safetensors', data: Buffer.from('w') }],
       /Model files/,
     ],
-    ['a video', () => [{ name: 'clip.mp4', data: MP4_BYTES() }], /Video/],
-    ['a video called something else', () => [{ name: 'a.dat', data: MP4_BYTES() }], /Video/],
+    [
+      'a video',
+      () => [{ name: 'clip.mp4', data: MP4_BYTES() }],
+      /^Video can't be delivered inside a \.zip\. Upload the video file directly\.$/,
+    ],
+    [
+      'a video called something else',
+      () => [{ name: 'a.dat', data: MP4_BYTES() }],
+      /^Video can't be delivered inside a \.zip/,
+    ],
     [
       `${SERVICE_ZIP_MAX_ENTRIES + 1} entries`,
       () => bigEntries(SERVICE_ZIP_MAX_ENTRIES + 1),
@@ -1979,5 +1988,118 @@ describe('the finals malware scan', () => {
       expect(await asBuyer(fileId)).toBeNull();
       expect(await listedForBuyer(dealId, fileId)).toMatchObject({ canDownload: false });
     });
+  });
+});
+
+describe('a video Final', () => {
+  const probe = { video: vi.fn() };
+  const CLIP = MP4_BYTES();
+  /** Serves the clip whole as version ver1, and its head bytes to a ranged read. */
+  const serveClip = (etag = '"v1"') =>
+    s3.send.mockImplementation(async (command: { input: { Range?: string } }) =>
+      command.input.Range
+        ? body(CLIP.subarray(0, 16))
+        : { ...body(CLIP), ETag: etag, VersionId: 'ver1' }
+    );
+  const videoFinal = async (limit: number) => {
+    const dealId = await accepted();
+    await q(`UPDATE "ServiceDeal" SET "maxNsfwLevel" = $1`, [limit]);
+    const fileId = await final(dealId, 'clip.mp4', CLIP);
+    serveClip();
+    expect(await unpack.unpackFinals({ probeVideo: probe.video })).toBe(1);
+    return { dealId, fileId };
+  };
+  /** Settles the entry and the malware scan, then the Final. */
+  const judged = async (fileId: number, level: number, flags = '') => {
+    await verdict('Scanned', flags, level);
+    await unpack.settleEntryScans();
+    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Passed' WHERE id = $1`, [fileId]);
+    await unpack.settleFinals();
+    return fileRow(fileId);
+  };
+  const completed = (dealId: number) =>
+    q(
+      `UPDATE "ServiceDeal" SET status = 'Completed', "completedAt" = now(), "releaseAt" = now() WHERE id = $1`,
+      [dealId]
+    );
+  const download = (fileId: number, userId: number, servableLevels = 31) =>
+    files.resolveServiceDealFileDownload({ fileId, userId, isModerator: false, servableLevels });
+
+  beforeEach(() => {
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 10.1 });
+  });
+
+  it('scans the whole video, as the version it will serve', async () => {
+    const { fileId } = await videoFinal(4);
+    expect(s3.uploadImageBufferToStore.mock.calls[0][0].equals(CLIP)).toBe(true);
+    expect(images.createImage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'video', mimeType: 'video/mp4', width: 640, height: 360 })
+    );
+    expect(
+      await q(`SELECT "scannedEtag", "scannedVersionId" FROM "ServiceDealFile" WHERE id = $1`, [
+        fileId,
+      ])
+    ).toEqual([{ scannedEtag: '"v1"', scannedVersionId: 'ver1' }]);
+  });
+
+  it('passes an R video on an R deal, which the buyer downloads after accepting', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    expect(await judged(fileId, 4)).toMatchObject({ scanStatus: 'Passed' });
+    expect(await download(fileId, BUYER)).toBeNull();
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    expect(await download(fileId, BUYER)).toMatchObject({ versionId: 'ver1' });
+  });
+
+  it('serves no bytes but the scanned version, nor to a SFW domain or a stranger', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    expect(await download(fileId, BUYER)).not.toBeNull();
+    // The object was replaced after the scan.
+    s3.send.mockResolvedValue({ ETag: '"v2"', VersionId: 'ver1' });
+    expect(await download(fileId, BUYER)).toBeNull();
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver2' });
+    expect(await download(fileId, BUYER)).toBeNull();
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    expect(await download(fileId, BUYER, 3)).toBeNull();
+    expect(await download(fileId, 99)).toBeNull();
+  });
+
+  it("fails an R video on a PG-13 deal, saying it is rated above the deal's level", async () => {
+    const { fileId } = await videoFinal(2);
+    expect(await judged(fileId, 4)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_OVER_LEVEL_REASON,
+    });
+  });
+
+  it.each([
+    ['a minor', ', minor = true'],
+    ['a real person', ', poi = true'],
+    ['one held for review', `, "needsReview" = 'csam'`],
+  ])('fails a video flagged as %s', async (_n, flags) => {
+    const { fileId } = await videoFinal(16);
+    expect(await judged(fileId, 4, flags)).toMatchObject({ scanStatus: 'Failed' });
+    expect((await entries(fileId))[0].failReason).toMatch(/rejected/);
+  });
+
+  it('refuses a video longer than the scan covers, and drops its copy unscanned', async () => {
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50.5 });
+    const { fileId } = await videoFinal(4);
+    expect(await fileRow(fileId)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: SERVICE_FINAL_VIDEO_TOO_LONG,
+    });
+    expect(images.createImage).not.toHaveBeenCalled();
+    expect(s3.deleteObject).toHaveBeenCalledWith('image-store', 'scan-key-1', expect.anything());
+  });
+
+  it('refuses a video whose length cannot be read', async () => {
+    probe.video.mockResolvedValue(null);
+    const { fileId } = await videoFinal(4);
+    expect((await fileRow(fileId)).failReason).toMatch(/could not be read/);
+    expect(images.createImage).not.toHaveBeenCalled();
   });
 });
