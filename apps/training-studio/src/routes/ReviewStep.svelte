@@ -170,7 +170,6 @@
   let attestSfw = $state(false);
   const needsAttestation = $derived(buzzMode.value === 'green');
 
-  // The base model licences the selected runs train under, once each; the same terms the generator asks for.
   const runLicenses = $derived([
     ...new Map(
       selection.runs.flatMap((run) => {

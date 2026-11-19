@@ -494,6 +494,25 @@ describe('the base model licence of a pass-through `kind:step` training step', (
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('control: once accepted, the submit gets past the licence to the resource check', async () => {
+    const [terms] = GENERATION_LICENSE_TERMS;
+    h.userSettings.mockImplementation(async () => ({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date().toISOString() },
+      },
+    }));
+    // The resource check reads the versions a step names and runs right after the licence, so
+    // stopping there proves the licence let the step through.
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async () => {
+      throw new Error('past the licence');
+    }) as never);
+    const step = {
+      ...h3Image('minimaxh3image'),
+      model: 'urn:air:minimaxh3image:checkpoint:civitai:1@99',
+    };
+    await expect(submit(stepBody(step))).rejects.toThrow('past the licence');
+  });
+
   it('matches the ecosystem however it is cased', async () => {
     await expect(submit(stepBody(h3Image('MiniMaxH3Image')))).rejects.toMatchObject({
       code: 'FORBIDDEN',
