@@ -3,6 +3,7 @@ import { IconAlertTriangle, IconPlayerPlay, IconShieldLock } from '@tabler/icons
 import { useCallback, useEffect, useState } from 'react';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { clampReviewSandbox } from '~/components/AppBlocks/sandbox';
+import { useReviewConsoleStore } from '~/components/Apps/ReviewConsole';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
@@ -66,6 +67,9 @@ export function ReviewBlockPreviewHost({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
+  // The review page's in-memory console (`ReviewConsole`); `null` in the queue modal, which has
+  // none, so the frame's reports there go nowhere, as before.
+  const reviewConsole = useReviewConsoleStore();
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Mint the SELF-BOUND, scope-stripped block token (mod-gated mutation). Minted
@@ -273,6 +277,11 @@ export function ReviewBlockPreviewHost({
         // self-bound / money-in / own-Buzz / per-user-storage handlers run for real.
         reviewMode
         reviewRunForReal={runForRealActive}
+        // The app's errors, for the page's console only: kept in memory, never sent anywhere.
+        // `review-preview` lists `blockErrors:v1`, so an SDK new enough sends non-fatal ones too.
+        onBlockError={reviewConsole?.report}
+        // Which SDK sent BLOCK_READY: the console's "too old to report other errors" notice.
+        onBlockReady={reviewConsole?.ready}
         // Re-mint the block token on an auth-failure Retry, preserving the mode.
         onRetryToken={() => doMint(runForRealActive)}
         // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, gated

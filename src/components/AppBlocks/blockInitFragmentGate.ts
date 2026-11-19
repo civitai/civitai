@@ -275,6 +275,34 @@ export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean>
 };
 
 /**
+ * The BLOCK_INIT `capabilities` entry by which a host says it COLLECTS the frame's non-fatal
+ * errors. `@civitai/sdk` from 0.29.0 then forwards uncaught errors, unhandled rejections and
+ * `console.error` as `BLOCK_ERROR { fatal: false, source, stack?, at }`, with the caps it already
+ * applies in a dev session (≤ 20 a minute, a repeat within 10 s dropped). An older SDK ignores
+ * it. A wire contract with the SDK: compared there as this exact string.
+ */
+export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
+
+/**
+ * Does this surface's host COLLECT the block's non-fatal errors, and so advertise
+ * {@link BLOCK_ERRORS_CAPABILITY}? Keyed on the SURFACE, like the storage record below.
+ *
+ *  - `review-preview` is `true`: the review page keeps them in memory for the moderator's own
+ *    session (`ReviewConsole`). Nothing is stored or sent anywhere.
+ *  - `dev-tunnel` is `true`: its host already collects them (`useDevPreviewErrorReporter`), and
+ *    the SDK already sends them there on the `storageMode` signal; listing it says the same thing.
+ *  - every other surface is `false`: nothing there would receive them, so a published app must
+ *    not be asked to send them.
+ */
+export const BLOCK_HOST_ERROR_REPORTS: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': false,
+  'dev-tunnel': true,
+  'review-preview': true,
+  'private-run': false,
+};
+
+/**
  * The `storageMode` fragment of a BLOCK_INIT payload for this surface: the key is
  * present only where {@link BLOCK_HOST_LOCAL_PREVIEW_STORAGE} says so, and
  * ABSENT (not `undefined`, which postMessage would still deliver as a key)
