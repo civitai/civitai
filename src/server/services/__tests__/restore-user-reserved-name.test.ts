@@ -5,7 +5,10 @@ import type * as AccountDeletionImages from '~/server/services/account-deletion-
 import type * as HatSync from '~/server/events/points/sync';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
-/** Restoring a closed account cannot hand it the shared moderation account's reserved username. */
+/**
+ * Restoring a closed account cannot hand it the shared moderation account's reserved username,
+ * and cannot restore a banned account at all.
+ */
 
 vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserRestrictionService>()),
@@ -30,6 +33,7 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
   syncOwnerEventHats: vi.fn(),
 }));
 
+import { disarmAccountDeletionImagePurge } from '~/server/services/account-deletion-images';
 import { restoreUser } from '~/server/services/user.service';
 
 const USER_ID = 7;
@@ -86,6 +90,32 @@ describe('restoreUser and the reserved username', () => {
     setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });
     await expect(restore('CivitaiModeration')).resolves.toEqual(
       expect.objectContaining({ id: USER_ID })
+    );
+  });
+});
+
+describe('restoreUser and a banned account', () => {
+  const deleted = (bannedAt: Date | null) =>
+    dbMock.dbWrite.user.findFirst.mockImplementation(
+      async ({ where }: { where: { id?: number } }) =>
+        where.id === USER_ID
+          ? { id: USER_ID, deletedAt: new Date('2026-07-28T00:00:00Z'), bannedAt, meta: {} }
+          : null
+    );
+
+  it('refuses a banned account and leaves its images hidden', async () => {
+    deleted(new Date('2026-07-27T00:00:00Z'));
+    await expect(restore('back')).rejects.toThrow(/is banned; unban the account/);
+    expect(disarmAccountDeletionImagePurge).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('restores an account that is not banned', async () => {
+    deleted(null);
+    await expect(restore('back')).resolves.toEqual(expect.objectContaining({ id: USER_ID }));
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ deletedAt: null }) })
     );
   });
 });

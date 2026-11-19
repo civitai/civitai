@@ -1450,10 +1450,13 @@ export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo
 export const restoreUser = async ({ id, username, email, restoreModels }: RestoreUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { id },
-    select: { id: true, deletedAt: true, meta: true },
+    select: { id: true, deletedAt: true, bannedAt: true, meta: true },
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
+  // Restoring re-shows the account's images; a banned account's must stay hidden.
+  if (user.bannedAt)
+    throw throwBadRequestError(`User ${id} is banned; unban the account before restoring it`);
   const isShared = id === getModerationAccountId();
   if (!isShared && resemblesReservedModerationUsername(username))
     throw throwBadRequestError('This username is reserved.');
