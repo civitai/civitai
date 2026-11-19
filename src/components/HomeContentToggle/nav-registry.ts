@@ -136,7 +136,7 @@ export const navRegistry: NavRegistryEntry[] = [
     key: 'services',
     url: '/services',
     defaultGroup: 'more',
-    // The `/services` page's own SSR gate.
+    // Mirrors the SSR gate in `src/pages/services/index.tsx`; change both together.
     visible: (ctx) => !!ctx.features.creatorShop && !!ctx.features.creatorServices,
   },
 
