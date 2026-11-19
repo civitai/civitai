@@ -9,12 +9,15 @@
 // RAW SQL ONLY: the migration is applied by hand, so a missing table (or one without its
 // columns) reads as "nobody granted anything", and a grant write there is refused.
 import { TRPCError } from '@trpc/server';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   isMissingColumnError,
   recordScopeGrant,
 } from '~/server/services/blocks/scope-grant.service';
+import { appRecordConfig } from '~/server/services/apps/app-record';
+import { importSourceStandings } from '~/server/services/apps/deleted-app-storage';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
@@ -241,9 +244,14 @@ export type ResolvedStorageImport = {
   access: AppStorageImportAccess;
   /** The approved source app, or null when none can be reached (see `unavailable`). */
   source: { appBlockId: string; name: string } | null;
-  /** Set when an approved app holds the blockId but this host may not show it (its rating). */
-  unavailable?: 'source_rating';
-  /** With `unavailable`: that app's id, so a grant given on another host is kept, not pruned. */
+  /**
+   * Set when an app holds the blockId but none of it may be offered: `source_rating`, an approved
+   * app this host may not show (its rating); `source_deleted`, a deleted app while the record core
+   * is on (`importSourceStanding`), whose existing grant keeps reading and which no one can be
+   * asked to grant again.
+   */
+  unavailable?: 'source_rating' | 'source_deleted';
+  /** With `unavailable`: that app's id, so a grant already given is kept, not pruned. */
   unshownAppBlockId?: string;
 };
 
@@ -254,6 +262,11 @@ export type ResolvedStorageImport = {
  * A source whose rating `host` may not show (`ratingAllowedOnHost`, the mint's rule) resolves as
  * unavailable, so the consent surfaces and the mint's coverage on that host agree: it is neither
  * offered, granted nor required there. Its grant from another host is kept (`unshownAppBlockId`).
+ *
+ * A DELETED source (record core on, `importSourceStanding`) resolves the same way, as
+ * `source_deleted`: never offered, so no new grant can name it, never required, and its existing
+ * grant is kept so the import keeps reading it. Switched off, it is a blockId no approved app
+ * holds, as before.
  */
 export async function resolveDeclaredImports(
   manifest: unknown,
@@ -267,6 +280,7 @@ export async function resolveDeclaredImports(
     select: { id: true, blockId: true, manifest: true },
   })) as Array<{ id: string; blockId: string; manifest: unknown }>;
   const byBlockId = new Map(rows.map((r) => [r.blockId, r]));
+  const deletedByBlockId = await deletedImportSources(froms.filter((f) => !byBlockId.has(f)));
   return froms.map((from) => {
     const decl = parsed.imports.get(from)!;
     const row = byBlockId.get(from);
@@ -275,6 +289,15 @@ export async function resolveDeclaredImports(
       contentRating?: unknown;
     };
     const base = { from, collections: [...decl.collections], access: decl.access };
+    const deletedId = deletedByBlockId.get(from);
+    if (!row && deletedId !== undefined) {
+      return {
+        ...base,
+        source: null,
+        unavailable: 'source_deleted' as const,
+        unshownAppBlockId: deletedId,
+      };
+    }
     if (!row) return { ...base, source: null };
     if (!ratingAllowedOnHost(typeof contentRating === 'string' ? contentRating : null, opts.host)) {
       return {
@@ -289,6 +312,23 @@ export async function resolveDeclaredImports(
       source: { appBlockId: row.id, name: typeof name === 'string' ? name : from },
     };
   });
+}
+
+/**
+ * The deleted apps (`importSourceStandings`) among `blockIds` that no approved app holds, by
+ * blockId. Reads nothing while the record core is off.
+ */
+async function deletedImportSources(blockIds: string[]): Promise<Map<string, string>> {
+  const recordCore = appRecordConfig(env);
+  if (recordCore === null || blockIds.length === 0) return new Map();
+  const rows = (await dbRead.appBlock.findMany({
+    where: { blockId: { in: blockIds } },
+    select: { id: true, blockId: true, status: true },
+  })) as Array<{ id: string; blockId: string; status: string }>;
+  const standings = await importSourceStandings(rows, recordCore);
+  return new Map(
+    rows.filter((r) => standings.get(r.id) === 'deleted').map((r) => [r.blockId, r.id])
+  );
 }
 
 export const SOURCE_PUBLISH_ONLY_MESSAGE = `With from, the only scope that can be granted is ${APP_STORAGE_PUBLISH_SCOPE}`;

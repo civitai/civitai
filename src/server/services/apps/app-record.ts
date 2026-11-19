@@ -21,9 +21,12 @@
  *   - `body`:   small structured data, at most {@link APP_RECORD_BODY_MAX_BYTES}. Large content is
  *               a URL reference inside the body, never inline.
  *
- * 🔴 SWITCHED OFF, AND NOTHING CALLS IT. {@link toAppRecord} takes an {@link AppRecordConfig},
- * and the only way to get one is {@link appRecordConfig}, which returns null unless
- * `APP_RECORD_CORE_ENABLED` is on. No live path imports this module yet.
+ * 🔴 SWITCHED OFF BY DEFAULT. {@link toAppRecord} takes an {@link AppRecordConfig}, and the only
+ * way to get one is {@link appRecordConfig}, which returns null unless `APP_RECORD_CORE_ENABLED`
+ * is on. What the switch turns on: the export (`appStorage.exportMine`,
+ * `doc-store-viewer-usage.service.ts`), the deleted-app reaper keeping the records users own
+ * (`jobs/reap-deleted-app-storage.ts`), and a deleted app's data staying readable through grants
+ * already given (`deleted-app-storage.ts`). Off, each of those is exactly what it was.
  *
  * Pure: no database, no clock, no env read (the caller passes the env value in).
  */

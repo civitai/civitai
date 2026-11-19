@@ -8,7 +8,8 @@
 //     (`jobs/remove-deleted-account-app-data.ts`). There is no one-app variant; a live user's
 //     per-app "empty" is a different operation with its own semantics, not this one.
 //   - `purgeAppDocuments(appId)`: every user's data in one app, in every namespace (the
-//     deleted-app reaper, `jobs/reap-deleted-app-storage.ts`).
+//     deleted-app reaper, `jobs/reap-deleted-app-storage.ts`); with `keepUserRecords`, everything
+//     but the production rows users own.
 //
 // Both go through the store's own maintenance operations (`DocStoreMaintenance.wipeAccount`,
 // `.purgeApp`), so usage counters, tallies and tombstones follow the same rules as every other
@@ -59,7 +60,8 @@ export type AppPurgeResult = Awaited<ReturnType<DocStoreMaintenance['purgeApp']>
  * Delete every row `appId` has in the store, in every namespace, in bounded batches.
  * `proceed` runs before every batch; return false to stop (e.g. the app was restored).
  * Resumable: a call that ran out of `maxRows`, or found a namespace that appeared mid-purge
- * (`done: false`), continues on the next call.
+ * (`done: false`), continues on the next call. With `keepUserRecords` the production rows users
+ * own stay, and only the app's own and the counter documents go (`DocStoreMaintenance.purgeApp`).
  */
 export async function purgeAppDocuments(
   appId: string,
@@ -67,6 +69,7 @@ export async function purgeAppDocuments(
     batchRows?: number;
     maxRows?: number;
     proceed?: () => Promise<boolean>;
+    keepUserRecords?: boolean;
     store?: DocStoreMaintenance;
   } = {}
 ): Promise<AppPurgeResult> {

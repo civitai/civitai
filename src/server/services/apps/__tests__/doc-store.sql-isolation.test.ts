@@ -415,6 +415,8 @@ describe('only the doc-store module touches the appdata tables', () => {
   // Enumerated with fs, not grep: the wrapped grep honours .gitignore. A seam
   // guard pins the RELATIONSHIP — it fails when the set grows or shrinks.
   const EXPECTED = [
+    // The deleted-app reaper suite reads back which production documents a purge kept.
+    'server/jobs/__tests__/reap-deleted-app-storage.test.ts',
     // The account app-data job suite counts each user's documents to prove only the opted-in one went.
     'server/jobs/__tests__/remove-deleted-account-app-data.test.ts',
     // The owner-usage router suite seeds usage_app rows with known byte and doc counts.

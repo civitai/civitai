@@ -1,5 +1,8 @@
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import type { AppRecordConfig } from '~/server/services/apps/app-record';
+import { appRecordConfig } from '~/server/services/apps/app-record';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { purgeAppDocuments } from '~/server/services/apps/doc-store-purge';
 import {
@@ -32,6 +35,18 @@ import { createJob } from './job';
  * Batched, resumable and idempotent: each run deletes at most `STORAGE_REAP_ROWS_PER_RUN` rows
  * in transactions of `STORAGE_REAP_BATCH_ROWS`; an app it did not finish stays eligible and
  * continues next run, and only a finished purge stamps `storage_purged_at`.
+ *
+ * WHAT IS DELETED depends on the record core's switch (`APP_RECORD_CORE_ENABLED`, read once per
+ * run):
+ *   - OFF (the default): every row of the app, every user's, every namespace.
+ *   - ON: the rows USERS own survive in the production namespace — each user's private documents
+ *     and the shared documents they created (the owner rule, `recordOwner` in `app-record.ts`),
+ *     with their tallies, marks and usage rows — so the owner can still read, export and delete
+ *     them. Only the documents no user owns (the app's own and the counter documents) and every
+ *     other namespace (developers' `dev:<uid>`) go (`purgeApp` with `keepUserRecords`). The
+ *     account wipe is unchanged: deleting an account still deletes that user's surviving rows.
+ * A purge finished under either setting is stamped, and a stamped app is not looked at again, so
+ * switching the core off later does not delete records an earlier run kept.
  */
 
 export const STORAGE_REAP_AFTER_DAYS = 30;
@@ -116,10 +131,14 @@ export async function reapDeletedAppStorage(
     batchRows?: number;
     rowsPerRun?: number;
     jobContext?: Pick<JobContext, 'checkIfCanceled'>;
+    /** The record core's config; read from the server env when not given (null = switched off). */
+    recordCore?: AppRecordConfig | null;
   } = {}
 ): Promise<ReapDeletedAppStorageResult> {
   const cutoff = new Date((opts.now ?? new Date()).getTime() - STORAGE_REAP_AFTER_DAYS * DAY_MS);
   const rowsPerRun = opts.rowsPerRun ?? STORAGE_REAP_ROWS_PER_RUN;
+  const keepUserRecords =
+    (opts.recordCore === undefined ? appRecordConfig(env) : opts.recordCore) !== null;
   const result: ReapDeletedAppStorageResult = {
     scanned: 0,
     purged: 0,
@@ -138,6 +157,8 @@ export async function reapDeletedAppStorage(
         batchRows: opts.batchRows ?? STORAGE_REAP_BATCH_ROWS,
         maxRows: rowsPerRun - result.rows,
         proceed: () => stillEligible(id, cutoff),
+        // Only when on, so the switched-off call is the one this job always made.
+        ...(keepUserRecords ? { keepUserRecords: true } : {}),
       });
       result.rows += out.rows;
       if (out.stopped) {
@@ -163,6 +184,7 @@ export async function reapDeletedAppStorage(
             appBlockId: id,
             namespaces: out.namespaces,
             rows: out.rows,
+            ...(keepUserRecords ? { keptUserRecords: true } : {}),
           },
           'webhooks'
         );

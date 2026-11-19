@@ -6,6 +6,7 @@ import type {
 } from '~/server/services/apps/doc-store';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
+import type * as EnvServer from '~/env/server';
 
 /**
  * `appStorage.*` — a signed-in user's own document-store data across apps — end to end below the
@@ -26,7 +27,19 @@ const h = vi.hoisted(() => ({
   store: undefined as unknown as DocStore,
   viewerData: undefined as unknown as DocStoreViewerData,
   appBlocksEnabled: true,
+  recordCore: false,
 }));
+// The record core's switch (`APP_RECORD_CORE_ENABLED`), per case.
+vi.mock('~/env/server', async (importOriginal) => {
+  const mod = await importOriginal<typeof EnvServer>();
+  return {
+    ...mod,
+    env: new Proxy(mod.env, {
+      get: (target, prop) =>
+        prop === 'APP_RECORD_CORE_ENABLED' ? h.recordCore : Reflect.get(target, prop),
+    }),
+  };
+});
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
 vi.mock('~/server/services/apps/doc-store-viewer-data.instance', () => ({
   getDocStoreViewerData: () => h.viewerData,
@@ -51,7 +64,11 @@ vi.mock('~/server/utils/server-domain', () => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { appStorageRouter } from '~/server/routers/app-storage.router';
-import { createDocStore, createDocStoreViewerData } from '~/server/services/apps/doc-store';
+import {
+  createDocStore,
+  createDocStoreMaintenance,
+  createDocStoreViewerData,
+} from '~/server/services/apps/doc-store';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   createPgliteHarness,
@@ -146,6 +163,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
 
   beforeEach(async () => {
     h.appBlocksEnabled = true;
+    h.recordCore = false;
     h.store = createDocStore({ db: harness.db, limits: LIMITS });
     h.viewerData = createDocStoreViewerData({ db: harness.db, limits: LIMITS });
     await harness.raw(
@@ -518,6 +536,229 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
         status: 'ok',
         limits: { userBytes: 7_003, userDocs: 17 },
         apps: [],
+      });
+    });
+  });
+
+  describe('exportMine (the record core on)', () => {
+    // A deleted app: its block row is kept (suspended), its data purged as the reaper does with
+    // the core on, so only the records users own survive.
+    const APP_DEL = { id: 'apb_STO_D', blockId: 'delta-store' };
+    const MANIFESTS: Record<string, unknown> = {
+      [APP_A.id]: {
+        scopes: ['apps:storage'],
+        storage: {
+          collections: {
+            prefs: { visibility: 'private' },
+            notes: { visibility: 'private' },
+            posts: { visibility: 'shared', write: 'own' },
+          },
+        },
+      },
+      [APP_B.id]: {
+        scopes: ['apps:storage'],
+        storage: { collections: { prefs: { visibility: 'private' } } },
+      },
+      [APP_DEL.id]: {
+        scopes: ['apps:storage'],
+        storage: {
+          collections: {
+            prefs: { visibility: 'private' },
+            posts: { visibility: 'shared', write: 'own' },
+            tallies: { visibility: 'shared', write: 'none', counters: ['plays'] },
+          },
+        },
+      },
+    };
+    const SLUGS: Record<string, string> = {
+      [APP_A.id]: APP_A.blockId,
+      [APP_B.id]: APP_B.blockId,
+      [APP_DEL.id]: APP_DEL.blockId,
+    };
+    // Literal record ids, set on the private rows so each URN is a literal.
+    const RID = {
+      aNotes: '0a1b2c3d-0000-4000-8000-000000000a01',
+      aPrefs: '0a1b2c3d-0000-4000-8000-000000000a02',
+      bPrefs: '0a1b2c3d-0000-4000-8000-000000000b01',
+      dPrefs: '0a1b2c3d-0000-4000-8000-000000000d01',
+    };
+    const setRecordId = (appId: string, coll: string, uid: number, key: string, id: string) =>
+      harness.raw(
+        `UPDATE appdata.doc SET record_id = $5::uuid
+          WHERE app_id = $1 AND ns = 'prod' AND coll = $2 AND scope_uid = $3 AND key = $4`,
+        [appId, coll, uid, key, id]
+      );
+    const owner = { kind: 'user', userId: USER };
+    // The revs were computed outside this code: sha256 of the sorted-key JSON of
+    // { version, data, schemas }, first 16 hex characters.
+    const A_RECORDS = [
+      {
+        urn: `urn:apps.civitai.com:alpha-store/notes/${RID.aNotes}`,
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'notes',
+        schemas: [],
+        rev: '3b4eadb036a63230',
+        body: sized(233),
+      },
+      {
+        urn: 'urn:apps.civitai.com:alpha-store/posts/post-u',
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'posts',
+        schemas: [],
+        rev: '832cc968c41416cd',
+        body: sized(57),
+      },
+      {
+        urn: `urn:apps.civitai.com:alpha-store/prefs/${RID.aPrefs}`,
+        owner,
+        writer: { app: 'alpha-store', version: null },
+        collection: 'prefs',
+        schemas: [],
+        rev: '57e15c205f6b48c3',
+        body: sized(121),
+      },
+    ];
+    const B_RECORDS = [
+      {
+        urn: `urn:apps.civitai.com:beta-store/prefs/${RID.bPrefs}`,
+        owner,
+        writer: { app: 'beta-store', version: null },
+        collection: 'prefs',
+        schemas: [],
+        rev: '4327fca1957d13a2',
+        body: sized(309),
+      },
+    ];
+    const GONE_SKIPPED = { appBlockId: APP_GONE, reason: 'app_unknown', docs: 1 };
+
+    beforeEach(async () => {
+      h.recordCore = true;
+      dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
+        SLUGS[where.id]
+          ? { blockId: SLUGS[where.id], manifest: MANIFESTS[where.id] }
+          : null) as never);
+      dbMock.dbRead.appBlockPublishRequest.findMany.mockResolvedValue([] as never);
+      await setRecordId(APP_A.id, 'notes', USER, 'n1', RID.aNotes);
+      await setRecordId(APP_A.id, 'prefs', USER, 'theme', RID.aPrefs);
+      await setRecordId(APP_B.id, 'prefs', USER, 'theme', RID.bPrefs);
+    });
+
+    it('is not a route while the record core is off', async () => {
+      h.recordCore = false;
+      await expect(caller(user(USER)).exportMine({})).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it("is every record the caller owns, across apps, as record-core objects: never another user's, never the dev namespace; an app with no row is reported, not guessed", async () => {
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+      expect(harness.violations).toEqual([]);
+    });
+
+    it("canary: another user's private record body never appears in the caller's bundle", async () => {
+      const OTHER_CANARY = 'other-private-canary-5d17';
+      const USER_CANARY = 'user-own-canary-9e24';
+      await h.store.put(storeCtx(APP_A.id, 'prod', OTHER), NOTES, 'secret', { c: OTHER_CANARY });
+      await h.store.put(storeCtx(APP_A.id, 'prod', USER), NOTES, 'mine', { c: USER_CANARY });
+      const mine = JSON.stringify(await caller(user(USER)).exportMine({}));
+      const theirs = JSON.stringify(await caller(user(OTHER)).exportMine({}));
+      // Positive controls: each user's own canary is in their own bundle.
+      expect(mine).toContain(USER_CANARY);
+      expect(theirs).toContain(OTHER_CANARY);
+      expect(mine).not.toContain(OTHER_CANARY);
+      expect(theirs).not.toContain(USER_CANARY);
+      // Every record in the caller's bundle is the caller's own.
+      const { records } = await caller(user(USER)).exportMine({});
+      expect(records.map((r) => r.owner)).toEqual(records.map(() => owner));
+    });
+
+    it('after the app is deleted and purged, the owner still exports their surviving records, and can delete them', async () => {
+      const uD = storeCtx(APP_DEL.id, 'prod', USER);
+      await h.store.put(uD, PREFS, 'theme', sized(64));
+      await h.store.put(uD, POSTS, 'post-d', sized(48));
+      // A counter document (nobody's) and another user's post (theirs, not the caller's).
+      await h.store.increment(storeCtx(APP_DEL.id, 'prod', OTHER), TALLIES, 'c1', 'plays');
+      await h.store.put(storeCtx(APP_DEL.id, 'prod', OTHER), POSTS, 'post-o', sized(41));
+      await setRecordId(APP_DEL.id, 'prefs', USER, 'theme', RID.dPrefs);
+      const maint = createDocStoreMaintenance({ db: harness.db, limits: LIMITS });
+      expect(await maint.purgeApp(APP_DEL.id, { keepUserRecords: true })).toMatchObject({
+        done: true,
+      });
+
+      const D_RECORDS = [
+        {
+          urn: 'urn:apps.civitai.com:delta-store/posts/post-d',
+          owner,
+          writer: { app: 'delta-store', version: null },
+          collection: 'posts',
+          schemas: [],
+          rev: '24486d2c012a1d2a',
+          body: sized(48),
+        },
+        {
+          urn: `urn:apps.civitai.com:delta-store/prefs/${RID.dPrefs}`,
+          owner,
+          writer: { app: 'delta-store', version: null },
+          collection: 'prefs',
+          schemas: [],
+          rev: 'b14df5dc6f1e6dbc',
+          body: sized(64),
+        },
+      ];
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS, ...D_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+
+      // The owner deletes them through the same account surface.
+      expect(
+        await caller(user(USER)).emptyMine({ appBlockId: APP_DEL.id, includeShared: true })
+      ).toEqual({ privateDocs: 1, privateBytes: 64, sharedDocs: 1, sharedBytes: 48 });
+      expect(await caller(user(USER)).exportMine({})).toEqual({
+        format: 'app-records/v1',
+        records: [...A_RECORDS, ...B_RECORDS],
+        nextCursor: null,
+        skipped: [GONE_SKIPPED],
+      });
+      // The other user's surviving post is still theirs, untouched.
+      expect((await userRows(APP_DEL.id, 'prod', OTHER)).sharedKeys).toEqual(['posts/post-o']);
+      await assertUsageConsistent(harness, APP_DEL.id, 'prod');
+      expect(harness.violations).toEqual([]);
+    });
+
+    it('pages: limit 1 walks every record in order, then ends; a forged cursor is refused', async () => {
+      const urns: string[] = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 10; i += 1) {
+        const page: Awaited<ReturnType<ReturnType<typeof caller>['exportMine']>> = await caller(
+          user(USER)
+        ).exportMine({ limit: 1, cursor });
+        urns.push(...page.records.map((r) => r.urn));
+        expect(page.records.length).toBeLessThanOrEqual(1);
+        cursor = page.nextCursor;
+        if (cursor === null) break;
+      }
+      expect(cursor).toBeNull();
+      expect(urns).toEqual([...A_RECORDS, ...B_RECORDS].map((r) => r.urn));
+      for (const forged of ['not-base64-json', Buffer.from('[1,2]').toString('base64url')]) {
+        await expect(
+          caller(user(USER)).exportMine({ limit: 1, cursor: forged })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      }
+    });
+
+    it('an API-key caller is refused', async () => {
+      await expect(apiKeyCaller(user(USER)).exportMine({})).rejects.toMatchObject({
+        code: 'FORBIDDEN',
       });
     });
   });
