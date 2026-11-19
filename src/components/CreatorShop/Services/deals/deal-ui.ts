@@ -10,6 +10,7 @@ import type {
   ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import type { DealAction } from '~/shared/utils/creator-service-deal-view';
+import { SERVICE_DEAL_CLOSE_LABELS } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -266,15 +267,7 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 };
 
 /** The codes the server writes as the comment of a Cancelled or Completed event it closed itself. */
-export const closeCommentLabel: Record<string, string> = {
-  withdrawn: 'Request withdrawn by the buyer',
-  late: 'Canceled by the buyer after the due date',
-  buyer_refund: 'Canceled by the buyer with a full refund',
-  overdue: 'Canceled automatically: nothing delivered in time',
-  cancellation_unanswered: 'Canceled automatically: the cancellation request was not answered',
-  payment_refused: 'Canceled: the payment was refused',
-  auto: 'Completed automatically: the buyer did not respond in time',
-};
+export const closeCommentLabel: Record<string, string> = SERVICE_DEAL_CLOSE_LABELS;
 
 const closeCommentText = (event: SheetEvent) =>
   (event.type === 'Cancelled' || event.type === 'Completed') &&
