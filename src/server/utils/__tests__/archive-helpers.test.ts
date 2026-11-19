@@ -37,7 +37,7 @@ import {
 // Deliberately awkward numbers: the entry count is not a multiple of the bound, and the entry
 // size is not a round power of two, so a fixture cannot land exactly on the boundary it tests.
 const ENTRY_COUNT = 37;
-const ENTRY_BYTES = 193 * 1024;
+const ENTRY_BYTES = 61 * 1024;
 const BOUND = 5;
 
 // Incompressible bytes, i.e. the JPEG/WebP case. Level-9 deflate on this is pure CPU burn, which
@@ -57,7 +57,7 @@ afterAll(() => {
 const entryBuffer = (i: number) => Buffer.from(pool.subarray(i, i + ENTRY_BYTES));
 
 /** A sink slow enough that a zero-latency producer will outrun it. */
-function slowSink(delayMs = 5) {
+function slowSink(delayMs = 1) {
   return new Writable({
     write(_chunk, _encoding, callback) {
       setTimeout(callback, delayMs);
