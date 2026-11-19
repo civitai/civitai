@@ -56,7 +56,6 @@ export function withoutHeldPicture<T>(picture: T | null, needsReview: string | n
   return isHeldForReview(needsReview) ? null : picture;
 }
 
-/** The picture fields `hasBlockMarker` reads, as the profile reads select them (nullable). */
 type BlockFields = {
   ingestion: string | null;
   nsfwLevel: number | null;

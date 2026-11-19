@@ -266,15 +266,17 @@ describe('getUserWithProfile — model-restricted cover', () => {
 // The Kysely profile read returns the picture's block reason beside the payload; a picture carrying
 // one is no one's avatar but its owner's and moderators'.
 describe('getUserWithProfile — avatar with a block reason, on the Kysely read', () => {
-  it('withholds it from a visitor, not the owner, with no extra read', async () => {
+  it('withholds it from a visitor, not the owner or a moderator, with no extra read', async () => {
     kysely.on = true;
     kysely.pictureBlockedFor = 'tos';
     setUser('Scanned');
 
-    const avatarFor = async (sessionUserId: number) =>
-      (await getUserWithProfile({ id: OWNER, sessionUserId })).profilePicture?.url ?? null;
+    const avatarFor = async (sessionUserId: number, isModerator = false) =>
+      (await getUserWithProfile({ id: OWNER, sessionUserId, isModerator })).profilePicture?.url ??
+      null;
     expect(await avatarFor(VISITOR)).toBeNull();
     expect(await avatarFor(OWNER)).toBe('avatar-Scanned');
+    expect(await avatarFor(VISITOR, true)).toBe('avatar-Scanned');
     expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
   });
 

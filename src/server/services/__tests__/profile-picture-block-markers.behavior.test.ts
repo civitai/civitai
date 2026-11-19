@@ -8,7 +8,10 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { gateProfilePictures } from '~/server/db/servable-profile-picture.extension';
 import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
-import { readUserWithProfileViaKysely } from '~/server/services/hot-reads-9.reads';
+import {
+  readUserWithProfileAndPictureGateViaKysely,
+  readUserWithProfileViaKysely,
+} from '~/server/services/hot-reads-9.reads';
 import { readCollectionByIdViaKysely } from '~/server/services/hot-reads-10.reads';
 import { readUsersWithCosmeticsViaKysely } from '~/server/services/hot-reads-12.reads';
 import {
@@ -21,12 +24,7 @@ import {
 } from '~/server/services/profile-picture.sql';
 import { readUserCreatorViaKysely } from '~/server/services/user-creator.reads';
 
-/**
- * A profile picture carrying any block marker (Blocked ingestion, the Blocked level, or a block
- * reason on a picture a rescan moved back to Scanned) is served as no one's avatar, and a
- * `User.image` naming it is not served as the fallback either: on the SQL and TS twins, the Prisma
- * extension, and the Kysely creator-card and profile reads.
- */
+// A picture with a block marker is no visitor's avatar, and a User.image naming it no fallback.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -180,7 +178,7 @@ describe('the Kysely user reads', () => {
     expect(clean?.user.image).toBe(imageOf('key-clean'));
   });
 
-  it('profile: no User.image naming a marked picture', async () => {
+  it("profile: no User.image naming a marked picture, and the picture's blockedFor beside it", async () => {
     const db = await kysely(
       'hot-reads-9-parity-schema.sql',
       'hot_reads_9_parity',
@@ -191,6 +189,12 @@ describe('the Kysely user reads', () => {
     expect((await readUserWithProfileViaKysely(db, { id: CLEAN_ID })).image).toBe(
       imageOf('key-clean')
     );
+    const gates = [];
+    for (const c of CASES)
+      gates.push(
+        (await readUserWithProfileAndPictureGateViaKysely(db, { id: c.id })).pictureBlockedFor
+      );
+    expect(gates).toEqual(CASES.map((c) => c.blockedFor));
   });
 });
 

@@ -8,7 +8,8 @@ import {
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
  * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned, rated, not
- * under an owner-hidden review hold, not restricted by its base model and carrying no block marker. Stricter than `servableProfilePictureSql`,
+ * under an owner-hidden review hold, not restricted by its base model and carrying no block
+ * marker. Stricter than `servableProfilePictureSql`,
  * which also admits moderator-locked ratings.
  * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
  * hand-built copy of the select is caught too. A sibling `image` (`User.image`) follows the same
