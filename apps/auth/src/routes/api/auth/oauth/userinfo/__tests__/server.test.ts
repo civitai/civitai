@@ -24,7 +24,7 @@ function userinfo() {
   } as never);
 }
 
-function token(tokenScope: bigint, user: { bannedAt?: Date | null } = {}) {
+function token(tokenScope: bigint, user: { bannedAt?: Date | null; deletedAt?: Date | null } = {}) {
   h.tables.User = [{ id: 1, deletedAt: null, bannedAt: null, ...user }];
   h.tables.ApiKey = [
     { key: 'hash:civitai_x', type: 'Access', userId: 1, tokenScope, expiresAt: null },
@@ -45,6 +45,13 @@ describe('oauth/userinfo', () => {
 
   it("refuses a banned user's token", async () => {
     token(TokenScope.UserRead, { bannedAt: new Date('2026-11-01T00:00:00Z') });
+    const res = await userinfo();
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
+  });
+
+  it("refuses a deleted user's token, even while their session user is still cached", async () => {
+    token(TokenScope.UserRead, { deletedAt: new Date('2026-11-01T00:00:00Z') });
     const res = await userinfo();
     expect(res.status).toBe(401);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_token');
