@@ -278,12 +278,10 @@ const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not 
 export async function decideCsamHold(args: DecideArgs) {
   const { holdId, textHash, decision, reportChoice, note, actor, batched } = args;
   const plan = PLAN[decision];
-  if ((decision === 'dismiss') !== (reportChoice === undefined))
-    throw throwBadRequestError(
-      decision === 'dismiss'
-        ? 'A dismissal takes no report choice.'
-        : 'Confirming a hold needs a report choice.'
-    );
+  // A missing choice on a confirm is accepted as main decided before the choice existed: a moderator
+  // app older than this one sends none (counted by the endpoint as `reportChoice-missing`).
+  if (decision === 'dismiss' && reportChoice !== undefined)
+    throw throwBadRequestError('A dismissal takes no report choice.');
   if (decision === 'remove_ban_report' && reportChoice === 'none')
     throw throwBadRequestError(REPORT_NEEDS_CATEGORY);
 
@@ -515,19 +513,16 @@ export const resolveCsamHoldInput = z
       .enum(CSAM_REPORT_CHOICES)
       .optional()
       .describe(
-        'Required with every decision but `dismiss`, and refused with it: the reportable category, or `none`.'
+        'Sent with every decision but `dismiss`, and refused with it: the reportable category, or `none`. Left out on a confirm, the decision is recorded with no choice, as before the choice existed.'
       ),
     note: note.describe('Moderator-only note recorded on the hold.'),
   })
   .superRefine((input, ctx) => {
-    if ((input.decision === 'dismiss') !== (input.reportChoice === undefined))
+    if (input.decision === 'dismiss' && input.reportChoice !== undefined)
       ctx.addIssue({
         code: 'custom',
         path: ['reportChoice'],
-        message:
-          input.decision === 'dismiss'
-            ? 'A dismissal takes no `reportChoice`.'
-            : '`reportChoice` is required to confirm a hold.',
+        message: 'A dismissal takes no `reportChoice`.',
       });
     if (input.decision === 'remove_ban_report' && input.reportChoice === 'none')
       ctx.addIssue({ code: 'custom', path: ['reportChoice'], message: REPORT_NEEDS_CATEGORY });

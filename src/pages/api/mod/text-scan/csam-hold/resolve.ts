@@ -18,7 +18,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
   notes: [
     'Requires the moderator app permission `csam.report.file`; `remove_strike` also needs `user.strike`, and `remove_ban` and `remove_ban_report` also need `user.ban`.',
     '`dismiss` closes the hold and changes nothing on the held content or its author.',
-    'Every decision but `dismiss` needs `reportChoice` (a reportable category, or `none`), and `dismiss` refuses one. The choice is recorded on the hold; it files nothing.',
+    'Every decision but `dismiss` sends `reportChoice` (a reportable category, or `none`), and `dismiss` refuses one. The choice is recorded on the hold; it files nothing. Until every moderator app sends it, a confirm without one is decided as before and counted (`reportChoice-missing`).',
     '`remove` takes the held content down through the same service a moderator removal uses; `remove_strike` also strikes the author; `remove_ban` and `remove_ban_report` also ban the author (skipped when already banned).',
     '`remove_ban_report` does not file anything: the moderator completes the existing CSAM report form for the returned `userId`. No Report row is created by any decision.',
     'A removal decision is refused with BAD_REQUEST for a type with no removal path; the hold stays pending.',
@@ -33,6 +33,14 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'Deciding a csam hold needs the "csam.report.file" moderator permission.',
+      });
+    // Counts only: an older moderator app confirming without a choice. Drop once none arrive.
+    if (input.decision !== 'dismiss' && input.reportChoice === undefined)
+      logToAxiom({
+        name: 'text-scan',
+        type: 'reportChoice-missing',
+        message: 'csam hold confirmed without a report choice',
+        payload: { decision: input.decision, count: input.holds?.length ?? 1 },
       });
 
     if (input.holds) {
