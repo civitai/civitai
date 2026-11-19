@@ -237,6 +237,21 @@ describe('approving an appeal on an image an account deletion blocked', () => {
   });
 });
 
+describe('approving an appeal on an image whose metadata is not an object', () => {
+  it('approves it and leaves the metadata as it was', async () => {
+    await db.query(`UPDATE "Image" SET "metadata" = 'null'::jsonb WHERE "id" = $1`, [IMAGE_ID]);
+
+    await approve();
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
+    expect(rows[0]).toEqual({ needsReview: null, ingestion: 'Scanned', metadata: null });
+  });
+});
+
 describe('rejecting an appeal on a rating-locked Blocked image', () => {
   it('leaves the level, the lock and the blocklist alone', async () => {
     await resolveImageAppeal({

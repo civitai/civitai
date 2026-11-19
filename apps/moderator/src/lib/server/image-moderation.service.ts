@@ -842,7 +842,9 @@ export async function resolveImageAppeal({
         END`,
         blockedFor: null,
         ingestion: 'Scanned',
-        metadata: sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
+        metadata: sql`(CASE WHEN jsonb_typeof("metadata") = 'object'
+          THEN "metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+          ELSE "metadata" END)`,
       })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
