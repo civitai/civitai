@@ -491,12 +491,14 @@ export async function blockImage({
         // Two things happen to `metadata` on a block, and they compose in one expression:
         //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
         //     row whose metadata is NULL stays NULL rather than becoming `{}`.
+        //   - a moderation rule's keys come off: the removal is the moderator's now, which is what
+        //     `REMOVED_BY_MODERATOR` reads.
         //   - remixSource gets its stamp. COALESCE guards the usual metadata=NULL, because `||`
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a

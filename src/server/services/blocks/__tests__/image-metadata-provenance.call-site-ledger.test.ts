@@ -621,6 +621,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  // A moderator's block drops a moderation rule's keys: the removal is the moderator's now.
+  'src/server/services/image.service.ts#writeModeratorBlock': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#markRemixSourceReviewed': {
     decision: 'raw-server-keys',
     sites: 1,

@@ -544,6 +544,31 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       expect(reportsMovedTo('Unactioned')).toEqual([report(RULE_BLOCKED)]);
     });
 
+    it('once a moderator Removed it, Unaction on its other report refuses and it stays blocked', async () => {
+      const OTHER_REPORT = 9070;
+      await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+        RULE_BLOCKED,
+        OTHER_REPORT,
+      ]);
+      await verdict('block', RULE_BLOCKED);
+      vi.clearAllMocks();
+
+      const unaction = await imageQueueActions.accept(
+        event({ imageId: String(RULE_BLOCKED), reportId: String(OTHER_REPORT) })
+      );
+      const remove = await imageQueueActions.block(
+        event({ imageId: String(RULE_BLOCKED), reportId: String(OTHER_REPORT) })
+      );
+
+      expect(await row(RULE_BLOCKED)).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+      });
+      expect(unaction).toMatchObject({ success: true, closedReportIds: [OTHER_REPORT] });
+      expect(remove).toMatchObject({ success: true, alreadyRemoved: expect.any(String) });
+      expect(notifiedImages()).toEqual([]);
+    });
+
     it('Remove writes a real block: the owner notice and a TOS blocklist entry', async () => {
       const result = await imageQueueActions.block(
         event({

@@ -750,7 +750,7 @@ export async function bulkSetReportStatus({
   /** Moves only the reports in this status; any other is left as it is. */
   fromStatus?: ReportStatus;
 }) {
-  if (!ids.length) return;
+  if (!ids.length) return [];
 
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
@@ -808,6 +808,7 @@ export async function bulkSetReportStatus({
       )
     );
   }
+  return reports.map((r) => r.id);
 }
 
 // #region [helpers]

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as Rewards from '~/server/rewards';
 
@@ -51,6 +52,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: clickhouseInsert, $query: vi.fn(async () => []) },
 }));
 
+const markResolved = vi.fn(async (_k: string, _f: string[], _t: number) => 1);
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const run = async (flat: { text: string; values: unknown[] }) =>
   holder.db.query(flat.text, flat.values as unknown[]);
@@ -75,7 +77,8 @@ beforeAll(async () => {
       "nsfwLevel" int NOT NULL DEFAULT 0,
       "needsReview" text,
       "pHash" bigint,
-      "updatedAt" timestamp(3)
+      "updatedAt" timestamp(3),
+      metadata jsonb
     );
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
     CREATE TYPE "ReportReason" AS ENUM ('TOSViolation', 'NSFW', 'CSAM');
@@ -108,6 +111,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   // No reporter here is banned or deleted.
   dbMock.dbWrite.user.findMany.mockResolvedValue([] as never);
+  (redisMock.redis as unknown as { hSetMultiWithExpire: typeof markResolved }).hSetMultiWithExpire =
+    markResolved;
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -501,6 +506,39 @@ describe("handleBlockImages and the images' reports", () => {
 
     expect(applyReward.mock.calls.map(([a]) => a.userId).sort()).toEqual([10, 9].sort());
     expect(rewardedReports()).toEqual([report(OTHER_REASON), report(OTHER_REASON)]);
+  });
+
+  it('stamps the settled report as reviewed and marks it resolved for the moderator queue', async () => {
+    await holder.db.exec(
+      `UPDATE "Report" SET "alsoReportedBy" = '{10}' WHERE id = ${report(OTHER_REASON)}`
+    );
+
+    await handleBlockImages({ ids: all, moderatorId: 2 });
+
+    const { rows } = await holder.db.query<{ previouslyReviewedCount: number }>(
+      `SELECT "previouslyReviewedCount" FROM "Report" WHERE id = $1`,
+      [report(OTHER_REASON)]
+    );
+    expect(rows[0].previouslyReviewedCount).toBe(2);
+    expect(markResolved).toHaveBeenCalledWith(
+      'report:resolved-recent',
+      [String(report(OTHER_REASON)), '1'],
+      300
+    );
+  });
+
+  it("drops a moderation rule's keys, so the removal reads as the moderator's", async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET metadata = '{"ruleId": 5, "ruleReason": "r", "other": 1}' WHERE id = ${OTHER_REASON}`
+    );
+
+    await handleBlockImages({ ids: [OTHER_REASON], moderatorId: 2 });
+
+    const { rows } = await holder.db.query<{ metadata: unknown }>(
+      `SELECT metadata FROM "Image" WHERE id = $1`,
+      [OTHER_REASON]
+    );
+    expect(rows[0].metadata).toEqual({ other: 1 });
   });
 
   it('a second removal of the same images pays nothing more', async () => {

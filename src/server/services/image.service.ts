@@ -1370,7 +1370,8 @@ export async function writeModeratorBlock(
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
         "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
-        "updatedAt" = NOW()
+        "updatedAt" = NOW(),
+        "metadata" = "metadata" - 'ruleId' - 'ruleReason'
       WHERE id = ANY(${ids}::int[])
     `;
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
@@ -1699,14 +1700,28 @@ export const actionPendingTosReports = async (ids: number[], actorId: number) =>
       AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
       AND r.status = ${ReportStatus.Pending}::"ReportStatus"
   `;
-  await bulkSetReportStatus({
+  const moved = await bulkSetReportStatus({
     ids: reports.map((r) => r.id),
     status: ReportStatus.Actioned,
     userId: actorId,
     fromStatus: ReportStatus.Pending,
     rewardRemovedReporters: false,
   });
+  // The moderator app's resolved marker, so a lagging replica does not hand them back to its queue.
+  if (moved.length)
+    await redis
+      .hSetMultiWithExpire(
+        REDIS_KEYS.REPORT.RESOLVED_RECENT,
+        moved.flatMap((id) => [String(id), '1']),
+        REPORT_RESOLVED_MARKER_TTL_SECONDS
+      )
+      .catch((e: unknown) =>
+        logToAxiom({ type: 'error', name: 'report-resolved-marker', error: safeError(e) })
+      );
 };
+
+/** The moderator app's `RESOLVED_MARKER_TTL_SECONDS`. */
+const REPORT_RESOLVED_MARKER_TTL_SECONDS = 300;
 
 /** The image's reports for one reason that are not yet actioned. */
 export const getOpenImageReportIds = async (id: number, reason: ReportReason) => {
