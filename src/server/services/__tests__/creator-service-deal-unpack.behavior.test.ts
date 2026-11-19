@@ -1440,9 +1440,14 @@ describe('the finals malware scan', () => {
   const asBuyer = (fileId: number) =>
     files.resolveServiceDealFileDownload({ fileId, userId: BUYER, isModerator: false });
   const listedForBuyer = async (dealId: number, fileId: number) =>
-    (await files.listServiceDealFiles({ dealId, userId: BUYER, isModerator: false })).find(
-      (row) => row.id === fileId
-    );
+    (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: BUYER,
+        isModerator: false,
+        servableLevels: 31,
+      })
+    ).find((row) => row.id === fileId);
 
   describe('reading a workflow', () => {
     const pickle = (status: string, extra = {}) => ({
