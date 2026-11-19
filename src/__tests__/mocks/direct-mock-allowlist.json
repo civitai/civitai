@@ -408,7 +408,6 @@
     "src/server/services/__tests__/challenge-collection-owner-wiring.service.test.ts",
     "src/server/services/__tests__/challenge-completion-emit-boundary.service.test.ts",
     "src/server/services/__tests__/challenge-delete-user.service.test.ts",
-    "src/server/services/__tests__/challenge-detail-visibility.service.test.ts",
     "src/server/services/__tests__/challenge-edit-rescan.service.test.ts",
     "src/server/services/__tests__/challenge-edit.service.test.ts",
     "src/server/services/__tests__/challenge-entry-eligibility.service.test.ts",
