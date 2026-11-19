@@ -2,7 +2,11 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { NsfwLevel } from '~/server/common/enums';
-import { challengeCoverWhere, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
+import {
+  challengeCoverSql,
+  challengeCoverWhere,
+  minorMatureImageVisibleSql,
+} from '~/server/common/image-visibility';
 import { minorContentNotRestrictedWhere } from '~/server/utils/minor-content-gate.sql';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -79,6 +83,25 @@ describe('challengeCoverWhere', () => {
 
   it.each(Object.keys(COVERS))('%s', async (name) => {
     expect((await shownIds()).includes(COVERS[name].id)).toBe(SHOWN.includes(name));
+  });
+});
+
+describe('challengeCoverSql', () => {
+  it('shows exactly the covers challengeCoverWhere shows', async () => {
+    const viaPrisma = (
+      await h.prisma.image.findMany({
+        where: { id: { lt: 1000 }, ...challengeCoverWhere() },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      })
+    ).map((r) => r.id);
+    const viaSql = (
+      await h.prisma.$queryRaw<{ id: number }[]>(
+        Prisma.sql`SELECT id FROM "Image" i WHERE id < 1000 AND ${challengeCoverSql()} ORDER BY id`
+      )
+    ).map((r) => r.id);
+    expect(viaSql).toEqual(viaPrisma);
+    expect(viaSql).toEqual(SHOWN.map((name) => COVERS[name].id));
   });
 });
 

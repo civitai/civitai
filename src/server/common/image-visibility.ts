@@ -199,16 +199,16 @@ export const imageNotRestrictedWhere = ({
   ],
 });
 
-/**
- * A challenge cover every viewer may be shown: unheld, not a ToS removal, rated and not Blocked,
- * outside the minor content rule, and, when it has a post, in a published, non-Private one.
- */
+// Ratings a challenge cover may never carry.
+const COVER_EXCLUDED_LEVELS = [0, NsfwLevel.Blocked];
+
+/** A challenge cover any viewer may be shown. `challengeCoverSql` is its SQL twin: change both together. */
 export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
   AND: [
     { needsReview: null },
     { tosViolation: false },
     { acceptableMinor: false },
-    { nsfwLevel: { notIn: [0, NsfwLevel.Blocked] } },
+    { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
     minorContentNotRestrictedWhere(),
     {
       OR: [
@@ -223,6 +223,24 @@ export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
     },
   ],
 });
+
+/** `challengeCoverWhere` as SQL over `"Image" i`. */
+export const challengeCoverSql = () => Prisma.sql`(
+  i."needsReview" IS NULL
+  AND i."tosViolation" = FALSE
+  AND i."acceptableMinor" = FALSE
+  AND i."nsfwLevel" NOT IN (${Prisma.join(COVER_EXCLUDED_LEVELS)})
+  AND NOT ${minorContentRestrictedSql({
+    minor: Prisma.sql`COALESCE(i."minor", FALSE)`,
+    nsfwLevel: Prisma.sql`i."nsfwLevel"`,
+  })}
+  AND (i."postId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Post" cp
+    WHERE cp.id = i."postId"
+      AND cp."publishedAt" < now()
+      AND cp.availability != ${Availability.Private}::"Availability"
+  ))
+)`;
 
 /** What {@link isImageNotRestricted} reads from an `Image`. */
 export const imageRestrictionSelect = {
