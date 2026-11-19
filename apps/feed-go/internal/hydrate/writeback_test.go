@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -431,7 +432,7 @@ func TestWriteBudgetChargesParallelWritesByWallTime(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 70 + i, key: "p:" + string(rune('0'+i)), val: []byte("v"), ttl: time.Hour}})
+			s.writePacked(ctx, []packedWrite{{cache: MissTagIDs, id: 70 + i, key: "p:" + strconv.Itoa(i), val: []byte("v"), ttl: time.Hour}})
 		}()
 	}
 	wg.Wait()
