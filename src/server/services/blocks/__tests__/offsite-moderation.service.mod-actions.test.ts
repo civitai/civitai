@@ -95,7 +95,7 @@ type ReadMock = {
   appCollaborator: { count: ReturnType<typeof vi.fn> };
 };
 
-const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() => {
+const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
   const write: WriteMock = {
     $transaction: vi.fn(),
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
@@ -162,7 +162,6 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     mockRead: read,
     mockWrite: write,
     mockNotify: vi.fn(async () => undefined),
-    mockLogToAxiom: vi.fn(async () => undefined),
     ids: { n: 0 },
   };
 });
@@ -178,8 +177,6 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
   ...(await importOriginal<typeof AppListingRating>()),
   recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
 }));
-// The on-site relist / owner-republish drift warn is a dynamic import of this module.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() => ({
   mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
   mockDeleteAuthSubject: vi.fn(async (_a: unknown) => undefined),
@@ -311,7 +308,6 @@ beforeEach(() => {
   mockWrite.appOwnershipTransfer.updateMany.mockResolvedValue({ count: 0 });
   mockWrite.appOwnershipEvent.create.mockImplementation(async (a: { data: unknown }) => a.data);
   mockNotify.mockResolvedValue(undefined);
-  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -2007,7 +2003,7 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
-  it('ON-SITE republish whose block-restore flip is a 0-count (drift) emits the post-commit warn (observability, mirrors mod relist)', async () => {
+  it('ON-SITE republish whose block-restore flip is a 0-count (drift) still restores the listing', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
     );
@@ -2017,13 +2013,6 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     // The listing is still restored (non-fatal) — visibility IS back.
     expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
-    // …but the block-serve divergence is warned post-commit (best-effort dynamic import).
-    await vi.waitFor(() => expect(mockLogToAxiom).toHaveBeenCalledTimes(1));
-    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
-      type: 'warning',
-      name: 'app-listing-relist-block-drift',
-      details: { appListingId: APP_ID, appBlockId: BLOCK_ID },
-    });
   });
 
   it('🔴 FORBIDDEN when the last event is a MOD delist (takedown-for-cause) — no flip, no event', async () => {

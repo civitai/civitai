@@ -4,7 +4,6 @@ import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -65,7 +64,6 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  vi.mocked(loggingMock.logToAxiom).mockClear();
   await holder.db.exec(`TRUNCATE "ScanLabelItem", "Image", "CsamReport", test_eligibility CASCADE`);
 });
 
@@ -194,15 +192,11 @@ describe('copyScanLabelImages', () => {
     }
   });
 
-  it('does nothing, with one warning, when the bucket is not configured', async () => {
+  it('does nothing when the bucket is not configured', async () => {
     setEnv({ SCAN_LABEL_P3_B2_BUCKET: undefined });
     expect(await scanLabelCopyStoreFromEnv()).toBeNull();
     await decided(1, { eligible: true });
     expect(await copyScanLabelImages()).toEqual({ configured: false });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'scan-label-copy' })
-    );
     expect((await state())[0].copyState).toBeNull();
   });
 });

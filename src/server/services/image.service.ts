@@ -7017,7 +7017,10 @@ export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUs
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
   if (hashes.length === 0) return new Set();
-  const rows = await blocklistClient().$query<{ hash: string }>`
+  const client = blocklistClient();
+  const rows = await blocklistCall(
+    () =>
+      client.$query<{ hash: string }>`
     SELECT toString(hash) AS hash
     FROM (
       SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
@@ -7026,7 +7029,8 @@ async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
       GROUP BY hash
     )
     WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false
-  `;
+  `
+  );
   return new Set(rows.map((row) => row.hash));
 }
 
@@ -7034,6 +7038,31 @@ async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
 function blocklistClient() {
   if (!clickhouse) throw new Error('blocked_images: no ClickHouse client');
   return clickhouse;
+}
+
+/**
+ * A blocklist store call failed. Only the driver error's class and code are kept: its message can
+ * quote the statement, hashes included (`$query` appends the whole query), and callers log it.
+ */
+export class BlocklistStoreError extends Error {
+  readonly code: unknown;
+  constructor(failure: unknown) {
+    const code = (failure as { code?: unknown })?.code;
+    super('blocked_images: the blocklist call failed', {
+      cause: { name: (failure as Error)?.name, code },
+    });
+    this.name = 'BlocklistStoreError';
+    this.code = code;
+  }
+}
+
+/** Runs one blocklist store call, rethrowing its failure as a BlocklistStoreError. */
+async function blocklistCall<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw new BlocklistStoreError(error);
+  }
 }
 
 /** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
@@ -7051,7 +7080,7 @@ function logBlocklistCheckFailed(
       step: context?.step,
       imageIds: context?.imageIds,
       actorUserId: context?.actorUserId,
-      hashes: rows.map(({ hash }) => hash.toString()),
+      hashCount: rows.length,
       reasons: rows.map(({ reason }) => reason),
       error: safeError(error),
     },
@@ -7158,17 +7187,20 @@ export async function bulkAddBlockedImages({
   context?: BlocklistWriteContext;
 }) {
   if (data.length === 0) return;
-  const write = (rows: typeof data) =>
-    rows.length
-      ? blocklistClient().insert({
-          table: 'blocked_images',
-          values: rows.map(({ hash, reason }) => ({
-            hash: toClickhouseInt64(hash),
-            reason: reason.toString(),
-          })),
-          format: 'JSONEachRow',
-        })
-      : undefined;
+  const write = async (rows: typeof data) => {
+    if (!rows.length) return;
+    const client = blocklistClient();
+    await blocklistCall(() =>
+      client.insert({
+        table: 'blocked_images',
+        values: rows.map(({ hash, reason }) => ({
+          hash: toClickhouseInt64(hash),
+          reason: reason.toString(),
+        })),
+        format: 'JSONEachRow',
+      })
+    );
+  };
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
   await write(csamRows);
@@ -7213,12 +7245,15 @@ export async function bulkRemoveBlockedImages(hashes: bigint[], context?: Blockl
   let blocked: { hash: string; reason: string }[];
   let csam: Set<string>;
   try {
+    const client = blocklistClient();
     [blocked, csam] = await Promise.all([
-      blocklistClient().$query<{ hash: string; reason: string }>`
-        SELECT toString(hash) AS hash, reason
-        FROM "blocked_images"
-        WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
-      `,
+      blocklistCall(
+        () => client.$query<{ hash: string; reason: string }>`
+          SELECT toString(hash) AS hash, reason
+          FROM "blocked_images"
+          WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
+        `
+      ),
       csamBlockedHashes(hashes),
     ]);
   } catch (error) {
@@ -7247,11 +7282,10 @@ export async function bulkRemoveBlockedImages(hashes: bigint[], context?: Blockl
     }));
   if (!values.length) return;
 
-  return await blocklistClient().insert({
-    table: 'blocked_images',
-    values,
-    format: 'JSONEachRow',
-  });
+  const client = blocklistClient();
+  await blocklistCall(() =>
+    client.insert({ table: 'blocked_images', values, format: 'JSONEachRow' })
+  );
 }
 
 // export async function bulkRemoveBlockedImages({

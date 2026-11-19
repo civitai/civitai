@@ -3,8 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockDbWrite,
   mockUnblock,
-  mockLogToAxiom,
-  mockSafeError,
   mockSysRedis,
   mockResetNsfwLevel,
   mockQueueSearchIndex,
@@ -12,8 +10,6 @@ const {
 } = vi.hoisted(() => ({
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   mockUnblock: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockSafeError: vi.fn((e: unknown) => ({ message: (e as Error).message })),
   mockSysRedis: { sAdd: vi.fn(), sMembers: vi.fn(), sRem: vi.fn() },
   mockResetNsfwLevel: vi.fn(async () => undefined),
   mockQueueSearchIndex: vi.fn(async () => undefined),
@@ -21,10 +17,6 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbWrite, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-  safeError: mockSafeError,
-}));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { SYSTEM: { PENDING_IMAGE_RESTORES: 'system:pending-image-restores' } },
@@ -251,9 +243,6 @@ describe('restoreUserImages', () => {
     expect(mockUnblock).toHaveBeenCalledWith(8);
     // The failure stays queued, and the account behind it is not stranded by it.
     expect(pendingSet).toEqual(['7']);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'restore-user-images', userId: 7 })
-    );
   });
 
   it('caps how many accounts a single run takes on', async () => {

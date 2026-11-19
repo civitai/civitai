@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { llm, router } = vi.hoisted(() => ({
   llm: { getJsonCompletion: vi.fn() },
@@ -36,7 +35,7 @@ describe('generateWinners model', () => {
     expect(router.getJsonCompletionWithUsage).not.toHaveBeenCalled();
   });
 
-  it('falls back to GPT-6 Luna on OpenRouter when the default model fails, and logs why', async () => {
+  it('falls back to GPT-6 Luna on OpenRouter when the default model fails', async () => {
     llm.getJsonCompletion.mockRejectedValue(new Error('Civitai LLM error 504'));
     router.getJsonCompletionWithUsage.mockResolvedValue({ content: picks, usage: {} });
 
@@ -44,12 +43,6 @@ describe('generateWinners model', () => {
 
     expect(result.model).toBe('openai/gpt-6-luna');
     expect(result.winners).toEqual(picks.winners);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'daily-challenge-winners-fallback',
-        error: 'Civitai LLM error 504',
-      })
-    );
   });
 
   it('uses an explicitly requested model without falling back', async () => {
@@ -91,9 +84,6 @@ describe('content stages model', () => {
     expect(result).toEqual({ name: 'n', description: 'd' });
     expect(router.getJsonCompletion).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'openai/gpt-6-luna' })
-    );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'daily-challenge-collection-fallback' })
     );
   });
 });

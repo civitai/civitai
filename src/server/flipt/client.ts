@@ -401,7 +401,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // document `pending`, and every read of that app's shared documents by anyone but their author
   // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
   // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
-  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  // above (entityId = the app block id, NO context). Off when the key reads `false`, but 🔴 NOT
+  // default-off: read with `readFliptBoolean`, an UNREADABLE flag (Flipt unreachable with no
+  // snapshot, or a missing key) counts as ON, so levels fail closed (`isSharedDocLevelsOn`). The key
+  // must exist in flag state (enabled: false) before the code that reads it serves traffic.
   APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
@@ -455,6 +458,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. Default-off; create the key disabled before
+  // the deploy that reads it, and only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
@@ -691,6 +697,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
+  // Hides civitai.com version text that has no passing verdict. Read only through
+  // `getComVersionTextHideMode`, where a flag that cannot be evaluated counts as ON.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  COM_FACE_VERSION_TEXT_HIDE = 'com-face-version-text-hide',
+  // On: the com-face-version-text jobs (rating every minute, sweep hourly) run. Off, unknown or
+  // not evaluated: both do nothing. Read only through `comVersionTextJobsEnabled`.
+  // 🔴 BOOLEAN ONLY, global.
+  COM_FACE_VERSION_TEXT_JOBS = 'com-face-version-text-jobs',
   // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
   // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
   // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are
@@ -834,6 +849,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
+// `null` when the flag could not be read (Flipt unreachable with no snapshot, or an unknown key),
+// for a gate that must fail CLOSED; `isFlipt` answers `false` for both. Honors local overrides.
+export const readFliptBoolean = flipt.readBoolean;
 export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.

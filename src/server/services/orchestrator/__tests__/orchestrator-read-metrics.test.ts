@@ -3,8 +3,7 @@ import client from 'prom-client';
 
 // Use the REAL prom-client registry (via the telemetry package's register* helpers) instead of the global test
 // stub (src/__tests__/setup.ts), so we can READ BACK the actually-recorded histogram + counter values off the
-// shared `civitai_app_*` registry — the same registry /api/metrics exposes. This is the registry-introspection
-// analog of session-metrics.test.ts (which spies the register* returns). A file-level vi.mock overrides the
+// shared `civitai_app_*` registry — the same registry /api/metrics exposes. A file-level vi.mock overrides the
 // global stub for this module only.
 vi.mock('~/server/prom/client', async () => {
   const pkg = await vi.importActual<typeof import('@civitai/telemetry/client')>(

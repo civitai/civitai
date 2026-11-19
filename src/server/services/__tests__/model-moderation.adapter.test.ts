@@ -208,7 +208,9 @@ describe('modelModerationAdapter.applyResult', () => {
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-    expect(flipCall()?.sql).toContain('array_append');
+    expect(flipCall()?.sql).toContain(
+      `array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+    );
   });
 
   describe('when a moderator has locked nsfw', () => {

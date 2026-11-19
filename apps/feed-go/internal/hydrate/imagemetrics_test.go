@@ -259,7 +259,7 @@ func TestMetricsMissGolden(t *testing.T) {
 				r := seedStore(c.Before)
 				f := c.ch(t, r)
 				s := &Sources{Packed: &PackedReader{Redis: r}, Cache: r, Compute: &MissCompute{
-					WriteBack: writeBack, ClickHouse: f, MetricsTimeout: 10 * time.Second, Now: func() time.Time { return now },
+					WriteBack: writeSet(writeBack), ClickHouse: f, MetricsTimeout: 10 * time.Second, Now: func() time.Time { return now },
 				}}
 				got, err := s.ImageMetrics(context.Background(), c.IDs)
 
@@ -380,7 +380,7 @@ func coldSources(writeBack bool) (*Sources, *testkit.Redis, *fakeCH) {
 	r := testkit.NewRedis()
 	r.SetHash(metricHashKey(31), map[string]string{"Like": "3"})
 	f := &fakeCH{rows: []map[string]any{{"entityId": json.Number("32"), "metricType": "Like", "value": json.Number("4")}}}
-	return &Sources{Cache: r, Packed: &PackedReader{Redis: r}, Compute: &MissCompute{WriteBack: writeBack, ClickHouse: f}}, r, f
+	return &Sources{Cache: r, Packed: &PackedReader{Redis: r}, Compute: &MissCompute{WriteBack: writeSet(writeBack), ClickHouse: f}}, r, f
 }
 
 // Only the absent hashes are looked up; the present one is served from the cache. Without a reader

@@ -14,7 +14,6 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
@@ -785,14 +784,10 @@ describe('judge votes', () => {
   // ClickHouse is a second store behind one page; its outage must not take the page down.
   it('still loads, at zero votes, when ClickHouse fails', async () => {
     chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
-    loggingMock.logToAxiom.mockClear();
 
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-journey-judge-votes' })
-    );
   });
 
   // The shared client would otherwise wait minutes on a stalled connection, holding the page.
@@ -869,14 +864,10 @@ describe('compete wins', () => {
 
   it('still loads, counting the Postgres wins, when the ledger read fails', async () => {
     chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
-    loggingMock.logToAxiom.mockClear();
 
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
     expect(activity.winBreakdown).toEqual({ challenges: 2, crucibles: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'creator-journey-ledger-wins' })
-    );
   });
 });

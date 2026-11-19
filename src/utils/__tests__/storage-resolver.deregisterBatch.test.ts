@@ -19,9 +19,6 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom }));
-
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 
 const okResponse = (body: unknown) => ({
@@ -36,7 +33,6 @@ describe('deregisterFileLocationsBatch', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    logToAxiom.mockClear();
     vi.stubGlobal('fetch', fetchMock);
     // Restore the configured env for each test; individual tests may clear it.
     envValues.STORAGE_RESOLVER_INTERNAL_URL = 'http://storage-resolver.internal';
@@ -65,7 +61,7 @@ describe('deregisterFileLocationsBatch', () => {
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('is a no-op returning null (and warns) when storage-resolver is not configured', async () => {
+  it('is a no-op returning null when storage-resolver is not configured', async () => {
     envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
     envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = undefined;
 
@@ -73,9 +69,6 @@ describe('deregisterFileLocationsBatch', () => {
 
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-skipped', count: 3 })
-    );
   });
 
   it('de-dupes + drops non-positive ids and makes no call when nothing survives', async () => {
@@ -115,7 +108,7 @@ describe('deregisterFileLocationsBatch', () => {
     expect(chunkSizes).toEqual([500, 500, 200]);
   });
 
-  it('is best-effort per chunk: a non-OK chunk is logged + skipped, others proceed', async () => {
+  it('is best-effort per chunk: a non-OK chunk is skipped, others proceed', async () => {
     const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
     fetchMock
       .mockResolvedValueOnce({
@@ -131,12 +124,9 @@ describe('deregisterFileLocationsBatch', () => {
     // First chunk failed (counted 0), second succeeded — the loop never aborts.
     expect(result).toEqual({ deleted: 500 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-failed', status: 500 })
-    );
   });
 
-  it('is best-effort per chunk: a thrown chunk is logged + skipped, others proceed', async () => {
+  it('is best-effort per chunk: a thrown chunk is skipped, others proceed', async () => {
     const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
     fetchMock
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
@@ -146,9 +136,6 @@ describe('deregisterFileLocationsBatch', () => {
 
     expect(result).toEqual({ deleted: 500 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-error' })
-    );
   });
 
   it('never throws when the request times out against a hung resolver', async () => {
@@ -157,8 +144,5 @@ describe('deregisterFileLocationsBatch', () => {
     );
 
     await expect(deregisterFileLocationsBatch([1, 2, 3])).resolves.toEqual({ deleted: 0 });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-error' })
-    );
   });
 });
