@@ -89,7 +89,7 @@ vi.mock('~/utils/s3-utils', () => ({
     backend: 'b2',
   }),
 }));
-vi.mock('~/utils/s3-purge-versions', () => ({
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
   purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
     await s3.deleteObject(bucket, key);
     return { versionsDeleted: 1, remaining: 0 };

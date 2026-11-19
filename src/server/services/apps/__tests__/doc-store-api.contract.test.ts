@@ -3056,6 +3056,60 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
     expect(noImports.body).toMatchObject({ code: 'import_not_declared' });
   });
 
+  it('consent state unreadable: 503 consent_unavailable, not consent_required', async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    // The consent marker cannot be read, so the middleware strips every consent-gated scope.
+    failingGet = (key) => key.startsWith(REDIS_KEYS.BLOCKS.CONSENT_REVOKED_SCOPES);
+    const r = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ code: 'consent_unavailable' });
+    // Control: the marker readable again, the same call passes consent (no such document).
+    failingGet = null;
+    const back = await call({
+      token: await as(C, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: S.blockId },
+    });
+    expect(back.status).toBe(404);
+  });
+
+  it('an app importing from itself: 403 import_not_declared, before any grant is read', async () => {
+    seq += 1;
+    const blockId = `imp-self-${seq}`;
+    const X: AppRow = {
+      id: `apb_impself${seq}`,
+      appId: `appblk-impself${seq}`,
+      blockId,
+      status: 'approved',
+      manifest: {
+        scopes: CONSUMER_SCOPES,
+        storage: {
+          collections: { notes: { visibility: 'private' } },
+          imports: [{ from: blockId, collections: ['notes'], access: 'read' }],
+        },
+      },
+    };
+    apps.push(X);
+    const r = await call({
+      token: await as(X, VIEWER_IDS.v1),
+      method: 'GET',
+      path: '/notes/n1',
+      query: { from: blockId },
+    });
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({
+      code: 'import_not_declared',
+      message: 'an app cannot import from itself',
+    });
+  });
+
   it('a source collection declared exportable: false: 403 not_exportable', async () => {
     const { S, C } = importApps();
     await grant(VIEWER_IDS.v1, C, S);

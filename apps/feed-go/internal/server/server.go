@@ -28,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
@@ -631,7 +632,9 @@ func (s *Server) computeWithin(parent context.Context, r *http.Request, where st
 // means whatever fn produced must be discarded.
 func (s *Server) within(parent context.Context, where string, fn func(context.Context) error) error {
 	budget := s.budget()
-	ctx, cancel := context.WithTimeout(parent, budget)
+	// One write-back budget for the whole computation: its cache writes, however many caches it
+	// fills in sequence, wait at most one hydrate write bound in total (hydrate.WithWriteBudget).
+	ctx, cancel := context.WithTimeout(hydrate.WithWriteBudget(parent), budget)
 	defer cancel()
 	_, err := safe.Call(func() (struct{}, error) { return struct{}{}, fn(ctx) })
 	var pe *safe.PanicError

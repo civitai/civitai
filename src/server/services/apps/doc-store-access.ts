@@ -26,8 +26,6 @@
 import { TRPCError } from '@trpc/server';
 import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
-import { recordStorageManifestUnparseable } from '~/server/metrics/app-block-runtime.metrics';
 import {
   parseSubjectUserId,
   type BlockTokenClaims,
@@ -51,21 +49,22 @@ import {
 } from '~/server/services/apps/doc-store.types';
 import type { SessionUser } from '~/types/session';
 import {
-  getStorageImportGrant,
-  importGrantCovers,
-} from '~/server/services/apps/storage-import-grant.service';
+  decideCollectionRead,
+  type CollectionReadRefusal,
+} from '~/server/services/apps/data-read-grant';
+import { declaredStorage } from '~/server/services/apps/doc-store-declared';
 import { getGrantedScopes } from '~/server/services/blocks/scope-grant.service';
 import {
   APP_STORAGE_BASE_SCOPE,
-  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
-  isCollectionExportable,
-  parseManifestStorage,
   type DeclaredStorageCollections,
   type DeclaredStorageImports,
 } from '~/shared/constants/block-storage.constants';
+
+// Declared here first; moved so `data-read-grant.ts` can read it without importing this module.
+export { declaredCollections, declaredStorage } from '~/server/services/apps/doc-store-declared';
 
 export type StorageAccess = {
   ctx: DocStoreContext;
@@ -113,40 +112,6 @@ const notEligible = (reason: string, message: string) =>
 
 const unavailable = docStoreUnavailable;
 const dependency = docStoreDependency;
-
-const loggedUnparseable = new Set<string>();
-
-/** The declared storage, or a retryable 503 (logged once per app, counted every time). */
-export function declaredStorage(
-  appId: string,
-  manifest: unknown
-): { collections: DeclaredStorageCollections; imports: DeclaredStorageImports } {
-  const parsed = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON);
-  if (parsed.errors.length === 0) {
-    return { collections: parsed.collections, imports: parsed.imports };
-  }
-  recordStorageManifestUnparseable();
-  if (!loggedUnparseable.has(appId)) {
-    loggedUnparseable.add(appId);
-    logToAxiom(
-      {
-        name: 'app-blocks-doc-store-manifest-unparseable',
-        type: 'error',
-        appBlockId: appId,
-        errors: parsed.errors.slice(0, 5),
-      },
-      'app-blocks'
-    );
-  }
-  throw new DocStoreError('service_unavailable', 'storage is temporarily unavailable', {
-    retryAfter: 30,
-  });
-}
-
-/** The declared collections, or a retryable 503 (see {@link declaredStorage}). */
-export function declaredCollections(appId: string, manifest: unknown): DeclaredStorageCollections {
-  return declaredStorage(appId, manifest).collections;
-}
 
 /**
  * Whether a token with this `maxBrowsingLevel` claim may reach an app rated `rating`: the mint's
@@ -258,6 +223,64 @@ export async function resolveStorageAccess(
  */
 export type ImportOp = 'read' | 'delete' | 'author';
 
+/** A collection-read refusal through an import, as the document store answers it. */
+function importRefusal(
+  reason: CollectionReadRefusal,
+  from: string,
+  collection: string
+): DocStoreError {
+  switch (reason) {
+    case 'source_not_approved':
+      return notEligible('source_not_approved', `the app ${from} is not available`);
+    case 'import_self':
+      return new DocStoreError('import_not_declared', 'an app cannot import from itself', { from });
+    case 'import_not_declared':
+      return new DocStoreError(
+        'import_not_declared',
+        `this app does not declare an import of ${collection} from ${from}`,
+        { from, collection }
+      );
+    case 'source_rating':
+      return notEligible('import_source_rating', `the app ${from} is not available on this site`);
+    case 'collection_not_declared':
+      return new DocStoreError(
+        'collection_not_declared',
+        `collection ${collection} is not declared by ${from}`,
+        { collection, from }
+      );
+    case 'not_exportable':
+      return new DocStoreError(
+        'not_exportable',
+        `${from} does not share ${collection} with other apps`,
+        {
+          collection,
+          from,
+        }
+      );
+    case 'import_scope_unavailable':
+      return new DocStoreError(
+        'consent_unavailable',
+        'permission state is temporarily unavailable',
+        {
+          retryAfter: 1,
+        }
+      );
+    case 'import_scope_missing':
+    case 'import_not_granted':
+      return new DocStoreError(
+        'consent_required',
+        `${APP_STORAGE_IMPORT_SCOPE} has not been granted`,
+        {
+          scope: APP_STORAGE_IMPORT_SCOPE,
+          from,
+        }
+      );
+    default:
+      // Reached only without `via` (the consumer resolved from a client id), never from here.
+      return notEligible(reason, 'this app cannot reach another app');
+  }
+}
+
 /**
  * The SOURCE app's access for one collection call through an import, for the same viewer, or a
  * refusal (each check runs before any read the next one needs). An import grant is not publish
@@ -281,13 +304,11 @@ export async function resolveImportAccess(
   if (consumer.tokenKind === 'hub') {
     throw notEligible('import_hub_token', 'a hub token cannot reach another app');
   }
+  // The predicate checks this too; it is read here first because the write check below needs the
+  // declared access, and both answer before any database read.
   const declared = consumer.imports.get(from);
   if (!declared || !declared.collections.has(collection)) {
-    throw new DocStoreError(
-      'import_not_declared',
-      `this app does not declare an import of ${collection} from ${from}`,
-      { from, collection }
-    );
+    throw importRefusal('import_not_declared', from, collection);
   }
   if (op !== 'read' && declared.access === 'read') {
     throw new DocStoreError('write_policy', `the import from ${from} is read-only`, {
@@ -298,69 +319,28 @@ export async function resolveImportAccess(
   const viewerUid = consumer.ctx.viewerUid;
   if (viewerUid === null) throw new DocStoreError('sign_in_required', 'sign in required');
 
-  const source = await dependency(
-    dbRead.appBlock.findUnique({
-      where: { blockId: from },
-      select: { id: true, status: true, manifest: true, updatedAt: true },
-    })
-  );
-  if (!source || source.status !== 'approved') {
-    throw notEligible('source_not_approved', `the app ${from} is not available`);
-  }
-  if (source.id === consumer.ctx.appId) {
-    throw new DocStoreError('import_not_declared', 'an app cannot import from itself', { from });
-  }
-  // The mint refuses a mature-rated app off a red-capable host; its documents must not reach that
-  // host through another app either. Same rule, read from the consumer token's ceiling.
-  const rating = (source.manifest as { contentRating?: unknown } | null)?.contentRating;
-  if (!ratingAllowedForCeiling(rating, consumer.maxBrowsingLevel)) {
-    throw notEligible('import_source_rating', `the app ${from} is not available on this site`);
-  }
-  const sourceStorage = declaredStorage(source.id, source.manifest);
-  const decl = sourceStorage.collections.get(collection);
-  if (!decl) {
-    throw new DocStoreError(
-      'collection_not_declared',
-      `collection ${collection} is not declared by ${from}`,
-      { collection, from }
-    );
-  }
-  if (!isCollectionExportable(decl)) {
-    throw new DocStoreError(
-      'not_exportable',
-      `${from} does not share ${collection} with other apps`,
-      {
-        collection,
-        from,
-      }
-    );
-  }
-
-  const consentRequired = () =>
-    new DocStoreError('consent_required', `${APP_STORAGE_IMPORT_SCOPE} has not been granted`, {
-      scope: APP_STORAGE_IMPORT_SCOPE,
-      from,
-    });
-  if (!consumer.scopes.includes(APP_STORAGE_IMPORT_SCOPE)) {
-    if (consumer.consentUnavailable) {
-      throw new DocStoreError(
-        'consent_unavailable',
-        'permission state is temporarily unavailable',
-        {
-          retryAfter: 1,
-        }
-      );
-    }
-    throw consentRequired();
-  }
-  const grant = await dependency(
-    getStorageImportGrant({
+  // Everything else is the one collection-read rule (`data-read-grant.ts`), with this token's
+  // consumer and consent as the middleware verified them.
+  const decision = await decideCollectionRead(
+    {
       userId: viewerUid,
-      consumerAppBlockId: consumer.ctx.appId,
-      sourceAppBlockId: source.id,
-    })
+      // Unused through `via`: the consumer is the token's, and the basis can only be an import.
+      clientId: '',
+      matureAllowed: (rating) => ratingAllowedForCeiling(rating, consumer.maxBrowsingLevel),
+    },
+    { sourceBlockId: from, collection },
+    {
+      appBlockId: consumer.ctx.appId,
+      imports: consumer.imports,
+      importScope: consumer.scopes.includes(APP_STORAGE_IMPORT_SCOPE)
+        ? 'held'
+        : consumer.consentUnavailable
+        ? 'unavailable'
+        : 'missing',
+    }
   );
-  if (!importGrantCovers(grant, declared)) throw consentRequired();
+  if (!decision.ok) throw importRefusal(decision.reason, from, collection);
+  const source = decision.source;
 
   if (consumer.ctx.ns !== PUBLISHED_NS) {
     throw notEligible('import_namespace', 'this token cannot reach another app');
@@ -379,7 +359,7 @@ export async function resolveImportAccess(
       ? [APP_STORAGE_BASE_SCOPE, APP_STORAGE_PUBLISH_SCOPE]
       : [APP_STORAGE_BASE_SCOPE],
     consentUnavailable: false,
-    collections: sourceStorage.collections,
+    collections: source.collections,
     // An import is one hop: a source's own imports are never followed.
     imports: new Map(),
     tokenKind: consumer.tokenKind,

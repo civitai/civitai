@@ -82,7 +82,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 		case !got:
 			return []OfficialModel{}, nil
 		}
-		defer s.releaseLocks(context.WithoutCancel(ctx), []string{lockKey})
+		defer s.releaseLocks(ctx, []string{lockKey}) // detached from the request by releaseLocks itself
 		list, err := s.officialFetch(ctx)
 		if err != nil {
 			return nil, err
