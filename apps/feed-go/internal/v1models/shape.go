@@ -400,7 +400,11 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 		version.Set("files", outFiles)
 		version.Set("images", outImages)
 		version.Set("downloadUrl", dl)
-		return removeEmpty(version), nil
+		version = removeEmpty(version)
+		// removeEmpty drops empty arrays, but the docs promise images is [] when every image is left
+		// out. Set keeps a non-empty one in place and appends an empty one, as the Node route does.
+		version.Set("images", outImages)
+		return version, nil
 	}
 	version.Set("supportsGeneration", getVal(v, "covered"))
 	version.Set("files", outFiles)
