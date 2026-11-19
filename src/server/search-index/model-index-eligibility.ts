@@ -21,7 +21,7 @@ import { Availability, ModelModifier, ModelStatus } from '~/shared/utils/prisma/
 export const MODEL_SEARCH_INDEX_ELIGIBILITY = {
   status: ModelStatus.Published,
   availability: { not: Availability.Unsearchable },
-  // A taken-down model is never searchable. Spelled with the NULL arm: `not` alone drops NULL.
+  // Prisma's `not` drops NULL rows, so the NULL arm is explicit.
   OR: [{ mode: null }, { mode: { not: ModelModifier.TakenDown } }],
 } as const satisfies Prisma.ModelWhereInput;
 

@@ -76,7 +76,6 @@ const queuedAs = (action: SearchIndexUpdateQueueAction) =>
     )
   );
 const reindexed = () => queuedAs(SearchIndexUpdateQueueAction.Update);
-// A taken-down model is not index-eligible, so its document is deleted rather than rewritten.
 const removedFromSearch = () =>
   queuedAs(SearchIndexUpdateQueueAction.Delete) && !queuedAs(SearchIndexUpdateQueueAction.Update);
 

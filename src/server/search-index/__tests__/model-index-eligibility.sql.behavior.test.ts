@@ -3,8 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { modelSearchIndexEligibilitySql } from '~/server/search-index/model-index-eligibility';
 
-// Which models the eligibility SQL keeps, run in Postgres: a taken-down model never; one with no
-// modifier, or an archived one, as before.
+// Run in real Postgres: NULL handling in `mode != 'TakenDown'` is invisible to a string-shape test.
 let pg: PGlite;
 beforeAll(async () => {
   pg = new PGlite();
