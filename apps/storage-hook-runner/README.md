@@ -109,7 +109,7 @@ transport failure or unverifiable response, to `hook_unavailable` (fail closed):
 
 ### Remix replay: `POST /v1/remix/replay`
 
-Replays a civitai remix app (`docs/features` has the product side): a module whose default export is
+Replays a civitai remix app: a module whose default export is
 `defineRemixApp({ async run(ctx) { ... } })`. `run` asks for steps through `ctx.workflow(request)`
 and `ctx.ask(spec)`; the caller keeps a log of each step's result and replays the app from the
 start over that log every time the run moves on. The runner only replays: it records each call the
@@ -129,7 +129,8 @@ non-2xx codes). Body (strict):
 | `input`     | object           | `{ source: { imageId, url, width, height }, base: Log, branches?: Log[], autoAnswer?: 'first' }` |
 
 A `Log` is up to 16 entries, each `{ type: 'workflow', result: { workflowId, images: [{ url, width?, height? }] } }`
-or `{ type: 'ask', answer: string | number }`. The runner replays `base`, then `base` followed by
+(`workflowId` at most 128 characters, at most 16 images, URLs at most 2048 characters, sizes positive
+integers) or `{ type: 'ask', answer }` (a string of at most 1000 characters, or a non-negative integer). The runner replays `base`, then `base` followed by
 each branch (at most 12, each with `base` at most 16 entries): how the caller prices a choice's
 options in one call. With `autoAnswer: 'first'`, each ask past the log is answered with its first
 answer (a choice's first option, a pick's first image, the text `remix`) until the first workflow.
@@ -140,11 +141,14 @@ answer (a choice's first option, a pick's first image, the text `remix`) until t
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{ effects }`                  | the app's calls up to the one the log has no entry for (the last); an auto-answered ask carries its `answer`; at most 17, the 17th past the limit |
 | `{ effects, done: { outputs } }` | `run` returned `outputs` after using the whole log                                                                                            |
-| `{ cause, detail }`            | the app's fault, as for hooks: `error`, `timeout`, `oom`, `stack_overflow`, or `invalid_result` (including a `run` that never settles)      |
+| `{ cause, detail }`            | the app's fault, as for hooks: `error`, `timeout`, `oom`, `stack_overflow`, or `invalid_result` (a `run` that never settles, one that returns before using its log, or a result nested deeper than 16 or longer than 32 KiB) |
 
-A replay stops for good at its first stop: an app that catches it and goes on still answers `{ effects }`.
-A call the log disagrees with (a workflow where the log has an answer) is returned as the last
-effect, for the caller to refuse.
+These are what the replay loop answers, and an app cannot step around them by catching a stop, by
+going on after one (a stop is final), or by changing a prototype: the loop is set up before the
+app's module runs and writes its result as JSON itself, without asking the app's objects. An app
+can still lie about itself through what it passes to `ctx` (a getter, an array index setter), so
+the caller treats every effect and output as the app's claim and checks it. A call the log disagrees
+with (a workflow where the log has an answer) is returned as the last effect, for the caller to refuse.
 
 ### The hook
 
@@ -174,7 +178,7 @@ All bounds live in `src/limits.ts`.
 | heap     | 16 MiB                                             | `runtime.setMemoryLimit`                                                                                        |
 | stack    | 256 KiB                                            | `runtime.setMaxStackSize` (see below)                                                                           |
 | time     | `timeoutMs`, [1, 500], default 50, evaluation only (a remix replay: 50, its awaits included) | interrupt handler (uncatchable; `catch`/`finally` cannot resume; a swallowed interrupt still ends as `timeout`) |
-| backstop | `timeoutMs` + 100 ms (a remix call: 50 ms per replay + 100 ms) | the pool terminates and replaces the worker; answered 500                                          |
+| backstop | `timeoutMs` + 100 ms (a remix call: (50 + 30) ms per replay + 50 ms + 100 ms) | the pool terminates and replaces the worker; answered 500                         |
 | per app  | ⌈`MAX_QUEUE` / 4⌉ calls queued plus in flight      | the pool; past it that app gets 503 while others proceed                                                        |
 | source   | 64 KiB (a remix app 32 KiB)                        | request validation                                                                                              |
 | body     | 256 KiB                                            | Fastify `bodyLimit`                                                                                             |
@@ -186,6 +190,10 @@ All bounds live in `src/limits.ts`.
   runtime (1 KiB hook, one CI run). The accepted residual
   risk: calls on one worker share the instance's linear memory, so a QuickJS memory-safety bug
   could read freed memory from an earlier call.
+- **A remix call's backstop** allows each replay 30 ms beyond its 50 (the compile-only pass,
+  the compile allowance and floor, runtime setup and disposal) and the call 50 ms for its fresh
+  instance, so a looping app's own timeouts never add up to a runner fault: 13 looping replays of
+  a 28 KiB app measured 815-863 ms against the 1,190 ms backstop.
 - **A remix call gets more.** Every replay gets its own fresh runtime and deadline, and every
   remix call a fresh WebAssembly instance (measured above as the instance-per-call cost), since
   an author sees what their own unreviewed app returns. `Date` and `Math.random` are removed
@@ -232,8 +240,9 @@ All bounds live in `src/limits.ts`.
 Metrics:
 
 - `storage_hook_runner_calls_total{app,collection,op,outcome}`: outcome is `allow`, `deny` or a
-  fault cause.
-- `storage_hook_runner_call_duration_seconds{outcome}`: evaluation time inside the worker.
+  fault cause. A remix replay counts once, as `collection="remix"`, `op="replay"`, with outcome
+  `effect`, `done` or a fault cause.
+- `storage_hook_runner_call_duration_seconds{outcome}`: evaluation time inside the worker (hooks only).
 - `storage_hook_runner_sig_rejected_total{reason}`: `bad_signature`, `stale_timestamp`.
 - `storage_hook_runner_requests_refused_total{reason,app}`: other non-2xx answers. `app` is empty
   until the request is authenticated and validated.

@@ -7,8 +7,8 @@ import {
   MAX_BODY_BYTES,
   MAX_REMIX_SOURCE_BYTES,
   MAX_SOURCE_BYTES,
-  REMIX_REPLAY_TIMEOUT_MS,
   SIG_HEADER,
+  remixBudgetMs,
 } from './limits.ts';
 import type { Metrics } from './metrics.ts';
 import { BackstopError, PoolClosedError, PoolOverloadedError } from './pool.ts';
@@ -245,7 +245,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         image: source,
         logs,
         autoAnswer,
-        budgetMs: logs.length * REMIX_REPLAY_TIMEOUT_MS,
+        budgetMs: remixBudgetMs(logs.length),
       });
     } catch (err) {
       return refusePoolError(reply, req, body.appId, err);
@@ -255,7 +255,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const outcome = 'cause' in result ? result.cause : result.done ? 'done' : 'effect';
       deps.metrics.calls.inc({ app: body.appId, collection: 'remix', op: 'replay', outcome });
     }
-    deps.metrics.duration.observe({ outcome: 'remix' }, out.elapsedMs / 1000);
     return send(reply, 200, { ts: nowSec(), req, results: out.results, elapsedMs: out.elapsedMs });
   });
 

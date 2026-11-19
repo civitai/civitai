@@ -1,4 +1,9 @@
-import { MAX_REMIX_EFFECTS, MAX_REMIX_RESULT_CHARS, REMIX_REPLAY_TIMEOUT_MS } from './limits.ts';
+import {
+  MAX_REMIX_EFFECTS,
+  MAX_REMIX_RESULT_CHARS,
+  MAX_REMIX_RESULT_DEPTH,
+  REMIX_REPLAY_TIMEOUT_MS,
+} from './limits.ts';
 import { fault } from './result.ts';
 import type { HookFaultCause, HookResult } from './result.ts';
 import { classifyVmError, evaluateOn, instantiate, loadModule } from './sandbox.ts';
@@ -55,6 +60,56 @@ delete Math.random;
 globalThis.defineRemixApp = (app) => app;
 (() => {
   const STOP = Object.freeze({});
+  const TOO_BIG = Object.freeze({});
+  // Taken before the app's module runs, so it cannot change how its result is written out.
+  const keysOf = Object.keys;
+  const isArray = Array.isArray;
+  const isFinite = Number.isFinite;
+  const quote = JSON.stringify;
+  // JSON, written in JS so it polls the interrupt, bounded in depth and size, and never asks the
+  // app's objects (toJSON, a prototype) how to write them.
+  const write = (v, depth, out) => {
+    if (depth > ${MAX_REMIX_RESULT_DEPTH} || out.n > ${MAX_REMIX_RESULT_CHARS}) throw TOO_BIG;
+    let s;
+    if (v === null || v === undefined) s = 'null';
+    else if (typeof v === 'string') s = quote(v);
+    else if (typeof v === 'number') s = isFinite(v) ? '' + v : 'null';
+    else if (typeof v === 'boolean') s = v ? 'true' : 'false';
+    else if (typeof v !== 'object') s = 'null';
+    else if (isArray(v)) {
+      out.push('[');
+      for (let i = 0; i < v.length; i++) {
+        if (i) out.push(',');
+        write(v[i], depth + 1, out);
+      }
+      out.push(']');
+      return;
+    } else {
+      out.push('{');
+      const ks = keysOf(v);
+      for (let i = 0; i < ks.length; i++) {
+        if (i) out.push(',');
+        out.push(quote(ks[i]) + ':');
+        write(v[ks[i]], depth + 1, out);
+      }
+      out.push('}');
+      return;
+    }
+    out.push(s);
+  };
+  const toJson = (v) => {
+    const parts = [];
+    const out = { n: 0, push: (s) => { parts[parts.length] = s; out.n += s.length; } };
+    try {
+      write(v, 0, out);
+    } catch (e) {
+      if (e === TOO_BIG) return '{"tooBig":true}';
+      throw e;
+    }
+    let text = '';
+    for (let i = 0; i < parts.length; i++) text += parts[i];
+    return text;
+  };
   const firstAnswer = (spec) =>
     spec.kind === 'choice' ? spec.options[0].value : spec.kind === 'pick' ? 0 : 'remix';
   return (app, input) => {
@@ -102,10 +157,11 @@ globalThis.defineRemixApp = (app) => app;
     );
     return () => {
       // A stop is final: an app that caught it and went on still stops there.
-      if (stopped) return { effects };
-      if (!settled) return { pending: true };
+      if (stopped) return toJson({ effects });
+      if (!settled) return '{"pending":true}';
       if (failed) throw value;
-      return { effects, done: { outputs: value } };
+      if (next < log.length) return '{"short":true}';
+      return toJson({ effects, done: { outputs: value } });
     };
   };
 })()`;
@@ -144,7 +200,7 @@ function replay(
   const { rt, ctx, keep, wasInterrupted, pastDeadline } = scope;
   const loaded = loadModule(scope, source, PRELUDE);
   if ('allow' in loaded) return loaded;
-  const { ns, engine, json, parse, stringify, preludeValue: driver } = loaded;
+  const { ns, engine, json, parse, preludeValue: driver } = loaded;
   const vmError = (err: ReturnType<typeof keep>) =>
     classifyVmError(ctx, err, wasInterrupted(), engine);
 
@@ -162,16 +218,10 @@ function replay(
     if (jobs.error) return vmError(keep(jobs.error));
   }
 
+  // `finish` writes the result as JSON itself (see `toJson` in the prelude).
   const finished = ctx.callFunction(finish, ctx.undefined);
   if (finished.error) return vmError(keep(finished.error));
-  const serialised = ctx.callFunction(stringify, json, keep(finished.value));
-  if (serialised.error) {
-    const e = vmError(keep(serialised.error));
-    return !e.allow && e.cause === 'error'
-      ? fault('invalid_result', `result could not be serialised: ${e.detail}`)
-      : e;
-  }
-  const text = keep(serialised.value);
+  const text = keep(finished.value);
   return validateRemixReturn(ctx.typeof(text) === 'string' ? ctx.getString(text) : undefined);
 }
 
@@ -180,7 +230,13 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
   if (json === undefined) return fault('invalid_result', 'replay returned nothing');
   if (json.length > MAX_REMIX_RESULT_CHARS)
     return fault('invalid_result', `result exceeds ${MAX_REMIX_RESULT_CHARS} characters`);
-  let v: { effects?: unknown; done?: unknown; pending?: unknown } | null;
+  let v: {
+    effects?: unknown;
+    done?: unknown;
+    pending?: unknown;
+    short?: unknown;
+    tooBig?: unknown;
+  } | null;
   try {
     v = JSON.parse(json);
   } catch {
@@ -189,6 +245,12 @@ export function validateRemixReturn(json: string | undefined): RemixReplayResult
   if (typeof v !== 'object' || v === null)
     return fault('invalid_result', 'result is not an object');
   if (v.pending === true) return fault('invalid_result', 'run never settled');
+  if (v.short === true) return fault('invalid_result', 'run finished before the log ended');
+  if (v.tooBig === true)
+    return fault(
+      'invalid_result',
+      `result is nested past ${MAX_REMIX_RESULT_DEPTH} or longer than ${MAX_REMIX_RESULT_CHARS}`
+    );
   const effects = v.effects;
   if (
     !Array.isArray(effects) ||

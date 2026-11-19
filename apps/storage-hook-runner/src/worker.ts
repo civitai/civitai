@@ -32,10 +32,9 @@ const crashed = (id: number) => (err: unknown) =>
 
 port.on('message', (msg: WorkerRequest) => {
   if (msg.kind === 'remix') {
-    evaluateRemix(compiled, msg).then(
-      (remix) => port.postMessage({ id: msg.id, remix } satisfies WorkerResponse),
-      crashed(msg.id)
-    );
+    evaluateRemix(compiled, msg)
+      .then((remix) => port.postMessage({ id: msg.id, remix } satisfies WorkerResponse))
+      .catch(crashed(msg.id));
     return;
   }
   instance.evaluate(msg).then(

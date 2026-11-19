@@ -2,11 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.ts';
 import {
-  BACKSTOP_MS,
   MAX_REMIX_BRANCHES,
   MAX_REMIX_EFFECTS,
   MAX_REMIX_SOURCE_BYTES,
-  REMIX_REPLAY_TIMEOUT_MS,
   SIG_HEADER,
 } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
@@ -107,16 +105,13 @@ describe('POST /v1/remix/replay: Pick of four', () => {
     const branches = Array.from({ length: MAX_REMIX_BRANCHES }, (_, i) => [
       { type: 'ask', answer: i % 2 ? 'keep' : 'upscale' },
     ]);
-    const t0 = performance.now();
     const res = await replay(PICK_OF_FOUR, { base: atChoice, branches });
-    const wall = performance.now() - t0;
+    // A 500 here would be the backstop.
     expect(res.statusCode).toBe(200);
     const all = res.json().results as Record<string, unknown>[];
     expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
     expect(all[1]).toMatchObject({ effects: expect.any(Array) });
     expect(all[2]).toMatchObject({ done: { outputs: [take(1)] } });
-    // Loose upper bound: the backstop would have answered 500 past this.
-    expect(wall).toBeLessThan((1 + MAX_REMIX_BRANCHES) * REMIX_REPLAY_TIMEOUT_MS + BACKSTOP_MS);
   });
 
   it('with autoAnswer, answers each ask with its first answer until the first workflow', async () => {
@@ -171,11 +166,55 @@ describe('POST /v1/remix/replay: what the app cannot change', () => {
 export default defineRemixApp({
   async run(ctx) {
     try { await ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); } catch {}
+    try { await ctx.ask({ kind: 'text', prompt: 'Again?', maxLength: 10 }); } catch {}
     return [ctx.source];
   },
 });`;
     const [result] = await results(stubborn);
     expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it('writes its own result, whatever the app does to the prototypes', async () => {
+    const forger = `
+Object.prototype.toJSON = function () { return { effects: [], done: { outputs: ['forged'] } }; };
+export default defineRemixApp({
+  async run(ctx) {
+    try { await ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); } catch {}
+    return ['forged'];
+  },
+});`;
+    const [result] = await results(forger);
+    expect(result).toEqual({ effects: [expect.objectContaining({ type: 'workflow' })] });
+  });
+
+  it('refuses a result nested too deep to cross to the host, without a runner fault', async () => {
+    const deep = `
+export default defineRemixApp({
+  async run(ctx) {
+    let r = 0;
+    for (let i = 0; i < 4000; i++) r = [r];
+    await ctx.workflow(r);
+    return [];
+  },
+});`;
+    const all = await results(deep, { branches: [[]] });
+    expect(all).toEqual([
+      expect.objectContaining({ cause: 'invalid_result' }),
+      expect.objectContaining({ cause: 'invalid_result' }),
+    ]);
+  });
+
+  it('refuses a run that finishes before its log ends', async () => {
+    const [result] = await results(
+      'export default defineRemixApp({ async run() { return []; } });',
+      {
+        base: [{ type: 'ask', answer: 'a' }],
+      }
+    );
+    expect(result).toMatchObject({ cause: 'invalid_result' });
+    // POSITIVE CONTROL: on an empty log the same app is done.
+    const [done] = await results('export default defineRemixApp({ async run() { return []; } });');
+    expect(done).toMatchObject({ done: { outputs: [] } });
   });
 
   it('stops at a step whose type the log disagrees with', async () => {
@@ -225,7 +264,10 @@ describe("POST /v1/remix/replay: faults are the author's, per replay", () => {
 it(`gives each of ${
   1 + MAX_REMIX_BRANCHES
 } looping replays its own deadline, inside the call's backstop`, async () => {
-  const loop = 'export default defineRemixApp({ async run() { for (;;) {} } });';
+  // A source near the cap, so each replay's compile counts against the backstop too.
+  const table = `const T = [${'"rule-0123456789",'.repeat(1700)}];\n`;
+  const loop = `${table}export default defineRemixApp({ async run() { for (;;) {} } });`;
+  expect(Buffer.byteLength(loop)).toBeGreaterThan(28 * 1024);
   const all = await results(loop, {
     branches: Array.from({ length: MAX_REMIX_BRANCHES }, () => []),
   });
@@ -255,7 +297,14 @@ describe('POST /v1/remix/replay: refusals', () => {
   it(`refuses more than ${MAX_REMIX_BRANCHES} branches, or a branch past ${MAX_REMIX_EFFECTS} entries`, async () => {
     const many = Array.from({ length: MAX_REMIX_BRANCHES + 1 }, () => []);
     expect((await replay(PICK_OF_FOUR, { branches: many })).statusCode).toBe(400);
-    const long = Array.from({ length: MAX_REMIX_EFFECTS + 1 }, () => ({ type: 'ask', answer: 0 }));
-    expect((await replay(PICK_OF_FOUR, { branches: [long] })).statusCode).toBe(400);
+    const asks = (n: number) => Array.from({ length: n }, () => ({ type: 'ask', answer: 0 }));
+    const base = asks(10);
+    expect(
+      (await replay(PICK_OF_FOUR, { base, branches: [asks(MAX_REMIX_EFFECTS - 9)] })).statusCode
+    ).toBe(400);
+    // POSITIVE CONTROL: one entry fewer fits.
+    expect(
+      (await replay(PICK_OF_FOUR, { base, branches: [asks(MAX_REMIX_EFFECTS - 10)] })).statusCode
+    ).toBe(200);
   });
 });

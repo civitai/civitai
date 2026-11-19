@@ -59,6 +59,26 @@ export const MAX_REMIX_EFFECTS = 16;
 /** One replay's result, serialised inside the VM, at most this many characters. */
 export const MAX_REMIX_RESULT_CHARS = 32 * 1024;
 
+/** ...and nested at most this deep (an effect needs 5), so it crosses to the host as plain data. */
+export const MAX_REMIX_RESULT_DEPTH = 16;
+
+/**
+ * Each replay's share of the backstop beyond its own budget: the compile-only pass, the compile
+ * allowance and floor, and runtime setup and disposal. Without it a looping app's own timeouts
+ * would add up past the backstop, turning the author's fault into a runner fault.
+ */
+export const REMIX_REPLAY_OVERHEAD_MS = 30;
+
+/** A remix call's share for its fresh WebAssembly instance (README: p99 36 ms). */
+export const REMIX_INSTANCE_ALLOWANCE_MS = 50;
+
+/** A remix call's budget, before the backstop's margin. */
+export function remixBudgetMs(replays: number): number {
+  return (
+    replays * (REMIX_REPLAY_TIMEOUT_MS + REMIX_REPLAY_OVERHEAD_MS) + REMIX_INSTANCE_ALLOWANCE_MS
+  );
+}
+
 /** Hook source size cap (UTF-8 bytes), matching the manifest-side cap. */
 export const MAX_SOURCE_BYTES = 64 * 1024;
 
