@@ -55,12 +55,16 @@ async function lookup(
   viewer: ViewerKey,
   poi: boolean,
   credential = {},
-  { versionStatus = 'Published', modelStatus = 'Published' } = {}
+  {
+    versionStatus = 'Published',
+    modelStatus = 'Published',
+    publishedAt = versionStatus === 'Published' ? new Date(0) : null,
+  }: { versionStatus?: string; modelStatus?: string; publishedAt?: Date | null } = {}
 ) {
   mockGetVersionById.mockResolvedValue({
     id: 100,
     status: versionStatus,
-    publishedAt: versionStatus === 'Published' ? new Date(0) : null,
+    publishedAt,
     recommendedResources: [],
     model: { id: 1, poi, status: modelStatus, user: { id: OWNER } },
   });
@@ -123,6 +127,7 @@ describe('getModelVersionHandler, version and model status', () => {
     ],
     ['a deleted version', { versionStatus: 'Deleted', modelStatus: 'Deleted' }],
     ['a scheduled version', { versionStatus: 'Scheduled', modelStatus: 'Published' }],
+    ['a version published for a later time', { publishedAt: new Date(Date.now() + 86_400_000) }],
     [
       'an unpublished version of a published model',
       { versionStatus: 'Unpublished', modelStatus: 'Published' },
