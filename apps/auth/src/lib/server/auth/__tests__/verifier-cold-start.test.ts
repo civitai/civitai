@@ -98,7 +98,7 @@ describe('hub verifier at cold start', () => {
 describe('hub verifier starting during a store outage', () => {
   it('waits one read deadline in all, then allows at once until the store is up', async () => {
     process.env.REDIS_SYS_READ_TIMEOUT_MS = '80';
-    const { verifier } = await load();
+    const { verifier, isUnconfirmedSession } = await load();
     const first = Date.now();
     await verifier.verifyToken(live);
     expect(Date.now() - first).toBeGreaterThanOrEqual(70);
@@ -106,6 +106,7 @@ describe('hub verifier starting during a store outage', () => {
     const claims = await verifier.verifyToken(live);
     expect(Date.now() - second).toBeLessThan(30);
     expect(claims?.sub).toBe('8');
+    expect(isUnconfirmedSession(claims!)).toBe(true);
   });
 });
 
