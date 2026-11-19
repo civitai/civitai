@@ -99,7 +99,7 @@ jobs:
           echo "$out" | tail -20
           echo "exit: $rc"
           [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
-          echo "$out" | grep -q 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars'
+          grep -q 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars' <<<"$out"
 
       # Run as the pod does: read-only root filesystem, uid/gid 1001, no capabilities, no
       # privilege escalation, a 2-CPU quota, and NO network (--network none: the pod's policy
@@ -125,13 +125,17 @@ jobs:
           get http://127.0.0.1:8080/readyz
           echo
           get http://127.0.0.1:8080/healthz >/dev/null
-          get http://127.0.0.1:9091/metrics | grep -q '^storage_hook_runner_pool_workers'
+          # Captured, never piped into `grep -q`: grep exits at the first match, the writer then
+          # dies of SIGPIPE, and with pipefail the step fails with 141 depending on timing.
+          metrics=$(get http://127.0.0.1:9091/metrics)
+          grep -q '^storage_hook_runner_pool_workers' <<<"$metrics"
           # The pool sized itself from the cgroup CPU quota (--cpus 2), not the runner's cores.
-          docker logs shr 2>&1 | grep -q '(metrics 9091), 2 workers'
+          logs=$(docker logs shr 2>&1)
+          grep -q '(metrics 9091), 2 workers' <<<"$logs"
           # An unsigned check is refused 401 (busybox wget exits non-zero on it and names the
           # status).
           out=$(docker exec shr wget -q -T 5 -O- --header 'content-type: application/json' \
             --post-data '{}' http://127.0.0.1:8080/v1/check 2>&1 || true)
           echo "unsigned /v1/check: $out"
-          echo "$out" | grep -q ' 401 '
+          grep -q ' 401 ' <<<"$out"
           docker rm -f shr >/dev/null
