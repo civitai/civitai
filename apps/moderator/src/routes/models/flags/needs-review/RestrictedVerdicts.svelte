@@ -3,6 +3,7 @@
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import { leadComCoverBlurred } from '$lib/com-face';
@@ -19,7 +20,17 @@
     rows,
     total,
     civitaiUrl,
-  }: { rows: RestrictedVerdictRow[]; total: number; civitaiUrl: string } = $props();
+    startOpen = true,
+  }: {
+    rows: RestrictedVerdictRow[];
+    total: number;
+    civitaiUrl: string;
+    /** Collapsed, the panel is one line: it sits in the queue column's fixed-height header, and
+     *  opened with dozens of leads it once left the queue list under it 0px tall. */
+    startOpen?: boolean;
+  } = $props();
+
+  let expanded = $state(untrack(() => startOpen));
 
   const RESTRICTION_LABEL: Record<Restriction, string> = {
     minor: 'minor',
@@ -65,18 +76,29 @@
 
 {#if rows.length}
   <section class="rounded-md border border-red-6/40 bg-dark-6 p-3" aria-label="Scan rated NSFW">
-    <h2 class="m-0 text-sm font-semibold">
-      Scan rated NSFW on a restricted model
-      <span class="text-dark-2"
-        >({total > rows.length ? `${rows.length} of ${total} shown` : rows.length})</span
+    <div class="flex items-center gap-2">
+      <h2 class="m-0 text-sm font-semibold">
+        Scan rated NSFW on a restricted model
+        <span class="text-dark-2"
+          >({total > rows.length ? `${rows.length} of ${total} shown` : rows.length})</span
+        >
+      </h2>
+      <button
+        type="button"
+        class="ml-auto shrink-0 text-xs {LINK_CLASS}"
+        aria-expanded={expanded}
+        onclick={() => (expanded = !expanded)}
       >
-    </h2>
+        {expanded ? 'Hide' : 'Show'}
+      </button>
+    </div>
+    {#if expanded}
     <p class="m-0 mt-1 text-xs text-dark-2">
       The owner marked these minor, a real person or SFW-only. Minor and real-person models keep their
       rating until you rule or the owner unticks the flag; SFW-only models were rated NSFW, and Keep
       restores SFW-only. Minor first.
     </p>
-    <ul class="m-0 mt-2 flex list-none flex-col gap-2 p-0">
+    <ul class="m-0 mt-2 flex max-h-[30vh] list-none flex-col gap-2 overflow-y-auto p-0">
       {#each rows as row (row.modelId)}
         <li class="rounded border border-dark-4 p-2 text-sm">
           <div class="flex flex-wrap items-center gap-1.5">
@@ -231,5 +253,6 @@
         </li>
       {/each}
     </ul>
+    {/if}
   </section>
 {/if}
