@@ -166,6 +166,15 @@ const VERSIONS = {
   6301: 5004,
   6401: 5005,
 };
+// ModelVersion.baseModel per version (the `baseModels` filter). Read only by a fixture that sends it.
+const VERSION_BASE_MODELS = {
+  6001: 'SDXL 1.0',
+  6002: 'Pony',
+  6101: 'SD 1.5',
+  6201: 'SDXL 1.0',
+  6301: 'Pony',
+  6401: 'Illustrious',
+};
 const settings = (extra) => ({
   hiddenTags: [],
   hiddenUsers: [],
@@ -486,6 +495,8 @@ class Trace {
     this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
     this.toolsRead = false; // a query filtered by `tools`: the tables then carry each image's tool rows
     this.toolsCandidatePosts = new Set(); // posts of every row a tools query matches without its tools clause
+    this.baseModelsRead = false; // a query filtered by `baseModels`: the tables then carry each version's baseModel
+    this.baseModelsCandidatePosts = new Set(); // posts of every row such a query matches without that clause
   }
 }
 let T; // the fixture being traced
@@ -798,7 +809,8 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
     params.set('excludePoi', '1');
     if (present(input.currentUserId)) params.set('viewerId', String(input.currentUserId));
   }
-  // (baseModels, which no fixture sends, is set here first.)
+  const baseModels = Array.isArray(input.baseModels) ? input.baseModels.map(String).filter(Boolean) : [];
+  if (baseModels.length) params.set('baseModels', baseModels.join(','));
   const tools = ints(input.tools);
   if (tools.length) params.set('tools', tools.join(','));
   if (postIds.length) params.set('postIds', [...new Set(postIds)].join(','));
@@ -868,12 +880,13 @@ class NodeError extends Error {
 /** The rows Node's getAllImages SQL returns, for the clauses these inputs reach. */
 function imageSql(q) {
   if (q.tools?.length) T.toolsRead = true;
+  if (q.baseModels?.length) T.baseModelsRead = true;
   const isModerator = !!q.user?.isModerator;
   const userId = q.user?.id;
   let browsingLevel = onlySelectableLevels(q.browsingLevel ?? 0);
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   const viaVersion = q.modelVersionId || q.modelId;
-  const passes = (i, applyTools) => {
+  const passes = (i, applyTools, applyBaseModels = true) => {
     const p = POSTS[i.postId];
     if (q.ids?.length && !q.ids.includes(i.id)) return false;
     if (q.types?.length && !q.types.includes(i.type)) return false;
@@ -895,6 +908,11 @@ function imageSql(q) {
     // EXISTS (… FROM "ImageTool" … HAVING array_agg(it."toolId") @> ARRAY[tools]::integer[]): every
     // listed tool on the image; an image with no tool row has no group, so never matches.
     if (applyTools && q.tools?.length && !q.tools.every((t) => toolIdsOf(i.id).includes(t))) return false;
+    // EXISTS (SELECT 1 FROM "ModelVersion" mv RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id
+    // AND ir."modelVersionId" = mv.id WHERE mv."baseModel" IN (baseModels)): a resource row on an
+    // existing version carrying one of the names (the whole list, an empty name included).
+    if (applyBaseModels && q.baseModels?.length && !RESOURCES[i.id].some((r) => r.modelVersionId in VERSION_BASE_MODELS && q.baseModels.includes(VERSION_BASE_MODELS[r.modelVersionId])))
+      return false;
     if (i.needsReview !== null || i.acceptableMinor) return false;
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
     return true;
@@ -903,6 +921,8 @@ function imageSql(q) {
   // Every row the same query would match WITHOUT the tools clause (before order, cursor and limit):
   // the fixture's tables must hold them, or a feed-go that dropped the clause would answer the same.
   if (q.tools?.length) for (const i of Object.values(IMAGES)) if (passes(i, false)) T.toolsCandidatePosts.add(i.postId);
+  // The same for the baseModels clause.
+  if (q.baseModels?.length) for (const i of Object.values(IMAGES)) if (passes(i, true, false)) T.baseModelsCandidatePosts.add(i.postId);
   // A post's own media (`postId` without `modelId`): ORDER BY i."index", i."id", the cursor on the
   // index (getCursor('i."index"'), inclusive), and the index as the cursor column.
   const byIndex = !!q.postId && !q.modelId;
@@ -1427,7 +1447,8 @@ function runInfinite(spec) {
   const color = Object.entries(HOST).find(([, h]) => h === spec.host)?.[0] ?? 'blue';
   const canViewNsfw = color === 'blue' || color === 'red';
   const cap = !user ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined;
-  const raw = structuredClone(spec.input);
+  // zod strips the keys getInfiniteImagesSchema lacks (the legacy clients' `useIndex` and `search`).
+  const { useIndex: _useIndex, search: _search, ...raw } = structuredClone(spec.input);
   if (cap !== undefined) raw.browsingLevel = ((raw.browsingLevel ?? 0) & cap) || cap;
   const input = {
     browsingLevel: allBrowsingLevelsFlag,
@@ -2337,7 +2358,69 @@ const INFINITE = [
     input: { modelId: 5001, sort: 'Newest', browsingLevel: 1, limit: 2, tools: [41] },
     replies: {},
   },
+  {
+    name: 'base-models-global-feed',
+    description: 'The global feed signed out with `baseModels: [SDXL 1.0, "", Illustrious, SDXL 1.0]`: the feed query sends the non-empty names in order, repeat kept, after the POI exclusion; the hydrate binds the whole list and drops 8020 (Pony only), which the feed named.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Most Reactions', browsingLevel: 1, limit: 4, baseModels: ['SDXL 1.0', '', 'Illustrious', 'SDXL 1.0'] },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&baseModels=SDXL+1.0%2CIllustrious%2CSDXL+1.0&sort=reactions&limit=4': { body: { items: [8204, 8007, 8020, 8001], ...fc('1717900000000', '8001') } },
+    },
+  },
+  {
+    name: 'base-models-model-only-db-path',
+    description: 'A model without a version (the Postgres path) with `baseModels: [SDXL 1.0]`: only images with a resource on an SDXL 1.0 version (the Pony version 6002’s images 8011-8020 are dropped), in irr.imageId DESC order, the look-ahead row’s id as the cursor.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5001, sort: 'Newest', browsingLevel: 1, limit: 2, baseModels: ['SDXL 1.0'] },
+    replies: {},
+  },
+  {
+    name: 'legacy-keys-ignored',
+    description: 'A legacy client’s `useIndex` and `search`: not getInfiniteImagesSchema keys, so zod strips them and the answer is the one without them.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Newest', browsingLevel: 1, limit: 2, useIndex: true, search: 'golden fox' },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=newest&limit=2': { body: { items: [8007, 8006], ...fc('1717000000000', '8006') } },
+    },
+  },
+  {
+    name: 'include-count-report',
+    description: '`include: [cosmetics, count, report]`: two include values getAllImagesUncaptured never reads, so the answer is the default include’s.',
+    viewer: null,
+    host: HOST.green,
+    input: { include: ['cosmetics', 'count', 'report'], browsingLevel: 1, limit: 2 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } },
+    },
+  },
   // Fallbacks.
+  {
+    name: 'fallback-base-models-not-a-list',
+    description: '`baseModels` as a bare string: the schema’s BAD_REQUEST (z.string().array()), which Node answers itself.',
+    fallback: 'input-invalid',
+    viewer: null,
+    host: HOST.green,
+    input: { baseModels: 'Pony', browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-include-tags',
+    description: '`include: [cosmetics, tags]`: the votable tags (imageTagsCache and the viewer’s votes) are not ported.',
+    fallback: 'input-include',
+    viewer: null,
+    host: HOST.green,
+    input: { include: ['cosmetics', 'tags'], browsingLevel: 1, limit: 2 },
+  },
+  {
+    name: 'fallback-unknown-key',
+    description: 'A key outside getInfiniteImagesSchema that is not a known stripped key still hands back, beside an ignored legacy one.',
+    fallback: 'input-unknown-key',
+    viewer: null,
+    host: HOST.green,
+    input: { someNewFilter: true, useIndex: true, browsingLevel: 1, limit: 2 },
+  },
   {
     name: 'fallback-hat-turf-sort',
     description: 'A Hat Turf sort: Node reads the event engine and the turf rank; not ported.',
@@ -2377,6 +2460,11 @@ function dbTables({ tags = false, meta = false } = {}) {
     for (const id of T.toolsCandidatePosts) T.posts.add(id);
     for (const id of Object.keys(IMAGE_TOOLS)) T.posts.add(IMAGES[id].postId);
   }
+  if (T.baseModelsRead) {
+    // Likewise for `baseModels`: each image the feed named and each row the clause alone decides on.
+    for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
+    for (const id of T.baseModelsCandidatePosts) T.posts.add(id);
+  }
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
@@ -2395,7 +2483,11 @@ function dbTables({ tags = false, meta = false } = {}) {
   return {
     images,
     posts: postIds.map((id) => ({ id, modelVersionId: POSTS[id].modelVersionId })),
-    modelVersions: Object.entries(VERSIONS).map(([id, modelId]) => ({ id: Number(id), modelId })),
+    modelVersions: Object.entries(VERSIONS).map(([id, modelId]) => ({
+      id: Number(id),
+      modelId,
+      ...(T.baseModelsRead ? { baseModel: VERSION_BASE_MODELS[id] } : {}),
+    })),
     models: Object.values(MODELS),
     reviews: REVIEWS,
     reactions: REACTIONS,
