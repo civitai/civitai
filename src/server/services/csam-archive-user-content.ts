@@ -305,8 +305,8 @@ const CHAT_MESSAGE_COLUMNS = [
  *
  * Member chats are paged per chat. The `(chatId, id)` index is partial on undeleted messages, so it
  * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
- * The user's other messages need a primary-key walk filtered on `userId`, since no index leads
- * with it; the cursor resumes, so that is about one pass over the table across all pages.
+ * The user's other messages are found by `userId`, which no index leads with: the read walks the
+ * primary key, so even a user with none outside their chats costs a scan of the table.
  */
 async function* chatMessages(db: Db, userId: number, pageSize?: number) {
   const memberships = await db
@@ -331,21 +331,38 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number) {
         return q.execute();
       }, pageSize)
     );
+  const inMemberChat = new Set(memberChats);
   yield* withEdits(
     db,
     userId,
-    scanPagesById(({ afterId, take }) => {
-      let q = db
-        .selectFrom('ChatMessage')
-        .select(CHAT_MESSAGE_COLUMNS)
-        .where('userId', '=', userId)
-        .orderBy('id', 'asc')
-        .limit(take);
-      if (memberChats.length) q = q.where('chatId', 'not in', memberChats);
-      if (afterId !== undefined) q = q.where('id', '>', afterId);
-      return q.execute();
-    }, pageSize)
+    outsideChats(
+      inMemberChat,
+      scanPagesById(({ afterId, take }) => {
+        let q = db
+          .selectFrom('ChatMessage')
+          .select(CHAT_MESSAGE_COLUMNS)
+          .where('userId', '=', userId)
+          .orderBy('id', 'asc')
+          .limit(take);
+        if (afterId !== undefined) q = q.where('id', '>', afterId);
+        return q.execute();
+      }, pageSize)
+    )
   );
+}
+
+/**
+ * Drops the messages of chats already archived whole. Filtered here rather than in SQL so the
+ * statement does not carry one parameter per chat; the cursor still advances on the unfiltered page.
+ */
+async function* outsideChats<T extends { chatId: number }>(
+  chats: Set<number>,
+  pages: AsyncIterable<T[]>
+) {
+  for await (const page of pages) {
+    const rest = page.filter((m) => !chats.has(m.chatId));
+    if (rest.length) yield rest;
+  }
 }
 
 /** Tags each message with its author side and the text each edit replaced, a page at a time. */

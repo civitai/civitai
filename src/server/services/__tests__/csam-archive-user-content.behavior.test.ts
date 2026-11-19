@@ -493,10 +493,18 @@ describe('the archive text sections', () => {
         );
     });
 
-    it('yields nothing for a user in no chats', async () => {
+    it('yields nothing for a user in no chats who wrote nothing', async () => {
       await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES (7, ${OTHER})`);
       await message(1, 7, OTHER);
       expect(await read('chatMessages', ME)).toEqual([]);
+    });
+
+    it('holds only their own messages for a user with no membership rows at all', async () => {
+      await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES (7, ${OTHER})`);
+      await message(1, 7, OTHER);
+      await message(2, 7, ME);
+      const rows = await read('chatMessages', ME);
+      expect(rows.map((r) => [r.chatId, r.id, r.isReportedUser])).toEqual([[7, 2, true]]);
     });
   });
 });
