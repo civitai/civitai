@@ -172,14 +172,89 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
 export const CSAM_BLOCKLIST_RETRY =
   'The image was blocked, but its CSAM blocklist entry could not be written. Block it again to retry.';
 
+/** Where a CSAM entry failed to land: the ClickHouse blocklist, or its Postgres held-media copy. */
+export type CsamBlocklistStore = 'blocklist' | 'held-media-copy';
+
 /** A block that committed, but whose CSAM blocklist entry was not written. */
 export class CsamBlocklistWriteError extends Error {
   readonly status = 502;
   /** What `blockImage` would have returned: a held image's reports stay open. */
   skipped?: true;
-  constructor(readonly imageId: number) {
+  constructor(readonly imageId: number, readonly failedStore: CsamBlocklistStore = 'blocklist') {
     super(CSAM_BLOCKLIST_RETRY);
   }
+}
+
+/** An error's class and code, never its message, which can quote a statement and its hashes. */
+const errorClass = (error: unknown) => ({
+  errorName: (error as Error)?.name,
+  errorCode: (error as { code?: unknown })?.code,
+});
+
+/** The blocklist entries were written but their Postgres copy failed. Its message holds no hash. */
+class HeldMediaCopyError extends Error {
+  constructor(failure: unknown) {
+    super('the held-media copy of the blocklist entries failed', { cause: errorClass(failure) });
+  }
+}
+
+/** It runs inside a moderator's request, so every attempt and wait fits in this. */
+const COPY_BUDGET_MS = 1_500;
+const COPY_ATTEMPTS = 3;
+const COPY_BACKOFF_MS = [100, 300];
+/** An attempt with less time than this left would only time out. */
+const COPY_MIN_ATTEMPT_MS = 50;
+
+/**
+ * The Postgres copy of the CSAM entries, which review routing reads. Retried within COPY_BUDGET_MS,
+ * then throws HeldMediaCopyError. An abandoned attempt may still land, which is harmless: the upsert
+ * is idempotent. Twin: the main app's mirrorCsamEntries (src/server/services/image.service.ts).
+ */
+async function mirrorCsamEntries(hashes: string[], context?: BlocklistWriteContext) {
+  const statement = mirrorBlockedHashesSql(hashes);
+  if (!statement) return;
+  const deadline = Date.now() + COPY_BUDGET_MS;
+  let lastError: unknown = new Error('no attempt fit the budget');
+  let attempts = 0;
+  while (attempts < COPY_ATTEMPTS && Date.now() < deadline) {
+    if (attempts > 0) {
+      const wait = Math.min(COPY_BACKOFF_MS[attempts - 1], deadline - Date.now());
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      if (deadline - Date.now() < COPY_MIN_ATTEMPT_MS) break;
+    }
+    attempts++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        sql.raw(statement).execute(dbWrite),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('copy attempt timed out')),
+            Math.max(deadline - Date.now(), 0)
+          );
+        }),
+      ]);
+      return;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  void logToAxiom({
+    type: 'error',
+    name: 'held-media-copy-failed',
+    message: 'the held-media copy of the blocklist entries failed',
+    payload: {
+      step: context?.step,
+      imageId: context?.imageId,
+      actorUserId: context?.actorUserId,
+      hashCount: hashes.length,
+      attempts,
+      ...errorClass(lastError),
+    },
+  });
+  throw new HeldMediaCopyError(lastError);
 }
 
 /** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
@@ -231,8 +306,10 @@ export async function addImagesToBlocklist(
   await write(csamRows);
   // The Postgres copy review routing reads; it throws like the write above. Twin: the main app's
   // bulkAddBlockedImages.
-  const mirror = mirrorBlockedHashesSql(csamRows.map((v) => v.hash));
-  if (mirror) await sql.raw(mirror).execute(dbWrite);
+  await mirrorCsamEntries(
+    csamRows.map((v) => v.hash),
+    context
+  );
   const inBatch = new Set(csamRows.map((v) => v.hash));
   const others = candidates.filter((v) => v.reason !== 'CSAM' && !inBatch.has(v.hash));
   if (!others.length) return;
@@ -522,32 +599,17 @@ export async function applyBlockSideEffects(
       imageId,
       userId: img.userId,
     });
-  // A CSAM entry only for a confirmed CSAM block; a block under the review flag alone writes TOS.
-  const csam = !!actor.removedForCsam;
-  const writeBlocklist = () =>
-    addImagesToBlocklist(
-      [{ pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor, csam }],
-      { step: 'block', imageId, actorUserId }
-    );
-  let csamBlocklistFailed = false;
+  const csamBlocklistFailures: CsamBlocklistWriteError[] = [];
   await Promise.all([
-    // A CSAM entry is not best-effort: its failure is reported to the caller once the rest has run.
-    csam
-      ? writeBlocklist().catch((error: unknown) => {
-          csamBlocklistFailed = true;
-          void logToAxiom({
-            type: 'error',
-            name: 'csam-blocklist-write-failed',
-            message: 'the CSAM blocklist entry for a block was not written',
-            payload: {
-              step: 'block',
-              imageCount: 1,
-              actorUserId,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-        })
-      : bestEffort('blocklist', imageId, writeBlocklist),
+    // Reported to the caller once the rest has run.
+    writeBlockBlocklistEntry(img, {
+      imageId,
+      actorUserId,
+      csam: !!actor.removedForCsam,
+    }).catch((error: unknown) => {
+      if (!(error instanceof CsamBlocklistWriteError)) throw error;
+      csamBlocklistFailures.push(error);
+    }),
     trackImageDeleteTos({
       imageId,
       ownerId: img.userId,
@@ -573,7 +635,36 @@ export async function applyBlockSideEffects(
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
-  if (csamBlocklistFailed) throw new CsamBlocklistWriteError(imageId);
+  if (csamBlocklistFailures.length) throw csamBlocklistFailures[0];
+}
+
+/**
+ * A block's blocklist entry: CSAM only for a confirmed CSAM block (`csam`); the review flag alone
+ * writes TOS. A CSAM entry is not best-effort: its failure throws CsamBlocklistWriteError naming the
+ * store that failed.
+ */
+export async function writeBlockBlocklistEntry(
+  img: BlockableImage,
+  { imageId, actorUserId, csam }: { imageId: number; actorUserId: number; csam: boolean }
+): Promise<void> {
+  const write = () =>
+    addImagesToBlocklist(
+      [{ pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor, csam }],
+      { step: 'block', imageId, actorUserId }
+    );
+  if (!csam) return bestEffort('blocklist', imageId, write);
+  try {
+    await write();
+  } catch (error) {
+    const failedStore = error instanceof HeldMediaCopyError ? 'held-media-copy' : 'blocklist';
+    void logToAxiom({
+      type: 'error',
+      name: 'csam-blocklist-write-failed',
+      message: 'the CSAM blocklist entry for a block was not written',
+      payload: { step: 'block', imageCount: 1, actorUserId, failedStore, ...errorClass(error) },
+    });
+    throw new CsamBlocklistWriteError(imageId, failedStore);
+  }
 }
 
 export async function applyAcceptSideEffects(

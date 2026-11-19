@@ -1,4 +1,5 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
@@ -45,7 +46,11 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
       // which follows the same holds when it names the picture.
       sql<
         string | null
-      >`coalesce(case when pic."nsfwLevel" between 1 and 16 and (pic."needsReview" is null or pic."needsReview" not in ('csam', 'minor')) then pic.url end, case when pic."needsReview" in ('csam', 'minor') and strpos(replace(lower(u.image), '%2d', '-'), lower(pic.url)) > 0 then null else u.image end)`.as(
+      >`coalesce(case when pic."nsfwLevel" between 1 and 16 and (pic."needsReview" is null or pic."needsReview" not in (${sql.join(
+        OWNER_HIDDEN_REVIEWS
+      )})) then pic.url end, case when pic."needsReview" in (${sql.join(
+        OWNER_HIDDEN_REVIEWS
+      )}) and strpos(replace(lower(u.image), '%2d', '-'), lower(pic.url)) > 0 then null else u.image end)`.as(
         'image'
       ),
       'p.rankType',

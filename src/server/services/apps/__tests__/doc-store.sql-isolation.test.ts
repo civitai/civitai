@@ -6,6 +6,7 @@ import {
   APPDATA_TABLES,
   isAccountWipeStatement,
   isAppPurgeStatement,
+  isRaterLookupStatement,
   isReviewMaintenanceStatement,
   scanStatement,
 } from './doc-store.sql-scan';
@@ -71,6 +72,11 @@ describe('scanner controls', () => {
       `SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text`,
       `SELECT pd.ns FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text`,
       `BEGIN; SELECT set_config('appdata.app_purge_id', 'ab_X', true)`,
+      // Rater lookup: one shared doc by its rating id, read only.
+      `SELECT rl.key FROM appdata.doc rl WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+      `BEGIN; SELECT set_config('appdata.rater_lookup_id', '7', true)`,
+      // The rating-id sequence, named only as nextval's argument.
+      `UPDATE appdata.doc d SET rating_id = nextval('appdata.doc_rating_id_seq')::int WHERE d.app_id = $1 AND d.ns = $2`,
     ]) {
       expect({ ok, v: scanStatement(ok) }).toEqual({ ok, v: [] });
     }
@@ -78,6 +84,18 @@ describe('scanner controls', () => {
 
   it('fails each way a statement can lose its isolation', () => {
     const bad: [string, RegExp][] = [
+      // Rater lookup: read only, `doc` only, shared rows only; the sequence only inside nextval.
+      [
+        `UPDATE appdata.doc rl SET level = 1 WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+        /rater-lookup statement on appdata\.doc is not a SELECT/,
+      ],
+      [
+        `SELECT 1 FROM appdata.doc_mark rl WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`,
+        /rater-lookup statement reads appdata\.doc_mark/,
+      ],
+      [`SELECT rl.key FROM appdata.doc rl WHERE rl.rating_id = $1::int`, /lacks rl\.scope_uid = 0/],
+      [`SELECT last_value FROM appdata.doc_rating_id_seq`, /named outside nextval/],
+      [`SELECT nextval('appdata.other_seq')`, /unknown appdata sequence other_seq/],
       [`SELECT 1 FROM appdata.doc d WHERE d.ns = $2`, /lacks d\.app_id = \$1/],
       [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $1`, /lacks d\.ns = \$2/],
       [`SELECT 1 FROM appdata.doc d WHERE d.app_id = $12 AND d.ns = $2`, /lacks d\.app_id = \$1/],
@@ -319,6 +337,33 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(calls.map(nearestFn)).toEqual(['listAppNamespaces']);
   });
 
+  it('every rater-lookup-shaped statement is SQL_RATER_LOOKUP', () => {
+    const lookup = collect((n) => {
+      const t = literalText(n);
+      return t !== null && /appdata\./.test(t) && isRaterLookupStatement(t);
+    });
+    expect(lookup.map((n) => owner(n, 'variable'))).toEqual(['SQL_RATER_LOOKUP']);
+  });
+
+  it('the rater-lookup setting is set in exactly one place, `raterLookupTx`, which only the rater’s lookup and readiness check call', () => {
+    const nearestFn = (n: ts.Node) => {
+      for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+        if ((ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name)
+          return p.name.text;
+      }
+      return null;
+    };
+    const setting = collect((n) => (literalText(n) ?? '').includes('appdata.rater_lookup_id'));
+    expect(setting.map(nearestFn)).toEqual(['raterLookupTx']);
+    const calls = collect(
+      (n) =>
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'raterLookupTx'
+    );
+    expect(calls.map(nearestFn).sort()).toEqual(['findByRatingId', 'ready']);
+  });
+
   it('no other server code mentions the app-purge setting (only the store, its migration and tests)', () => {
     const found: string[] = [];
     const walkAll = (dir: string) => {
@@ -380,6 +425,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.
     'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
+    // Reads back the rating and rating id the rater service stored.
+    'server/services/apps/__tests__/doc-rater.service.pglite.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
     // The publish suite reads back the copies, seqs, usage and tombstones a publish wrote.
@@ -402,6 +449,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Reads back the rating columns a publish under content levels left on each copy.
     'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
+    // Reads back the rating columns and rating id the rater stored, and seeds a moderator override.
+    'server/services/apps/__tests__/doc-store.rater.pglite.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
@@ -424,6 +473,10 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The content-level columns on doc, and their rollback (DDL only).
     'server/services/apps/migrations/20261116120000_appdata_doc_levels.down.sql',
     'server/services/apps/migrations/20261116120000_appdata_doc_levels.sql',
+    // The rater's rating id, its sequence and lookup policy, their rollback, and the lookup index.
+    'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.down.sql',
+    'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.sql',
+    'server/services/apps/migrations/20261118120100_appdata_doc_rating_id_idx.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];

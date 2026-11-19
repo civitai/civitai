@@ -22,6 +22,8 @@ import {
   recordSemanticAudit,
   verdictComputesRefusedIds,
   verdictKeepsServedIds,
+  type RefusedSearchPath,
+  type SemanticSearchPath,
   type RefusedCandidates,
   type SemanticAuditEntry,
 } from '~/server/services/semantic-search-audit.service';
@@ -310,7 +312,11 @@ export function beginSemanticAudit({
   let withholdIds = false;
   let withholdComputedIds = false;
   let candidates: { guard?: GuardRead; cacheHit?: boolean } | undefined;
-  const entry = (browsingLevel: number, resultIds: number[]): SemanticAuditEntry => ({
+  const entry = (
+    browsingLevel: number,
+    resultIds: number[],
+    searchPath: SemanticSearchPath
+  ): SemanticAuditEntry => ({
     index,
     viewer,
     query: query ?? '',
@@ -319,6 +325,7 @@ export function beginSemanticAudit({
     withholdIds,
     withholdComputedIds,
     resultsServed: true,
+    searchPath,
     // Called but sent no guard: a cached block stored without one.
     guard: candidates ? candidates.guard ?? { ...GUARD_NONE, outcome: 'unknown' } : GUARD_NONE,
     cacheHit: candidates?.cacheHit ?? false,
@@ -334,12 +341,17 @@ export function beginSemanticAudit({
     candidates(result: { guard?: GuardRead; cacheHit?: boolean } | undefined) {
       candidates ??= result;
     },
-    done<R extends { items: { id: number }[] }>(result: R, browsingLevel: number): R {
+    done<R extends { items: { id: number }[] }>(
+      result: R,
+      browsingLevel: number,
+      searchPath?: SemanticSearchPath
+    ): R {
       if (firstPage)
         recordSemanticAudit(
           entry(
             browsingLevel,
-            result.items.map((x) => x.id)
+            result.items.map((x) => x.id),
+            searchPath ?? (wordVerdict ? 'narrowed' : 'served')
           )
         );
       return result;
@@ -349,11 +361,12 @@ export function beginSemanticAudit({
      * the candidates the search would have served, never shown to anyone.
      */
     refused<R extends { items: { id: number }[] }>(
+      searchPath: RefusedSearchPath,
       result: R,
       browsingLevel: number,
       compute: () => Promise<RefusedCandidates>
     ): R {
-      if (firstPage) recordRefusedSemanticAudit(entry(browsingLevel, []), compute);
+      if (firstPage) recordRefusedSemanticAudit(entry(browsingLevel, [], searchPath), compute);
       return result;
     },
   };

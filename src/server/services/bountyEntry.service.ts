@@ -13,7 +13,6 @@ import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.serv
 import {
   checkEntityImageKeys,
   createEntityImages,
-  invalidateManyImageExistence,
   updateEntityImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
@@ -25,6 +24,8 @@ import type { GetByIdInput } from '../schema/base.schema';
 import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import {
   isPayoutOverdue,
@@ -422,9 +423,11 @@ export const getBountyEntryFilteredFiles = async ({
 
 export const deleteBountyEntry = async ({
   id,
+  userId,
   isModerator,
 }: {
   id: number;
+  userId: number;
   isModerator: boolean;
 }) => {
   const entryFindArgs = {
@@ -467,7 +470,8 @@ export const deleteBountyEntry = async ({
       async (tx) => {
         const locked = await lockBountyForPayout(tx, entry.bountyId);
         if (!evenIfPending && locked && isPayoutPending(locked)) return PAYOUT_PENDING;
-        return deleteEntryRows(tx, id);
+        // A moderator deleting their own entry deletes it as its owner.
+        return deleteEntryRows(tx, id, isModerator && entry.userId !== userId);
       },
       { maxWait: 10000, timeout: 30000 }
     );
@@ -483,25 +487,25 @@ export const deleteBountyEntry = async ({
       'This bounty has a payout still pending, so its entries cannot be deleted yet. Try again later.'
     );
   if (!deleted) return null;
-  await invalidateManyImageExistence(deleted.imageIds);
   return deleted.entry;
 };
 
 const PAYOUT_PENDING = Symbol('payout-pending');
 
-async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
+async function deleteEntryRows(tx: Prisma.TransactionClient, id: number, moderatorDelete: boolean) {
   const entry = await tx.bountyEntry.delete({ where: { id } });
   if (!entry) return null;
 
   await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-  const images = await tx.imageConnection.findMany({
-    select: { imageId: true },
-    where: { entityId: id, entityType: 'BountyEntry' },
-  });
-
-  await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-  const imageIds = images.map((i) => i.imageId);
-  await tx.image.deleteMany({ where: { id: { in: imageIds } } });
-
+  const connections = await tx.$queryRaw<{ imageId: number }[]>`
+    DELETE FROM "ImageConnection"
+    WHERE "entityId" = ${id} AND "entityType" = 'BountyEntry'
+    RETURNING "imageId"
+  `;
+  const imageIds = connections.map((connection) => connection.imageId);
+  // An entry can link any image its author owns, so only the ones nothing else uses go. One whose
+  // author was removed keeps its images.
+  if (entry.userId !== null)
+    await queueImageDeletes(kyselyOver(tx), imageIds, { ownerId: entry.userId, moderatorDelete });
   return { entry, imageIds };
 }

@@ -8,6 +8,7 @@ import {
   getSourcesContext,
   getSourcesSettings,
   saveGameSettings,
+  saveRuleGuide,
   saveSourcesConfig,
 } from '$lib/server/knights/sources-config.service';
 import { parseGameForm } from './game-form';
@@ -97,6 +98,26 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights sources: could not save the config', { error });
       return fail(500, { error: 'The config could not be saved. Nothing was changed; try again.' });
+    }
+  },
+  rules: async ({ request, locals, url }) => {
+    requireAccess(locals.user, url.pathname);
+    const raw = (await request.formData()).get('ruleGuide');
+    if (typeof raw !== 'string') return fail(400, { error: 'No rule guide was sent.' });
+    let input: unknown;
+    try {
+      input = JSON.parse(raw);
+    } catch {
+      return fail(400, { error: 'The rule guide could not be read. Reload the page and try again.' });
+    }
+    try {
+      const result = await saveRuleGuide(input, locals.user.id);
+      return result.ok
+        ? { success: true, changed: result.changed }
+        : fail(400, { error: result.error });
+    } catch (error) {
+      console.error('knights rule guide: could not save', { error });
+      return fail(500, { error: 'The rules could not be saved. Nothing was changed; try again.' });
     }
   },
   game: async ({ request, locals, url }) => {
