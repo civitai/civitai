@@ -1,4 +1,4 @@
-import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
+import type { Index, IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
 import { MeiliSearchTimeOutError } from 'meilisearch';
 import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -114,9 +114,7 @@ const onSearchIndexDocumentsCleanup = async ({
       return;
     }
 
-    await index.deleteDocuments(ids);
-    console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
-
+    await deleteDocumentsOrRequeue({ index, indexName, ids, client });
     return;
   }
 
@@ -141,9 +139,57 @@ const onSearchIndexDocumentsCleanup = async ({
     return;
   }
 
-  await index.deleteDocuments(itemIds);
-  await queuedItemsToDelete.commit();
-  console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
+  await deleteDocumentsOrRequeue({
+    index,
+    indexName,
+    ids: itemIds,
+    client,
+    // After `commit()`, as `requeueFailedIds` does: an id re-queued before it would land in the
+    // bucket the commit deletes.
+    beforeWait: () => queuedItemsToDelete.commit(),
+  });
+};
+
+/**
+ * Deletes `ids` and waits for Meilisearch to finish the task. A task that fails, or that the wait
+ * gives up on, puts the ids back on the index's Delete queue: once a caller has marked them handled
+ * nothing else would retry them. Deleting an id twice is harmless.
+ */
+const deleteDocumentsOrRequeue = async ({
+  index,
+  indexName,
+  ids,
+  client,
+  beforeWait,
+}: {
+  index: Pick<Index, 'deleteDocuments'>;
+  indexName: string;
+  ids: number[];
+  client: MeiliSearch;
+  beforeWait?: () => Promise<unknown>;
+}) => {
+  const { taskUid } = await index.deleteDocuments(ids);
+  await beforeWait?.();
+  let error: string | undefined;
+  try {
+    const [task] = await waitForTasksWithRetries([taskUid], undefined, client);
+    if (task?.status !== 'succeeded') error = task?.error?.message ?? `status ${task?.status}`;
+  } catch (e) {
+    error = e instanceof Error ? e.message || e.name : String(e);
+  }
+  if (!error) {
+    console.log(`onSearchIndexDocumentsCleanup :: deleted ${ids.length} items`);
+    return;
+  }
+  const queued = await SearchIndexUpdate.queueUpdate({
+    indexName,
+    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+  });
+  console.error(
+    `onSearchIndexDocumentsCleanup :: ${indexName} :: delete task ${taskUid} did not succeed (${error}); ${
+      queued ? 're-queued' : 'could not re-queue'
+    } ${ids.length} ids`
+  );
 };
 
 const waitForTasksWithRetries = async (
@@ -168,7 +214,7 @@ const waitForTasksWithRetries = async (
     return tasks;
   } catch (e) {
     if (e instanceof MeiliSearchTimeOutError) {
-      return waitForTasksWithRetries(taskUids, remainingRetries - 1);
+      return waitForTasksWithRetries(taskUids, remainingRetries - 1, client);
     }
 
     throw e;
