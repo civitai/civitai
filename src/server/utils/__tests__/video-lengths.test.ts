@@ -808,9 +808,13 @@ describe('readVideoLengths, on bytes hidden inside the structures it reads', () 
     expect(readVideoLengths(spaced(0))).toContain(10);
   });
 
+  const stss = (...samples: number[]) => B('stss', w(0, samples.length, ...samples));
+  const sdtp = () => B('sdtp', w(0), Buffer.alloc(1));
+
   it('takes the movie as built, with a second (sound) track (the control for the cases below)', () => {
     expect(readVideoLengths(movie())).toContain(10);
     expect(readVideoLengths(movie({ second: true }))).toContain(10);
+    expect(readVideoLengths(movie({ stblExtra: [stss(1), sdtp()] }))).toContain(10);
   });
 
   it.each([
@@ -823,6 +827,15 @@ describe('readVideoLengths, on bytes hidden inside the structures it reads', () 
     ['two tracks whose samples share bytes', overlapping],
     ["a megabyte of non-zero bytes between two tracks' samples", () => spaced(7)],
     ['samples outside the mdat', outside],
+    [
+      'a megabyte past its sync-sample entries',
+      () => movie({ stblExtra: [B('stss', w(0, 1, 1), MB)] }),
+    ],
+    [
+      'a megabyte past its sample dependency flags',
+      () => movie({ stblExtra: [B('sdtp', w(0), Buffer.alloc(1), MB)] }),
+    ],
+    ['more sync samples than samples', () => movie({ stblExtra: [stss(1, 1)] })],
   ])('refuses an mp4 with %s', (_n, bytes) => {
     expect(readVideoLengths(bytes())).toBeNull();
   });
@@ -902,20 +915,20 @@ describe('readVideoLengths, at the edges of its accounting', () => {
   };
   const MB = Buffer.alloc(1024 * 1024, 7);
 
-  it('takes a box grown by a few bytes (the control for the cases below)', () => {
-    expect(readVideoLengths(inside('trak', B('uuid', Buffer.alloc(16, 7))))).toContain(10);
-  });
+  const FEW = Buffer.alloc(16, 7);
 
   it.each(['trak', 'mdia', 'minf', 'stbl'])(
-    'counts a megabyte in an unknown child of %s',
+    'takes a few bytes in an unknown child of %s, and counts a megabyte',
     (type) => {
+      expect(readVideoLengths(inside(type, B('uuid', FEW)))).toContain(10);
       expect(readVideoLengths(inside(type, B('uuid', MB)))).toBeNull();
     }
   );
 
   it.each(['mvhd', 'tkhd', 'mdhd', 'stts', 'stsz', 'stsc', 'stco', 'ftyp'])(
-    'counts a megabyte past the fields of %s',
+    'takes a few bytes past the fields of %s, and counts a megabyte',
     (type) => {
+      expect(readVideoLengths(inside(type, FEW))).toContain(10);
       expect(readVideoLengths(inside(type, MB))).toBeNull();
     }
   );
