@@ -154,6 +154,9 @@ const scan = await import('~/server/services/creator-service-deal-file-scan');
 const orchestrator = await import('@civitai/orchestration-client');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
 const {
+  SERVICE_FINAL_OVER_LEVEL_REASON,
+  SERVICE_FINAL_VIDEO_IN_ZIP,
+  SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
   SERVICE_FINAL_SCAN_RETRY_MS,
@@ -175,6 +178,7 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -671,7 +675,7 @@ describe('judging a file by what it is', () => {
   const PK = Buffer.concat([Buffer.from([0x50, 0x4b, 3, 4]), Buffer.alloc(40)]);
   const BMP = Buffer.concat([Buffer.from('BM'), Buffer.alloc(40)]);
   it.each([
-    ['a video called notes.txt', MP4_BYTES(), /Video/],
+    ['a video called notes.txt', MP4_BYTES(), /video file itself/],
     ['an archive called notes.txt', PK, /renamed/],
     ['a bitmap called notes.txt', BMP, /image format/],
   ])('refuses %s', async (_n, content, reason) => {
@@ -865,8 +869,6 @@ describe('the verdict on each image', () => {
   });
 
   it.each([
-    ['rated above the limit', 'Scanned', '', 3],
-    ['rated far above the limit', 'Scanned', '', 16],
     ['unrated', 'Scanned', '', 0],
     ['sent to review', 'Scanned', `, "needsReview" = 'minor'`, 1],
     ['flagged as a real person', 'Scanned', ', poi = true', 1],
@@ -881,6 +883,28 @@ describe('the verdict on each image', () => {
       nsfwLevel: level,
       failReason: expect.stringContaining('rejected'),
     });
+  });
+
+  it.each([4, 16])(
+    "fails an image rated %i, above the deal's level, saying only that",
+    async (level) => {
+      const { fileId } = await submitted();
+      await verdict('Scanned', '', level);
+      expect(await unpack.settleEntryScans()).toMatchObject({ passed: 0, rejected: 1 });
+      expect((await entries(fileId))[0]).toMatchObject({
+        scanStatus: 'Failed',
+        nsfwLevel: level,
+        failReason: SERVICE_FINAL_OVER_LEVEL_REASON,
+      });
+      expect((await fileRow(fileId)).failReason).toBe(SERVICE_FINAL_OVER_LEVEL_REASON);
+    }
+  );
+
+  it('rejects an image rated above every level a deal can have', async () => {
+    const { fileId } = await submitted();
+    await verdict('Scanned', '', 32);
+    await unpack.settleEntryScans();
+    expect((await entries(fileId))[0].failReason).toMatch(/rejected/);
   });
 
   it('fails an image the scan could not run on, without calling it rejected', async () => {

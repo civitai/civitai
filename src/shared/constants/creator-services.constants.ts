@@ -105,9 +105,28 @@ export const SERVICE_PREVIEW_PROCESSING_STALE_MS = 10 * 60_000;
 /** A preview still not Ready this long after its upload is failed, so a delivery never hangs on it. */
 export const SERVICE_PREVIEW_GIVE_UP_MS = 6 * HOUR;
 
+/** A video Final is delivered bare: the scan reads the video file itself, never one inside a .zip. */
+export const SERVICE_FINAL_VIDEO_EXTENSIONS = ['mp4', 'webm'] as const;
+/**
+ * The scan samples one frame a second and stops at 50 frames, and nothing shows those 50 are spread
+ * over a longer video, so a longer one could carry content the scan never saw.
+ */
+export const SERVICE_FINAL_VIDEO_MAX_SECONDS = 50;
+/** The whole video is read into memory for its scan copy. */
+export const SERVICE_FINAL_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
+export const SERVICE_FINAL_VIDEO_HELP = `Videos: .mp4 or .webm, up to ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds and ${
+  SERVICE_FINAL_VIDEO_MAX_BYTES / (1024 * 1024)
+} MB, uploaded as the video file itself.`;
+export const SERVICE_FINAL_VIDEO_TOO_LONG = `Videos over ${SERVICE_FINAL_VIDEO_MAX_SECONDS} seconds can't be delivered yet: they can't be checked in full.`;
+export const SERVICE_FINAL_VIDEO_IN_ZIP =
+  "Video can't be delivered inside a .zip. Upload the video file directly.";
+/** Why a Final rated above its deal's content level was refused. */
+export const SERVICE_FINAL_OVER_LEVEL_REASON =
+  "This file is rated above this deal's content level.";
+
 /**
  * What a seller may deliver as a Final. Everything else is refused up front: a file type we cannot
- * inspect is not delivered, and video is refused outright until it can be moderated. Archives are limited to .zip, the one format the unpack step reads;
+ * inspect is not delivered. Archives are limited to .zip, the one format the unpack step reads;
  * the rest (rar, 7z, tar and its compressions) cannot be enumerated here, so they are refused.
  */
 export const SERVICE_FINAL_EXTENSIONS = [
@@ -134,6 +153,7 @@ export const SERVICE_FINAL_EXTENSIONS = [
   'yaml',
   'yml',
   'csv',
+  ...SERVICE_FINAL_VIDEO_EXTENSIONS,
 ] as const;
 /** Why a preview rated above its deal's content level was refused. Shown to the seller only. */
 export const SERVICE_PREVIEW_OVER_LEVEL_REASON =

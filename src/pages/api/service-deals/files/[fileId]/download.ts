@@ -6,6 +6,11 @@ import {
   resolveServiceDealFileDownload,
 } from '~/server/services/creator-service-deal-file.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 const querySchema = z.object({ fileId: z.coerce.number().int().positive() });
 
@@ -26,6 +31,8 @@ export default AuthedEndpoint(async function downloadServiceDealFile(req, res, u
     userId: user.id,
     isModerator: !!user.isModerator,
     canReviewCsam: !!getFeatureFlags({ user, req }).csamReports,
+    servableLevels:
+      getRequestDomainColor(req) === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag,
   });
   if (!target) return res.status(404).json({ error: 'Not found' });
 

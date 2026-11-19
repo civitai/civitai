@@ -12,6 +12,7 @@ import {
   SERVICE_ZIP_MODEL_EXTENSIONS,
   SERVICE_ZIP_RATIO_FLOOR_BYTES,
   SERVICE_ZIP_VIDEO_EXTENSIONS,
+  SERVICE_FINAL_VIDEO_IN_ZIP,
 } from '~/shared/constants/creator-services.constants';
 import type { getS3Client } from '~/utils/s3-utils';
 
@@ -80,7 +81,7 @@ class SourceReader extends yauzl.RandomAccessReader {
   }
 }
 
-const VIDEO_REFUSAL = 'Video cannot be delivered yet.';
+const VIDEO_REFUSAL = SERVICE_FINAL_VIDEO_IN_ZIP;
 const NESTED_REFUSAL = 'Archives cannot be nested inside the .zip. Put the files in it directly.';
 const IMAGE_FORMAT_REFUSAL = 'This image format cannot be delivered. Use PNG, JPEG, WebP or GIF.';
 const TOO_LARGE_REFUSAL = 'A file in the archive is too large.';

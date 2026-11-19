@@ -130,6 +130,7 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271119070000_service_deal_file_scanned_etag',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -355,16 +356,7 @@ describe('requesting an upload', () => {
 
   it('refuses a final type we cannot inspect, and archives other than zip', async () => {
     const dealId = await accepted();
-    for (const name of [
-      'a.rar',
-      'a.7z',
-      'a.tar.gz',
-      'a.exe',
-      'a.mp4',
-      'a.webm',
-      'noextension',
-      'a.zip.exe',
-    ])
+    for (const name of ['a.rar', 'a.7z', 'a.tar.gz', 'a.exe', 'a.mov', 'noextension', 'a.zip.exe'])
       await expect(upload(dealId, { fileName: name })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
       });
