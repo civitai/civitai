@@ -113,7 +113,8 @@ const itemSourceCase = sql.raw(
     .map(([type, source]) => `WHEN '${type}' THEN '${source}'`)
     .join(' ')} END`
 );
-const reportCoversHold = sql<boolean>`r."createdAt" >= h."decidedAt" AND CASE
+// At any createdAt: a filing folds into the author's older unsent report, so the row can predate the decision.
+const reportCoversHold = sql<boolean>`CASE
   WHEN ${itemSourceCase} IS NULL THEN false
   ELSE jsonb_typeof(r.details -> 'contextText') = 'array'
     AND r.details -> 'contextText' @> jsonb_build_array(

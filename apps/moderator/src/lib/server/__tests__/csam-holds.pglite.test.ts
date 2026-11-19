@@ -1340,8 +1340,14 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect((await listed()).length).toBe(3);
   });
 
-  it('ignores a report filed before the decision', async () => {
+  // A filing folds into the author's unsent report, which can predate the decision.
+  it('drops an item a report from before the decision captured', async () => {
     await report([{ source: 'postText', id: 210 }], '2026-09-01');
+    expect(await listed()).toEqual([22, 23, 24]);
+  });
+
+  it('keeps an item a report from before the decision never captured', async () => {
+    await report([{ source: 'comment', id: 998 }], '2026-09-01');
     expect(await listed()).toEqual([21, 22, 23, 24]);
   });
 

@@ -40,7 +40,6 @@ const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; body: s
   },
 };
 
-/** The copy for a choice. */
 export const reportChoiceCopy = (choice: CsamReportChoice) => CSAM_REPORT_CHOICE_COPY[choice];
 
 export const CSAM_REPORT_NOT_SURE = "Not sure? Don't pick None. Send it to the Moderation Lead.";

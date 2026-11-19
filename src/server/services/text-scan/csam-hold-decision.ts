@@ -545,7 +545,7 @@ export const resolveCsamHoldInput = z
       .max(CSAM_HOLD_BATCH_MAX)
       .optional()
       .describe(
-        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50. A batch records no report choice: `reportChoice` is ignored with it.'
+        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50. A batch records no report choice: one sent with `holds` is not recorded (and `dismiss` still refuses one).'
       ),
     decision: z.enum(CSAM_HOLD_DECISIONS),
     reportChoice: z

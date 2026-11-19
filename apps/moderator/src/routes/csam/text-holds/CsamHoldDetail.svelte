@@ -123,7 +123,6 @@
   let decision = $state<CsamHoldDecision>('dismiss');
   let confirming = $state<CsamHoldDecision | null>(null);
   let confirmOpen = $state(false);
-  // Every confirm asks it afresh; a dismissal sends none.
   let reportChoice = $state<CsamReportChoice | ''>('');
   let referEl: HTMLFormElement | undefined = $state();
   let markEl: HTMLFormElement | undefined = $state();
