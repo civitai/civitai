@@ -266,10 +266,133 @@ function diffJson(a, b, path, out, max) {
   if (!Object.is(a, b)) out.push({ path, a, b });
 }
 
+/** superjson's escaped dotted path (`items.0.images`, a literal dot written `\.`) as its segments. */
+function splitSuperjsonPath(p) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === '\\' && i + 1 < p.length) {
+      cur += p[++i];
+      continue;
+    }
+    if (c === '.') {
+      out.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+function isPlainObject(v) {
+  return typeOf(v) === 'object';
+}
+
+/** A superjson envelope: an object whose keys are `json` and, optionally, `meta`. */
+function isSuperjsonEnvelope(v) {
+  return (
+    isPlainObject(v) &&
+    Object.prototype.hasOwnProperty.call(v, 'json') &&
+    Object.keys(v).every((k) => k === 'json' || k === 'meta')
+  );
+}
+
 /**
- * Compare two response bodies: byte-identical, JSON-identical (object key order ignored, array
- * order not), and the first `maxDiffs` differing JSON paths (`$.result.data.json.items[0].postId`).
- * A body that is not JSON compares unequal at `$`.
+ * Decode one superjson envelope as `superjson.deserialize` does for `["undefined"]` annotations: each
+ * annotated path is set to `undefined` (setDeep assigns the parent's key whether or not the json
+ * carried it). The Node app writes an undefined member as `null` plus that annotation; feed-go omits
+ * the member and writes the same annotation, so both decode alike. Returns the value and every
+ * annotation (path -> JSON), which are compared separately as sets.
+ */
+function decodeSuperjson(env) {
+  let value = env.json;
+  const annotations = {};
+  const values = env.meta && env.meta.values;
+  const entries = Array.isArray(values)
+    ? [['', values]] // a root-level annotation (`["undefined"]`) is not a path map
+    : isPlainObject(values)
+      ? Object.entries(values)
+      : [];
+  for (const [path, ann] of entries) {
+    if (!Array.isArray(ann) || ann.length === 0) continue;
+    annotations[path] = JSON.stringify(ann);
+    if (ann[0] !== 'undefined') continue;
+    if (path === '') {
+      value = undefined;
+      continue;
+    }
+    const segs = splitSuperjsonPath(path);
+    let parent = value;
+    for (const seg of segs.slice(0, -1)) {
+      parent = parent !== null && typeof parent === 'object' ? parent[seg] : undefined;
+    }
+    const last = segs[segs.length - 1];
+    if (Array.isArray(parent)) {
+      const i = Number(last);
+      if (Number.isInteger(i) && i >= 0 && i < parent.length) parent[i] = undefined;
+    } else if (isPlainObject(parent)) {
+      parent[last] = undefined;
+    }
+  }
+  return { value, annotations };
+}
+
+/**
+ * Decode every tRPC result in a parsed body (one `{result: {data}}`, or a batch: an array of them)
+ * whose `data` is a superjson envelope, in place: `data` becomes `{json: <decoded>}`, so a decoded
+ * path reads like its raw one. Returns every annotation per result, keyed by the
+ * result's path (`$.result.data` or `$[i].result.data`).
+ */
+function decodeTrpcBody(body) {
+  const annotations = {};
+  const one = (r, prefix) => {
+    if (!isPlainObject(r) || !isPlainObject(r.result)) return;
+    const data = r.result.data;
+    if (!isSuperjsonEnvelope(data)) return;
+    const decoded = decodeSuperjson(data);
+    r.result.data = { json: decoded.value };
+    annotations[`${prefix}.result.data`] = decoded.annotations;
+  };
+  if (Array.isArray(body)) body.forEach((r, i) => one(r, `$[${i}]`));
+  else one(body, '$');
+  return annotations;
+}
+
+/**
+ * The annotation sets (`meta.values`) of two decoded bodies, compared as sets per result, undefined
+ * annotations included: one present on one side only is a diff (as feed-go's shadow comparator
+ * reports it), even where the decoded values agree.
+ */
+function diffAnnotations(annA, annB, out, max) {
+  const results = new Set([...Object.keys(annA), ...Object.keys(annB)]);
+  for (const prefix of [...results].sort()) {
+    const a = annA[prefix] || {};
+    const b = annB[prefix] || {};
+    const paths = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const p of [...paths].sort()) {
+      if (out.length >= max) return;
+      if (a[p] !== b[p])
+        out.push({
+          path: `${prefix}.meta.values[${JSON.stringify(p)}]`,
+          a: a[p] === undefined ? undefined : JSON.parse(a[p]),
+          b: b[p] === undefined ? undefined : JSON.parse(b[p]),
+        });
+    }
+  }
+}
+
+/**
+ * Compare two bodies raw (`bytesEqual`; `jsonEqual` / `diffs`: key order ignored, array order not) and
+ * decoded (`valueEqual` / `valueDiffs`: after each tRPC superjson envelope is decoded as the client
+ * does, `decodeSuperjson`, plus the annotation sets). Decoded, a key absent on one side and undefined
+ * on the other is equal; a literal `null` with no annotation against an absent key is still a diff.
+ * A non-JSON body compares unequal at `$`.
+ *
+ * The decoding is done here, not by the `superjson` package: this harness has no dependencies
+ * beyond Node, and superjson 2 is ESM-only.
  */
 function compareBodies(a, b, { maxDiffs = 10 } = {}) {
   const bytesEqual = a === b;
@@ -279,11 +402,44 @@ function compareBodies(a, b, { maxDiffs = 10 } = {}) {
     ja = JSON.parse(a);
     jb = JSON.parse(b);
   } catch {
-    return { bytesEqual, jsonEqual: bytesEqual, diffs: bytesEqual ? [] : [{ path: '$' }] };
+    const diffs = bytesEqual ? [] : [{ path: '$' }];
+    return {
+      bytesEqual,
+      jsonEqual: bytesEqual,
+      diffs,
+      valueEqual: bytesEqual,
+      valueDiffs: diffs,
+    };
   }
   const diffs = [];
   diffJson(ja, jb, '$', diffs, maxDiffs);
-  return { bytesEqual, jsonEqual: diffs.length === 0, diffs };
+  // Decoding mutates the parsed trees, so it runs after the raw compare.
+  const annA = decodeTrpcBody(ja);
+  const annB = decodeTrpcBody(jb);
+  const valueDiffs = [];
+  diffJson(ja, jb, '$', valueDiffs, maxDiffs);
+  diffAnnotations(annA, annB, valueDiffs, maxDiffs);
+  return {
+    bytesEqual,
+    jsonEqual: diffs.length === 0,
+    diffs,
+    valueEqual: valueDiffs.length === 0,
+    valueDiffs,
+  };
+}
+
+/**
+ * Add one comparison to a parity pair's counters (`compared`, `bytesEqual`, `jsonEqual`,
+ * `valueEqual`, `examples`). Examples are taken from the DECODED diffs: the raw ones are dominated
+ * by undefined members written as null + annotation on one side and omitted on the other. Paths
+ * only (a value can be a username or a URL from the page), at most 10.
+ */
+function tallyParity(p, cmp) {
+  p.compared++;
+  if (cmp.bytesEqual) p.bytesEqual++;
+  if (cmp.jsonEqual) p.jsonEqual++;
+  if (cmp.valueEqual) p.valueEqual++;
+  else if (p.examples.length < 10) p.examples.push(cmp.valueDiffs.map((d) => d.path));
 }
 
 /**
@@ -357,6 +513,7 @@ module.exports = {
   summarize,
   commonOkIndexes,
   compareBodies,
+  tallyParity,
   cpuPerRequestMs,
   cpuReport,
   gapCheck,
