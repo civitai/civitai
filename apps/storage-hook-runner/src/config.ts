@@ -44,8 +44,18 @@ function int(name: string, fallback: number, env: NodeJS.ProcessEnv): number {
   return n;
 }
 
+/**
+ * The shared HMAC secret as both sides use it: surrounding whitespace removed, so a trailing
+ * newline from a secret file or an env editor signs and verifies the same. 🔴 The civitai caller
+ * applies the identical rule (`normalizeHookRunnerSecret` in doc-store-hook.ts); a seam test there
+ * pins the two equal.
+ */
+export function normalizeRunnerSecret(raw: string | undefined): string {
+  return (raw ?? '').trim();
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const secret = env.STORAGE_HOOK_RUNNER_SECRET ?? '';
+  const secret = normalizeRunnerSecret(env.STORAGE_HOOK_RUNNER_SECRET);
   // The same secret signs requests (civitai) and responses (here); a short one is a config bug.
   if (secret.length < 32) throw new Error('STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars');
   const maxQueue = int('MAX_QUEUE', DEFAULT_MAX_QUEUE, env);

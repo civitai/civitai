@@ -23,7 +23,10 @@ vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
-vi.mock('$lib/server/hidden/hidden.service', () => ({ pickHiddenCheck }));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  pickHiddenCheck,
+  hiddenItemId: (id: number) => -id,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
 vi.mock('$lib/server/yesno/cadence', () => ({

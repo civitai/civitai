@@ -1250,6 +1250,9 @@ importers:
       '@civitai/shared':
         specifier: workspace:*
         version: link:../../packages/civitai-shared
+      '@microsoft/signalr':
+        specifier: ^7.0.14
+        version: 7.0.14(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
