@@ -320,9 +320,9 @@ export type ModEndpoint =
 // the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
 // already accepts, and relaying it server-side attributes the audit row to a person rather than to a
 // shared key. This app therefore needs no moderator API key at all.
-/** One `/api/mod/*` endpoint per action, called as the acting moderator. With `readModEndpoint`,
- *  `bustModelVersionCache` and `decidePayoutReview`, the only places `auth` becomes `'session'` — a
- *  call site that picks its own scheme is how one gets the wrong one. */
+/** One `/api/mod/*` endpoint per action, called as the acting moderator. With `bustModelVersionCache`,
+ *  the only places `auth` becomes `'session'` — a call site that picks its own scheme is how one gets
+ *  the wrong one. */
 export const callModEndpoint = (
   path: ModEndpoint,
   body: Record<string, unknown>,
