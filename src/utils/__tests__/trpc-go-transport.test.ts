@@ -125,6 +125,62 @@ describe('the /api/trpc-go rewrite', () => {
       '/api/trpc/image.getImagesAsPostsInfinite'
     );
   });
+
+  // Local dev: `pnpm dev` (scripts/dev-feed-go/launcher.mjs) sets FEED_GO_LOCAL_URL to its loopback
+  // proxy in front of a local feed-go. `rewrites()` reads it per call, so each case sets it first.
+  describe('with FEED_GO_LOCAL_URL (local dev feed-go)', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it('sends each procedure to <local>/api/trpc/<procedure> (literal paths)', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://127.0.0.1:43123');
+      const rewrites = await loadRewrites();
+      expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
+        'http://127.0.0.1:43123/api/trpc/image.getImagesAsPostsInfinite'
+      );
+      expect(rewriteFor(rewrites, '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://127.0.0.1:43123/api/trpc/model.getAll'
+      );
+      // Still exact sources: no other procedure is aliased to feed-go.
+      expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${ORDINARY}`)).toBeUndefined();
+    });
+
+    it('is ignored in production (a built app never carries it)', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://127.0.0.1:43123');
+      const rewrites = await loadRewrites();
+      expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
+        '/api/trpc/image.getImagesAsPostsInfinite'
+      );
+    });
+
+    it('is ignored unless it is a bare loopback http origin', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      for (const url of [
+        'http://feed-go.example.com:8080',
+        'https://127.0.0.1:43123',
+        'http://127.0.0.1',
+        'http://127.0.0.1:43123/elsewhere',
+        'http://user:pw@127.0.0.1:43123',
+        'not a url',
+      ]) {
+        vi.stubEnv('FEED_GO_LOCAL_URL', url);
+        const rewrites = await loadRewrites();
+        expect(rewriteFor(rewrites, '/api/trpc-go/model.getAll')?.destination, url).toBe(
+          '/api/trpc/model.getAll'
+        );
+      }
+      // Positive control in the same loop shape: localhost and [::1] are honoured.
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://localhost:43124/');
+      expect(rewriteFor(await loadRewrites(), '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://localhost:43124/api/trpc/model.getAll'
+      );
+      vi.stubEnv('FEED_GO_LOCAL_URL', 'http://[::1]:43125');
+      expect(rewriteFor(await loadRewrites(), '/api/trpc-go/model.getAll')?.destination).toBe(
+        'http://[::1]:43125/api/trpc/model.getAll'
+      );
+    });
+  });
 });
 
 describe('feedGoTransport', () => {

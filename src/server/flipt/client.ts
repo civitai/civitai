@@ -458,6 +458,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. Default-off; create the key disabled before
+  // the deploy that reads it, and only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
@@ -694,6 +697,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
+  // Hides civitai.com version text that has no passing verdict. Read only through
+  // `getComVersionTextHideMode`, where a flag that cannot be evaluated counts as ON.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  COM_FACE_VERSION_TEXT_HIDE = 'com-face-version-text-hide',
+  // On: the com-face-version-text jobs (rating every minute, sweep hourly) run. Off, unknown or
+  // not evaluated: both do nothing. Read only through `comVersionTextJobsEnabled`.
+  // 🔴 BOOLEAN ONLY, global.
+  COM_FACE_VERSION_TEXT_JOBS = 'com-face-version-text-jobs',
   // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
   // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
   // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are

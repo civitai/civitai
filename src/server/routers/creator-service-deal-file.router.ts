@@ -1,4 +1,5 @@
 import { CacheTTL } from '~/server/common/constants';
+import { domainServableLevels } from '~/server/utils/browsing-level';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
@@ -84,6 +85,7 @@ export const creatorServiceDealFileRouter = router({
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
       canReviewCsam: !!ctx.features?.csamReports,
+      servableLevels: domainServableLevels(ctx),
     })
   ),
 });

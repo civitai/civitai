@@ -1,4 +1,4 @@
-import { CompiledQuery, type Kysely } from 'kysely';
+import { CompiledQuery, sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
@@ -107,6 +107,25 @@ export const servablePictureParameters = [
   PERMANENT_SCAN_FAILURE,
   NSFW_BROWSING_LEVELS_FLAG,
 ] as unknown[];
+
+/**
+ * `servablePictureText` as a Kysely fragment over `Image` aliased `i`, each `$n` bound to
+ * `parameters[n - 2]`. A placeholder with no parameter throws, so the text and its parameters cannot
+ * drift apart silently.
+ */
+export const servablePictureSql = (
+  text = servablePictureText,
+  parameters = servablePictureParameters
+): RawBuilder<boolean> => {
+  const fragments = text.split(/\$(\d+)/).map((part, index) => {
+    if (index % 2 === 0) return sql.raw(part);
+    const position = Number(part) - 2;
+    if (position < 0 || position >= parameters.length)
+      throw new Error(`servablePictureSql: $${part} has no parameter`);
+    return sql.val(parameters[position]);
+  });
+  return sql<boolean>`(${sql.join(fragments, sql.raw(''))})`;
+};
 
 const MARKED = `jsonb_typeof(u.meta) = 'object' AND u.meta ? 'heldImageCleared'`;
 // Compared as text, so a marker whose pictureId is not a number never fails the statement.

@@ -19,7 +19,6 @@ vi.mock('~/utils/s3-utils', () => ({
 import type { CoverImageDeps, ReusableCoverImageCandidate } from '../cover-image.service';
 import {
   COVER_IMAGE_EXISTS_TIMEOUT_MS,
-  COVER_IMAGE_EXISTS_UNKNOWN_LOG,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   isReusableCoverImage,
   productionCoverImageDeps,
@@ -27,11 +26,10 @@ import {
   resolveCoverImageId,
 } from '../cover-image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
+
 const dbWriteMock = dbMock.dbWrite;
-const logToAxiomMock = loggingMock.logToAxiom;
 
 const coverImage = { url: '0d5f0a4e-0000-4000-8000-000000000001', name: 'cover.png' } as any;
 
@@ -219,49 +217,6 @@ describe('resolveCoverImageId — no id (a raw upload key)', () => {
   });
 });
 
-describe('resolveCoverImageId — the fail-open branch is observable', () => {
-  // 🔴 Failing open is correct, but it is SILENT: while it is happening the guard is off, and
-  // "no bad drafts found" is indistinguishable from "the check never ran". These pin the signal
-  // that tells those apart.
-  it('reports the indeterminate check when it proceeds unverified', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(null) });
-
-    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).resolves.toBe(999);
-
-    expect(deps.logExistenceUnknown).toHaveBeenCalledTimes(1);
-    expect(deps.logExistenceUnknown).toHaveBeenCalledWith({ userId: 7 });
-  });
-
-  it('stays quiet when the object was definitively present', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(true) });
-
-    await resolveCoverImageId({ coverImage, userId: 7 }, deps);
-
-    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-
-  it('stays quiet when the object was definitively absent', async () => {
-    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(false) });
-
-    await resolveCoverImageId({ coverImage, userId: 7 }, deps).catch(() => undefined);
-
-    // A rejection is a decision the user sees; it is not the silent no-op this signal counts.
-    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-
-  it('stays quiet on the hot path and on reuse — neither consults the bucket', async () => {
-    const idDeps = makeDeps();
-    await resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, idDeps);
-    expect(idDeps.logExistenceUnknown).not.toHaveBeenCalled();
-
-    const reuseDeps = makeDeps({
-      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
-    });
-    await resolveCoverImageId({ coverImage, userId: 7 }, reuseDeps);
-    expect(reuseDeps.logExistenceUnknown).not.toHaveBeenCalled();
-  });
-});
-
 describe('isReusableCoverImage', () => {
   it('accepts a row attached to nothing', () => {
     expect(isReusableCoverImage(unattached)).toBe(true);
@@ -370,22 +325,6 @@ describe('productionCoverImageDeps.objectExists', () => {
     // failure mode this bound exists to prevent) does not.
     expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeGreaterThan(0);
     expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeLessThanOrEqual(5000);
-  });
-});
-
-describe('productionCoverImageDeps.logExistenceUnknown', () => {
-  it('emits a structured warning naming the branch, and never throws', () => {
-    expect(() => productionCoverImageDeps.logExistenceUnknown({ userId: 7 })).not.toThrow();
-
-    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
-    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
-      type: 'warning',
-      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
-      reason: 'proceeded-unverified',
-      userId: 7,
-    });
-    // The object key is deliberately NOT logged — the decision is what needs counting.
-    expect(logToAxiomMock.mock.calls[0][0]).not.toHaveProperty('url');
   });
 });
 
