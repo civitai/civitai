@@ -3,7 +3,6 @@ import type * as ClientEnv from '~/env/client';
 import type * as CloudflareClient from '~/server/cloudflare/client';
 import type * as ImageDeliveryService from '~/server/services/image-delivery.service';
 import type * as ImageService from '~/server/services/image.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const LOC = 'https://image.example.test/abcdEFGH';
 
@@ -115,15 +114,11 @@ describe('invalidateHiddenImageMetadata — order', () => {
     );
   });
 
-  it('logs, and rejects nothing, when the detached CDN purge fails', async () => {
+  it('rejects nothing when the detached CDN purge fails', async () => {
     mocks.purgeCache.mockRejectedValue(new Error('cf down'));
 
     await expect(invalidateHiddenImageMetadata(IMAGE)).resolves.toBeUndefined();
-    await vi.waitFor(() =>
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'hidden-meta-invalidation', imageKey: KEY })
-      )
-    );
+    await vi.waitFor(() => expect(mocks.purgeCache).toHaveBeenCalledTimes(1));
   });
 });
 

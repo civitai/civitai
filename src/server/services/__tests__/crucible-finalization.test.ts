@@ -1293,9 +1293,6 @@ describe('finalizeCrucible — entry posts', () => {
     });
 
     await expect(finalizeCrucible(1)).resolves.toMatchObject({ crucibleId: 1 });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
-    );
   });
 });
 

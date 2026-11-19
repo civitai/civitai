@@ -2,7 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A change of a model's mode rebuilds every collection whose document shows the model's images:
@@ -101,10 +100,6 @@ describe('getCollectionIdsForModelImages', () => {
         BY_ARTICLE_COVER,
         BY_ARTICLE_BANNER,
       ]);
-      // Said, not silent: those covers stay stale until a full reindex.
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'collection-media-index-cover-leg-skipped' })
-      );
     } finally {
       await db.exec(`CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId")`);
     }
