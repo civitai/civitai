@@ -1252,7 +1252,7 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
-  // Erasure of their deal uploads follows their other content, and the retention off-switch.
+  // Deal uploads go only when the rest of their content does, and only with retention on.
   const removeDealUploads =
     imageRemovalMode(removeImages) === 'immediate' &&
     (await isFlipt(FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION));
@@ -1277,7 +1277,6 @@ export const deleteUser = async ({
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
-      // Marks their own uploads on closed deals removed; purgeRemovedFiles deletes the unheld ones.
       ...(removeDealUploads ? [dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id))] : []),
       ...(removeModels
         ? []

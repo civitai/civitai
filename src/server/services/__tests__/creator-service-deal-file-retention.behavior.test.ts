@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -18,6 +19,11 @@ const s3 = vi.hoisted(() => ({
   purgeObjectVersions: vi.fn(),
   deleteObject: vi.fn(),
   send: vi.fn(),
+}));
+const flipt = vi.hoisted(() => ({ retentionOn: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(async () => flipt.retentionOn),
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getBucket: async () => 'bucket',
@@ -218,6 +224,21 @@ describe('the retention windows', () => {
   it('marks a closed deal that never held money', async () => {
     const { finalId } = await closedDeal('Declined', 40);
     await q(`UPDATE "ServiceDeal" SET "heldAt" = NULL, "settledAt" = NULL`);
+    await sweep();
+    expect(await removed(finalId)).toBe(true);
+  });
+});
+
+describe('the retention off-switch', () => {
+  it('marks nothing while the flag is off, and marks once it is on', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    flipt.retentionOn = false;
+    try {
+      expect(await sweep()).toBe(0);
+      expect(await removed(finalId)).toBe(false);
+    } finally {
+      flipt.retentionOn = true;
+    }
     await sweep();
     expect(await removed(finalId)).toBe(true);
   });

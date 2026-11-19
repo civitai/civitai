@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
@@ -80,6 +81,8 @@ export async function markExpiredDealFiles({
   limit = 200,
   effectiveAt = SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
 }: { limit?: number; effectiveAt?: Date } = {}) {
+  // The off-switch for the whole retention clock.
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION))) return 0;
   const marked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" SET "removedAt" = now()
     WHERE "id" IN (

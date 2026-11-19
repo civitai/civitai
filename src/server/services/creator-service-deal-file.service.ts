@@ -1433,7 +1433,7 @@ export async function settlePreviewScans() {
           AND (i."needsReview" IS NOT NULL OR i."poi" OR i."minor" OR i."nsfwLevel" > ${NsfwLevel.XXX}::int)))`;
   // Only the rating is above the deal's level: the seller is told that, and nothing else. Not a
   // verdict on the content, so the scan Passed: its copy is not kept as evidence and the file purges
-  // once removed. Every reader that serves a preview also needs status Processing or Ready.
+  // once removed.
   const overLevel = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" f
     SET "status" = 'Failed'::"ServiceDealFileStatus", "scanStatus" = 'Passed'::"ServiceDealFileScanStatus",

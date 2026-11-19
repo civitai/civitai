@@ -3,6 +3,7 @@ import { SERVICE_PREVIEW_OVER_LEVEL_REASON } from '~/shared/constants/creator-se
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -33,6 +34,11 @@ const buzz = vi.hoisted(() => ({
   refundTransaction: vi.fn(),
 }));
 // The deal flows notify buyer and seller; accept the call without asserting on it.
+const flipt = vi.hoisted(() => ({ retentionOn: true }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(async () => flipt.retentionOn),
+}));
 vi.mock('~/server/notifications/client', () => ({
   notifications: { createNotification: vi.fn(async () => undefined) },
 }));
