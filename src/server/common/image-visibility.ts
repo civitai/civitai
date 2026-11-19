@@ -9,11 +9,14 @@ import {
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
-import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
+import {
+  minorContentNotRestrictedWhere,
+  minorContentRestrictedSql,
+} from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
 
@@ -180,6 +183,49 @@ export const imageNotRestrictedWhere = ({
     ...(isUploaderId(viewerId) ? [{ userId: viewerId }] : []),
   ],
 });
+
+// Ratings a challenge cover may never carry.
+const COVER_EXCLUDED_LEVELS = [0, NsfwLevel.Blocked];
+
+/** A challenge cover any viewer may be shown. `challengeCoverSql` is its SQL twin: change both together. */
+export const challengeCoverWhere = (): Prisma.ImageWhereInput => ({
+  AND: [
+    { needsReview: null },
+    { tosViolation: false },
+    { acceptableMinor: false },
+    { nsfwLevel: { notIn: COVER_EXCLUDED_LEVELS } },
+    minorContentNotRestrictedWhere(),
+    {
+      OR: [
+        { postId: null },
+        {
+          post: {
+            publishedAt: { lt: new Date() },
+            availability: { not: Availability.Private },
+          },
+        },
+      ],
+    },
+  ],
+});
+
+/** `challengeCoverWhere` as SQL over `"Image" i`. */
+export const challengeCoverSql = () => Prisma.sql`(
+  i."needsReview" IS NULL
+  AND i."tosViolation" = FALSE
+  AND i."acceptableMinor" = FALSE
+  AND i."nsfwLevel" NOT IN (${Prisma.join(COVER_EXCLUDED_LEVELS)})
+  AND NOT ${minorContentRestrictedSql({
+    minor: Prisma.sql`COALESCE(i."minor", FALSE)`,
+    nsfwLevel: Prisma.sql`i."nsfwLevel"`,
+  })}
+  AND (i."postId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Post" cp
+    WHERE cp.id = i."postId"
+      AND cp."publishedAt" < now()
+      AND cp.availability != ${Availability.Private}::"Availability"
+  ))
+)`;
 
 /** What {@link isImageNotRestricted} reads from an `Image`. */
 export const imageRestrictionSelect = {
