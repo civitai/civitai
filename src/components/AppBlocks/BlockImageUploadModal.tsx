@@ -60,10 +60,7 @@ export type BlockUploadedImageInfo = {
   url: string;
 };
 
-/**
- * Why the image is scanned, true whether or not it is shared: `persist` runs the real scan on
- * every upload, and `gate` holds every upload to the same SFW ceiling — neither reads `share`.
- */
+/** Shown for shared and unshared uploads alike: the server scans and SFW-gates both. */
 const SCAN_COPY =
   'Civitai scans every image you upload here, shared or not, so it must be safe-for-work.';
 
@@ -243,9 +240,7 @@ export default function BlockImageUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            {/* Unshared ⇒ the server writes no `blockSharedUploadAppId`, so the app's gated read
-                never returns this row to another viewer. A shared upload says who sees it in the
-                share notice below instead. */}
+            {/* Unshared only: a shared upload's visibility is the share notice below. */}
             {!share && (
               <>
                 This image is kept <strong>private</strong>: Civitai won&apos;t show it to other people
