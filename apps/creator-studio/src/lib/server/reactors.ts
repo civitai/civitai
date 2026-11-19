@@ -1,4 +1,5 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import {
@@ -95,7 +96,7 @@ export const safeProfilePictureUrl = () => sql`
   CASE
     WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
       AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0
-      AND (p."needsReview" IS NULL OR p."needsReview" NOT IN ('csam', 'minor')) THEN p.url
+      AND (p."needsReview" IS NULL OR p."needsReview" <> ALL(${sql.lit(`{${OWNER_HIDDEN_REVIEWS.join(',')}}`)}::text[])) THEN p.url
   END`;
 
 /**

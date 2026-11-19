@@ -213,10 +213,11 @@ export function decideModelVersionSubmit(
     };
   }
 
+  // A template seeds the first save only: the server reads id + templateId as "create another version".
+  const templateId = ctx.versionId ? undefined : ctx.templateId;
   const shouldSubmit =
     ctx.isDirty ||
     !ctx.versionId ||
-    !!ctx.templateId ||
     !!ctx.bountyId ||
     !isEqual(data.paidAccessConfig, ctx.storedPaidAccessConfig);
   if (!shouldSubmit) return { kind: 'skip' };
@@ -251,7 +252,7 @@ export function decideModelVersionSubmit(
       baseModelType: data.baseModelType,
       monetization: ctx.monetizationBlocked ? null : data.monetization,
       recommendedResources,
-      templateId: ctx.templateId,
+      templateId,
       bountyId: ctx.bountyId,
     },
   };

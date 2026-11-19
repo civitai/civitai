@@ -762,7 +762,11 @@ export const addSimpleImagePostHandler = async ({
       }
     } catch (error) {
       // The refusal is what the user needs to see; a failed cleanup must not replace it.
-      await deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
+      await deletePost({
+        id: post.id,
+        isModerator,
+        actor: { system: 'add-simple-image-post-rollback' },
+      }).catch((rollbackError) =>
         logToAxiom({
           type: 'error',
           name: 'add-simple-image-post-rollback-failed',

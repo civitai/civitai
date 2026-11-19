@@ -968,6 +968,49 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_correction', resultIds: [] }),
+      expect.any(Function)
+    );
+  });
+
+  it('refuses, and records as the own-images path, a verdict that would narrow the own-images search', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wordVerdict: 'minor',
+        searchPath: 'refused_own_images',
+        resultIds: [],
+      }),
+      expect.any(Function)
+    );
+  });
+
+  it('records the own-images path for a refused own-images search from an image', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ imageId: 101 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_own_images', resultIds: [] })
+    );
   });
 
   it('audits a correction that changes between hydration rounds of one page', async () => {
