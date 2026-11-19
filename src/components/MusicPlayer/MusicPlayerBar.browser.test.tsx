@@ -115,7 +115,7 @@ describe('the global player bar', () => {
     await expect.element(page.getByText('3:32')).toBeInTheDocument();
   });
 
-  test("the cover and title open the song's detail; the creator opens their profile", async () => {
+  test("the cover and title open the song's detail; the creator opens their music tab", async () => {
     await renderWithProviders(<MusicPlayerBar />);
     const region = page.getByRole('region', { name: 'Music player' });
     const detailLinks = region
@@ -127,7 +127,7 @@ describe('the global player bar', () => {
     expect(detailLinks[1].textContent).toBe('Midnight Arcade');
     await expect
       .element(region.getByRole('link', { name: 'neonwave' }))
-      .toHaveAttribute('href', '/user/neonwave');
+      .toHaveAttribute('href', '/user/neonwave/music');
   });
 
   test('shows no playing animation beside the song name', async () => {

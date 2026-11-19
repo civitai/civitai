@@ -3,7 +3,8 @@ import { Box, Center, Chip, Group, Loader, SegmentedControl, Stack } from '@mant
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
-import React from 'react';
+import clsx from 'clsx';
+import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
 import { resolveFeedSort } from '~/components/Filters/sort-availability';
@@ -15,9 +16,16 @@ import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import {
+  PROFILE_SONG_SIDE_PADDING,
+  profileSongColumnWidth,
+} from '~/components/Music/song-card.constants';
+import { songTextDimmed } from '~/components/Music/song-styles';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { isViewer } from '~/utils/is-viewer';
@@ -34,6 +42,8 @@ const availableReactions = Object.keys(constants.availableReactions) as ReviewRe
 // `showResources` and `showModerator`. `HubFeedFilters` already hoists its own
 // for the same reason.
 const PROFILE_EXCLUDED_FILTERS: MediaFilterKey[] = ['notPublished'];
+
+const MY_REACTIONS = 'My Reactions';
 
 export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType }) {
   const currentUser = useCurrentUser();
@@ -75,6 +85,21 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
     { enabled: !!profileUsername && profileUsername !== constants.system.user.username }
   );
 
+  const { data: overview } = trpc.userProfile.overview.useQuery(
+    { username: profileUsername },
+    { enabled: !!profileUsername && type === MediaType.audio }
+  );
+
+  const isAudio = type === MediaType.audio;
+  const [tabWidth, setTabWidth] = useState(0);
+  const tabRef = useResizeObserver<HTMLDivElement>((entry) => {
+    if (isAudio) setTabWidth(entry.contentRect.width);
+  });
+  // Before paint, so the first layout is not drawn at the minimum column width.
+  useIsomorphicLayoutEffect(() => {
+    if (isAudio) setTabWidth(tabRef.current?.clientWidth ?? 0);
+  }, [isAudio]);
+
   // currently not showing any content if the username is undefined
   if (!profileUsername) return <NotFound />;
 
@@ -85,18 +110,27 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
 
   const isVideo = type === 'video';
   const jumpToEmpty = viewingReactions ? undefined : jumpToEmptyMessage(query.jumpTo, sort);
+  const columnWidth = isAudio
+    ? profileSongColumnWidth(tabWidth - 2 * PROFILE_SONG_SIDE_PADDING)
+    : constants.cardSizes.image;
 
   return (
-    <Box mt="md">
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer p={0}>
+    <Box mt="md" ref={tabRef}>
+      <MasonryProvider columnWidth={columnWidth} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryContainer
+          p={0}
+          {...(isAudio && { px: PROFILE_SONG_SIDE_PADDING })}
+          columnWidth={columnWidth}
+        >
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
               <Group gap={8}>
+                {isAudio && overview && (
+                  // Pencil `nYcQM`.
+                  <span className={clsx('text-[13px]', songTextDimmed)}>
+                    {overview.audioCount} {overview.audioCount === 1 ? 'song' : 'songs'}
+                  </span>
+                )}
                 {isSameUser && (
                   <ContentToggle
                     size="xs"
@@ -229,8 +263,15 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 // Under a jump the feed is empty on one side of a month, not empty.
                 showEmptyCta={isSameUser && !jumpToEmpty}
                 emptyMessage={jumpToEmpty}
-                // Reactions span other creators, and the header bar never filters the videos tab.
-                searchable={!viewingReactions && !isVideo}
+                // Reactions span other creators; the header bar filters only the images tab.
+                searchable={!viewingReactions && !isVideo && !isAudio}
+                songListName={
+                  isAudio
+                    ? viewingReactions
+                      ? MY_REACTIONS
+                      : user.username ?? undefined
+                    : undefined
+                }
               />
             )}
           </Stack>
@@ -256,8 +297,11 @@ function ContentToggle({
       value={value}
       onChange={(v) => onChange(v as ImageSections)}
       data={[
-        { label: `My ${titleCase(type)}s`, value: 'images' }, // will need to fix for "Audios"
-        { label: 'My Reactions', value: 'reactions' },
+        {
+          label: type === MediaType.audio ? 'My Songs' : `My ${titleCase(type)}s`,
+          value: 'images',
+        },
+        { label: MY_REACTIONS, value: 'reactions' },
       ]}
       className="w-full sm:w-auto"
     />

@@ -6,12 +6,39 @@ surfaces below change anything.
 
 - **Global player:** `src/store/music-player.store.ts` holds the current song, Up next and playback; one
   `<audio>` element (`MusicPlayerAudio`) plays it. Every surface starts a song with `playFromList`.
-  The bar's cover and title open the song's detail view, and the creator's name opens their profile
-  (`songCreatorHref`; profiles have no music section yet).
+  The bar's cover and title open the song's detail view, and the creator's name opens the music tab
+  of their profile (`songCreatorHref`).
 - **Lyrics:** stored in `TrackLyrics.lines` as `[{ t, text }]`, `t` in milliseconds or null when the
   line has no time.
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
   `src/server/common/image-visibility.ts`), which for a song includes the verdict on its lyrics text.
+
+## Discovery
+
+The surfaces where people find songs, all hidden with the flag off (`/music` and `/user/<name>/music`
+are not found, and no music nav entry, chip or tab shows).
+
+| Surface                    | Behaviour                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/music` (`MusicFeedPage`) | Title, genre chips, then the "All music" feed: the image feed (`ImagesInfinite`) with `types: ['audio']`, so sort, period and the Filters panel are the images feed's (and share its saved choices). Linked from the header's content nav.                                                                                                |
+| Genre chips                | "All" plus each genre of `SONG_GENRES` that has its mirrored tag (`songGenreTagName`); a genre no song was published under has no tag yet and gets no chip. Single-select, writing `?tags=<tag id>` (ids from `image.getSongGenreTags`); "All" clears it. A `?tags=` link that is not one genre lights no chip and "All" still clears it. |
+| Card / list view           | A grid / list switch beside the sort, kept per browser. Card: the Song Card. List: a Song Row per song (index, cover, title, "creator · genre", length, menu).                                                                                                                                                                            |
+| Song Card (`SongCard`)     | Any song in an image feed renders as one: cover, play button, length, title, creator, genre, likes and comments.                                                                                                                                                                                                                          |
+| Media filter               | The Filters panel's Media type section offers Audio beside Image and Video.                                                                                                                                                                                                                                                               |
+| Profile music tab          | `/user/<name>/music` lists the creator's songs, with the song count on the profile's Music tab; the owner keeps the Published / Draft toggle.                                                                                                                                                                                             |
+
+Playing a song from a list starts it with `playFromList` and the list's songs loaded at that moment,
+in display order, so Up next shows the ones after it as "Next from <name>". A page loaded afterwards
+is not added.
+
+| Played from                                        | Up next name                       |
+| -------------------------------------------------- | ---------------------------------- |
+| `/music`                                           | "All music", or the selected genre |
+| A profile's music tab                              | The creator's username             |
+| A collection                                       | The collection's name              |
+| Any other image feed (Audio picked in its filters) | "Images"                           |
+
+"Rising this week" and "Recently played" on `/music` come later.
 
 ## Song detail view
 
@@ -20,7 +47,7 @@ pieces live in `src/components/Music/SongDetail/`.
 
 | Part | Behaviour |
 |------|-----------|
-| Stage (`SongDetailStage`) | The carousel slide of a song: the cover with a play button, title, creator (linking to their profile) and length, and the lyrics beside it, centred as one group (lyrics at most 720px wide; the cover grows from 320px to 400px from the `lg` container width). Arrows still browse the feed the view was opened from. |
+| Stage (`SongDetailStage`) | The carousel slide of a song: the cover with a play button, title, creator (linking to their profile's music tab) and length, and the lyrics beside it, centred as one group (lyrics at most 720px wide; the cover grows from 320px to 400px from the `lg` container width). Arrows still browse the feed the view was opened from. |
 | Colour environment (`SongStageBackdrop`) | The cover, blurred, over a wash of its accent (`music-accent.ts`), under a dark scrim, once the image guard reveals the song. No cover the viewer may see: the Civitai primary. |
 | Playback | Through the global player only. Opening a song never autoplays. Play starts the song with the creator's other songs as Up next, which reads "Next from <creator>"; on the current song the button pauses and resumes instead of restarting. The cover shows "Playing m:ss" or "Paused" while it is the current song. |
 | Synced lyrics (`SongLyrics`) | While the song is current, the line the playhead has reached is highlighted and followed. Clicking a timed line seeks there; when another song is current, this one starts at that line. A line with `t: null` renders as text and is not clickable. Lyrics with no times at all are plain text: no highlight, nothing to click. `[Verse 1]`-style lines render as section labels. |

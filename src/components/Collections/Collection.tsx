@@ -409,6 +409,7 @@ const ImageCollection = ({
                 filters={filters}
                 disableStoreFilters
                 collectionId={collection.id}
+                songListName={collection.name}
                 hideHatTurf={collectionHidesHatTurf(collection)}
               />
             </FlagRowProviders>

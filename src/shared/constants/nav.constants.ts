@@ -27,6 +27,7 @@ export const NAV_KEYS = [
   'models',
   'images',
   'videos',
+  'music',
   '3d-models',
   'hubs',
   'posts',

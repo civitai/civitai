@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 /**
- * A user's countable images and videos, for the profile counts: scanned, not awaiting review, and on
+ * A user's countable images, videos and songs, for the profile counts: scanned, not awaiting review, and on
  * a post that is published, public and not future-dated. `browsingLevelsFlag` narrows it to one
  * browsing-level variant.
  */
@@ -10,7 +10,8 @@ export function userImageVideoCountQuery(userIds: number[], browsingLevelsFlag?:
     SELECT
       "userId" as id,
       COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
-      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
+      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount",
+      COALESCE(SUM(IIF("type" = 'audio', 1, 0)), 0)::INT as "audioCount"
     FROM "Image"
     WHERE "userId" IN (${Prisma.join(userIds)})
       AND "ingestion" = 'Scanned'

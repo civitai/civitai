@@ -36,6 +36,8 @@ describe('sub-nav default layout', () => {
       'models',
       'images',
       'videos',
+      // Gated on `features.music`, like `crucibles` below.
+      'music',
       '3d-models',
       'hubs',
       'articles',

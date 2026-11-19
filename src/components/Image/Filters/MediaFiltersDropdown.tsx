@@ -24,6 +24,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -67,10 +68,10 @@ const urlOverridableKeys = [
   'includePG13',
 ] as const satisfies readonly (keyof ImagesQueryParamSchema)[];
 
-// TODO: adjust filter as we begin to support more media types
-const availableMediaTypes = Object.values(MediaType).filter(
-  (value) => value === 'image' || value === 'video'
-);
+const getAvailableMediaTypes = (music: boolean) =>
+  Object.values(MediaType).filter(
+    (value) => value === 'image' || value === 'video' || (music && value === 'audio')
+  );
 
 export function MediaFiltersDropdown({
   query,
@@ -89,6 +90,7 @@ export function MediaFiltersDropdown({
 }: Props) {
   const mobile = useIsMobile();
   const isClient = useIsClient();
+  const availableMediaTypes = getAvailableMediaTypes(!!useOptionalFeatureFlags()?.music);
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
   const domainColor = useDomainColor();

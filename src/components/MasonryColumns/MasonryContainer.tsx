@@ -8,6 +8,8 @@ import clsx from 'clsx';
 
 type MasonryContainerProps = Omit<BoxProps, 'children'> & {
   children: React.ReactNode | ((state: MasonryContextState) => React.ReactNode);
+  /** Reaches the inner `MasonryProvider`; give the surrounding one the same width. */
+  columnWidth?: number;
 };
 
 export function MasonryContainer({ children, ...boxProps }: MasonryContainerProps) {

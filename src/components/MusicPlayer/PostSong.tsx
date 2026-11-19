@@ -50,11 +50,11 @@ export function playSongWithCreatorList(song: SongImage, moreFrom: SongList, sta
   });
 }
 
-/** Play now, with the songs after it in `list` as Up next. */
-function playNow(song: SongImage, list: SongList) {
+/** Play now, from `startAtSec` when given, with the songs after it in `list` as Up next. */
+export function playSongFromList(song: SongImage, list: SongList, startAtSec?: number) {
   const index = list.songs.findIndex((s) => s.id === song.id);
   if (index < 0) return store().playTrack(songTrack(song));
-  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index });
+  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index, startAtSec });
 }
 
 /**
@@ -95,7 +95,7 @@ export function PostSongTile({
         <button
           type="button"
           aria-label={`${playing ? 'Pause' : 'Play'} ${title}`}
-          onClick={() => (isCurrent ? store().togglePlay() : playNow(song, list))}
+          onClick={() => (isCurrent ? store().togglePlay() : playSongFromList(song, list))}
           className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--mantine-primary-color-filled)] text-[var(--mantine-primary-color-contrast)] transition-transform hover:scale-105"
         >
           {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
@@ -109,7 +109,10 @@ export function PostSongTile({
 export function SongMenuItems({ song, list }: { song: SongImage; list: SongList }) {
   return (
     <>
-      <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={() => playNow(song, list)}>
+      <Menu.Item
+        leftSection={<IconPlayerPlay size={16} />}
+        onClick={() => playSongFromList(song, list)}
+      >
         Play now
       </Menu.Item>
       <Menu.Item
