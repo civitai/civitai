@@ -6,18 +6,13 @@
 
   let {
     guide,
-    plain = false,
-  }: {
-    guide: { level: number; label: string; description: string; examples?: Example[] }[];
-    /** Rows that are not rating levels: no level names and no Blocked styling or link. */
-    plain?: boolean;
-  } = $props();
+  }: { guide: { level: number; label: string; description: string; examples?: Example[] }[] } = $props();
 </script>
 
 <ul class="guide">
   {#each guide as entry (entry.level)}
-    {@const blocked = !plain && entry.label.toLowerCase() === 'blocked'}
-    {@const name = plain ? null : levelName(entry.label)}
+    {@const blocked = entry.label.toLowerCase() === 'blocked'}
+    {@const name = levelName(entry.label)}
     <li class="row" class:blocked>
       <span class="chip">{entry.label}</span>
       <div class="meaning">

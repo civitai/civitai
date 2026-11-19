@@ -496,7 +496,8 @@ describe('saveRuleGuide', () => {
   const guide = {
     intro: 'Why we ask',
     sets: [
-      { title: 'First set', notes: 'A note', levels: [{ code: 'A0', description: 'Level zero' }] },
+      { title: 'First set', notes: 'A note', points: ['Point one'] },
+      { title: 'Notes only', notes: 'Just a line.', points: [] },
     ],
   };
 
@@ -519,22 +520,10 @@ describe('saveRuleGuide', () => {
   });
 
   it.each([
-    [
-      'a level with no description',
-      { sets: [{ title: 'T', levels: [{ code: 'A0', description: ' ' }] }] },
-      'description',
-    ],
-    ['a set with no levels', { sets: [{ title: 'T', levels: [] }] }, 'level'],
-    [
-      'a set with no title',
-      { sets: [{ title: '', levels: [{ code: 'A0', description: 'D' }] }] },
-      'title',
-    ],
-    [
-      'a code over the limit',
-      { sets: [{ title: 'T', levels: [{ code: 'TOOLONGCODE', description: 'D' }] }] },
-      'code',
-    ],
+    ['a blank point', { sets: [{ title: 'T', points: ['One', ' '] }] }, 'point 2'],
+    ['a set with neither notes nor points', { sets: [{ title: 'T', points: [] }] }, 'notes or'],
+    ['a set with no title', { sets: [{ title: '', points: ['One'] }] }, 'title'],
+    ['a point over the limit', { sets: [{ title: 'T', points: ['x'.repeat(301)] }] }, 'point 1'],
     ['an intro over the limit', { intro: 'x'.repeat(601), sets: guide.sets }, 'intro'],
   ])('refuses %s, naming what is wrong, and writes nothing', async (_, input, word) => {
     redisStore.set(KEY, JSON.stringify(stored));

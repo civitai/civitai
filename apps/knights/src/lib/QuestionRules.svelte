@@ -1,15 +1,7 @@
 <script lang="ts">
-  import type { KnightsRuleGuide, KnightsRuleSet } from '@civitai/shared/new-order';
-  import RatingGuide from './RatingGuide.svelte';
+  import type { KnightsRuleGuide } from '@civitai/shared/new-order';
 
   let { rules }: { rules: KnightsRuleGuide } = $props();
-
-  const rows = (set: KnightsRuleSet) =>
-    set.levels.map((level, index) => ({
-      level: index,
-      label: level.code,
-      description: level.description,
-    }));
 </script>
 
 <div class="question-rules" id="question-rules">
@@ -18,8 +10,13 @@
   {#each rules.sets as set, i (i)}
     <section class="set" aria-label={set.title}>
       <h4 class="title">{set.title}</h4>
-      <RatingGuide guide={rows(set)} plain />
-      {#if set.notes}<p class="notes">{set.notes}</p>{/if}
+      {#if set.points.length}
+        <ul class="points">
+          {#each set.points as point, p (p)}<li>{point}</li>{/each}
+        </ul>
+      {/if}
+      <!-- A notes-only set reads at the size of the points so it does not look like a footnote. -->
+      {#if set.notes}<p class="notes" class:lead={!set.points.length}>{set.notes}</p>{/if}
     </section>
   {/each}
 </div>
@@ -46,7 +43,7 @@
   .set {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
   .title {
     margin: 0;
@@ -55,7 +52,32 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
+  .points {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding-left: 1.25em;
+    color: var(--io-parchment);
+    font: 400 18px/1.35 var(--io-font-body);
+  }
+  .points li::marker {
+    color: var(--io-gold);
+  }
   .notes {
     font-size: 14px;
+  }
+  .notes.lead {
+    color: var(--io-parchment);
+    font-size: 18px;
+    line-height: 1.35;
+  }
+
+  @media (max-width: 40rem) {
+    .points,
+    .notes.lead {
+      font-size: 17px;
+      line-height: 1.3;
+    }
   }
 </style>

@@ -301,7 +301,7 @@ describe('Knights of New Order config access', () => {
 describe('Knights of New Order rule guide action', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  const guide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+  const guide = { sets: [{ title: 'T', points: ['Point one'] }] };
 
   it('saves the posted guide as the acting moderator', async () => {
     saveRules.mockResolvedValueOnce({ ok: true, changed: true });

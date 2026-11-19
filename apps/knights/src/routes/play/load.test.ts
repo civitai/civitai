@@ -646,7 +646,7 @@ describe('play load notices', () => {
   it('carries the saved question rules with the guide, and null when none are saved', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     expect((await run()).ruleGuide).toBeNull();
-    const ruleGuide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+    const ruleGuide = { sets: [{ title: 'T', points: ['Point one'] }] };
     storedRules.value = { ruleGuide };
     expect((await run()).ruleGuide).toEqual(ruleGuide);
     storedRules.value = {};

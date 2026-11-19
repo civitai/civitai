@@ -48,8 +48,8 @@ export type KnightsSourcesConfig = {
   ruleGuide?: KnightsRuleGuide;
 };
 
-export type KnightsRuleLevel = { code: string; description: string };
-export type KnightsRuleSet = { title: string; notes?: string; levels: KnightsRuleLevel[] };
+/** A set is a title with notes, a bullet list (mild to severe), or both. */
+export type KnightsRuleSet = { title: string; notes?: string; points: string[] };
 export type KnightsRuleGuide = { intro?: string; sets: KnightsRuleSet[] };
 
 /** Shared by the Config-page validator and the Knights reader; change both together via this object. */
@@ -58,9 +58,8 @@ export const KNIGHTS_RULE_GUIDE_LIMITS = {
   sets: 6,
   title: 60,
   notes: 600,
-  levels: 10,
-  code: 8,
-  description: 300,
+  points: 10,
+  point: 300,
 } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -74,23 +73,18 @@ const readText = (value: unknown, max: number) => {
 };
 
 function readRuleSet(value: unknown): KnightsRuleSet | undefined {
-  if (!isRecord(value) || !Array.isArray(value.levels)) return undefined;
+  if (!isRecord(value)) return undefined;
   const title = readText(value.title, KNIGHTS_RULE_GUIDE_LIMITS.title);
   if (!title) return undefined;
-  const levels = value.levels
-    .flatMap((level): KnightsRuleLevel[] => {
-      if (!isRecord(level)) return [];
-      const code = readText(level.code, KNIGHTS_RULE_GUIDE_LIMITS.code);
-      const description = readText(level.description, KNIGHTS_RULE_GUIDE_LIMITS.description);
-      return code && description ? [{ code, description }] : [];
-    })
-    .slice(0, KNIGHTS_RULE_GUIDE_LIMITS.levels);
-  if (!levels.length) return undefined;
+  const points = (Array.isArray(value.points) ? value.points : [])
+    .flatMap((point) => readText(point, KNIGHTS_RULE_GUIDE_LIMITS.point) ?? [])
+    .slice(0, KNIGHTS_RULE_GUIDE_LIMITS.points);
   const notes = readText(value.notes, KNIGHTS_RULE_GUIDE_LIMITS.notes);
-  return { title, ...(notes ? { notes } : {}), levels };
+  if (!points.length && !notes) return undefined;
+  return { title, ...(notes ? { notes } : {}), points };
 }
 
-/** Keeps the usable sets, levels and intro; undefined when no set is usable. */
+/** Keeps the usable sets, points and intro; undefined when no set is usable. */
 export function readRuleGuide(value: unknown): KnightsRuleGuide | undefined {
   if (!isRecord(value) || !Array.isArray(value.sets)) return undefined;
   const sets = value.sets

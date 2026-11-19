@@ -70,7 +70,7 @@ describe('createStoredSettingsSource', () => {
   it('carries the saved question rules, and keeps them when a later read fails', async () => {
     let clock = 0;
     let fail = false;
-    const ruleGuide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+    const ruleGuide = { sets: [{ title: 'T', points: ['Point one'] }] };
     const source = createStoredSettingsSource({
       read: async () => {
         if (fail) throw new Error('down');

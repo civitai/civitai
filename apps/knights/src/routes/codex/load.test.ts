@@ -65,7 +65,7 @@ describe('codex load', () => {
 
   it('carries the question rules saved on the moderator Config page, and null when none are', async () => {
     expect((await run()).ruleGuide).toBeNull();
-    const ruleGuide = { sets: [{ title: 'T', levels: [{ code: 'A0', description: 'Level zero' }] }] };
+    const ruleGuide = { sets: [{ title: 'T', points: ['Point one'] }] };
     stored.value = { ruleGuide };
     expect((await run()).ruleGuide).toEqual(ruleGuide);
   });

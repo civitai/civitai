@@ -236,7 +236,7 @@ describe('changeSummary', () => {
   it('names a save, edit or clear of the question rules', () => {
     const base = { enabled: true, sfwRate: 1, nsfwRate: 0.3 };
     const guide = (description: string) => ({
-      sets: [{ title: 'T', levels: [{ code: 'A0', description }] }],
+      sets: [{ title: 'T', points: [description] }],
     });
     expect(changeSummary(base, { ...base, ruleGuide: guide('One') })).toBe('Question rules: saved');
     expect(

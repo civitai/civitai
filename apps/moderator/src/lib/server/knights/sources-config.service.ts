@@ -301,21 +301,19 @@ export function validateRuleGuideInput(
     if (!title.ok) return title;
     const notes = text(set.notes, `${where}'s notes`, LIMITS.notes, false);
     if (!notes.ok) return notes;
-    if (!Array.isArray(set.levels) || !set.levels.length)
-      return { ok: false, error: `${where} needs at least one level.` };
-    if (set.levels.length > LIMITS.levels)
-      return { ok: false, error: `${where} can have at most ${LIMITS.levels} levels.` };
-    const levels: KnightsRuleSet['levels'] = [];
-    for (const [j, rawLevel] of set.levels.entries()) {
-      const level = (rawLevel ?? {}) as Record<string, unknown>;
-      const at = `${where}, level ${j + 1}`;
-      const code = text(level.code, `${at}: the code`, LIMITS.code, true);
-      if (!code.ok) return code;
-      const description = text(level.description, `${at}: the description`, LIMITS.description, true);
-      if (!description.ok) return description;
-      levels.push({ code: code.value, description: description.value });
+    const rawPoints = set.points ?? [];
+    if (!Array.isArray(rawPoints)) return { ok: false, error: `${where}'s points must be a list.` };
+    if (rawPoints.length > LIMITS.points)
+      return { ok: false, error: `${where} can have at most ${LIMITS.points} points.` };
+    const points: string[] = [];
+    for (const [j, rawPoint] of rawPoints.entries()) {
+      const point = text(rawPoint, `${where}, point ${j + 1}`, LIMITS.point, true);
+      if (!point.ok) return point;
+      points.push(point.value);
     }
-    sets.push({ title: title.value, ...(notes.value ? { notes: notes.value } : {}), levels });
+    if (!points.length && !notes.value)
+      return { ok: false, error: `${where} needs notes or at least one point.` };
+    sets.push({ title: title.value, ...(notes.value ? { notes: notes.value } : {}), points });
   }
   return { ok: true, guide: { ...(intro.value ? { intro: intro.value } : {}), sets } };
 }
