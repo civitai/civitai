@@ -1,5 +1,10 @@
+import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as PostService from '~/server/services/post.service';
@@ -27,7 +32,18 @@ const h = vi.hoisted(() => ({
   submitGallery: vi.fn(),
   getWorkflow: vi.fn(),
   blocked: new Set<string>(),
+  isFlipt: vi.fn(async () => false),
+  pg: null as unknown as PGlite,
 }));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: h.isFlipt,
+}));
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { ...(await importOriginal<typeof KyselyDb>()), kyselyWrite: pgliteKysely(() => h.pg) };
+});
 
 vi.mock('~/server/services/blocks/block-image-upload.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlockImageUpload>()),
@@ -128,10 +144,13 @@ function memoryRedis() {
   return store;
 }
 
+let sys: Map<string, string>;
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.blocked.clear();
-  memoryRedis();
+  h.isFlipt.mockResolvedValue(false);
+  sys = memoryRedis();
   h.stage.mockResolvedValue({
     url: STORE_KEY,
     mimeType: 'image/png',
@@ -360,5 +379,90 @@ describe('createHeadlessPost', () => {
     const retry = await post();
 
     expect(retry).toMatchObject({ postId: POST_ID, deduped: false });
+  });
+});
+
+const SYS_KEY = `headless-post:idempotency:${USER_ID}:remix:${WORKFLOW_ID}`;
+const migration = readFileSync(
+  path.resolve(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20271119120000_idempotency_key/migration.sql'
+  ),
+  'utf8'
+);
+
+describe('createHeadlessPost with the idempotency-keys-pg flag', () => {
+  let withTable: PGlite;
+  let withoutTable: PGlite;
+  const rows = async () =>
+    (await withTable.query<{ scope: string; key: string; state: string }>(
+      'SELECT scope, key, state FROM "IdempotencyKey" ORDER BY key'
+    )).rows;
+
+  beforeAll(async () => {
+    withTable = new PGlite();
+    await withTable.exec(migration);
+    withoutTable = new PGlite();
+  });
+  afterAll(async () => {
+    await withTable?.close();
+    await withoutTable?.close();
+  });
+  beforeEach(async () => {
+    h.pg = withTable;
+    await withTable.exec('DELETE FROM "IdempotencyKey"');
+  });
+  afterEach(() => {
+    h.isFlipt.mockResolvedValue(false);
+  });
+
+  it('off: the key lives only in sysRedis, written exactly as before, and Postgres is not touched', async () => {
+    const result = await post();
+
+    expect(redisMock.sysRedis.set.mock.calls).toEqual([
+      [SYS_KEY, 'pending', { NX: true, EX: 300 }],
+      [SYS_KEY, JSON.stringify({ postId: POST_ID, imageIds: [1] }), { EX: 604800 }],
+    ]);
+    expect(result.deduped).toBe(false);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('on: a repeat after sysRedis lost the key returns the first post, without posting again', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    const first = await post();
+    // sysRedis evicted the key (volatile-lru): only Postgres remembers the first post.
+    sys.clear();
+
+    const repeat = await post();
+
+    expect(first.deduped).toBe(false);
+    expect(repeat).toEqual({ ...first, deduped: true });
+    expect(h.createPost).toHaveBeenCalledTimes(1);
+    expect(await rows()).toEqual([
+      { scope: 'headless-post', key: `${USER_ID}:remix:${WORKFLOW_ID}`, state: 'done' },
+    ]);
+  });
+
+  it('on: a result sysRedis stored before the flag was turned on still answers a repeat', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    sys.set(SYS_KEY, JSON.stringify({ postId: 41, imageIds: [9] }));
+
+    const repeat = await post();
+
+    expect(repeat).toEqual({ postId: 41, imageIds: [9], deduped: true });
+    expect(h.createPost).not.toHaveBeenCalled();
+    // The Postgres claim it took to look is given back, not left pending.
+    expect(await rows()).toEqual([]);
+  });
+
+  it('on, with the table missing: refuses, copying and posting nothing', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    h.pg = withoutTable;
+
+    await expect(post()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+
+    expect(h.stage).not.toHaveBeenCalled();
+    expect(h.createPost).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 });

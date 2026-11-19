@@ -1,5 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -21,7 +25,17 @@ const h = vi.hoisted(() => ({
   createMessage: vi.fn(),
   createNotification: vi.fn(async () => undefined),
   reportConcernsUser: vi.fn(async () => true),
+  isFlipt: vi.fn(async () => false),
+  pg: null as unknown as PGlite,
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: h.isFlipt,
+}));
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { ...(await importOriginal<typeof KyselyDb>()), kyselyWrite: pgliteKysely(() => h.pg) };
+});
 vi.mock('~/server/services/report-subject', () => ({ reportConcernsUser: h.reportConcernsUser }));
 vi.mock('~/server/services/chat.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ChatService>()),
@@ -80,6 +94,16 @@ beforeAll(async () => {
       (${CIVITAI}, 'CivitaiModeration'), (${MOD_A}, 'mod-a'), (${MOD_B}, 'mod-b'),
       (${USER}, 'someone'), (${OTHER_USER}, 'someone-else');
   `);
+  await db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20271119120000_idempotency_key/migration.sql'
+      ),
+      'utf8'
+    )
+  );
+  h.pg = db;
   raw = pgliteRaw(db);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
 });
@@ -108,8 +132,10 @@ beforeEach(async () => {
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   await db.exec(`
     DELETE FROM "Chat"; DELETE FROM "ChatMember"; DELETE FROM "ChatMessage";
-    DELETE FROM "ModActivity"; DELETE FROM "ModThreadClaim";
+    DELETE FROM "ModActivity"; DELETE FROM "ModThreadClaim"; DELETE FROM "IdempotencyKey";
   `);
+  h.pg = db;
+  h.isFlipt.mockResolvedValue(false);
 
   dbMock.dbWrite.user.findFirst.mockImplementation((async ({ where }: { where: { id: number } }) =>
     where.id === BANNED
@@ -458,6 +484,69 @@ describe('sendAsCivitaiOnce', () => {
     const input = { actorId: MOD_A, userId: BANNED, message: 'hi', idempotencyKey: 'key-0002' };
     await expect(sendAsCivitaiOnce(input)).rejects.toThrow();
     expect(redisStore.size).toBe(0);
+  });
+});
+
+describe('sendAsCivitaiOnce with the idempotency-keys-pg flag', () => {
+  const idemRows = async () =>
+    (await db.query<{ scope: string; state: string }>(
+      'SELECT scope, state FROM "IdempotencyKey"'
+    )).rows;
+  afterEach(() => {
+    h.isFlipt.mockResolvedValue(false);
+  });
+
+  it('off: the key lives only in sysRedis, and Postgres is not touched', async () => {
+    const input = { actorId: MOD_A, userId: USER, message: 'hi', idempotencyKey: 'key-0101' };
+    const first = await sendAsCivitaiOnce(input);
+
+    const idemKeys = [...redisStore.keys()].filter((k) => k.includes(':idempotency:'));
+    expect(idemKeys).toHaveLength(1);
+    expect(idemKeys[0]).toMatch(new RegExp(`^message-as-civitai:idempotency:${MOD_A}:key-0101:`));
+    expect(JSON.parse(redisStore.get(idemKeys[0])!)).toEqual({
+      chatId: first.chatId,
+      messageId: first.messageId,
+    });
+    expect(await idemRows()).toEqual([]);
+  });
+
+  it('on: a repeat after sysRedis lost the key returns the first message, sending nothing', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    const input = { actorId: MOD_A, userId: USER, message: 'hi', idempotencyKey: 'key-0102' };
+    const first = await sendAsCivitaiOnce(input);
+    // sysRedis evicted the key (volatile-lru): only Postgres remembers the first send.
+    for (const k of [...redisStore.keys()]) if (k.includes(':idempotency:')) redisStore.delete(k);
+
+    const repeat = await sendAsCivitaiOnce(input);
+
+    expect(repeat).toEqual({ ...first, deduped: true });
+    expect(h.createMessage).toHaveBeenCalledTimes(1);
+    expect(await idemRows()).toEqual([{ scope: 'message-as-civitai', state: 'done' }]);
+  });
+
+  it('on: frees the Postgres key when the send fails, so a retry can succeed', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    const input = { actorId: MOD_A, userId: BANNED, message: 'hi', idempotencyKey: 'key-0103' };
+
+    await expect(sendAsCivitaiOnce(input)).rejects.toThrow();
+
+    expect(await idemRows()).toEqual([]);
+  });
+
+  it('on, with the table missing: refuses, sending nothing', async () => {
+    h.isFlipt.mockResolvedValue(true);
+    h.pg = new PGlite();
+    try {
+      const input = { actorId: MOD_A, userId: USER, message: 'hi', idempotencyKey: 'key-0104' };
+      await expect(sendAsCivitaiOnce(input)).rejects.toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+      });
+      expect(h.createMessage).not.toHaveBeenCalled();
+      expect(h.upsertChat).not.toHaveBeenCalled();
+    } finally {
+      await h.pg.close();
+      h.pg = db;
+    }
   });
 });
 
