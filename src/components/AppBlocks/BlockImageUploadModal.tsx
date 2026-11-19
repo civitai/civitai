@@ -248,7 +248,8 @@ export default function BlockImageUploadModal({
                 share notice below instead. */}
             {!share && (
               <>
-                This image is kept <strong>private</strong>: only you can see it.{' '}
+                This image is kept <strong>private</strong>: Civitai won&apos;t show it to other people
+                using this app.{' '}
               </>
             )}
             {SCAN_COPY} Upload a PNG, JPEG or WebP.

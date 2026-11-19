@@ -93,6 +93,10 @@ function filesFallbackInput() {
   return input;
 }
 
+/** The notice a shared upload shows, for an app named `Gen App`. */
+const SHARE_NOTICE =
+  'This image will be visible to other viewers of Gen App once Civitai has scanned it.';
+
 const previewEl = () => document.querySelector('[data-testid="block-image-upload-preview"]');
 
 /** The visible control of the main file input (a button); the native input behind it is hidden. */
@@ -333,8 +337,6 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
 });
 
 describe('BlockImageUploadModal — an upload the app asked to share', () => {
-  const SHARE_NOTICE =
-    'This image will be visible to other viewers of Gen App once Civitai has scanned it.';
   const noticeEl = () => document.querySelector('[data-testid="block-image-upload-share-notice"]');
 
   function openWith(share?: { blockToken: string; appName: string }) {
@@ -403,13 +405,12 @@ describe('BlockImageUploadModal — an upload the app asked to share', () => {
 describe('BlockImageUploadModal — what the dialog says about who sees the image', () => {
   // Literal, not built from the component's constant: a reword must fail here.
   const UNSHARED_COPY =
-    'This image is kept private: only you can see it. Civitai scans every image you upload ' +
-    'for an app, shared or not, so it must be safe-for-work. Upload a PNG, JPEG or WebP.';
+    "This image is kept private: Civitai won't show it to other people using this app. " +
+    'Civitai scans every image you upload for an app, shared or not, so it must be ' +
+    'safe-for-work. Upload a PNG, JPEG or WebP.';
   const SHARED_COPY =
     'Civitai scans every image you upload for an app, shared or not, so it must be ' +
     'safe-for-work. Upload a PNG, JPEG or WebP.';
-  const SHARE_NOTICE =
-    'This image will be visible to other viewers of Gen App once Civitai has scanned it.';
 
   const normalised = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
