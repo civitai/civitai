@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 
 import type { PrismaClient } from '@prisma/client';
@@ -45,32 +46,35 @@ type SubListingHydrateRow = {
   parent_content_rating: string | null;
   parent_cover_url: string | null;
   parent_cover_nsfw_level: number | null;
-  parent_cover_ingestion: string | null;
+  parent_cover_ingestion: ListingMediaImage['ingestion'] | null;
   parent_cover_needs_review: string | null;
   parent_cover_poi: boolean | null;
   parent_cover_minor: boolean | null;
   parent_cover_tos_violation: boolean | null;
   parent_cover_acceptable_minor: boolean | null;
   parent_cover_blocked_for: string | null;
+  parent_cover_model_restricted: boolean | null;
   parent_icon_url: string | null;
   parent_icon_nsfw_level: number | null;
-  parent_icon_ingestion: string | null;
+  parent_icon_ingestion: ListingMediaImage['ingestion'] | null;
   parent_icon_needs_review: string | null;
   parent_icon_poi: boolean | null;
   parent_icon_minor: boolean | null;
   parent_icon_tos_violation: boolean | null;
   parent_icon_acceptable_minor: boolean | null;
   parent_icon_blocked_for: string | null;
+  parent_icon_model_restricted: boolean | null;
   parent_link_template: string | null;
   image_url: string | null;
   image_nsfw_level: number | null;
-  image_ingestion: string | null;
+  image_ingestion: ListingMediaImage['ingestion'] | null;
   image_needs_review: string | null;
   image_poi: boolean | null;
   image_minor: boolean | null;
   image_tos_violation: boolean | null;
   image_acceptable_minor: boolean | null;
   image_blocked_for: string | null;
+  image_model_restricted: boolean | null;
   /** The item image is in a published, non-private post (see `hydrateSubListingCards`). */
   image_public: boolean | null;
 };
@@ -155,6 +159,7 @@ function parentImage(row: SubListingHydrateRow, which: 'cover' | 'icon'): Listin
     tosViolation: isModerationFlagSet(row[`parent_${which}_tos_violation` as const]),
     acceptableMinor: isModerationFlagSet(row[`parent_${which}_acceptable_minor` as const]),
     blockedFor: row[`parent_${which}_blocked_for` as const],
+    modelRestricted: row[`parent_${which}_model_restricted` as const] !== false,
   };
 }
 
@@ -188,6 +193,7 @@ export function projectSubListingCard(
         tosViolation: row.image_tos_violation,
         acceptableMinor: row.image_acceptable_minor,
         blockedFor: row.image_blocked_for,
+        modelRestricted: row.image_model_restricted !== false,
       },
       ceiling
     );
@@ -235,7 +241,7 @@ export async function hydrateSubListingCards(
   if (ids.length === 0) return new Map();
   const rows = await db.$queryRaw<SubListingHydrateRow[]>(Prisma.sql`
     SELECT s.id, s.title, s.tagline, s.sub_path, s.content_rating, s.author_user_id,
-           u.username AS author_username, u.image AS author_image,
+           u.username AS author_username, ${Prisma.raw(fallbackUserImageColumn)} AS author_image,
            al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
            al.kind AS parent_kind, al.category AS parent_category,
            al.content_rating AS parent_content_rating,
@@ -245,12 +251,14 @@ export async function hydrateSubListingCards(
            pc.minor AS parent_cover_minor, pc."tosViolation" AS parent_cover_tos_violation,
            pc."acceptableMinor" AS parent_cover_acceptable_minor,
            pc."blockedFor" AS parent_cover_blocked_for,
+           pc."modelRestricted" AS parent_cover_model_restricted,
            pi.url AS parent_icon_url, pi."nsfwLevel" AS parent_icon_nsfw_level,
            pi.ingestion::text AS parent_icon_ingestion,
            pi."needsReview" AS parent_icon_needs_review, pi.poi AS parent_icon_poi,
            pi.minor AS parent_icon_minor, pi."tosViolation" AS parent_icon_tos_violation,
            pi."acceptableMinor" AS parent_icon_acceptable_minor,
            pi."blockedFor" AS parent_icon_blocked_for,
+           pi."modelRestricted" AS parent_icon_model_restricted,
            ${PARENT_LINK_TEMPLATE_SQL} AS parent_link_template,
            i.url AS image_url, i."nsfwLevel" AS image_nsfw_level,
            i.ingestion::text AS image_ingestion, i."needsReview" AS image_needs_review,
@@ -258,6 +266,7 @@ export async function hydrateSubListingCards(
            i."tosViolation" AS image_tos_violation,
            i."acceptableMinor" AS image_acceptable_minor,
            i."blockedFor" AS image_blocked_for,
+           i."modelRestricted" AS image_model_restricted,
            ${IMAGE_POST_PUBLIC_SQL} AS image_public
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id

@@ -117,11 +117,15 @@ const RESTRICTED_X = 222; // stranger's X image on a restricted base model
 const RESTRICTED_XXX = 223; // stranger's XXX image on a restricted base model
 const UNRATED = 224; // stranger's scanned image on a published post that has no rating
 const VIEWER_UNRATED = 225; // the viewer's own scanned image that has no rating
+const MINOR_R = 226; // the viewer's minor-flagged image rated R, on a published public post
+const MINOR_PG13 = 227; // the viewer's minor-flagged image rated PG-13, on the same post
+const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (NULL)
 
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
+      minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,
       "userId"          integer NOT NULL,
       "postId"          integer,
@@ -193,6 +197,10 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${UNRATED}, ${STRANGER}, 1, 0), (${VIEWER_UNRATED}, ${VIEWER}, 5, 0);
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "minor") VALUES
+      (${MINOR_R}, ${VIEWER}, 5, 4, true),
+      (${MINOR_PG13}, ${VIEWER}, 5, 2, true),
+      (${UNFLAGGED_R}, ${VIEWER}, 5, 4, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion", "blockedFor") VALUES (${OWNER_REMOVED}, ${OWNER}, NULL, 'Blocked', 'Moderated');
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "modelRestricted") VALUES
       (${RESTRICTED_R},        ${STRANGER}, 1, 4, true),
@@ -267,9 +275,28 @@ describe('which covers a stranger is shown', () => {
     expect(await servable(REMOVED, { id: 99, isModerator: true })).toBe(true);
   });
 
-  it('follows the base-model rules for the image owner too, and not for staff', async () => {
-    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(false);
-    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(true);
+  it('shows a restricted base model R image to its uploader only, not to staff', async () => {
+    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(true);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: STRANGER })).toBe(false);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(false);
+  });
+});
+
+describe('a minor-flagged cover', () => {
+  it('is shown at R only to its owner and staff', async () => {
+    expect(await servable(MINOR_R)).toBe(false);
+    expect(await servable(MINOR_R, { id: STRANGER })).toBe(false);
+    expect(await servable(MINOR_R, { id: VIEWER })).toBe(true);
+    expect(await servable(MINOR_R, { id: 99, isModerator: true })).toBe(true);
+  });
+
+  it('is shown to anyone at PG-13', async () => {
+    expect(await servable(MINOR_PG13)).toBe(true);
+    expect(await servable(MINOR_PG13, { id: STRANGER })).toBe(true);
+  });
+
+  it('is shown to anyone at R when the flag is unset', async () => {
+    expect(await servable(UNFLAGGED_R, { id: STRANGER })).toBe(true);
   });
 });
 
@@ -346,11 +373,9 @@ describe('getCollectionById', () => {
     expect(await coverOf(RESTRICTED_PG)).toBe(RESTRICTED_PG);
   });
 
-  it("withholds the owner's own R cover on a restricted base model, but not from staff", async () => {
-    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBeNull();
-    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(
-      VIEWER_RESTRICTED_R
-    );
+  it("returns the owner's own R cover on a restricted base model, and withholds it from staff", async () => {
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(VIEWER_RESTRICTED_R);
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBeNull();
   });
 });
 
@@ -445,7 +470,11 @@ describe('upsertCollection with no cover sent', () => {
     replica.stale = false;
   });
 
-  const edit = async (storedCover: number, isModerator = false) => {
+  const edit = async (
+    storedCover: number,
+    isModerator = false,
+    coverViewer?: { id?: number; isModerator?: boolean }
+  ) => {
     vi.mocked(dbMock.dbWrite.collection.findUnique).mockResolvedValue({
       id: COLLECTION,
       name: 'old',
@@ -472,6 +501,7 @@ describe('upsertCollection with no cover sent', () => {
         isModerator,
         isMember: true,
       } as never,
+      coverViewer,
     });
     expect(dbMock.dbWrite.collection.update).toHaveBeenCalledTimes(1);
     return vi.mocked(dbMock.dbWrite.collection.update).mock.calls[0]?.[0]?.data?.image;
@@ -487,6 +517,10 @@ describe('upsertCollection with no cover sent', () => {
 
   it("removes the editor's own hidden image when they clear it", async () => {
     expect(await edit(OWNER_REMOVED)).toEqual({ disconnect: true });
+  });
+
+  it("keeps the editor's own hidden image when they read it without the owner's view", async () => {
+    expect(await edit(OWNER_REMOVED, false, {})).toBeUndefined();
   });
 
   it('lets staff remove a hidden cover', async () => {

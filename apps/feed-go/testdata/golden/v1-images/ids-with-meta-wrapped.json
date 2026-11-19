@@ -286,7 +286,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNH16obm90Rm91bmTDqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -308,7 +308,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -500,6 +500,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -558,6 +559,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -612,6 +614,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -666,6 +669,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -720,6 +724,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [],
         "_meta": "{\"prompt\": \"golden hidden prompt\"}"
       }

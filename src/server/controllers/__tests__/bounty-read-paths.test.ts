@@ -461,6 +461,33 @@ describe('bounty images on a capped site', () => {
     expect(result.images).toEqual([]);
   });
 
+  // Unrated and mixed ratings reaching above the cap are dropped; a mixed rating inside it is kept.
+  const mixedImages = (entityId = 0) => [
+    image(40, 0, entityId),
+    image(41, NsfwLevel.PG | NsfwLevel.XXX, entityId),
+    image(42, NsfwLevel.PG | NsfwLevel.PG13, entityId),
+  ];
+
+  it('the detail page drops unrated and mixed-above-cap images and keeps an in-cap mix', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue(detailBounty);
+    mockBountyImages.mockResolvedValue(mixedImages());
+    const result = await getBountyHandler({ input: { id: 9 }, ctx: signedInSfw as never });
+    expect(ids(result.images)).toEqual([42]);
+  });
+
+  it('entry lists and entry detail drop unrated and mixed-above-cap images and keep an in-cap mix', async () => {
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: OWNER } }] as never);
+    mockImagesByEntity.mockResolvedValue(mixedImages(3));
+    const list = await getBountyEntriesHandler({
+      input: { id: 9 } as never,
+      ctx: signedInSfw as never,
+    });
+    expect(ids(list.items[0].images)).toEqual([42]);
+
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: signedInSfw as never });
+    expect(ids(entry.images)).toEqual([42]);
+  });
+
   it.each([
     ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
     ['a moderator', { user: { id: 77, isModerator: true }, features: { canViewNsfw: false } }],

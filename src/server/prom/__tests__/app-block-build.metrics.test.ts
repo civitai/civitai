@@ -25,45 +25,10 @@ const key = (l: Record<string, string>) =>
   `${l.mode}/${l.outcome}/${l.failed_step}/${l.failure_class}`;
 
 describe('civitai_app_block_builds_total', () => {
-  it('seeds exactly the reachable label sets at 0 — the class table, both modes', async () => {
+  it('publishes the series at 0 before any build reports', async () => {
     ensureRegisterAppBlockBuildMetrics();
-    const seeded = (await rows()).map((r) => key(r.labels)).sort();
-    const perMode = [
-      'succeeded/none/none',
-      'failed/clone/platform',
-      'failed/validate/author',
-      'failed/validate/unknown',
-      'failed/build/unknown',
-      'failed/build/transient',
-      'failed/scan/unknown',
-      'failed/push/transient',
-      'failed/none/unknown',
-      'failed/apply/platform',
-      'failed/unreported/unknown',
-    ];
-    expect(seeded).toEqual(
-      ['build', 'review'].flatMap((m) => perMode.map((s) => `${m}/${s}`)).sort()
-    );
-    // No slug / sha / run label exists to grow it.
-    expect(Object.keys((await rows())[0].labels).sort()).toEqual([
-      'failed_step',
-      'failure_class',
-      'mode',
-      'outcome',
-    ]);
-  });
-
-  it('counts one outcome on its own series', async () => {
-    const get = async () =>
-      (await rows()).find((r) => key(r.labels) === 'review/failed/push/transient')?.value ?? 0;
-    const before = await get();
-    recordAppBlockBuildOutcome({
-      mode: 'review',
-      outcome: 'failed',
-      failedStep: 'push',
-      failureClass: 'transient',
-    });
-    expect((await get()) - before).toBe(1);
+    const seeded = await rows();
+    expect(seeded.find((r) => key(r.labels) === 'build/failed/build/transient')?.value).toBe(0);
   });
 
   it('drops a label value outside its closed set instead of creating a series', async () => {

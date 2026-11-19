@@ -239,13 +239,13 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
  * required Full and that token lacks Full as well. Bitmasks are hard-coded so an enum
  * drift trips a test rather than silently re-pointing the gate.
  */
-const FULL = 33554431; // TokenScope.Full — a Full personal API key
-const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel
-const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel — lacks AppBlocksSubmit
+const FULL = 33554431n; // TokenScope.Full — a Full personal API key
+const CLI = 1n | (1n << 25n) | (1n << 26n); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel
+const NO_SUBMIT = 1n | (1n << 26n); // UserRead|AppBlocksDevTunnel — lacks AppBlocksSubmit
 
 // A token-authenticated caller. The user stays the OWNER so the ownership check is
 // satisfied and the only variable under test is the scope.
-function tokenCtx(scope: number) {
+function tokenCtx(scope: bigint) {
   return { ...fakeCtx(ownerUser), apiKeyId: 999, tokenScope: scope };
 }
 

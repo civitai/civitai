@@ -3,6 +3,12 @@ import type * as ManifestSubmitValidation from '~/server/services/blocks/manifes
 // Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
 // this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
 // validator is untouched).
+const { mockRevokeOrchestratorTokens } = vi.hoisted(() => ({
+  mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
+}));
 vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
   ...(await importOriginal<typeof ManifestSubmitValidation>()),
   assertManifestValidAtSubmit: vi.fn(async () => undefined),
@@ -168,7 +174,7 @@ const {
         create: vi.fn(),
         update: vi.fn(),
         // The ceiling a late hold puts back, read on the primary before step (3).
-        findUnique: vi.fn<DelegateMock>(async () => ({ allowedScopes: 33554431 })),
+        findUnique: vi.fn<DelegateMock>(async () => ({ allowedScopes: 33554431n })),
       },
       // W13 auto-create-on-approve: approveRequest mints the onsite AppListing
       // (idempotent skip-if-exists, P2002-tolerant) right after the AppBlock row
@@ -2153,7 +2159,7 @@ describe('approveRequest', () => {
       id: 'apb_legacy',
       appId: 'oc_legacy',
       repoUrl: 'https://forgejo.example/civitai-apps/old--name',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://old--name.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://old--name.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
 
@@ -2179,7 +2185,11 @@ describe('approveRequest', () => {
     finalise.mockClear();
     notify.mockClear();
     mockTriggerBuild.mockClear();
-    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7] }));
+    finalise.mockImplementationOnce(async () => ({
+      lateHoldIds: [7],
+      revokedTokens: { clientId: 'appblk-hello', userIds: [5] },
+    }));
+    mockRevokeOrchestratorTokens.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockBundleBuffer.current = await makeValidBundle();
@@ -2194,6 +2204,8 @@ describe('approveRequest', () => {
     expect(takeDown).toHaveBeenCalledWith('hello');
     // The put-back listing is not served from a stale catalog cache.
     expect(bust).toHaveBeenCalled();
+    // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.
+    expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 5 });
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {
@@ -2300,7 +2312,7 @@ describe('approveRequest', () => {
     // allowedScopes is the manifest-derived ceiling — for the default
     // zero-scope manifest that's 0, NOT TokenScope.Full (33554431).
     expect(ocArg.grants).toEqual([]);
-    expect(ocArg.allowedScopes).toBe(0);
+    expect(ocArg.allowedScopes).toBe(0n);
 
     // commitFiles received the bundle contents with replaceAllFiles=true.
     const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
@@ -2343,7 +2355,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
       });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
@@ -2373,7 +2385,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
       });
       await expect(
         approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
@@ -2415,7 +2427,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing flip matches one row (listing WAS pending) → reset re-approve.
@@ -2455,7 +2467,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists + is pending (found by id), but its icon is still
@@ -2504,7 +2516,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists (found by id) with all-Scanned icon+cover → gate passes.
@@ -2614,7 +2626,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
   };
@@ -2688,7 +2700,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // Answer ONLY the (3b-reset) probe. Answering the (3b-transition) draft probe as well
@@ -2745,7 +2757,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     mockDbWrite.appListing.findFirst.mockResolvedValue({
@@ -2789,7 +2801,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // Listing flip matches 0 rows (not a reset) → the block un-suspend is skipped.
@@ -2944,8 +2956,8 @@ describe('approveRequest', () => {
     });
 
     const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;
-    expect(ocArg.allowedScopes).toBe(5);
-    expect(ocArg.allowedScopes).not.toBe(33554431);
+    expect(ocArg.allowedScopes).toBe(5n);
+    expect(ocArg.allowedScopes).not.toBe(33554431n);
     expect(ocArg.grants).toEqual([]);
   });
 
@@ -2956,7 +2968,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     const hold = {
@@ -3000,7 +3012,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     const hold = {
@@ -3057,7 +3069,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     mockForgejo.commitFiles.mockRejectedValueOnce(new Error('forgejo down'));
@@ -3075,7 +3087,7 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce(null);
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
@@ -3101,7 +3113,7 @@ describe('approveRequest', () => {
       // H-4 fix path: approveRequest's pre-validation reads the
       // existing OauthClient context off this relation.
       app: {
-        allowedScopes: 33554431,
+        allowedScopes: 33554431n,
         allowedOrigins: ['https://hello.civit.ai'],
       },
     });
@@ -3142,7 +3154,7 @@ describe('approveRequest', () => {
     expect(finalise).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        priorVersion: { block: prior, oauthClientId: 'oc_existing', allowedScopes: 33554431 },
+        priorVersion: { block: prior, oauthClientId: 'oc_existing', allowedScopes: 33554431n },
       })
     );
     // 🔴 The store listing as it was before the approve reaches it too.
@@ -3199,7 +3211,7 @@ describe('approveRequest', () => {
     const ocUpdateArg = mockDbWrite.oauthClient.update.mock.calls[0][0];
     expect(ocUpdateArg.where).toEqual({ id: 'oc_existing' });
     expect(ocUpdateArg.data.grants).toEqual([]);
-    expect(ocUpdateArg.data.allowedScopes).toBe(0);
+    expect(ocUpdateArg.data.allowedScopes).toBe(0n);
   });
 
   // The validator here is the real one, so the padded manifest is accepted, not refused.
@@ -3292,7 +3304,7 @@ describe('approveRequest', () => {
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
         trustTier: 'verified',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
 
@@ -3319,7 +3331,7 @@ describe('approveRequest', () => {
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
         trustTier: 'unverified',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
 
@@ -3599,7 +3611,7 @@ describe('approveRequest', () => {
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
       app: {
-        allowedScopes: 33554431,
+        allowedScopes: 33554431n,
         allowedOrigins: ['https://hello.civit.ai'],
       },
     });
@@ -3716,7 +3728,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // A listing already exists (minted on the first approve; a mod may since
       // have set category/featured). The guard must never CREATE a second one —
@@ -3770,7 +3782,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // No listing yet (app approved BEFORE this feature; never backfilled).
       mockDbRead.appListing.findUnique.mockResolvedValue(null);
@@ -3985,7 +3997,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // …but the row already carries the moderator's curated 'utility'. Use the
       // transition case (no prior listing) so a listing IS minted and we can
@@ -4217,7 +4229,7 @@ describe('approveRequest', () => {
         id: 'apb_existing',
         appId: 'oc_existing',
         repoUrl: 'https://forgejo.example/civitai-apps/hello',
-        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+        app: { allowedScopes: 33554431n, allowedOrigins: ['https://hello.civit.ai'] },
       });
       mockBundleBuffer.current = await makeValidBundle({
         version: '0.2.0',

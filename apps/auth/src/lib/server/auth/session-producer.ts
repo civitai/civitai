@@ -1,4 +1,10 @@
 import { isRefusedModerationAccount } from './moderation-account';
+import { sql } from 'kysely';
+import {
+  ownImageNamedByUserImage,
+  servablePictureSql,
+  userImageNamesPicture,
+} from '@civitai/db-queries/profile-picture-clear';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -29,7 +35,19 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      'User.image',
+      // User.image is also the OAuth userinfo picture, so a key it names is held to the full servable
+      // rule (wider than the main app's fallbackUserImageColumn): the profile picture reaches the session
+      // only through profilePicture, and any other own image only while servable.
+      sql<string | null>`CASE WHEN EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE i.id = "User"."profilePictureId"
+          AND ${sql.raw(userImageNamesPicture('i', '"User"'))}
+      ) OR EXISTS (
+        -- Every session produce relies on Image_url_covered_idx here.
+        SELECT 1 FROM "Image" i
+        WHERE ${sql.raw(ownImageNamedByUserImage('i', '"User"'))}
+          AND ${servablePictureSql()} IS NOT TRUE
+      ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',
       'User.showNsfw',
@@ -49,9 +67,11 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.meta',
       jsonObjectFrom(
         eb
-          .selectFrom('Image')
-          .select(['Image.url'])
-          .whereRef('Image.id', '=', 'User.profilePictureId')
+          .selectFrom('Image as i')
+          .select(['i.url'])
+          .whereRef('i.id', '=', 'User.profilePictureId')
+          // Only a servable picture is shown, even to its owner.
+          .where(servablePictureSql())
       ).as('profilePicture'),
       jsonObjectFrom(
         eb

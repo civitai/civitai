@@ -100,7 +100,9 @@ vi.mock('~/utils/logging', () => ({
   createLogger: vi.fn(() => vi.fn()),
 }));
 
-const { getInfiniteChallenges } = await import('~/server/services/challenge.service');
+const { getInfiniteChallenges, getCompletedChallengesWithWinners } = await import(
+  '~/server/services/challenge.service'
+);
 
 // See challenge-feed-block-exclusion.service.test.ts for why Prisma.Sql is duck-typed rather than
 // detected with instanceof.
@@ -199,5 +201,57 @@ describe('getInfiniteChallenges — content level filter', () => {
     const { text } = captureQuery();
     expect(text).not.toContain(CHALLENGE_LEVEL_PREDICATE);
     expect(text).not.toContain(COVER_LEVEL_PREDICATE);
+  });
+});
+
+// The semantic search hydrates through getInfiniteChallenges with ownRowsExempt: false, so a
+// narrowed query can't show the viewer their own challenge above its level (the rule itself is
+// run as SQL in challenge-visibility-own-rows.behavior.test.ts).
+describe('getInfiniteChallenges — the owner exemption', () => {
+  // Every gate's exemption compares the creator with the viewer: `c."createdById" = <viewer>`.
+  const OWNER_EXEMPTION = 'c."createdById" =';
+  const query = (ownRowsExempt?: boolean) =>
+    getInfiniteChallenges({
+      limit: 20,
+      includeEnded: false,
+      excludeEventChallenges: false,
+      canAccessUserChallenges: true,
+      currentUserId: 5,
+      isGreen: false,
+      browsingLevel: 1,
+      ownRowsExempt,
+    } as Parameters<typeof getInfiniteChallenges>[0]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.image.findMany.mockResolvedValue([]);
+  });
+
+  const winners = (ownRowsExempt?: boolean) =>
+    getCompletedChallengesWithWinners({
+      limit: 20,
+      isGreen: false,
+      currentUserId: 5,
+      canAccessUserChallenges: true,
+      browsingLevel: 1,
+      ownRowsExempt,
+    } as Parameters<typeof getCompletedChallengesWithWinners>[0]);
+
+  // The default cases are the control: they show the matcher sees the clause the others drop.
+  it.each([
+    ['the feed', query],
+    ['the winners list', winners],
+  ])("%s lets the viewer's own challenges past the gates by default", async (_name, run) => {
+    await run();
+    expect(captureQuery().text).toContain(OWNER_EXEMPTION);
+  });
+
+  it.each([
+    ['the feed', query],
+    ['the winners list', winners],
+  ])('%s holds them to every gate with ownRowsExempt: false', async (_name, run) => {
+    await run(false);
+    expect(captureQuery().text).not.toContain(OWNER_EXEMPTION);
   });
 });

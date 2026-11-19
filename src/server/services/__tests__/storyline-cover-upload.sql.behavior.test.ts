@@ -66,7 +66,8 @@ beforeAll(async () => {
       "userId" integer NOT NULL, minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
       "postId" integer, ingestion text NOT NULL DEFAULT 'Pending',
       "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text,
-      "acceptableMinor" boolean NOT NULL DEFAULT false, "blockedFor" text, index integer);
+      "acceptableMinor" boolean NOT NULL DEFAULT false, "blockedFor" text, index integer,
+      "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "EvidenceHeldUser" ("userId" int);

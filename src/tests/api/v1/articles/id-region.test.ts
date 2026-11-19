@@ -121,6 +121,35 @@ describe('GET /api/v1/articles/[id] by region', () => {
   });
 });
 
+describe('GET /api/v1/articles/[id] cover', () => {
+  beforeEach(() => {
+    mockGetArticleById.mockReset();
+    mockIsRegionRestricted.mockReset();
+  });
+
+  const withCover = (nsfwLevel: number) =>
+    mockGetArticleById.mockResolvedValue({
+      ...article(PG),
+      cover: 'cover-key',
+      coverImage: { id: 9, url: 'cover-key', nsfwLevel },
+    });
+
+  it('🔴 drops the legacy cover key with a cover above the served level', async () => {
+    withCover(R);
+    const { elsewhere, restricted } = await bothRegions();
+    for (const answer of [elsewhere, restricted]) {
+      expect(answer.body).not.toHaveProperty('coverImage.id');
+      expect(answer.body?.cover).toBeNull();
+    }
+  });
+
+  it('keeps the key with a PG cover (control)', async () => {
+    withCover(PG);
+    const { elsewhere, restricted } = await bothRegions();
+    for (const answer of [elsewhere, restricted]) expect(answer.body?.cover).toBe('cover-key');
+  });
+});
+
 describe('GET /api/v1/articles/[id] author avatar', () => {
   beforeEach(() => {
     mockGetArticleById.mockReset();

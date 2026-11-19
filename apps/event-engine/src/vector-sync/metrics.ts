@@ -34,6 +34,12 @@ export const vectorSyncMetrics = {
     labelNames: ['topic'],
     registers: [register],
   }),
+  orphanBrakes: new Counter({
+    name: 'vector_sync_orphan_brakes_total',
+    help: 'Refresh batches whose points with no row were too many to delete, so none were',
+    labelNames: ['domain'],
+    registers: [register],
+  }),
   embedSeconds: new Histogram({
     name: 'vector_sync_embed_duration_seconds',
     help: 'Wall time of one embed call for a flush batch, including rate-limit waits',

@@ -1,17 +1,8 @@
-import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { logToAxiom } from '~/server/logging/client';
 import type { SemanticCrucibleSearchInput } from '~/server/schema/semantic-crucible-search.schema';
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
-import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
-import {
-  isNonModClampOn,
-  makeRefusalOf,
-  queryVerdictLevel,
-  resolveSemanticBrowsingLevel,
-  type QueryTracker,
-} from '~/server/services/semantic-query-guard';
+import { semanticSearchPrelude, type QueryTracker } from '~/server/services/semantic-query-guard';
 import {
   auditedTextCandidates,
   collectPage,
@@ -22,7 +13,6 @@ import {
   type CandidateSource,
   type Hydrate,
 } from '~/server/services/semantic-search-client';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -62,34 +52,17 @@ export async function searchSemanticCrucibles({
     nextCursor: undefined,
     correctedQuery: undefined,
   };
-  let browsingLevel = resolveSemanticBrowsingLevel(
-    input.browsingLevel,
-    user,
-    await isNonModClampOn()
-  );
-  if (browsingLevelCap !== undefined)
-    browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
-  const [hidden, addonData] = await Promise.all([
-    getAllHiddenForUser({ userId: user?.id }),
-    getBrowsingSettingAddons(),
-  ]);
-  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
-  const refusalOf = makeRefusalOf({
+  const prelude = await semanticSearchPrelude({
     index: 'crucibles_semantic',
-    track,
-    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
-  });
-  const refusal = await refusalOf(input.query, 'query');
-  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
-  // The level the feed itself filters on, so the candidates and the hydration agree.
-  browsingLevel = getEffectiveBrowsingLevel({
+    query: input.query,
+    requestedLevel: input.browsingLevel,
+    user,
     isGreen,
-    isLoggedIn: !!user,
-    requested: verdictLevel,
+    browsingLevelCap,
+    track,
   });
+  if (!prelude) return none;
+  const { browsingLevel, hidden, refusalOf } = prelude;
 
   const statuses = input.status?.length ? input.status : OPEN_STATUSES;
   const excludedUserIds = viewerExcludedUserIds(hidden);

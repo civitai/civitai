@@ -283,10 +283,15 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
     //   the eight `app_block_publish_requests.actions_run_*` columns:
     //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
     //     `actions-run-source.service.ts`, which degrades while it is unapplied.
+    //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
     const inFlightColumns = new Set([
+      'ServiceDealFile.scannedEtag',
+      'ServiceDealFile.scannedVersionId',
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
       'ModActivity.reviewBatchId',

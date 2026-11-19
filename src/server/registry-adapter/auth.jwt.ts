@@ -23,25 +23,49 @@ import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth'
 /** The hub's issuer identifier, when none is configured. */
 export const DEFAULT_HUB_ISSUER = 'https://auth.civitai.com';
 
+const scopeNames = (scope: string) => scope.split(' ').filter(Boolean);
+
+/** The site's bit for a scope name, or null for a name it does not know. */
+function knownScopeBit(name: string): bigint | null {
+  // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
+  // at all, so it is treated like an unknown name instead.
+  if (name === 'None' || !Object.hasOwn(TokenScope, name)) return null;
+  return TokenScope[name as keyof typeof TokenScope];
+}
+
 /**
- * The token's scope names as the site's bitmask. A name the site does not know counts as every
- * scope, and so does a missing or non-string `scope` claim, so a check that refuses write scopes
- * (a system account's) refuses it rather than missing it.
+ * FOR A REFUSAL CHECK ONLY: the token's scope names as the site's bitmask, where a name the site
+ * does not know counts as EVERY scope, and so does a missing or non-string `scope` claim, so a
+ * check that refuses write scopes (a system account's) refuses it rather than missing it.
+ *
+ * Never ask this whether a token HOLDS a scope: it says yes to a token claiming `Bogus`. That is
+ * {@link scopeGrantBits}.
  */
-export function scopeBits(scope: unknown): number {
+export function scopeBitsAssumingUnknownIsAll(scope: unknown): bigint {
   if (typeof scope !== 'string') return ALL_SCOPES;
-  let bits = 0;
-  for (const name of scope.split(' ').filter(Boolean)) {
-    // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
-    // at all, so it is treated like an unknown name instead.
-    if (name !== 'None' && Object.hasOwn(TokenScope, name)) {
-      bits |= TokenScope[name as keyof typeof TokenScope];
-    } else {
-      bits |= ALL_SCOPES;
-    }
-  }
+  let bits = 0n;
+  for (const name of scopeNames(scope)) bits |= knownScopeBit(name) ?? ALL_SCOPES;
   return bits;
 }
+
+/**
+ * The scopes the token GRANTS, as the site's bitmask: only the names the site knows. A name it
+ * does not know (and `None`) grants nothing, and so does a missing or non-string `scope` claim.
+ */
+export function scopeGrantBits(scope: unknown): bigint {
+  if (typeof scope !== 'string') return 0n;
+  let bits = 0n;
+  for (const name of scopeNames(scope)) bits |= knownScopeBit(name) ?? 0n;
+  return bits;
+}
+
+/** Whether a verified token grants the scope `name` (its bits from {@link scopeGrantBits}). */
+export function hasScope(token: Pick<VerifiedToken, 'scope'>, name: TokenScopeName): boolean {
+  const bit = TokenScope[name];
+  return bit !== 0n && (token.scope & bit) === bit;
+}
+
+type TokenScopeName = Exclude<keyof typeof TokenScope, 'None'>;
 
 export type HubJwtConfig = {
   /** The hub's issuer identifier; `iss` must equal it exactly. */
@@ -57,10 +81,17 @@ export type HubJwtConfig = {
 
 export type HubJwtDeps = {
   /** The user a bearer for `userId` with `tokenScope` acts as, or null (`getBearerTokenUser`). */
-  loadUser: (userId: number, tokenScope: number) => Promise<VerifiedToken['user'] | null>;
+  loadUser: (userId: number, tokenScope: bigint) => Promise<VerifiedToken['user'] | null>;
 };
 
 const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
+
+/** The acting party of a delegated token (RFC 8693 `act.sub`), or null. */
+function actorOf(act: unknown): string | null {
+  if (typeof act !== 'object' || act === null) return null;
+  const sub = (act as { sub?: unknown }).sub;
+  return typeof sub === 'string' && sub !== '' ? sub : null;
+}
 
 /**
  * Verifies a hub access token for this source: signature against the hub's JWKS (cached, refetched
@@ -83,15 +114,23 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
   return async (token) => {
     const payload = await verifyJwt(token, config.issuer);
     if (!payload) return null;
-    const { sub, client_id: clientId, exp } = payload as typeof payload & { client_id?: unknown };
+    const {
+      sub,
+      client_id: clientId,
+      exp,
+      act,
+    } = payload as typeof payload & { client_id?: unknown; act?: unknown };
     if (typeof sub !== 'string' || !USER_ID_RE.test(sub)) return null;
     if (typeof clientId !== 'string' || clientId === '') return null;
     if (typeof exp !== 'number') return null;
     const userId = Number(sub);
-    const user = await deps.loadUser(userId, scopeBits(payload.scope));
+    const user = await deps.loadUser(userId, scopeBitsAssumingUnknownIsAll(payload.scope));
     if (!user) return null;
     return {
       subject: `user:${userId}/client:${clientId}`,
+      clientId,
+      scope: scopeGrantBits(payload.scope),
+      actor: actorOf(act),
       user,
       expiresAt: new Date(exp * 1000),
     };

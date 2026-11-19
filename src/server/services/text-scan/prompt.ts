@@ -185,8 +185,8 @@ export async function setTextScanLabelMode(
     type: 'info',
     message: 'label mode updated',
     moderatorId,
-    label,
     mode,
+    payload: { label },
   });
   return readTextScanLabelModes();
 }
@@ -210,8 +210,8 @@ export async function setTextScanCsamMode(
     type: 'info',
     message: 'label mode updated',
     moderatorId,
-    label: TEXT_SCAN_CSAM_MODE_FIELD,
     mode,
+    payload: { label: TEXT_SCAN_CSAM_MODE_FIELD },
   });
   return readTextScanCsamMode();
 }

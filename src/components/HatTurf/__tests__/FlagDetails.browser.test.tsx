@@ -51,6 +51,45 @@ const text = (id: string) =>
 
 afterEach(() => cleanup());
 
+describe("a past day's flag", () => {
+  test('shows who its freeze paid and the points, dated, without the hat counts it never kept', async () => {
+    await renderWithProviders(
+      <FlagRaceContext.Provider
+        value={{
+          event: 'e',
+          summary: summary(false, { Green: 2 }),
+          past: [
+            {
+              imageId: 8,
+              flagDayId: 2,
+              rank: 3,
+              cutAt: new Date('2026-11-16T12:00:00Z'),
+              closesAt: new Date('2026-11-16T13:00:00Z'),
+              winners: ['Pink'],
+              points: 1800,
+            },
+          ],
+        }}
+      >
+        <FlagBadge imageId={8} />
+      </FlagRaceContext.Provider>
+    );
+    const badge = await vi.waitFor(() => {
+      const el = document.querySelector('[data-testid="flag-badge"]') as HTMLElement | null;
+      if (!el) throw new Error('badge not rendered');
+      return el;
+    });
+    expect(badge.dataset.leader).toBe('Pink');
+    expect(badge.dataset.closed).toBe('true');
+    expect(text('flag-badge-pot')).toBe('1.8k pts');
+    badge.click();
+    await expect.poll(() => text('flag-details-winner')).toBe('Pink won 1.8k pts');
+    const details = text('flag-details') ?? '';
+    expect(details).toContain('Flag #3 · Nov 16');
+    expect(details).not.toMatch(/player/);
+  });
+});
+
 describe('the flag details popover', () => {
   test('tells a trailing team how many hats take the lead, one more than the gap', async () => {
     await open(summary(false, { Green: 14, Blue: 9, Pink: 3 }));

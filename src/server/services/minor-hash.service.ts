@@ -7,6 +7,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import {
   MINOR_FLAG_SNAPSHOT_KEY,
   MINOR_LOCKED_PROPERTIES,
@@ -1301,6 +1302,7 @@ export async function rollbackMinorHashAutoFlags({
           ids: row.prevMinorImageIds,
           action: SearchIndexUpdateQueueAction.Update,
         });
+        await queueModelsForImageChildTagChanges({ minorImageIds: row.prevMinorImageIds });
       }
 
       report.rolledBack++;

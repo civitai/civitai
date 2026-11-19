@@ -8,6 +8,7 @@ import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { getClientIp } from '$lib/server/auth/request';
 import { NO_FRAMING } from '$lib/server/auth/same-origin';
 import { establishSession } from '$lib/server/auth/session';
+import { readLastMethod, rememberLastMethod } from '$lib/server/auth/last-method';
 import { newAccountRefusal } from '$lib/server/auth/signup-rules';
 import {
   findOrCreateUserByEmail,
@@ -55,12 +56,17 @@ export const actions: Actions = {
 
     let user: Awaited<ReturnType<typeof findOrCreateUserByEmail>>;
     try {
-      user = await findOrCreateUserByEmail(email, { allowCreate: true });
+      user = await findOrCreateUserByEmail(email, {
+        allowCreate: true,
+        lastMethod: readLastMethod(cookies),
+      });
     } catch (e) {
       if (e instanceof SystemAccountSignInError) return fail(403, { error: 'refused' as const });
       throw e;
     }
     await establishSession(cookies, user, { returnUrl });
+    // An invite signs in by email address, so the email form is the way back.
+    rememberLastMethod(cookies, 'email');
     loginsTotal.inc({ provider: 'invite' });
 
     logOAuthEvent({

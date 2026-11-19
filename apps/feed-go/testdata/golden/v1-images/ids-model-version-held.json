@@ -71,7 +71,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNIG2pcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzSBtrm1vZGVsVmVyc2lvbklkzRfVqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tiqltb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDKpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYxMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -163,6 +163,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -216,6 +217,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,

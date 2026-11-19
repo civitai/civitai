@@ -158,7 +158,7 @@ const crucibleForViewer = async ({
       prizeWinners: [],
     };
   }
-  if (crucible && isCrucibleHiddenByScan(crucible, viewer)) return null;
+  if (crucible?.hiddenByScan) return null;
   // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
   // text stays off green.
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;

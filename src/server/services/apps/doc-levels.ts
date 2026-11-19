@@ -5,7 +5,8 @@
  *
  * - The flag: `app-blocks-shared-doc-levels`, evaluated per app (entity id = the app block id
  *   whose documents are read or written, NO context), like the shared-data moderation flags. Off,
- *   the store's context carries no `levels` and every statement is the one it ran before.
+ *   the store's context carries no `levels` and every statement is the one it ran before. A flag
+ *   that cannot be read counts as on ({@link isSharedDocLevelsOn}).
  * - A block-token reader (the storage REST routes): the token's viewer level
  *   ({@link viewerDocLevel}) for other people's documents, and the token's domain ceiling
  *   ({@link domainDocLevel}) for the reader's own rated documents.
@@ -17,7 +18,7 @@
  * within it when its one level bit is in the set (the site's bitwise browsing-level semantics).
  */
 import { NsfwLevel } from '~/server/common/enums';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import type { StorageAccess } from '~/server/services/apps/doc-store-access';
 import type { DocLevelGate } from '~/server/services/apps/doc-store.types';
@@ -27,9 +28,27 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
-/** Whether content levels are on for the app whose shared documents are being read or written. */
-export function isSharedDocLevelsOn(appBlockId: string): Promise<boolean> {
-  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_SHARED_DOC_LEVELS, appBlockId);
+/**
+ * Whether content levels are on for the app whose shared documents are being read or written.
+ * FAILS CLOSED: a flag that cannot be read (Flipt unreachable with no stored snapshot, or the key
+ * missing) counts as ON, so unrated and over-level documents stay hidden from viewers who are not
+ * allowed them. Only a flag that reads `false` turns levels off. Every gate reads this one answer:
+ * the storage routes, the server key lookup, the card decisions and the registry feed.
+ */
+export async function isSharedDocLevelsOn(appBlockId: string): Promise<boolean> {
+  const on = await readFliptBoolean(FLIPT_FEATURE_FLAGS.APP_BLOCKS_SHARED_DOC_LEVELS, appBlockId);
+  return on ?? true;
+}
+
+/**
+ * Whether the flag READS on for the app: unreadable counts as off. For the rater only, which
+ * spends a scan per document: a Flipt outage must not start rating every app. Never a read gate;
+ * those use {@link isSharedDocLevelsOn}.
+ */
+export async function isSharedDocLevelsKnownOn(appBlockId: string): Promise<boolean> {
+  return (
+    (await readFliptBoolean(FLIPT_FEATURE_FLAGS.APP_BLOCKS_SHARED_DOC_LEVELS, appBlockId)) === true
+  );
 }
 
 /**
@@ -59,12 +78,15 @@ export function domainDocLevel(claims: Pick<BlockTokenClaims, 'maxBrowsingLevel'
 /**
  * A registry subscription's level, from the mature ratings its audience may read
  * (`registry-adapter/audience.ts`): PG and PG-13 for everyone (the site never hides those by
- * rating), R with `r`, X with `x`. XXX is never included: an audience records only `r` and `x`,
- * so it cannot say whether its user admits XXX, and the feed fails closed on it.
+ * rating), R with `r`, X with `x`, XXX with `xxx`.
  */
-export function audienceDocLevel(allowed: { r: boolean; x: boolean }): number {
+export function audienceDocLevel(allowed: { r: boolean; x: boolean; xxx: boolean }): number {
   return (
-    NsfwLevel.PG | NsfwLevel.PG13 | (allowed.r ? NsfwLevel.R : 0) | (allowed.x ? NsfwLevel.X : 0)
+    NsfwLevel.PG |
+    NsfwLevel.PG13 |
+    (allowed.r ? NsfwLevel.R : 0) |
+    (allowed.x ? NsfwLevel.X : 0) |
+    (allowed.xxx ? NsfwLevel.XXX : 0)
   );
 }
 

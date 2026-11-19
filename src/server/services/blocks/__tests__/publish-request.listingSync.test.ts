@@ -215,7 +215,7 @@ function existingAppBlock() {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   };
 }
 
@@ -253,7 +253,7 @@ beforeEach(() => {
   db.write.appBlock.findUnique.mockResolvedValue(appBlockRow());
   db.write.oauthClient.update.mockResolvedValue({});
   // The ceiling a late hold would put back, read on the primary before step (3).
-  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0 });
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
   db.write.appListing.findFirst.mockResolvedValue(null);

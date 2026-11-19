@@ -31,6 +31,12 @@ export type CivitaiLinkInstance = {
  */
 const registrableDomain = (hostname: string): string => hostname.split('.').slice(-2).join('.');
 
+const sameOriginHosts = (): string[] =>
+  (env.NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+
 /**
  * Resolve the Civitai Link service base URL for the current host, or
  * `undefined` when the service cannot authenticate this origin at all.
@@ -58,18 +64,23 @@ const registrableDomain = (hostname: string): string => hostname.split('.').slic
  * (401 )`. Returning undefined lets callers disable the feature cleanly instead
  * of firing a request that can never succeed.
  *
+ * A host listed in `NEXT_PUBLIC_CIVITAI_LINK_SAME_ORIGIN_HOSTS` (comma-separated,
+ * exact hostnames) uses its own origin instead: the ingress must route that
+ * host's `/api/link` and `/api/socketio` to link-service before it is listed.
+ *
  * Runs in both window and SharedWorker contexts (`globalThis.location`).
  */
 export const getCivitaiLinkBaseUrl = (): string | undefined => {
   const base = env.NEXT_PUBLIC_CIVITAI_LINK;
   if (!base) return base;
-  const host = (
-    globalThis as { location?: { hostname?: string } }
-  ).location?.hostname?.toLowerCase();
+  const location = (globalThis as { location?: { hostname?: string; origin?: string } }).location;
+  const host = location?.hostname?.toLowerCase();
   // No location (SSR / node): keep the baked value. The same-domain check below
   // is a CLIENT decision — deciding it server-side would make SSR and hydration
   // disagree about whether the feature exists.
   if (!host) return base;
+
+  if (location?.origin && sameOriginHosts().includes(host)) return location.origin;
 
   const isRed = host === 'civitai.red' || host.endsWith('.civitai.red');
   const resolved = isRed ? base.replace('.civitai.com', '.civitai.red') : base;

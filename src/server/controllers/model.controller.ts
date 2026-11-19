@@ -1,5 +1,7 @@
 import type { SessionUser } from '~/types/session';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -124,12 +126,7 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import {
-  canSeeCollectionDetails,
-  getCollectionById,
-  getCollectionItemCount,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
+import { getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -286,7 +283,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ownerViewer))
       throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -295,7 +293,7 @@ export const getModelHandler = async ({
     }
 
     const features = ctx.features;
-    const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const isOwner = ownerViewer?.id === model.user.id || !!ownerViewer?.isModerator;
     // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
     const editorRead = isOwner && !!forEditor;
     const withSfwFace =
@@ -308,7 +306,7 @@ export const getModelHandler = async ({
 
     const filteredVersions = model.modelVersions.filter((version) =>
       canViewModelVersionStatus({
-        viewer: ctx.user,
+        viewer: ownerViewer,
         ownerId: model.user.id,
         modelStatus: model.status,
         versionStatus: version.status,
@@ -357,7 +355,6 @@ export const getModelHandler = async ({
     );
 
     const metrics = model.metrics[0];
-    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
     const entityAccess = await hasEntityAccess({
       entityIds: filteredVersions.map((x) => x.id),
       entityType: 'ModelVersion',
@@ -466,7 +463,7 @@ export const getModelHandler = async ({
       // The list endpoint and public API still push them for backward compat.
       const files = isDownloadable
         ? version.files
-            .filter((x) => x.visibility === 'Public' || canManage)
+            .filter((x) => x.visibility === 'Public' || isOwner)
             .sort((a, b) => {
               const aType = a.type as ModelFileType;
               const bType = b.type as ModelFileType;
@@ -590,7 +587,7 @@ export const getModelHandler = async ({
     const matureLockReason = forEditor
       ? await getMatureLockReason({
           model: { ...model, userId: model.user.id },
-          viewerId: ctx.user?.id,
+          viewerId: ownerViewer?.id,
         })
       : null;
 
@@ -2589,17 +2586,13 @@ export async function getModelCollectionShowcaseHandler({
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    const permissions = await getUserCollectionPermissionsById({
-      id: modelMeta.showcaseCollectionId,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
-    });
-    if (!canSeeCollectionDetails(permissions)) return null;
+    const { permissions, collection: read } = await readCollectionForViewer(
+      ctx,
+      modelMeta.showcaseCollectionId
+    );
+    if (!read) return null;
 
-    const { coverHidden: _coverHidden, ...found } = await getCollectionById({
-      input: { id: modelMeta.showcaseCollectionId },
-      viewer: ctx.user,
-    });
+    const { coverHidden: _coverHidden, ...found } = read;
     // The cover as collection lists show it to this viewer: within their browsing level and rules.
     const coverShown =
       !!found.image &&

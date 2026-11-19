@@ -19,7 +19,7 @@ export const PUSH_PROMPT_ROWS = [
   {
     key: 'services',
     label: 'Creator Services',
-    description: 'New requests, deliveries and payouts on your deals',
+    description: 'Requests, deliveries, disputes, deadlines and payouts on your deals',
     types: [
       'service-deal-requested',
       'service-deal-accepted',
@@ -30,6 +30,14 @@ export const PUSH_PROMPT_ROWS = [
       'service-deal-cancellation-requested',
       'service-deal-completed',
       'service-deal-paid-out',
+      'service-deal-disputed',
+      'service-deal-dispute-resolved',
+      'service-deal-cancellation-accepted',
+      'service-deal-cancellation-declined',
+      'service-deal-cancelled',
+      'service-deal-auto-complete-soon',
+      'service-deal-due-soon',
+      'service-deal-overdue',
     ],
   },
   {

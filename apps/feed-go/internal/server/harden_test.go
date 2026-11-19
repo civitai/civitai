@@ -20,6 +20,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
@@ -372,6 +373,24 @@ func TestComputeWithinParentDeadlineIsADeadline(t *testing.T) {
 	}
 }
 
+// Every computation runs under one write-back budget (hydrate.WithWriteBudget), so its
+// cache writes share one bound however many caches it fills; the probe and shadow paths go through
+// within too. Fails on: within not installing it (each write would take its own bound).
+func TestWithinInstallsOneWriteBudget(t *testing.T) {
+	s := &Server{Metrics: NewMetrics(prometheus.NewRegistry()), Log: quietLog(), RequestBudget: time.Minute}
+	var marked bool
+	_, err := s.computeWithin(context.Background(), publicRequest(), "serve", func(ctx context.Context, _ *http.Request) (*computed, error) {
+		marked = hydrate.WithWriteBudget(ctx) == ctx
+		return &computed{payload: []byte(`{}`)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marked {
+		t.Fatal("the computation's context carries no write-back budget")
+	}
+}
+
 // Served computes are the site's traffic; shadow computes are marked so the feed service tells them
 // apart (feedsvc.IsShadow drives the request-source headers).
 func TestShadowModeReachesTheFeedClientOnlyFromTheShadowPath(t *testing.T) {
@@ -631,6 +650,8 @@ func TestCacheMissCounter(t *testing.T) {
 		"tag-ids/computed": 0, "tag-ids/error": 0, "model-frames/computed": 0, "model-frames/error": 0,
 		"version-images/computed": 0, "version-images/error": 0,
 		"model-decorations/computed": 0, "model-decorations/error": 0,
+		"model-data/computed": 0, "model-data/error": 0, "model-tags/computed": 0, "model-tags/error": 0,
+		"official-models/computed": 0, "official-models/error": 0,
 		"metrics/computed": 0, "metrics/error": 0,
 	}
 	if len(got) != len(want) {
@@ -668,6 +689,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_degraded_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+		// Sessions are resolved once per request, before any endpoint's compute.
+		"feed_go_session_cookie_slot_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true}
 	checked := 0

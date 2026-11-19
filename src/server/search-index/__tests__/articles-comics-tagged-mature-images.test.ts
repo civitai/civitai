@@ -15,6 +15,7 @@ describe("an article's search document cover, by tag and level", () => {
     nsfwLevel,
     ingestion: 'Scanned',
     needsReview: null,
+    modelRestricted: false,
     meta: null,
     tags: tagIds.map((tagId) => ({ tag: { id: tagId, name: `t${tagId}` } })),
   });

@@ -9,7 +9,7 @@ import { burstDue, burstRoller, servedHistory } from '$lib/server/yesno/cadence'
 import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
-import { db } from '$lib/server/db';
+import { db, dbRead } from '$lib/server/db';
 import { itemKey, type PickedItem } from './optimistic';
 
 /**
@@ -27,10 +27,11 @@ export async function pickItem(
   /** Every item already handed out ahead of the player, oldest first: the cadence counts them as served. */
   served?: ItemRef[]
 ): Promise<PickedItem | null> {
-  const feed = await getFeed(db, userId, { limit: 1, exclude: skipped?.queue });
+  // The replica may lag: an item judged a moment ago can come back, and castVote refuses it ('already-voted').
+  const feed = await getFeed(dbRead, userId, { limit: 1, exclude: skipped?.queue });
   const secret = feedSecret();
 
-  const yesNo = yesNoConfig();
+  const yesNo = await yesNoConfig();
   const due =
     yesNo.share > 0 &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
@@ -68,12 +69,14 @@ export async function pickItem(
   }
   if (!feed) return null;
 
+  const hiddenConfig = await hiddenSettings();
   const hidden = await pickHiddenCheck(db, {
     userId,
     rank,
     secret,
     questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
+    rate: hiddenConfig.rate,
+    probationShare: hiddenConfig.probationShare,
     exclude: skipped?.hidden,
     slot,
   });

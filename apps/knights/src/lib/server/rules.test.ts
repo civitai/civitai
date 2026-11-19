@@ -31,6 +31,7 @@ describe('rulesFacts', () => {
     expect(rulesFacts().hearts).toEqual({
       max: SMITES.max,
       returnAfterDays: SMITES.expireAfterDays,
+      rightVerdictsBack: SMITES.size,
     });
   });
 

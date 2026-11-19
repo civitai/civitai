@@ -75,3 +75,25 @@ button.ov-secondary:hover:not(:disabled) {
     animation: none;
   }
 }
+
+/* A toast's acknowledge button (Understood, Onward): thin, in the toast's tone, which the toast sets as `--ack-tone`. */
+.ov-ack {
+  min-height: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--ack-tone, var(--io-gold));
+  background: transparent;
+  color: var(--ack-tone, var(--io-gold));
+  font: 600 12px/1.2 var(--io-font-ui);
+}
+.ov-ack:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ack-tone, var(--io-gold)) 14%, transparent);
+}
+.ov-ack:focus-visible {
+  outline: 2px solid var(--ack-tone, var(--io-gold));
+  outline-offset: 2px;
+}
+@media (max-width: 40rem) {
+  .ov-ack {
+    min-height: 36px;
+  }
+}

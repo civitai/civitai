@@ -316,7 +316,8 @@ describe('toggleBan -> removeMedia', () => {
       const text = (strings as unknown as string[]).join('?');
       return (
         text.includes('UPDATE "Image"') &&
-        text.includes('WHERE "userId" = ? AND ingestion <>') &&
+        text.includes('WHERE "userId" = ?') &&
+        text.includes('AND (ingestion <>') &&
         values.includes('moderated') &&
         values.includes(USER_ID)
       );

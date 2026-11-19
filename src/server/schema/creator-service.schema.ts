@@ -78,6 +78,12 @@ export type GetServiceOfferingFeedInput = z.infer<typeof getServiceOfferingFeedS
 export const getServiceOfferingFeedSchema = z.object({
   browsingLevel: z.number().int().optional(),
   sort: z.enum(serviceOfferingFeedSorts).default('newest'),
+  /** The header bar's text, matched against title and description. Blank is no filter. */
+  query: z
+    .string()
+    .max(500) // what the bar may put in `?query=`
+    .transform((value) => value.trim().slice(0, 100) || undefined)
+    .optional(),
   cursor: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(50).default(24),
 });

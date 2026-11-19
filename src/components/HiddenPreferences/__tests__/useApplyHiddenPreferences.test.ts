@@ -478,3 +478,47 @@ describe('filterPreferences: a cover featured from someone else', () => {
     ]);
   });
 });
+
+describe('filterPreferences — collection covers', () => {
+  const collection = (
+    images: { id: number; nsfwLevel: number }[],
+    image?: { id: number; nsfwLevel: number }
+  ) => ({
+    id: 1,
+    userId: 2,
+    nsfwLevel: 1,
+    image: image ?? null,
+    images,
+    srcs: ['a', 'b'],
+  });
+  const run = (data: unknown[]) =>
+    filterPreferences({
+      type: 'collections',
+      data: data as never,
+      hiddenPreferences: emptyPrefs(),
+      browsingLevel: BROWSING_LEVEL,
+      currentUser: null as never,
+      canViewNsfw: true,
+    }).items as { images: { id: number }[]; srcs?: string[] }[];
+
+  it('drops the unrated srcs with an image above the viewer level', () => {
+    const [hit] = run([
+      collection([
+        { id: 10, nsfwLevel: 1 },
+        { id: 11, nsfwLevel: 2 },
+      ]),
+    ]);
+    expect(hit.images.map((i) => i.id)).toEqual([10]);
+    expect(hit.srcs).toEqual([]);
+  });
+
+  it('drops them when only the cover is above the viewer level', () => {
+    const [hit] = run([collection([{ id: 10, nsfwLevel: 1 }], { id: 12, nsfwLevel: 2 })]);
+    expect(hit.srcs).toEqual([]);
+  });
+
+  it('keeps them when every image is within the viewer level (control)', () => {
+    const [hit] = run([collection([{ id: 10, nsfwLevel: 1 }])]);
+    expect(hit.srcs).toEqual(['a', 'b']);
+  });
+});

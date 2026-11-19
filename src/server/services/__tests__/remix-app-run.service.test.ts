@@ -49,7 +49,7 @@ const h = vi.hoisted(() => ({
   patchWorkflows: vi.fn(),
   /** What the whatIf prices an upscale at, apart from every other workflow. */
   upscalePrice: 12,
-  /** sysRedis, where the option prices are cached. */
+  /** The cache cluster, where the option prices are cached (named before they moved there). */
   sys: new Map<string, string>(),
 }));
 
@@ -295,22 +295,79 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
       });
       const options = [{ value: 'ok', label: 'OK' }];
       await ctx.ask({ kind: 'choice', prompt: 'This one?', options, image: images[0] });
-      await ctx.ask({ kind: 'choice', prompt: 'That one?', options, image: foreign });
+      return images;
+    },
+  });
+  /** A choice whose `bad` option leads to an upscale of a url no workflow of the run made. */
+  const badOption = defineRemixApp({
+    slug: 'bad-option',
+    name: 'Bad option',
+    icon: 'sparkles',
+    version: 1,
+    engine: DEFAULT_ENGINE,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      const options = [
+        { value: 'good', label: 'Good' },
+        { value: 'bad', label: 'Bad' },
+      ];
+      const pick = await ctx.ask({ kind: 'choice', prompt: 'Which?', options });
+      const image = pick === 'bad' ? foreign : images[0];
+      return (await ctx.workflow({ kind: 'upscale', image, scale: 2 })).images;
+    },
+  });
+  /** A choice about a url no workflow of the run made. */
+  const aboutForeign = defineRemixApp({
+    slug: 'about-foreign',
+    name: 'About foreign',
+    icon: 'sparkles',
+    version: 1,
+    engine: DEFAULT_ENGINE,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      await ctx.ask({
+        kind: 'choice',
+        prompt: 'That one?',
+        options: [{ value: 'ok', label: 'OK' }],
+        image: foreign,
+      });
       return images;
     },
   });
   const apps = new Map(
-    [pickThenEdit, endless, asksFirst, thenChoose, smuggles, aboutTake].map((app) => [
-      app.slug,
-      app,
-    ])
+    [
+      pickThenEdit,
+      endless,
+      asksFirst,
+      thenChoose,
+      smuggles,
+      aboutTake,
+      aboutForeign,
+      badOption,
+    ].map((app) => [app.slug, app])
   );
+  const { replayRemixApp } = await import('~/shared/remix-apps/replay');
   // Apps with shapes no row has, beside the real registry (the seed, or the rows a test serves).
   return {
     ...real,
-    getRegisteredRemixApp: async (slug: string, opts: { allowDisabled: boolean }) => {
-      const app = apps.get(slug);
-      return app ? { app } : real.getRegisteredRemixApp(slug, opts);
+    getRegisteredRemixApp: async (...args: Parameters<typeof real.getRegisteredRemixApp>) => {
+      const app = apps.get(args[0]);
+      if (!app) return real.getRegisteredRemixApp(...args);
+      const replay: Registry.RegisteredRemixApp['replay'] = (source, log) =>
+        replayRemixApp(app, source, log);
+      return { app, replay, shape: 'test', enabled: true };
     },
   };
 });
@@ -451,8 +508,8 @@ beforeEach(() => {
   h.upscalePrice = 12;
   const { sys } = h;
   sys.clear();
-  redisMock.sysRedis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     sys.set(key, value);
     return 'OK';
   }) as never);
@@ -502,7 +559,12 @@ describe('remix app runs', () => {
       (workflow.callbacks as { url: string }[]).map(({ url }) => url.split('/').pop())
     ).toEqual(['orchestrator:text-to-image-update', 'orchestrator:remix-app-update']);
     expect(verifyProvenance(workflow.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID]);
-    expect(workflow.metadata?.remixRun).toEqual({ app: 'anime-it', version: 1, answers: [] });
+    expect(workflow.metadata?.remixRun).toEqual({
+      app: 'anime-it',
+      version: 1,
+      shape: expect.any(String),
+      answers: [],
+    });
   });
 
   it('a repeated start of the same tap submits nothing new', async () => {
@@ -779,10 +841,15 @@ describe('remix app runs', () => {
   describe("a choice's image goes through the viewer gate", () => {
     const hidesMature = () => caller({ user: { ...caller().user, showNsfw: false } });
     /** The run at its first choice, its one take rated `level` (absent = not rated yet). */
-    async function atChoice(nonce: string, viewer: RemixAppCaller, level?: string) {
+    async function atChoice(
+      nonce: string,
+      viewer: RemixAppCaller,
+      level?: string,
+      slug = 'about-take'
+    ) {
       addImage(SOURCE_ID);
       const { runId } = await startRemixRun({
-        slug: 'about-take',
+        slug,
         imageId: SOURCE_ID,
         nonce,
         quote: 30,
@@ -812,16 +879,11 @@ describe('remix app runs', () => {
       expect(JSON.stringify(state)).not.toContain(blob('take'));
     });
 
-    it('is left off when the run did not make it, for any viewer', async () => {
-      const viewer = caller();
-      const { runId, state } = await atChoice('nonce-choice-foreign', viewer, 'pg');
-      // POSITIVE CONTROL: this viewer is shown the run's own take.
-      expect(state).toMatchObject({ ask: { image: { url: blob('take') } } });
-
-      const next = await advanceRemixRun({ runId, answers: ['ok'], caller: viewer });
-
-      expect(next).toMatchObject({ status: 'ask', ask: { prompt: 'That one?' } });
-      expect(next).not.toHaveProperty('ask.image');
+    it('is refused when the run did not make it', async () => {
+      // POSITIVE CONTROL: the same shape about the run's own take is asked (above).
+      await expect(
+        atChoice('nonce-choice-foreign', caller(), 'pg', 'about-foreign')
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
     });
   });
 
@@ -840,17 +902,34 @@ describe('remix app runs', () => {
     });
     finish(submits()[0].id, [blob('one')], { [blob('one')]: 'pg' });
 
-    const pick = await advanceRemixRun({ runId, caller: viewer() });
-    expect(pick).toMatchObject({ status: 'ask', ask: { images: [{ url: blob('one') }, null] } });
-    expect(JSON.stringify(pick)).not.toContain(FOREIGN);
-    await expect(advanceRemixRun({ runId, answers: [1], caller: viewer() })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-
-    const done = await advanceRemixRun({ runId, answers: [0], caller: viewer() });
-    expect(done).toMatchObject({ status: 'done', outputs: [{ url: blob('one') }] });
-    expect(JSON.stringify(done)).not.toContain(FOREIGN);
+    const pick = advanceRemixRun({ runId, caller: viewer() });
+    await expect(pick).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(JSON.stringify(await pick.catch((error: Error) => error.message))).not.toContain(
+      FOREIGN
+    );
   });
+});
+
+it('leaves an option unpriced when its next step is refused, and refuses the run once it is tapped', async () => {
+  addImage(SOURCE_ID);
+  const { runId } = await startRemixRun({
+    slug: 'bad-option',
+    imageId: SOURCE_ID,
+    nonce: 'nonce-bad-option',
+    quote: 30,
+    caller: caller(),
+  });
+  finish(submits()[0].id, [blob('one')], { [blob('one')]: 'pg' });
+
+  const asked = await advanceRemixRun({ runId, caller: caller() });
+  expect(asked).toMatchObject({ status: 'ask', ask: { prompt: 'Which?' }, prices: {} });
+  await expect(
+    advanceRemixRun({ runId, answers: ['bad'], quote: 30, caller: caller() })
+  ).rejects.toMatchObject({ code: 'CONFLICT' });
+  // POSITIVE CONTROL: the good option goes on.
+  await expect(
+    advanceRemixRun({ runId, answers: ['good'], quote: 30, caller: caller() })
+  ).resolves.toMatchObject({ status: 'running' });
 });
 
 describe('posting a finished run', () => {
@@ -1159,6 +1238,13 @@ describe('Pick of four', () => {
 
     expect(again).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
     expect(whatIfs()).toHaveLength(priced);
+    // A cache: on the cache cluster, not in system Redis.
+    expect([...h.sys.keys()].some((key) => key.startsWith('remix-app:option-prices:'))).toBe(true);
+    expect(
+      redisMock.sysRedis.set.mock.calls.filter(([key]: unknown[]) =>
+        String(key).startsWith('remix-app:')
+      )
+    ).toEqual([]);
   });
 
   it('will not post a run still waiting on an answer, and prices nothing to find that out', async () => {
@@ -1206,7 +1292,7 @@ describe('replay', () => {
   it('builds the next workflow from the recorded answer alone', async () => {
     const { app } = await (
       await import('~/server/services/remix-app-registry.service')
-    ).getRegisteredRemixApp('pick-then-edit', { allowDisabled: false });
+    ).getRegisteredRemixApp('pick-then-edit', caller(), { allowDisabled: false });
     const takes = { workflowId: 'takes', images: ['a', 'b', 'c'].map((n) => ({ url: blob(n) })) };
     const replayWith = (answer: number) =>
       replayRemixApp(app, source, [
@@ -1229,7 +1315,7 @@ describe('replay', () => {
   it('refuses a log that disagrees with what the app asks for', async () => {
     const { app } = await (
       await import('~/server/services/remix-app-registry.service')
-    ).getRegisteredRemixApp('pick-then-edit', { allowDisabled: false });
+    ).getRegisteredRemixApp('pick-then-edit', caller(), { allowDisabled: false });
     await expect(replayRemixApp(app, source, [{ type: 'ask', answer: 0 }])).rejects.toBeInstanceOf(
       RemixReplayError
     );
@@ -1392,7 +1478,12 @@ describe('a row-defined app', () => {
     const [edit] = submits();
     expect(JSON.stringify(edit)).toContain('Redraw this image as a modern comic panel.');
     expect(edit.tags).toEqual(expect.arrayContaining(['remix-app:comic-it', 'remix:runtime']));
-    expect(edit.metadata?.remixRun).toEqual({ app: 'comic-it', version: 1, answers: ['modern'] });
+    expect(edit.metadata?.remixRun).toEqual({
+      app: 'comic-it',
+      version: 1,
+      shape: expect.any(String),
+      answers: ['modern'],
+    });
 
     finish(edit.id, [blob('edit')], { [blob('edit')]: 'pg' });
     expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({
@@ -1445,6 +1536,17 @@ describe('a row-defined app', () => {
     });
   });
 
+  it('stops replaying a run once its slug is deleted and made again, on the same run version', async () => {
+    serve(row());
+    const { runId } = await start(['golden'], h.price);
+    finish(submits()[0].id, [blob('edit')], { [blob('edit')]: 'pg' });
+    // A new row restarts at run version 1, so only the recorded shape tells the two apart.
+    serve(row({ prompt: 'Redraw this image as {{look}} splash page.' }));
+    await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+  });
+
   it('skips a stored row that no longer validates, and lists the others', async () => {
     const broken = row();
     // An engine off the allowlist still serves (checked on save only); a row with no steps does not.
@@ -1455,6 +1557,121 @@ describe('a row-defined app', () => {
     serve(row());
     await expect(start(['golden'], h.price, 'nonce-ok')).resolves.toMatchObject({
       status: 'running',
+    });
+  });
+});
+
+describe('a user app', () => {
+  const OTHER_AUTHOR = 5;
+  const userRow = (status = 'remix', author = OTHER_AUTHOR) => ({
+    id: 'ab_rx_u5_mine_______________',
+    blockId: `remix-u${author}-mine`,
+    version: '1.0.0',
+    status,
+    featuredOrder: 1,
+    manifest: {
+      kind: 'remix',
+      name: 'Mine',
+      version: '1.0.0',
+      targets: [{ slotId: 'image.remix' }],
+      remix: {
+        icon: 'sparkles',
+        engine: { safe: { ecosystem: 'NanoBanana', versionId: NANO_V2_LITE } },
+        source: 'export default defineRemixApp({ async run(ctx) { return []; } });',
+      },
+      author: { userId: author },
+      review: status === 'remix' ? 'approved' : 'rejected',
+    },
+  });
+  const flagOn = (over: Partial<RemixAppCaller['user']> = {}) =>
+    caller({
+      user: { ...caller().user, ...over },
+      features: { isGreen: false, remixAppsUserCode: true } as RemixAppCaller['features'],
+    });
+  const serve = (...rows: object[]) =>
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue(rows as never);
+  const startMine = (viewer: RemixAppCaller) =>
+    startRemixRun({
+      slug: 'u5-mine',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-mine',
+      quote: 30,
+      caller: viewer,
+    });
+
+  /** A run recorded on the user app: a run of the seed's Anime it, relabelled as one of `u5-mine`. */
+  async function runOfMine(viewer: RemixAppCaller, author = OTHER_AUTHOR) {
+    serve();
+    const { runId } = await startRemixRun({
+      slug: 'anime-it',
+      imageId: SOURCE_ID,
+      nonce: `nonce-relabel-${author}`,
+      quote: 30,
+      caller: viewer,
+    });
+    serve(userRow('remix', author));
+    const { getRemixAppRegistry } = await import('~/server/services/remix-app-registry.service');
+    const mine = (await getRemixAppRegistry()).find((app) => app.slug === `u${author}-mine`)!;
+    const segment = submits().at(-1)!;
+    Object.assign(segment.metadata!.remixRun as object, { app: mine.slug, shape: mine.shape });
+    finish(segment.id, [blob('out')], { [blob('out')]: 'pg' });
+    return runId;
+  }
+
+  beforeEach(() => addImage(SOURCE_ID));
+
+  it('is absent from start with its flag off, and refuses to run in-process with it on', async () => {
+    serve(userRow());
+    await expect(startMine(caller())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(startMine(flagOn())).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'This app is unavailable right now',
+    });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it('is absent from advance with its flag off', async () => {
+    const runId = await runOfMine(flagOn());
+    await expect(advanceRemixRun({ runId, caller: caller() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    // POSITIVE CONTROL: with the flag, the run reaches its replay (which no runner serves yet).
+    await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+  });
+
+  it('stops its runs at the next step once it is disabled, except for its author or a mod', async () => {
+    const runId = await runOfMine(flagOn());
+    serve(userRow('remix_disabled', OTHER_AUTHOR));
+    await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'This app is no longer available',
+    });
+    // A mod's run, and the author's own, get past the gate to the replay (which no runner serves yet).
+    await expect(
+      advanceRemixRun({ runId, caller: flagOn({ isModerator: true }) })
+    ).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+    const own = await runOfMine(flagOn(), USER_ID);
+    serve(userRow('remix_disabled', USER_ID));
+    await expect(advanceRemixRun({ runId: own, caller: flagOn() })).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+  });
+
+  it('never replays a run recorded on another shape of the app, or on none', async () => {
+    const runId = await runOfMine(flagOn());
+    const meta = submits()[0].metadata!.remixRun as Record<string, unknown>;
+    meta.shape = 'a-deleted-app';
+    await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    // Only a system app's run may predate shapes; a user app's with none is refused, not replayed.
+    delete meta.shape;
+    await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+      code: 'CONFLICT',
     });
   });
 });

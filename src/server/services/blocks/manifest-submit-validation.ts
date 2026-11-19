@@ -37,7 +37,7 @@ export function manifestValidationContext(args: {
   manifest: Record<string, unknown>;
   existingAllowedOrigins: string[] | null;
   appsDomain: string;
-}): { allowedScopes: number; allowedOrigins: string[] } {
+}): { allowedScopes: bigint; allowedOrigins: string[] } {
   const scopes = Array.isArray(args.manifest.scopes) ? (args.manifest.scopes as string[]) : [];
   return {
     allowedScopes: deriveOauthBitmaskFromBlockScopes(scopes),

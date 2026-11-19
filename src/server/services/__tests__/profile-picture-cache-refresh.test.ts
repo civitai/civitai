@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { refreshSession } from '~/server/auth/session-invalidation';
+import * as refreshAlert from '~/server/services/profile-picture-refresh-alert';
 
 /**
  * Avatars are gated in the browser on the profile picture's `nsfwLevel` and `ingestion`, and the hot
@@ -13,6 +16,29 @@ import { NsfwLevel } from '~/server/common/enums';
  */
 
 const refreshPicture = vi.fn(async (_ids: number | number[]) => undefined);
+const refreshBasic = vi.fn(async (_ids: number | number[]) => undefined);
+const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
+const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+const pictureLookup = vi.fn();
+const alertStep = vi
+  .spyOn(refreshAlert, 'alertRefreshStepFailure')
+  .mockImplementation(() => undefined);
+
+vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
+  // The lookup's SQL runs against Postgres in held-avatar-clear.behavior.test.ts; here it answers
+  // from the same user fake as the profile pictures.
+  getPictureUserIds: async (db: typeof dbMock.dbWrite, ids: number[]) => {
+    pictureLookup(db, ids);
+    return (
+      (await db.user.findMany({
+        where: { profilePictureId: { in: ids } },
+        select: { id: true },
+      })) as { id: number }[]
+    ).map((row) => row.id);
+  },
+}));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReDerive>()),
@@ -28,6 +54,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
     profilePictureCache: {
       ...actual.profilePictureCache,
       refresh: (ids: number | number[]) => refreshPicture(ids),
+    },
+    userBasicCache: {
+      ...actual.userBasicCache,
+      refresh: (ids: number | number[]) => refreshBasic(ids),
     },
   };
 });
@@ -59,6 +89,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
+  usersSearchIndex: { queueUpdate: (items: unknown[]) => queueUserUpdate(items) },
 }));
 vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   const reset = { reset: vi.fn(() => Promise.resolve()) };
@@ -118,12 +149,126 @@ beforeEach(() => {
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
 
+describe('an avatar change', () => {
+  it("busts the event engine's copy of the user's picture too", async () => {
+    const { deleteUserProfilePictureCache } = await import('../user.service');
+
+    await deleteUserProfilePictureCache(AVATAR_OWNER);
+
+    expect(refreshPicture).toHaveBeenCalledWith(AVATAR_OWNER);
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+  });
+});
+
+describe('a bulk picture refresh', () => {
+  it("clears a User.image naming a held picture, then refreshes those users' basic-user cache and search documents", async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockRejectedValueOnce(new Error('clear failed'));
+    await refreshProfilePicturesForUsers([3, 4, 3]);
+    expect(clearImages).toHaveBeenLastCalledWith(expect.anything(), [3, 4]);
+    expect(refreshPicture).toHaveBeenLastCalledWith([3, 4]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+
+    clearImages.mockResolvedValueOnce([]);
+    await refreshProfilePicturesForUsers([3, 4]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+    expect(queueUserUpdate).not.toHaveBeenCalled();
+
+    // The event engine's copy of each picture is busted whether or not it is held.
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith('user:profilePicture:v3:3', {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+    expect(redisMock.redis.expire).toHaveBeenCalledWith('user:profilePicture:v3:4', 10);
+
+    clearImages.mockResolvedValueOnce([4]);
+    await refreshProfilePicturesForUsers([3, 4]);
+    expect(refreshBasic).toHaveBeenCalledWith([4]);
+    expect(clearImages.mock.invocationCallOrder[2]).toBeLessThan(
+      refreshBasic.mock.invocationCallOrder[0]
+    );
+    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
+  });
+
+  it('refreshes the picture cache but not the basic-user entry of a user the clear did not touch', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+
+    await refreshProfilePicturesForUsers([9]);
+
+    expect(refreshPicture).toHaveBeenCalledWith([9]);
+    expect(refreshBasic).not.toHaveBeenCalled();
+    expect(queueUserUpdate).not.toHaveBeenCalled();
+  });
+
+  it('🔴 alerts a failed step by name and still runs the steps after it', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([9]);
+    refreshPicture.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(refreshProfilePicturesForUsers([9])).resolves.toBeUndefined();
+
+    expect(alertStep).toHaveBeenCalledWith('picture-cache');
+    expect(alertStep).toHaveBeenCalledTimes(1);
+    expect(refreshBasic).toHaveBeenCalledWith([9]);
+  });
+
+  it('🔴 alerts a failed session refresh as the session step', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('session store down'));
+
+    await expect(refreshProfilePicturesForUsers([9])).resolves.toBeUndefined();
+
+    expect(alertStep.mock.calls).toEqual([['session']]);
+  });
+
+  it('alerts nothing when every step succeeds (control)', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([9]);
+    await refreshProfilePicturesForUsers([9]);
+    expect(alertStep).not.toHaveBeenCalled();
+  });
+
+  it('refreshes every session, never more than the cap at once', async () => {
+    const { refreshProfilePicturesForUsers, PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY } =
+      await import('../user.service');
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(refreshSession).mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return undefined as never;
+    });
+    const ids = Array.from({ length: 250 }, (_, i) => i + 1);
+
+    await refreshProfilePicturesForUsers(ids);
+
+    expect(
+      vi
+        .mocked(refreshSession)
+        .mock.calls.map(([id]) => id)
+        .sort((a, b) => a - b)
+    ).toEqual(ids);
+    expect(peak).toBe(PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY);
+  });
+});
+
 describe('a moderator re-rate', () => {
   it('refreshes the cached profile picture of the user whose avatar it is', async () => {
     await reRate(AVATAR);
 
     expect(pictureLookups()).toEqual([[AVATAR]]);
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+    // The session shape carries the picture's url too.
+    expect(refreshSession).toHaveBeenCalledWith(
+      AVATAR_OWNER,
+      expect.objectContaining({ caller: 'profile' })
+    );
     // After the write, or the refresh re-reads the old rating.
     expect(dbMock.dbWrite.image.update.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]
@@ -251,5 +396,12 @@ describe('a moderator report flag', () => {
     expect(dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]
     );
+  });
+});
+
+describe('the users an image change reaches', () => {
+  it('come from the shared lookup, on the primary', async () => {
+    await reRate(AVATAR);
+    expect(pictureLookup).toHaveBeenCalledWith(dbMock.dbWrite, [AVATAR]);
   });
 });

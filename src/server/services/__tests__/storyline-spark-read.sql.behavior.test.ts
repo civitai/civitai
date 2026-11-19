@@ -47,7 +47,8 @@ beforeAll(async () => {
       "nsfwLevel" integer NOT NULL DEFAULT 1, hash text, width integer, height integer,
       "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
       "acceptableMinor" boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text);
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "EvidenceHeldUser" ("userId" int);

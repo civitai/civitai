@@ -182,9 +182,7 @@ type Lane = {
 // one set of counters; this makes the limiters and the circuit match.
 //
 // `??=`, not `=`: with `=`, a later copy would REPLACE the state and orphan the
-// first copy's in-flight slots and counts. Enrolled in
-// scripts/server-graph-watchlist.mjs so the build fails if an emitted copy
-// loses this pin. Vitest loads each module once and cannot see any of this
+// first copy's in-flight slots and counts. Vitest loads each module once and cannot see any of this
 // unless forced to (src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts).
 // Same pattern as `__civitaiBulkheadState` (src/server/utils/request-bulkhead.ts)
 // and the Meili wrapper fix in civitai/civitai#5578. Dev caveat: the state also

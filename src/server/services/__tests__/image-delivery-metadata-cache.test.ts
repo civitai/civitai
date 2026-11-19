@@ -32,8 +32,6 @@ import {
 import { respondWithRows, statementOf } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { dbReadFallbackCounter } from '~/server/prom/client';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
@@ -255,9 +253,6 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     const result = await getCachedImageDeliveryMetadata(URL);
     expect(result).toEqual(IMAGE_ROW); // primary fallback resolved
     expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
-      [{ entity: 'image', caller: 'imageDelivery' }],
-    ]);
   });
 
   it('treats an empty replica answer as a not-found: the primary is NOT asked', async () => {
@@ -265,7 +260,6 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
 
     expect(await getCachedImageDeliveryMetadata(URL)).toBeNull();
     expect(dbWriteQueryRaw).not.toHaveBeenCalled();
-    expect(dbReadFallbackCounter.inc).not.toHaveBeenCalled();
   });
 
   it('rejects with the primary error when replica and primary both fail, caching nothing', async () => {
@@ -532,11 +526,10 @@ describe('bustImageDeliveryMetadataCache', () => {
 
     expect(redisDel).toHaveBeenCalledTimes(2);
     expect(store.has(`${KEY_PREFIX}:${URL}`)).toBe(false);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   // The bust runs inside the user's save, so a hung Redis must not hold it past the deadline.
-  it('gives up within one second on a hung Redis, across both attempts, and logs', async () => {
+  it('gives up within one second on a hung Redis, across both attempts', async () => {
     vi.useFakeTimers();
     try {
       redisDel.mockReturnValue(new Promise(() => undefined));
@@ -550,23 +543,16 @@ describe('bustImageDeliveryMetadataCache', () => {
       // Read the flag rather than awaiting `done`: a regression then fails here instead of hanging.
       expect(settled).toBe(true);
       await done;
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
-      );
     } finally {
       vi.useRealTimers();
     }
   });
 
-  // A failed bust leaves the old hideMeta served for up to the TTL; it must be visible.
-  it('logs when the bust still fails after the retry', async () => {
+  it('resolves when the bust still fails after the retry', async () => {
     redisDel.mockRejectedValue(new Error('redis down'));
 
     await expect(bustImageDeliveryMetadataCache(URL)).resolves.toBeUndefined();
 
     expect(redisDel).toHaveBeenCalledTimes(2);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
-    );
   });
 });

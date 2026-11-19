@@ -10,8 +10,7 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -130,7 +129,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // OAuth token from a NON-moderator is still rejected there. Ordered after auth
   // (401) and before the mod gate so an un-scoped OAuth key gets 403, never a leak.
   if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
+    if (!hasScope(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
           'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope',

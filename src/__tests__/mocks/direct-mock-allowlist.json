@@ -214,8 +214,6 @@
     "src/tests/api/v1/model-versions/id-file-download-url.test.ts",
     "src/tests/api/webhooks/resource-training-v2.service-contract.test.ts",
     "src/tests/server/utils/apps-catalog-rate-limit.test.ts",
-    "src/utils/__tests__/storage-resolver.deregister.test.ts",
-    "src/utils/__tests__/storage-resolver.deregisterBatch.test.ts",
     "src/utils/metadata/__tests__/audit-slow-log.test.ts"
   ],
   "pendingFiles": [
@@ -263,7 +261,6 @@
     "src/server/__tests__/warmup.test.ts",
     "src/server/auth/__tests__/ban-session-revocation.test.ts",
     "src/server/auth/__tests__/session-invalidation.test.ts",
-    "src/server/auth/__tests__/session-metrics.test.ts",
     "src/server/auth/__tests__/session-verifier.test.ts",
     "src/server/clickhouse/__tests__/tracker.awaitDelivery.test.ts",
     "src/server/clickhouse/__tests__/tracker.impressions.test.ts",
@@ -408,7 +405,6 @@
     "src/server/services/__tests__/challenge-collection-owner-wiring.service.test.ts",
     "src/server/services/__tests__/challenge-completion-emit-boundary.service.test.ts",
     "src/server/services/__tests__/challenge-delete-user.service.test.ts",
-    "src/server/services/__tests__/challenge-detail-visibility.service.test.ts",
     "src/server/services/__tests__/challenge-edit-rescan.service.test.ts",
     "src/server/services/__tests__/challenge-edit.service.test.ts",
     "src/server/services/__tests__/challenge-entry-eligibility.service.test.ts",
@@ -699,8 +695,6 @@
     "src/utils/__tests__/delivery-worker.resolver-enabled.test.ts",
     "src/utils/__tests__/delivery-worker.test.ts",
     "src/utils/__tests__/s3-utils.test.ts",
-    "src/utils/__tests__/storage-resolver.deregister.test.ts",
-    "src/utils/__tests__/storage-resolver.deregisterBatch.test.ts",
     "src/utils/__tests__/storage-resolver.deregisterByFile.test.ts"
   ]
 }

@@ -38,6 +38,7 @@ import {
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
 import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
+import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
 
 const url = '/api/trpc';
 
@@ -129,6 +130,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
   }
 }
 
+/** Queries whose input carries a private upload's blob URL (`uploadUrl`), kept out of request URLs. */
+export const PRIVATE_URL_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
+  'imageSearchUpload.search',
+]);
+
 /**
  * Whether a query must leave the browser as POST: either its input is too large for a GET URL
  * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
@@ -137,7 +143,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
  */
 export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
   if (op.type !== 'query') return false;
-  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+  return (
+    BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) ||
+    PRIVATE_URL_QUERY_PROCEDURES.has(op.path) ||
+    isLargeQuery(op)
+  );
 }
 
 /**
@@ -249,8 +259,10 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getWornHat',
   'generation.checkResourcesCoverage',
   'hatTurf.getFlagRaceForCollection',
+  'hatTurf.getFlagRaceTotals',
   'hatTurf.getFlags',
   'hatTurf.getOpenFlagCrucible',
+  'hatTurf.getPastFlags',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -330,8 +342,9 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
- *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
- *    queries as GET, which would put a block token in the URL),
+ *  - the procedure is NOT a block-token or private-URL query (`BLOCK_TOKEN_QUERY_PROCEDURES`,
+ *    `PRIVATE_URL_QUERY_PROCEDURES` — the batch link sends queries as GET, which would put the
+ *    token or URL in the request URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -350,6 +363,7 @@ export function shouldBatch(op: {
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
     !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
+    !PRIVATE_URL_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );
@@ -359,7 +373,8 @@ export function shouldBatch(op: {
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
  *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
- *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`),
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
+ *    `feedGoTransportInfinite` for `image.getInfinite`),
  *  - we're in an authenticated browser — signed-out responses are edge-cached under the
  *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
@@ -401,8 +416,18 @@ function terminatingLink({
   });
   return splitLink({
     condition: shouldUseGoTransport,
-    true: httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
-    false: defaultLink,
+    true: [
+      feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
+      httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+    ],
+    false: [
+      feedTransportTimingLink({
+        transport: 'node',
+        isAuthed: isAuthedBrowser,
+        skip: shouldSendQueryAsPost,
+      }),
+      defaultLink,
+    ],
   });
 }
 

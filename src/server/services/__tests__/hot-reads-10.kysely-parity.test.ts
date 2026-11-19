@@ -297,6 +297,7 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
       scannedAt: SCANNED_AT,
       ingestion: 'Blocked',
       blockedFor: 'csam-check',
+      modelRestricted: false,
       postId: 10601,
       type: 'video',
       metadata: { duration: 3 },

@@ -2,8 +2,17 @@ import { describe, expect, test, vi } from 'vitest';
 import { startRefreshers } from '@/vector-sync/domain/refresh';
 import type { Domain } from '@/vector-sync/domain/sync';
 
-const domain = (name: string, refresh?: Domain<any>['refresh']) =>
-  ({ name, table: name, refresh } as Domain<any>);
+const domain = (name: string, refresh?: Domain<any>['refresh'], points?: number[]) =>
+  ({
+    name,
+    table: name,
+    refresh,
+    store: points
+      ? () => ({
+          idsInRange: async (lo: number, hi: number) => points.filter((id) => id >= lo && id < hi),
+        })
+      : undefined,
+  } as unknown as Domain<any>);
 
 /** Throws past `max` reads, so a walk whose cursor never wraps fails instead of spinning forever. */
 const bounded =
@@ -14,6 +23,282 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  /** A walk that drops rows 2-29 every pass; `lookup` answers the primary-key check. */
+  const droppingWalk = async (lookup: (ids: number[]) => Promise<{ rows: { id: number }[] }>) => {
+    const added: number[] = [];
+    const pg = {
+      query: bounded(async (sql: string, args: unknown[]) => {
+        if (sql.includes('ANY(')) return lookup(args[0] as number[]);
+        return { rows: (args[0] as number) === 0 ? [{ id: 1 }, { id: 30 }] : [] };
+      }, 40),
+    };
+    const queue = {
+      lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+      isFull: false,
+    };
+    const points = Array.from({ length: 30 }, (_, i) => i + 1);
+    const timers = startRefreshers(
+      [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+      queue as never,
+      pg as never
+    );
+    await vi.advanceTimersByTimeAsync(3000);
+    for (const t of timers) clearInterval(t);
+    return added.filter((id) => id !== 1 && id !== 30);
+  };
+
+  test('a walk that keeps missing rows the table still has deletes none of them', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async (ids) => ({ rows: ids.map((id) => ({ id })) }));
+      expect(deleted).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('releases only the held orphans the primary-key lookup cannot find', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async (ids) => ({
+        rows: ids.filter((id) => id % 2 === 0).map((id) => ({ id })),
+      }));
+      expect(deleted.length).toBeGreaterThan(0);
+      expect(deleted.every((id) => id % 2 === 1)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a failed primary-key lookup releases no held orphan', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async () => {
+        throw new Error('connection reset');
+      });
+      expect(deleted).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('an empty read does not exempt the next pass from the brake', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      let rows: number[] = [];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: rows
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 50 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000); // empty read
+      rows = [1, 2]; // then a lagging read missing most rows
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 2]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('held orphans are let through the next pass even when the batch ranges shifted', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      let rows = [1, 40];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: rows
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 40 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added.filter((id) => id > 1 && id < 40)).toEqual([]);
+      rows = [40]; // row 1 deleted too: the one batch now starts and ends elsewhere
+      added.length = 0;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect([...added].sort((a, b) => a - b)).toEqual(points);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a burst of orphans is held one pass, then deleted when the same orphans are still there', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor]: [number, number]) => ({
+          rows: cursor === 0 ? [{ id: 1 }, { id: 30 }] : [],
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      // Rows 2-29 deleted together: 28 orphans of 30 points.
+      const points = Array.from({ length: 30 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 30]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added.slice(2).sort((a, b) => a - b)).toEqual(points);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a failed point read (a missing collection) deletes nothing and leaves other domains walking', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: Record<string, number[]> = { storyline: [], comic: [] };
+      const pg = {
+        query: bounded(async (_sql: string, [cursor]: [number, number]) => ({
+          rows: cursor === 0 ? [{ id: 1 }, { id: 2 }] : [],
+        })),
+      };
+      const lane = (name: string) => ({ add: (r: { id: number }) => void added[name].push(r.id) });
+      const queue = {
+        lanes: new Map([
+          ['storyline', lane('storyline')],
+          ['comic', lane('comic')],
+        ]),
+        isFull: false,
+      };
+      const missing = {
+        ...domain('comic', { everyMs: 1000, batch: 10 }),
+        store: () => ({
+          idsInRange: async () => {
+            throw Object.assign(new Error('Not found: Collection comics does not exist'), {
+              status: 404,
+            });
+          },
+        }),
+      } as unknown as Domain<any>;
+      const timers = startRefreshers(
+        [missing, domain('storyline', { everyMs: 1000, batch: 10 }, [1, 2, 7])],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      // Its rows are still walked; no point is queued, so nothing is deleted on its account.
+      expect(added.comic).toEqual([1, 2]);
+      expect([...added.storyline].sort()).toEqual([1, 2, 7]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a row read that comes back empty over a populated range deletes nothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = { query: bounded(async () => ({ rows: [] })) };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 50 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(added).toEqual([]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('an empty row read deletes nothing even when too few points to trip the brake', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = { query: bounded(async () => ({ rows: [] })) };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, [1, 2, 3])],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(added).toEqual([]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('also queues points whose row is gone, inside a batch and past the last row', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const ids = [1, 2, 4, 5];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: ids
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      // 3 sits between rows of the second batch's range, 9 after the last row; 1 and 4 have rows.
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 }, [1, 3, 4, 9])],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect([...added].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 9]);
+      expect(added.filter((id) => id === 1 || id === 4)).toHaveLength(2);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('each tick walks the whole table, a batch per read, into the domain lane', async () => {
     vi.useFakeTimers();
     try {

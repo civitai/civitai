@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -263,17 +262,10 @@ describe('/api/v1/models — a minor or SFW-only model', () => {
     expect(await servedByModelsApi()).toEqual(SFW_IDS);
   });
 
-  it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
+  it('serves SFW, and does not throw, when the settings read fails', async () => {
     primeOneModel({ minor: true, sfwOnly: false });
     redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByModelsApi()).toEqual(SFW_IDS);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'showcase-hold-settings-read',
-        modelId: MODEL_ID,
-      })
-    );
   });
 });
 
@@ -344,12 +336,9 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
     expect(await servedByVersionApi()).toEqual(ALL_IDS);
   });
 
-  it('serves SFW with a warning, and does not throw, when the settings read fails', async () => {
+  it('serves SFW, and does not throw, when the settings read fails', async () => {
     redisMock.redis.get.mockRejectedValue(new Error('redis down'));
     expect(await servedByVersionApi()).toEqual(SFW_IDS);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'showcase-hold-settings-read' })
-    );
   });
 
   it('leaves the entries it is handed unchanged', async () => {

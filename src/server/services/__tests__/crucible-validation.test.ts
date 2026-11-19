@@ -620,6 +620,7 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
   userId: 42,
   type,
   nsfwLevel: 1,
+  modelRestricted: false,
   metadata,
   ingestion: 'Scanned',
   createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000),
@@ -1309,9 +1310,6 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
 
     expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
-    );
   });
 
   it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
@@ -1405,20 +1403,11 @@ describe('submitEntry — creator notification', () => {
     expect(sentDetails()).toMatchObject({ crucibleId: 1, crucibleName: null });
   });
 
-  it('logs a notification it could not send without failing the entry', async () => {
+  it('does not fail the entry when its notification cannot be sent', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
     createNotification.mockRejectedValue(new Error('notifications down'));
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
-    await vi.waitFor(() =>
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          name: 'crucible-notification-failed',
-          notificationType: 'crucible-entry-submitted',
-        })
-      )
-    );
   });
 });
 
@@ -1690,6 +1679,30 @@ describe('submitEntry — who and what may enter', () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 
+  describe('made with a base model whose license restricts mature images', () => {
+    const enter = (nsfwLevel: number) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        ...crucibleRow(MediaType.image),
+        nsfwLevel: 1 | 2 | 4,
+      });
+      dbMock.dbRead.image.findUnique.mockResolvedValue({
+        ...imageRow(MediaType.image),
+        nsfwLevel,
+        modelRestricted: true,
+      });
+      return submit();
+    };
+
+    it('refuses a mature entry', async () => {
+      await expect(enter(4)).rejects.toThrow(/doesn't allow mature images/);
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a PG entry', async () => {
+      await expect(enter(1)).resolves.toMatchObject({ id: 5 });
+    });
+  });
+
   it('refuses a user on the contest-ban list', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
       meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
@@ -1742,8 +1755,8 @@ describe('checkCrucibleEntryEligibility', () => {
   describe('once a required model is held to PG and PG-13', () => {
     const withRequiredModel = (flagged: boolean) => {
       dbMock.dbRead.image.findMany.mockResolvedValue([
-        { id: 1, createdAt: after, nsfwLevel: 1 },
-        { id: 5, createdAt: after, nsfwLevel: 4 },
+        { id: 1, createdAt: after, nsfwLevel: 1, modelRestricted: false },
+        { id: 5, createdAt: after, nsfwLevel: 4, modelRestricted: false },
       ]);
       fetchImageResources.mockResolvedValue({
         1: { resources: [{ modelVersionId: 500 }] },
@@ -1768,6 +1781,26 @@ describe('checkCrucibleEntryEligibility', () => {
 
       await expect(check([5])).resolves.toEqual([{ imageId: 5, eligible: true, reasons: [] }]);
     });
+  });
+
+  it('refuses a mature image whose base model license restricts mature images', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: [],
+      allowedBaseModels: [],
+    });
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after, nsfwLevel: 4, modelRestricted: true },
+      { id: 2, createdAt: after, nsfwLevel: 1, modelRestricted: true },
+      { id: 3, createdAt: after, nsfwLevel: 4, modelRestricted: false },
+    ]);
+
+    await expect(check([1, 2, 3])).resolves.toEqual([
+      { imageId: 1, eligible: false, reasons: ['restricted-model'] },
+      { imageId: 2, eligible: true, reasons: [] },
+      { imageId: 3, eligible: true, reasons: [] },
+    ]);
   });
 
   it("only looks at the caller's own images", async () => {

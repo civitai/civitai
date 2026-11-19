@@ -1,4 +1,5 @@
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
@@ -51,7 +52,6 @@ import {
   getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
-  canSeeCollectionDetails,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
@@ -126,12 +126,13 @@ export const getAllCollectionsInfiniteHandler = async ({
         createdAt: true,
         metadata: true,
       },
-      user: ctx.user,
+      user: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     });
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
     const showsImage = await getRequestImageFilter(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
-    const items = (await withServableCovers(rows, ctx.user)).map((row) =>
+    const coverViewer = credentialViews(ctx).asOwner ? ctx.user : undefined;
+    const items = (await withServableCovers(rows, coverViewer)).map((row) =>
       row.image &&
       (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
         !showsImage({ ...row.image, tags: row.image.tags.map((t) => t.tag) }))
@@ -249,17 +250,11 @@ export const getCollectionByIdHandler = async ({
   ctx: Context;
   input: GetByIdInput;
 }) => {
-  const { user } = ctx;
-
   try {
-    const permissions = await getUserCollectionPermissionsById({
-      ...input,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const { permissions, collection } = await readCollectionForViewer(ctx, input.id);
 
     // The flags go back empty, as for a missing id, so the answer does not describe the collection.
-    if (!canSeeCollectionDetails(permissions)) {
+    if (!collection) {
       return {
         collection: null,
         permissions: createEmptyPermissions(input.id),
@@ -269,7 +264,6 @@ export const getCollectionByIdHandler = async ({
       };
     }
 
-    const collection = await getCollectionById({ input, viewer: ctx.user });
     const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
@@ -462,6 +456,8 @@ export const upsertCollectionHandler = async ({
         isModerator: user.isModerator,
         isMember: !!user.tier && user.tier !== 'free',
       },
+      // Read without the owner's view, the editor saw a hidden cover as none; an image: null keeps it.
+      coverViewer: credentialViews(ctx).asOwner ? undefined : {},
     });
 
     const [itemId] = [
@@ -627,14 +623,12 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
-  const fullAccess = isSessionOrFullUserKey(ctx);
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
     requireRead: true,
-    asModerator: !!ctx.user?.isModerator && fullAccess,
-    asOwner: fullAccess,
+    ...credentialViews(ctx),
   });
 
   return {
@@ -764,7 +758,11 @@ export const addSimpleImagePostHandler = async ({
       }
     } catch (error) {
       // The refusal is what the user needs to see; a failed cleanup must not replace it.
-      await deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
+      await deletePost({
+        id: post.id,
+        isModerator,
+        actor: { system: 'add-simple-image-post-rollback' },
+      }).catch((rollbackError) =>
         logToAxiom({
           type: 'error',
           name: 'add-simple-image-post-rollback-failed',

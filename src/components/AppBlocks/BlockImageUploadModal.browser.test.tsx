@@ -93,6 +93,10 @@ function filesFallbackInput() {
   return input;
 }
 
+/** The notice a shared upload shows, for an app named `Gen App`. */
+const SHARE_NOTICE =
+  'This image will be visible to other viewers of Gen App once Civitai has scanned it.';
+
 const previewEl = () => document.querySelector('[data-testid="block-image-upload-preview"]');
 
 /** The visible control of the main file input (a button); the native input behind it is hidden. */
@@ -330,4 +334,157 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     expect(mocks.uploadToCF.mock.calls[1][0]).toBe(fromFiles);
     expect(document.body.textContent).not.toContain('Files should not exceed');
   });
+});
+
+describe('BlockImageUploadModal — an upload the app asked to share', () => {
+  const noticeEl = () => document.querySelector('[data-testid="block-image-upload-share-notice"]');
+
+  function openWith(share?: { blockToken: string; appName: string }) {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({
+      id: 'share-upload-test',
+      component: BlockImageUploadModal,
+      props: { onResolved: vi.fn(), onAccepted: vi.fn(), ...(share ? { share } : {}) },
+    });
+  }
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.uploadToCF.mockReset().mockResolvedValue({ id: 'cf-key' });
+    mocks.persistMutate.mockReset().mockResolvedValue({ imageId: 77 });
+  });
+
+  test('🔴 the server’s `shared` answer reaches onAccepted unchanged', async () => {
+    const onAccepted = vi.fn();
+    mocks.persistMutate.mockResolvedValue({ imageId: 78, shared: true });
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({
+      id: 'share-echo-test',
+      component: BlockImageUploadModal,
+      props: {
+        onResolved: vi.fn(),
+        onAccepted,
+        share: { blockToken: 'tok_abc', appName: 'Gen App' },
+      },
+    });
+    await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledTimes(1));
+    expect(onAccepted.mock.calls[0][0]).toMatchObject({ imageId: 78, shared: true });
+  });
+
+  test('🔴 with share: the notice shows BEFORE a pick, and the persist carries share + the token', async () => {
+    openWith({ blockToken: 'tok_abc', appName: 'Gen App' });
+    await expect.element(page.getByText(SHARE_NOTICE, { exact: true })).toBeVisible();
+    expect(mocks.persistMutate).not.toHaveBeenCalled();
+
+    await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+    await vi.waitFor(() => expect(mocks.persistMutate).toHaveBeenCalledTimes(1));
+    expect(mocks.persistMutate.mock.calls[0][0]).toMatchObject({
+      share: true,
+      blockToken: 'tok_abc',
+    });
+  });
+
+  test('🔴 without share: no notice, and the persist carries neither share nor a token', async () => {
+    openWith();
+    await fileInputEl();
+    // The dialog has rendered (positive control) and still shows no notice.
+    await expect
+      .element(page.getByText('Upload a PNG, JPEG or WebP.', { exact: false }))
+      .toBeVisible();
+    expect(noticeEl()).toBeNull();
+
+    await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+    await vi.waitFor(() => expect(mocks.persistMutate).toHaveBeenCalledTimes(1));
+    const sent = mocks.persistMutate.mock.calls[0][0] as Record<string, unknown>;
+    expect('share' in sent).toBe(false);
+    expect('blockToken' in sent).toBe(false);
+  });
+});
+
+describe('BlockImageUploadModal — what the dialog says about who sees the image', () => {
+  // Literal, not built from the component's constant: a reword must fail here.
+  const UNSHARED_COPY =
+    "This image is kept private: Civitai won't show it to other people using this app. " +
+    'Civitai scans every image you upload here, shared or not, so it must be ' +
+    'safe-for-work. Upload a PNG, JPEG or WebP.';
+  const SHARED_COPY =
+    'Civitai scans every image you upload here, shared or not, so it must be ' +
+    'safe-for-work. Upload a PNG, JPEG or WebP.';
+
+  const normalised = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+  async function visibilityCopy(share?: { blockToken: string; appName: string }) {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({
+      id: 'visibility-copy-test',
+      component: BlockImageUploadModal,
+      props: { onResolved: vi.fn(), ...(share ? { share } : {}) },
+    });
+    await fileInputEl();
+    // Found by role, not by a test id: the dialog's only alert before a pick is this copy.
+    const alerts = document.querySelectorAll('[role="dialog"] [role="alert"]');
+    expect(alerts).toHaveLength(1);
+    return normalised(alerts[0]);
+  }
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  test('🔴 an unshared upload is described as private, never public', async () => {
+    expect(await visibilityCopy()).toBe(UNSHARED_COPY);
+    expect(document.querySelector('[data-testid="block-image-upload-share-notice"]')).toBeNull();
+  });
+
+  test('🔴 a shared upload keeps the share notice and makes no private claim', async () => {
+    expect(await visibilityCopy({ blockToken: 'tok_abc', appName: 'Gen App' })).toBe(SHARED_COPY);
+    expect(
+      normalised(document.querySelector('[data-testid="block-image-upload-share-notice"]'))
+    ).toBe(SHARE_NOTICE);
+  });
+});
+
+describe('BlockImageUploadModal — the BLOCKING path reports the server’s `shared` answer', () => {
+  const READY = {
+    imageId: 4242,
+    nsfwLevel: 1,
+    contentRating: 'pg' as const,
+    url: 'https://image.example/ready-4242.jpeg',
+  };
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.uploadToCF.mockReset().mockResolvedValue({ id: 'cf-key' });
+    mocks.persistMutate.mockReset();
+    mocks.gateMutate.mockReset().mockResolvedValue({ status: 'ready', ...READY });
+  });
+
+  test.each([
+    ['a share request the server stamped', { blockToken: 'tok_abc', appName: 'Gen App' }, true],
+    ['an unshared request', undefined, false],
+    [
+      'a share request the server did not stamp',
+      { blockToken: 'tok_abc', appName: 'Gen App' },
+      false,
+    ],
+  ])(
+    '🔴 %s: onResolved gets the scanned result and the server’s `shared`',
+    async (_label, share, serverShared) => {
+      mocks.persistMutate.mockResolvedValue({ imageId: READY.imageId, shared: serverShared });
+      const onResolved = vi.fn();
+      renderWithProviders(<DialogProvider />);
+      // No `onAccepted`: the modal polls the gate itself and resolves through onResolved.
+      dialogStore.trigger({
+        id: 'blocking-share-echo-test',
+        component: BlockImageUploadModal,
+        props: { onResolved, ...(share ? { share } : {}) },
+      });
+      await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+
+      await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
+      expect(mocks.gateMutate.mock.calls).toEqual([[{ imageId: READY.imageId }]]);
+      expect(onResolved.mock.calls).toEqual([[READY, { shared: serverShared }]]);
+    }
+  );
 });

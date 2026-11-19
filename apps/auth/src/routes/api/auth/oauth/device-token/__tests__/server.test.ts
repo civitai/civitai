@@ -117,6 +117,20 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.7' }));
   });
 
+  it('mints nothing for an app block’s client, even with an approved code', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, clientId: 'appblk-some-app' });
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'appblk-some-app',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
+
   it('rejects with invalid_scope when the client allowedScopes does NOT include AppBlocksSubmit', async () => {
     h.hGet.mockResolvedValueOnce(approvedCode);
     h.clientRow = { allowedScopes: TokenScope.UserRead }; // intersection must reject the submit bit
@@ -236,6 +250,43 @@ describe('device-token +server — the poll is bounded per sign-in, not per flee
     expect(res.status).toBe(429);
     expect(h.checkRateLimit).not.toHaveBeenCalledWith('device-token', 'attacker-supplied');
     expect(h.hGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('device-token +server — scopes past bit 30', () => {
+  it('passes the bounds check with AppsRead and AppDataRead (bits 31, 32) and mints them intact', async () => {
+    // UserRead | AppsRead (2^31) | AppDataRead (2^32): above the old 32-bit ALL_SCOPES bound.
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: '6442450945' });
+    h.clientRow = { allowedScopes: 6442450945 };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).scope).toBe('6442450945');
+    expect(h.createPair).toHaveBeenCalledWith(7, 'civitai-cli', 6442450945n);
+  });
+
+  it('still refuses a bit past the defined scopes', async () => {
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: '8589934593' }); // 2^33 | UserRead
+    h.clientRow = { allowedScopes: 6442450945 };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.createPair).not.toHaveBeenCalled();
   });
 });
 

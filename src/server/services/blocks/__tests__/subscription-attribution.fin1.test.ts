@@ -80,7 +80,7 @@ function resolvedInstance(over: Record<string, unknown> = {}) {
       status: 'approved',
       manifest: {},
       approvedScopes: [],
-      app: { allowedScopes: 0 },
+      app: { allowedScopes: 0n },
     },
     ...over,
   };
@@ -161,9 +161,7 @@ describe('membership FIN-1 (model surface)', () => {
 
 describe('membership FIN-1 (page surface)', () => {
   it('re-derives a page_* instance to viewer_global server-side', async () => {
-    mockResolve.mockResolvedValueOnce(
-      resolvedInstance({ source: 'page', modelId: 0, slotId: '' })
-    );
+    mockResolve.mockResolvedValueOnce(resolvedInstance({ source: 'page', modelId: 0, slotId: '' }));
     const pageAttribution: BlockAttribution = {
       appId: REAL_APP_ID,
       appBlockId: REAL_APP_BLOCK_ID,

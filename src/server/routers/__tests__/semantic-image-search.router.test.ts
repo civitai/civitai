@@ -43,11 +43,12 @@ const VIEWER = {
   onboarding: 0x1f,
   emailVerified: new Date(),
 };
-const caller = (user: typeof VIEWER | null = VIEWER) =>
+const caller = (user: typeof VIEWER | null = VIEWER, credential: object = {}) =>
   semanticImageSearchRouter.createCaller({
     acceptableOrigin: true,
     user: user ?? undefined,
     tokenScope: TokenScope.Full,
+    ...credential,
     req: { headers: {} },
     features: {},
     track: { search: h.trackSearch },
@@ -78,6 +79,22 @@ describe('semanticImageSearch router', () => {
     await caller(null).search({ query: 'fox' });
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined }));
   });
+
+  // The procedure takes the full scope, so the narrowed credential that reaches it is an app's
+  // token: full scope, but issued to an OAuth client, never a full user credential.
+  it.each([
+    ['an app token', { subject: { type: 'oauth', id: 'app' }, tokenScope: TokenScope.Full }, false],
+    ['a session (control)', {}, true],
+  ])(
+    'searches for a moderator on %s with moderator and owner views: %s',
+    async (_, credential, views) => {
+      h.flagOn = true;
+      await caller({ ...VIEWER, isModerator: true }, credential).search({ query: 'fox' });
+      expect(h.search).toHaveBeenCalledWith(
+        expect.objectContaining({ asModerator: views, asOwner: views })
+      );
+    }
+  );
 
   it('refuses feedback from a signed-out visitor', async () => {
     h.flagOn = true;
@@ -131,6 +148,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
       userIds: [7],
     });
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(true);
   });
 
   it('logs the search as it ran, not as it was asked', async () => {
@@ -187,6 +205,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     const { input } = h.search.mock.calls[0][0];
     expect(input.usernames).toEqual(['vixen']);
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(false);
+    expect(h.search.mock.calls[0][0].tagMatchesFirst).toBe(false);
     expect(input.userIds).toBeUndefined();
   });
 });

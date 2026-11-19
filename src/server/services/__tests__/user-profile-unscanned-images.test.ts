@@ -16,14 +16,21 @@ vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
 }));
 
-const kysely = vi.hoisted(() => ({ on: false, user: undefined as unknown }));
+const kysely = vi.hoisted(() => ({
+  on: false,
+  user: undefined as unknown,
+  pictureBlockedFor: null as string | null,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isFlipt: vi.fn(async () => kysely.on),
 }));
 vi.mock('~/server/services/hot-reads-9.reads', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  readUserWithProfileViaKysely: vi.fn(async () => kysely.user),
+  readUserWithProfileAndPictureGateViaKysely: vi.fn(async () => ({
+    user: kysely.user,
+    pictureBlockedFor: kysely.pictureBlockedFor,
+  })),
 }));
 
 import { getUserWithProfile } from '~/server/services/user-profile.service';
@@ -57,7 +64,18 @@ const picture = (ingestion: string) => ({
   metadata: null,
 });
 
-function setUser(ingestion: string, { pictureNulled = false } = {}) {
+function setUser(
+  ingestion: string,
+  {
+    pictureNulled = false,
+    pictureNsfwLevel = 1,
+    coverFields = {},
+  }: {
+    pictureNulled?: boolean;
+    pictureNsfwLevel?: number;
+    coverFields?: { nsfwLevel?: number; modelRestricted?: boolean | null };
+  } = {}
+) {
   const row = {
     id: OWNER,
     username: 'creator',
@@ -65,14 +83,14 @@ function setUser(ingestion: string, { pictureNulled = false } = {}) {
     settings: {},
     publicSettings: {},
     cosmetics: [],
-    profilePicture: pictureNulled ? null : picture(ingestion),
+    profilePicture: pictureNulled ? null : { ...picture(ingestion), nsfwLevel: pictureNsfwLevel },
     profile: {
       userId: OWNER,
       privacySettings: {},
       profileSectionsSettings: [],
       showcaseItems: [],
       coverImageId: 1,
-      coverImage: cover(ingestion),
+      coverImage: { ...cover(ingestion), ...coverFields },
       sfwCoverImageId: null,
       sfwCoverImage: null,
     },
@@ -84,6 +102,7 @@ function setUser(ingestion: string, { pictureNulled = false } = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   kysely.on = false;
+  kysely.pictureBlockedFor = null;
   dbMock.dbRead.userStat.findFirst.mockResolvedValue(null);
 });
 
@@ -165,5 +184,108 @@ describe('getUserWithProfile — unscanned cover and avatar', () => {
     expect(visitor.profilePicture).toBeNull();
     expect(visitor.profile.coverImage).toBeNull();
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// A mature picture made with a base model that restricts mature images is its uploader's alone:
+// moderators included. The flag is looked up per picture, and only for a mature one.
+describe('getUserWithProfile — model-restricted avatar', () => {
+  const R = 4;
+  const restricted = (modelRestricted: boolean | null) =>
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      (modelRestricted === null ? null : { modelRestricted }) as never
+    );
+  const viewers = {
+    visitor: { sessionUserId: VISITOR },
+    moderator: { sessionUserId: VISITOR, isModerator: true },
+    owner: { sessionUserId: OWNER },
+  };
+  const avatarFor = async (viewer: keyof typeof viewers) =>
+    (await getUserWithProfile({ id: OWNER, ...viewers[viewer] })).profilePicture?.url ?? null;
+
+  it('withholds a restricted mature avatar from a visitor and a moderator, not the owner', async () => {
+    setUser('Scanned', { pictureNsfwLevel: R });
+    restricted(true);
+
+    expect(await avatarFor('visitor')).toBeNull();
+    expect(await avatarFor('moderator')).toBeNull();
+    expect(await avatarFor('owner')).toBe('avatar-Scanned');
+  });
+
+  it('serves an unrestricted mature avatar to a visitor and a moderator', async () => {
+    setUser('Scanned', { pictureNsfwLevel: R });
+    restricted(false);
+
+    expect(await avatarFor('visitor')).toBe('avatar-Scanned');
+    expect(await avatarFor('moderator')).toBe('avatar-Scanned');
+  });
+
+  it('counts a mature avatar whose image row is missing as restricted', async () => {
+    setUser('Scanned', { pictureNsfwLevel: R });
+    restricted(null);
+
+    expect(await avatarFor('visitor')).toBeNull();
+    expect(await avatarFor('moderator')).toBeNull();
+  });
+
+  it('never looks up the flag for a SFW avatar', async () => {
+    setUser('Scanned', { pictureNsfwLevel: 1 });
+    restricted(true);
+
+    expect(await avatarFor('visitor')).toBe('avatar-Scanned');
+    expect(await avatarFor('moderator')).toBe('avatar-Scanned');
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// The cover follows the avatar's rule: a restricted mature cover is its uploader's alone.
+describe('getUserWithProfile — model-restricted cover', () => {
+  const R = 4;
+  const visitor = { sessionUserId: VISITOR };
+  const moderator = { sessionUserId: VISITOR, isModerator: true };
+  const owner = { sessionUserId: OWNER };
+  const coverFor = async (viewer: { sessionUserId: number; isModerator?: boolean }) =>
+    (await getUserWithProfile({ id: OWNER, ...viewer })).profile.coverImage?.url ?? null;
+
+  it('withholds a restricted mature cover from a visitor and a moderator, not the owner', async () => {
+    setUser('Scanned', { coverFields: { nsfwLevel: R, modelRestricted: true } });
+
+    expect(await coverFor(visitor)).toBeNull();
+    expect(await coverFor(moderator)).toBeNull();
+    expect(await coverFor(owner)).toBe('cover-Scanned');
+  });
+
+  it('serves an unrestricted mature cover to a visitor and a moderator', async () => {
+    setUser('Scanned', { coverFields: { nsfwLevel: R, modelRestricted: false } });
+
+    expect(await coverFor(visitor)).toBe('cover-Scanned');
+    expect(await coverFor(moderator)).toBe('cover-Scanned');
+  });
+});
+
+// The Kysely profile read returns the picture's block reason beside the payload; a picture carrying
+// one is no one's avatar but its owner's and moderators'.
+describe('getUserWithProfile — avatar with a block reason, on the Kysely read', () => {
+  it('withholds it from a visitor, not the owner or a moderator, with no extra read', async () => {
+    kysely.on = true;
+    kysely.pictureBlockedFor = 'tos';
+    setUser('Scanned');
+
+    const avatarFor = async (sessionUserId: number, isModerator = false) =>
+      (await getUserWithProfile({ id: OWNER, sessionUserId, isModerator })).profilePicture?.url ??
+      null;
+    expect(await avatarFor(VISITOR)).toBeNull();
+    expect(await avatarFor(OWNER)).toBe('avatar-Scanned');
+    expect(await avatarFor(VISITOR, true)).toBe('avatar-Scanned');
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('serves one without a block reason', async () => {
+    kysely.on = true;
+    setUser('Scanned');
+
+    expect(
+      (await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR })).profilePicture?.url
+    ).toBe('avatar-Scanned');
   });
 });

@@ -11,6 +11,7 @@ import { isOrchestratorServiceToken } from '~/server/auth/orchestrator-service-t
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import {
   CLIENT_CREDENTIALS_ONLY_SCOPES,
+  readApiKeyScope,
   TokenScopePresets,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -34,7 +35,7 @@ export type BearerTokenOptions = {
  */
 export async function getBearerTokenUser(
   userId: number,
-  tokenScope: number
+  tokenScope: bigint
 ): Promise<NonNullable<Session['user']> | null> {
   const user = (await sessionClient.getSessionUserById(userId)) as NonNullable<
     Session['user']
@@ -48,7 +49,7 @@ export async function getBearerTokenUser(
   // A system account with moderator access authenticates with read-only keys only, unless an admin
   // has allowed it write keys. Both are read from the primary, not the session copy, so a grant
   // counts as soon as it lands.
-  if (isSystemAccountMeta(user.meta) && (tokenScope & ~TokenScopePresets.ReadOnly) !== 0) {
+  if (isSystemAccountMeta(user.meta) && (tokenScope & ~TokenScopePresets.ReadOnly) !== 0n) {
     const access = await dbWrite.user.findUnique({
       where: { id: user.id },
       select: { meta: true, isModerator: true, roles: { select: { role: true } } },
@@ -87,7 +88,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   const cached = await readCachedApiKey(token, now);
   let apiKey = cached.apiKey;
   if (!apiKey) {
-    apiKey = await dbWrite.apiKey.findFirst({
+    const row = await dbWrite.apiKey.findFirst({
       where: {
         key: token,
         // Refresh tokens share this table and scope with their access token but are not bearer
@@ -99,6 +100,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
         id: true,
         userId: true,
         tokenScope: true,
+        tokenScopeWide: true,
         lastUsedAt: true,
         buzzLimit: true,
         clientId: true,
@@ -106,13 +108,16 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
         expiresAt: true,
       },
     });
+    // The wide column as a number, so the row is the shape the cache stores (see CachedApiKey).
+    apiKey = row && {
+      ...row,
+      tokenScopeWide: row.tokenScopeWide == null ? null : Number(row.tokenScopeWide),
+    };
     if (apiKey && cached.fill) await cacheApiKey(token, apiKey, lookup);
   }
   if (!apiKey) return null;
-  if (
-    !options.allowClientCredentialsOnly &&
-    ((apiKey.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
-  ) {
+  const tokenScope = readApiKeyScope(apiKey);
+  if (!options.allowClientCredentialsOnly && (tokenScope & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n) {
     return null;
   }
 
@@ -124,7 +129,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
       .catch(() => releaseLastUsedWrite(id));
   }
 
-  const user = await getBearerTokenUser(apiKey.userId, apiKey.tokenScope ?? 0);
+  const user = await getBearerTokenUser(apiKey.userId, tokenScope);
   if (!user) return null;
 
   // OAuth-issued tokens key their subject on clientId (stable across access-token
@@ -149,7 +154,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     apiKeyId: apiKey.id,
     apiKeyType: apiKey.type,
     subject,
-    tokenScope: apiKey.tokenScope,
+    tokenScope,
     buzzLimit,
     // A cached row went through JSON, so its date may be a string.
     expiresAt: apiKey.expiresAt ? new Date(apiKey.expiresAt) : null,
@@ -157,7 +162,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     apiKeyId: number;
     apiKeyType: ApiKeyType;
     subject: Subject;
-    tokenScope: number;
+    tokenScope: bigint;
     buzzLimit: BuzzLimit | null;
     /** When the credential stops being accepted; null for one that never expires. */
     expiresAt: Date | null;

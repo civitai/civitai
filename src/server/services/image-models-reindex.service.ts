@@ -11,8 +11,13 @@ const childTagIds = new Set<number>(CHILD_TAG_IDS);
 type ImageChildTagChanges = {
   /** Images whose tags were written; those whose written tags include a child tag are queued. */
   tagWrites?: { imageId: number; tagId: number }[];
-  /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
+  /**
+   * Images whose nsfwLevel may have changed; queued while they carry a child tag or the minor flag,
+   * since either rule reads the level.
+   */
   levelImageIds?: number[];
+  /** Images whose minor flag was written; always queued, since the minor rule reads no tags. */
+  minorImageIds?: number[];
 };
 
 /**
@@ -20,13 +25,25 @@ type ImageChildTagChanges = {
  * cached tags and showcase images from the primary), for the articles and comics using them as a
  * cover or banner, and for the collections and bounties whose documents show them. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
  * an image's child browsing tags or nsfwLevel reaches its model documents only through here.
- * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once;
+ * Never throws: it runs after the tag, level or minor-flag write has committed. A failed attempt is retried once;
  * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
  * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
  */
-export async function queueModelsForImageChildTagChanges(changes: ImageChildTagChanges) {
-  await withRetry(() => queueChanged(changes));
+export async function queueModelsForImageChildTagChanges({
+  minorImageIds = [],
+  ...changes
+}: ImageChildTagChanges) {
+  // A model's minor flag rewrites every image of its versions: bounded queries per batch.
+  await withRetry(() =>
+    queueChanged({ ...changes, minorImageIds: minorImageIds.slice(0, MINOR_BATCH) })
+  );
+  for (let i = MINOR_BATCH; i < minorImageIds.length; i += MINOR_BATCH) {
+    const batch = minorImageIds.slice(i, i + MINOR_BATCH);
+    await withRetry(() => queueChanged({ minorImageIds: batch }));
+  }
 }
+
+const MINOR_BATCH = 1000;
 
 /**
  * Queue an update for the articles using these images as cover or banner and the comics using them
@@ -62,17 +79,26 @@ function logError(e: unknown) {
   });
 }
 
-async function queueChanged({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
-  const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
+async function queueChanged({
+  tagWrites = [],
+  levelImageIds = [],
+  minorImageIds = [],
+}: ImageChildTagChanges) {
+  const imageIds = new Set([
+    ...tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId),
+    ...minorImageIds,
+  ]);
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {
-    // Primary: the tag that makes the image count may have been written moments ago.
+    // Primary: the tag or flag that makes the image count may have been written moments ago.
     const tagged = await dbWrite.$queryRaw<{ imageId: number }[]>`
-      SELECT DISTINCT "imageId"
+      SELECT "imageId"
       FROM "TagsOnImageNew"
       WHERE "imageId" = ANY(${levelOnly}::int[])
         AND "tagId" = ANY(${CHILD_TAG_IDS}::int[])
+      UNION
+      SELECT id FROM "Image" WHERE id = ANY(${levelOnly}::int[]) AND minor
     `;
     for (const { imageId } of tagged) imageIds.add(imageId);
   }

@@ -10,6 +10,7 @@ const PENDING_USER = 4;
 const OTHER_REVIEW_USER = 5;
 const UNRATED_USER = 6;
 const MOD_RATED_USER = 7;
+const MINOR_USER = 8;
 
 let pg: PGlite;
 
@@ -48,8 +49,9 @@ beforeAll(async () => {
       (50, 'other-review', 'Scanned', 'other-review');
     INSERT INTO "Image" (id, url, ingestion, "nsfwLevel") VALUES (60, 'unrated', 'Scanned', 0);
     INSERT INTO "Image" (id, url, ingestion, "nsfwLevelLocked") VALUES (70, 'pending-mod-rated', 'Pending', true);
+    INSERT INTO "Image" (id, url, ingestion, "needsReview") VALUES (80, 'minor', 'Scanned', 'minor');
     INSERT INTO "User" (id, "profilePictureId") VALUES
-      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40), (${OTHER_REVIEW_USER}, 50), (${UNRATED_USER}, 60), (${MOD_RATED_USER}, 70);
+      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40), (${OTHER_REVIEW_USER}, 50), (${UNRATED_USER}, 60), (${MOD_RATED_USER}, 70), (${MINOR_USER}, 80);
   `);
 });
 afterAll(() => pg.close());
@@ -64,6 +66,7 @@ describe('profilePictures cache', () => {
       OTHER_REVIEW_USER,
       UNRATED_USER,
       MOD_RATED_USER,
+      MINOR_USER,
     ]);
 
     expect(result[CLEAN_USER]).toMatchObject({ id: 10, url: 'clean' });
@@ -72,6 +75,7 @@ describe('profilePictures cache', () => {
     expect(result[OTHER_REVIEW_USER]).toMatchObject({ id: 50, url: 'other-review' });
     expect(result).not.toHaveProperty(String(BLOCKED_USER));
     expect(result).not.toHaveProperty(String(FLAGGED_USER));
+    expect(result).not.toHaveProperty(String(MINOR_USER));
     expect(result).not.toHaveProperty(String(UNRATED_USER));
     // Rated but not yet scanned: its scan's checks have not run.
     expect(result).not.toHaveProperty(String(PENDING_USER));

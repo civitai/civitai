@@ -87,7 +87,7 @@ describe('syncOauthConsentFromGrant — the suppression list', () => {
         'against this bitmask, and the row is durable.'
     ).toEqual({ clientId: CLIENT_ID, scope: TokenScope.UserRead });
     const written = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
-    expect(written.create.scope & TokenScope.AIServicesWrite).toBe(0);
+    expect(written.create.scope & TokenScope.AIServicesWrite).toBe(0n);
   });
 
   /**
@@ -290,7 +290,7 @@ describe('syncOauthConsentFromGrant', () => {
       clientId: CLIENT_ID,
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
     });
-    expect(result!.scope & TokenScope.BuzzRead).toBe(0);
+    expect(result!.scope & TokenScope.BuzzRead).toBe(0n);
   });
 
   /**

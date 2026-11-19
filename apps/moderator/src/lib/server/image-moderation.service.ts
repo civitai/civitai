@@ -9,6 +9,8 @@ import {
   applyBlockSideEffects,
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
+  CsamBlocklistWriteError,
+  writeBlockBlocklistEntry,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -34,6 +36,7 @@ import {
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -53,9 +56,10 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
 )))`;
 
 /**
- * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
+ * The three `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
- * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
+ * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` /
+ * `PRIOR_NEEDS_REVIEW_KEY` in
  * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
  * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
  *
@@ -65,6 +69,7 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
  */
 const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
+const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -135,6 +140,9 @@ const resetBlockedNsfwLevel = (imageId: number) =>
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
+// pHash is a signed 64-bit value; the Kysely clients parse INT8 as a float, which rounds it.
+const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
+
 /** An accept refused because the image is removed and a review queue cannot put it back. */
 export class RemovedImageNotRestorableError extends Error {
   constructor(readonly imageId: number) {
@@ -175,7 +183,7 @@ export async function acceptImage({
   const readImage = (db: Kysely<DB>) =>
     db
       .selectFrom('Image')
-      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .select(['needsReview', pHashText, 'postId', 'ingestion', 'blockedFor'])
       .where('id', '=', imageId)
       .executeTakeFirst();
   // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
@@ -257,6 +265,11 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  // A minor-queue accept rewrites "minor", which no trigger watches.
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+  }
   await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
@@ -275,7 +288,7 @@ export async function acceptImage({
       activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
     });
 
-  await applyAcceptSideEffects(img, imageId);
+  await applyAcceptSideEffects(img, imageId, userId);
 
   // Drops its blocks' deferred effects unfired. Last and best-effort: the image is already restored.
   await dropDeferredBlockEffects(dbWrite, [imageId]).catch((e: Error) =>
@@ -351,7 +364,7 @@ export async function blockImage({
     .selectFrom('Image')
     .select([
       'needsReview',
-      'pHash',
+      pHashText,
       'blockedFor',
       'postId',
       'nsfwLevel',
@@ -391,8 +404,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a
@@ -405,6 +418,8 @@ export async function blockImage({
     const state = await tx
       .selectFrom('Image')
       .select([
+        // Read here, not off the replica read above, which may not have the scan's hash yet.
+        pHashText,
         HELD_IMAGE.as('held'),
         sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
@@ -433,7 +448,20 @@ export async function blockImage({
         .execute();
     return { updated: !!updated, state };
   });
-  if (!updated) return state?.held ? { skipped: true } : {};
+  const blockRow = { ...img, pHash: state?.pHash ?? null };
+  if (!updated) {
+    // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
+    // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
+    // A TOS entry is best-effort, with no retry to honour.
+    if (state?.removedForCsam)
+      await writeBlockBlocklistEntry(blockRow, { imageId, actorUserId: userId, csam: true }).catch(
+        (e: unknown) => {
+          if (e instanceof CsamBlocklistWriteError) e.skipped = true;
+          throw e;
+        }
+      );
+    return state?.held ? { skipped: true } : {};
+  }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
@@ -442,8 +470,8 @@ export async function blockImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
-  // `img` is the pre-block row (read above, before the update).
-  await applyBlockSideEffects(img, {
+  // The pre-block row (read above, before the update), with the hash read under the block.
+  await applyBlockSideEffects(blockRow, {
     imageId,
     actorUserId: userId,
     ip,
@@ -452,6 +480,10 @@ export async function blockImage({
     violationDetails,
     heldImage: blocked.held,
     underReview: blocked.underReview,
+    removedForCsam: blocked.removedForCsam,
+  }).catch((e: unknown) => {
+    if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
+    throw e;
   });
   return blocked.held ? { skipped: true } : {};
 }
@@ -788,7 +820,7 @@ export async function resolveImageAppeal({
 
   const img = await dbRead
     .selectFrom('Image')
-    .select(['postId', 'pHash'])
+    .select(['postId', pHashText])
     .where('id', '=', imageId)
     .executeTakeFirst();
 
@@ -841,7 +873,8 @@ export async function resolveImageAppeal({
   }
 
   const postId = img?.postId ?? null;
-  if (restored) await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId);
+  if (restored)
+    await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 
   await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);

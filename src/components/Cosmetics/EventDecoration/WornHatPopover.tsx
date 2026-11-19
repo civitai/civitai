@@ -29,8 +29,8 @@ type WornHat = NonNullable<RouterOutput['event']['getWornHat']>;
 
 /**
  * The popover a click on a card's hat opens: which hat it is, who wears it, what it has earned on
- * this content, and a way to the event. Its read waits for the first open, so a feed of hatted
- * cards costs no request.
+ * every piece of content it has been worn on, and a way to the event. Its read waits for the first open, so a
+ * feed of hatted cards costs no request.
  */
 export function WornHatPopover({
   event,
@@ -109,6 +109,12 @@ export function WornHatPopover({
             {definition?.eventLinkLabel ?? 'See the event'}
           </Button>
           <TeamRostersButton event={event} onClick={() => onChange(false)} />
+          {/* Totals are kept per hat, not per content: a moved hat brings what it earned before. */}
+          {data?.topicId && (
+            <Text size="xs" c="dimmed" ta="center" data-testid="hat-stats-scope">
+              This hat&apos;s totals from everywhere it has been worn
+            </Text>
+          )}
           {data?.team && (
             <Text size="xs" c="dimmed" ta="center">
               Scores for Team {data.team} while it&apos;s worn

@@ -2,6 +2,7 @@ import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { NotificationCategory } from '~/server/common/enums';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -976,6 +977,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND u."bannedAt" IS NULL
     ${reviewedSince}
     AND ${notYetReviewedByJudge}
+    AND ${imageNotRestrictedSql()}
   `;
   log('Recent entries:', recentEntries.length);
 
@@ -1023,6 +1025,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci."tagId" = ${config.reviewMeTagId}
     AND u."bannedAt" IS NULL
     AND ${notYetReviewedByJudge}
+    AND ${imageNotRestrictedSql()}
   `;
   log('Requested review:', requestReview.length);
   // Owed reviews: a review that failed on an earlier tick, or a moderator re-judge.
@@ -1043,6 +1046,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         AND ci."imageId" = ANY(${pendingIds}::int[])
         AND u."bannedAt" IS NULL
         AND ${notYetReviewedByJudge}
+        AND ${imageNotRestrictedSql()}
       `
     : [];
   log('Pending review:', pendingEntries.length);
@@ -1303,6 +1307,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         ci."collectionId" = ${currentChallenge.collectionId}
         AND ci.status = 'ACCEPTED'
         AND i."userId" IN (${Prisma.join(userIds)})
+        AND ${imageNotRestrictedSql()}
       GROUP BY 1
       HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
     `;
@@ -1589,7 +1594,7 @@ export async function pickWinnersForChallenge(
       collectionId: currentChallenge.collectionId,
       reviewMeTagId: config.reviewMeTagId,
     });
-    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    log('Unjudgeable paid reviews refunded:', refundedReviews.length);
 
     let winningEntries: Array<{
       userId: number;
@@ -2308,6 +2313,7 @@ export async function getJudgedEntries(
     AND ci.note IS NOT NULL
     AND ci.status = 'ACCEPTED'
     AND u."bannedAt" IS NULL
+    AND ${imageNotRestrictedSql()}
   `;
   // Re-checked on the primary: the refund and participation payout read it there, so a ban the
   // replica has not seen yet must not let the same user be refunded and still place.

@@ -2129,22 +2129,6 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
-  const hostSourcePhases = () =>
-    loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-
-  it.each(ARMS)(
-    '%s: counts an orchestrator blob on the estimate and on the submit',
-    async (_, make) => {
-      loggingMock.logToAxiom.mockClear();
-      await estimate(make(BLOB)).catch(() => undefined);
-      await submit(make(BLOB)).catch(() => undefined);
-      expect(hostSourcePhases()).toEqual(['estimate', 'submit']);
-    }
-  );
-
   const refusedBeforeTheOrchestrator = async (b: Record<string, unknown>) => {
     const refusal = { code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE };
     await expect(estimate(b)).rejects.toMatchObject(refusal);
@@ -2607,33 +2591,16 @@ describe('inline customComfy — the generation input gate', () => {
         redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
-  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
-    loggingMock.logToAxiom.mockClear();
     const body = inline();
     (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason })
-    );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('counts an orchestrator blob on the estimate and on the submit', async () => {
-    const blob = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg';
-    const body = inline({ image: blob });
-    loggingMock.logToAxiom.mockClear();
-    await estimate(body).catch(() => undefined);
-    await submit(body).catch(() => undefined);
-    const phases = loggingMock.logToAxiom.mock.calls
-      .map(([data]) => data as Record<string, unknown>)
-      .filter((data) => data.reason === 'host-orchestrator-source')
-      .map((data) => data.phase);
-    expect(phases).toEqual(['estimate', 'submit']);
   });
 
   it('refuses inline image bytes in a node input at the schema', async () => {
@@ -2763,4 +2730,77 @@ describe("kind:'workflow' — accountType (the pool tried first)", () => {
       expect(counter(USER_CAP)).toBe(0);
     }
   );
+});
+
+describe('host media urls as workflow inputs', () => {
+  // A ticket-shaped value: the guard matches the sealed-token wire form, never its contents.
+  const ticketOf = (user: string) =>
+    `bm1.${user.padEnd(16, 'a')}.${'c'.repeat(40)}.${'t'.repeat(22)}`;
+  const OTHER_VIEWERS_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('other')}`;
+  const OWN_TICKET = `https://civitai.com/api/v1/blocks/media/${ticketOf('own')}`;
+  const upscaleOf = (image: string) =>
+    body({
+      steps: [
+        { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
+        { $type: 'imageUpscaler', input: { image } },
+      ],
+    });
+
+  beforeEach(() => {
+    // Both external-source refusals off: the opaque path admits a plain Civitai page link.
+    flags.refuseExternal = false;
+    flags.refuseExternalApp = false;
+  });
+
+  it.each([
+    ["another viewer's ticket", OTHER_VIEWERS_TICKET],
+    ["the viewer's own ticket", OWN_TICKET],
+  ])('refuses %s on estimate AND submit, before any orchestrator call', async (_, url) => {
+    for (const call of [estimate, submit]) {
+      await expect(call(upscaleOf(url))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('persistGenerationSource'),
+      });
+    }
+    expect(whatifs()).toHaveLength(0);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    const refusals = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string }).name === 'app-block-media-input-refused'
+    );
+    expect(refusals).toHaveLength(2);
+    // The log carries the app and phase, never the ticket.
+    expect(JSON.stringify(refusals)).not.toContain('bm1.');
+  });
+
+  it('CONTROL: with the same flags a plain Civitai page link reaches the orchestrator', async () => {
+    await estimate(upscaleOf('https://civitai.com/images/1')).catch(() => undefined);
+    expect(whatifs().length).toBeGreaterThan(0);
+  });
+
+  it("the way to chain: a persisted source (the viewer's own private image) upscales", async () => {
+    const key = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
+    // What persistGenerationSource returns: the original of a private, scanned row the viewer owns.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('FROM "Image" i')
+        ? [
+            {
+              url: key,
+              userId: VIEWER,
+              visible: false,
+              blocked: false,
+              scanComplete: true,
+              scanPending: false,
+              held: false,
+            },
+          ]
+        : []) as never);
+    try {
+      await submit(
+        upscaleOf(`https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true`)
+      ).catch(() => undefined);
+      expect(h.submitWorkflow).toHaveBeenCalled();
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockReset();
+    }
+  });
 });

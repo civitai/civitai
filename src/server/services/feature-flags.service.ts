@@ -108,6 +108,10 @@ const featureFlags = createFeatureFlags({
   // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
   // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
+  // Sends `image.getInfinite` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the
+  // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
+  // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -388,6 +392,7 @@ const featureFlags = createFeatureFlags({
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
   minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
+  minimaxh3ImageTraining: { availability: ['mod'], fliptKey: 'minimaxh3-image-training' },
   wan22Training: { availability: ['mod'] },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
@@ -407,6 +412,11 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -427,6 +437,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -485,6 +497,13 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
@@ -555,6 +574,11 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -869,6 +893,8 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -939,6 +965,10 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // App index store search — `/apps` store text search through the app index service
+  // (`app-index-search.service.ts`, APP_INDEX_URL) instead of filtering the loaded grid in the
+  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on.
+  appIndexSearch: { availability: [], fliptKey: 'app-index-search' },
   // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
   // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
@@ -1841,6 +1871,10 @@ export function computeUserFeatureFlagsOverlay(
       delete result[key];
     }
   }
+
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
 
   return result;
 }

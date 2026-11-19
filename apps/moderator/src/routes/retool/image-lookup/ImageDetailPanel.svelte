@@ -3,7 +3,7 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -159,12 +159,9 @@
 
   <div class="mt-4 flex flex-col gap-4 sm:flex-row">
     <!-- An image lookup that does not show the image makes the moderator open a second tab to answer
-         "what am I even looking at". `url` is the Cloudflare key, which is exactly EdgeMedia's `src`. -->
-    <EdgeMedia
-      src={image.url}
-      name={image.name}
-      type={image.type}
-      width={450}
+         "what am I even looking at". -->
+    <CdnOrRetractedMedia
+      item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
       alt="Image {image.id}"
       class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
     />

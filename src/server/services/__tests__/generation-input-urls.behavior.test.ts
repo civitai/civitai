@@ -63,6 +63,7 @@ const {
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
   generationInputUrlsIn,
+  classifyGenerationInputUrl,
   opaqueInputUrlsIn,
   keySetSizeBucket,
   TOO_MANY_IDS_MESSAGE,
@@ -559,14 +560,6 @@ describe('an App Blocks generation source', () => {
     expect(await check([KEY], 'generateFromGraph', true)).toBe('accepted');
   });
 
-  it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
-    loggingMock.logToAxiom.mockClear();
-    await check(['https://example.com/a.png'], 'appBlocksPassThrough');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'external', mode: 'refuse' })
-    );
-  });
-
   it('logs external urls once per host bucket in one call', async () => {
     holder.refuseExternalApp = false;
     loggingMock.logToAxiom.mockClear();
@@ -616,9 +609,14 @@ describe('an App Blocks generation source', () => {
       registered.calls.findIndex(([def]) => def.name === 'app_block_host_source_total')
     ]?.value as { inc: ReturnType<typeof vi.fn> };
 
+    const acceptedCounter = registered.results[
+      registered.calls.findIndex(([def]) => def.name === 'app_block_source_accepted_total')
+    ]?.value as { inc: ReturnType<typeof vi.fn> };
+
     beforeEach(() => {
       loggingMock.logToAxiom.mockClear();
       hostSourceCounter.inc.mockClear();
+      acceptedCounter.inc.mockClear();
     });
 
     it('counts a consumer blob and any other orchestrator path, refusing neither', async () => {
@@ -638,6 +636,57 @@ describe('an App Blocks generation source', () => {
       const logged = JSON.stringify(loggingMock.logToAxiom.mock.calls);
       expect(logged).not.toContain('ABC123');
       expect(logged).not.toContain('orchestration.civitai.com');
+    });
+
+    // A videoGen pass-through body as an app sends it: the same frame url as first and last frame.
+    const videoGenBody = (frame: string) => ({
+      engine: 'ltx2',
+      prompt: 'a walk',
+      firstFrame: frame,
+      lastFrame: frame,
+      duration: 5,
+    });
+    const acceptedCalls = () => acceptedCounter.inc.mock.calls.map(([labels]) => labels);
+
+    it('an orchestrator blob frame with a signed query is counted as a host source and accepted', async () => {
+      const frame =
+        'https://orchestration-new.civitai.com/v2/consumer/blobs/AAAAAAAAAAAAAAAAAAAAbbbbbbbbbbbbbbbbbbbbCd12?sig=abc%2Bdef&exp=1763535180';
+      const { urls } = opaqueInputUrlsIn(videoGenBody(frame));
+      expect(urls).toEqual([frame]);
+      expect(await check(urls, 'appBlocksPassThrough', true)).toBe('accepted');
+      expect(hostRows()).toEqual([
+        expect.objectContaining({
+          entry: 'appBlocksPassThrough',
+          reason: 'host-orchestrator-source',
+          count: 1,
+        }),
+      ]);
+      expect(acceptedCalls()).toEqual([{ entry: 'appBlocksPassThrough', class: 'orchestrator' }]);
+    });
+
+    it('a gated-read edge url frame is accepted as cdn, and is not a host source', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      // The production shape of the gated read's getEdgeUrl(row.url, { width: 450 }).
+      const edge = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/width=450/${KEY}.jpeg`;
+      expect(classifyGenerationInputUrl(edge)).toBe('cdn');
+      const { urls } = opaqueInputUrlsIn(videoGenBody(edge));
+      expect(await check(urls, 'appBlocksPassThrough', true)).toBe('accepted');
+      expect(hostRows()).toEqual([]);
+      expect(acceptedCalls()).toEqual([{ entry: 'appBlocksPassThrough', class: 'cdn' }]);
+    });
+
+    it('a refused edge url frame counts no accepted source', async () => {
+      await givenImage({ userId: CALLER, postId: null, ingestion: 'Pending' });
+      const edge = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/width=450/${KEY}.jpeg`;
+      const { urls } = opaqueInputUrlsIn(videoGenBody(edge));
+      expect(await check(urls, 'appBlocksPassThrough', true)).toMatch(/^refused: /);
+      expect(acceptedCalls()).toEqual([]);
+    });
+
+    it('a site entry counts no accepted source', async () => {
+      await givenImage({ userId: CALLER, postId: null });
+      expect(await check([CDN()], 'generateFromGraph')).toBe('accepted');
+      expect(acceptedCalls()).toEqual([]);
     });
 
     it('writes one row per reason with its count', async () => {
@@ -743,6 +792,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     const url = `https://cdn.example/x/${KEY}/original=true`;
     await givenImage({ url, blockedFor: 'moderated' });
     expect(await stored([url])).toBe('refused');
+  });
+
+  it('refuses a url that names no stored object', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    expect(await stored([KEY])).toBe('accepted');
+    expect(await stored([KEY, `blob:https://civitai.com/${KEY}`])).toBe('refused');
+    expect(await stored(['data:image/png;base64,iVBORw0KGgo'])).toBe('refused');
   });
 });
 

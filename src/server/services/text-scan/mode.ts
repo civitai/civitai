@@ -32,6 +32,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'ServiceOffering',
   'PostText',
   'ModelRules',
+  'AppDoc',
 ] as const satisfies readonly TextScanEntityType[];
 
 /**
@@ -217,7 +218,7 @@ function logLabelModeReadFailure(
       name: 'text-scan',
       type: 'error',
       message,
-      label,
+      payload: { label },
       error: error instanceof Error ? error.message : String(error),
     });
   } catch {

@@ -1,7 +1,7 @@
 import type { ReadableStream as WebReadableStream } from 'stream/web';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyV3Read } from '~/server/db/kyselyDb';
+import { kyselyRead, kyselyReadLong, kyselyV3Read } from '~/server/db/kyselyDb';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
@@ -62,6 +62,12 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
+import {
+  authorPassPool,
+  flattenPages,
+  scanPagesById,
+  userContentReaders,
+} from '~/server/services/csam-archive-user-content';
 import {
   FlaggedConsumerFetchError,
   getConsumerStrikes,
@@ -737,7 +743,7 @@ function logSendFailure(
     message: (e as Error | undefined)?.message,
     reportId: report.id,
     ncmecReportId,
-    hoursPending: hoursSinceFiled(report),
+    payload: { hoursPending: hoursSinceFiled(report) },
   });
 }
 
@@ -757,7 +763,7 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       subType: 'send-blocked',
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
-      hoursPending,
+      payload: { hoursPending },
     });
   }
 }
@@ -782,8 +788,7 @@ export async function logOverdueEvidenceApprovals() {
       subType: 'send-blocked',
       message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
       reportId: report.id,
-      hoursPending,
-      awaiting: 'evidence-approval',
+      payload: { hoursPending, awaiting: 'evidence-approval' },
     });
   }
 }
@@ -921,8 +926,7 @@ async function recordSkippedEntries(claim: SendClaim, budget: SpoolBudget) {
     'send-entries-skipped',
     {
       message: `report ${claim.report.id} skips ${skipped.count} archive entries`,
-      empty: skipped.empty,
-      unreadable: skipped.unreadable,
+      payload: { empty: skipped.empty, unreadable: skipped.unreadable },
     },
     'error'
   );
@@ -952,11 +956,13 @@ async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason:
   const unconfirmed = report.details?.unconfirmedOpens ?? [];
   const fields = {
     message: `report ${report.id} held (${holdCase}): ${reason}`,
-    case: holdCase,
-    hoursPending: hoursSinceFiled(report),
     ncmecReportId: report.reportId ?? undefined,
-    possibleDuplicateReportIds: possibleDuplicates,
-    unconfirmedOpens: unconfirmed.length,
+    payload: {
+      case: holdCase,
+      hoursPending: hoursSinceFiled(report),
+      possibleDuplicateReportIds: possibleDuplicates,
+      unconfirmedOpens: unconfirmed.length,
+    },
   };
   logSendLine(claim, 'send-held', fields, 'error');
   logSendLine(claim, 'send-decision-needed', fields, 'error');
@@ -1028,7 +1034,7 @@ async function cancelStoredCyberTip(
     logSendLine(
       claim,
       'send-possible-duplicate',
-      { ncmecReportId: stored, cancelOutcome: outcome, message },
+      { ncmecReportId: stored, message, payload: { cancelOutcome: outcome } },
       'error'
     );
   else
@@ -1049,19 +1055,17 @@ async function cancelStoredCyberTip(
 async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = {
-    case: 'no-files' satisfies SendHoldCase,
-    ncmecReportId: claim.report.reportId ?? undefined,
-  };
-  logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
+  const ncmecReportId = claim.report.reportId ?? undefined;
+  const payload = { hoursPending, case: 'no-files' satisfies SendHoldCase };
+  logSendLine(claim, 'send-no-files', { message, ncmecReportId, payload }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
       claim,
       'send-decision-needed',
       {
         message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
-        hoursPending,
-        ...stored,
+        ncmecReportId,
+        payload,
       },
       'error'
     );
@@ -1074,10 +1078,15 @@ async function logNoFiles(claim: SendClaim, message: string) {
  */
 function logXmlProblem(claim: SendClaim, problem: string) {
   const hoursPending = hoursSinceFiled(claim.report);
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const ncmecReportId = claim.report.reportId ?? undefined;
   const message = `report ${claim.report.id} would not be well-formed XML: ${problem}`;
-  logSendLine(claim, 'send-xml', { message, hoursPending, ...stored }, 'error');
-  logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
+  logSendLine(claim, 'send-xml', { message, ncmecReportId, payload: { hoursPending } }, 'error');
+  logSendLine(
+    claim,
+    'send-decision-needed',
+    { message, ncmecReportId, payload: { hoursPending } },
+    'error'
+  );
 }
 
 /**
@@ -1109,8 +1118,7 @@ function logHeldOnUnconfirmedOpen(claim: SendClaim) {
     'send-decision-needed',
     {
       message: `report ${claim.report.id} is held: ${opens.length} earlier open(s) may have left a CyberTip at NCMEC with no id here. Check with NCMEC, then clear it to send.`,
-      hoursPending: hoursSinceFiled(claim.report),
-      unconfirmedOpens: opens.length,
+      payload: { hoursPending: hoursSinceFiled(claim.report), unconfirmedOpens: opens.length },
     },
     'error'
   );
@@ -1310,9 +1318,7 @@ async function reportImages(claim: SendClaim) {
       subType: 'send-all-unreadable',
       message: `report ${report.id} has no readable file`,
       reportId: report.id,
-      hoursPending,
-      filesUnreadable: failed.length,
-      filesAbsent: absent.length,
+      payload: { hoursPending, filesUnreadable: failed.length, filesAbsent: absent.length },
     });
     if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
       logToAxiom({
@@ -1321,7 +1327,7 @@ async function reportImages(claim: SendClaim) {
         subType: 'send-decision-needed',
         message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
         reportId: report.id,
-        hoursPending,
+        payload: { hoursPending },
       });
     return logSendFailure(report, new Error('no file of the report could be read'), 'archive-data');
   }
@@ -1543,8 +1549,7 @@ async function reportImages(claim: SendClaim) {
       'send-short',
       {
         message: `report ${report.id} sent without ${filesMissing} file(s)`,
-        filesMissing,
-        filesAbsent: filesMissing - failed.length,
+        payload: { filesMissing, filesAbsent: filesMissing - failed.length },
       },
       'error'
     );
@@ -1718,8 +1723,7 @@ async function sendGenerationData(
       'send-short',
       {
         message: `report ${report.id} sent without ${failed.length} file(s)`,
-        filesMissing: failed.length,
-        filesAbsent: 0,
+        payload: { filesMissing: failed.length, filesAbsent: 0 },
       },
       'error'
     );
@@ -2278,64 +2282,6 @@ function uploadStream({
   });
 }
 
-/**
- * Rows fetched per round-trip by the cursor-paged scans that feed an evidence bundle.
- *
- * The number is a round-trip/latency trade, not a correctness one: any positive value produces
- * the same rows in the same order. It only has to be small enough that one page of full `Image`
- * rows is comfortably resident, which is the whole reason the scans are paged.
- *
- * Exported so the tests can size their fixtures to cross a real page boundary. A test that
- * hardcodes 500 goes green-and-vacuous the day this number is raised — it would be measuring a
- * single-page scan while claiming to measure a multi-page one.
- */
-export const ARCHIVE_SCAN_PAGE_SIZE = 500;
-
-/**
- * Keyset-pages a `findMany` over an ascending integer primary key, yielding one page at a time.
- *
- * Keyset rather than `skip`/`offset` because offset paging over a large table both degrades
- * quadratically and can skip or duplicate rows if the underlying set shifts between pages. With
- * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
- * exactly the row set a single unpaged `findMany` with the same `where` would have returned.
- *
- * ⚠️ PRECONDITION, and it does not hold uniformly across the three tables this is used on:
- * keyset paging is only *cheap* where an index can serve `WHERE <filter> AND id > $cursor
- * ORDER BY id ASC`. Read off `packages/civitai-db-schema/prisma/schema.full.prisma`, `Image`
- * carries `@@index([userId, id])`, so the one genuinely large scan here — every image the
- * reported user owns — is served directly. `Model` has no `userId` index at all, and
- * `ModelVersion`'s only `modelId` index is a HASH index, which can answer equality but cannot
- * serve a range or an ordering. So the two are not in the same position: `Model` has nothing
- * indexed for its filter at all, while `ModelVersion`'s hash index CAN serve its `modelId IN
- * (…)` equality filter — what it cannot serve is the ordering. Both have the primary key
- * available for the cursor and the ordering. That is accepted rather than fixed here,
- * because a user's model and model-version counts are small next to their image count and the
- * point of this change is the memory ceiling, not latency. It is NOT a claim about the plan the
- * planner actually chooses — no `EXPLAIN` was run.
- *
- * Lazy: the first query is not issued until the generator is first pulled from. Callers below
- * depend on that.
- */
-async function* scanPagesById<T extends { id: number }>(
-  fetchPage: (args: { afterId: number | undefined; take: number }) => Promise<T[]>,
-  pageSize: number = ARCHIVE_SCAN_PAGE_SIZE
-): AsyncGenerator<T[], void, undefined> {
-  let afterId: number | undefined;
-  for (;;) {
-    const rows = await fetchPage({ afterId, take: pageSize });
-    if (!rows.length) return;
-    yield rows;
-    // A short page is the last page: there is no id greater than the one we just read.
-    if (rows.length < pageSize) return;
-    afterId = rows[rows.length - 1].id;
-  }
-}
-
-/** Flattens paged rows into a per-row async iterable. Also lazy. */
-async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, void, undefined> {
-  for await (const page of pages) for (const row of page) yield row;
-}
-
 /** Every CommentV3 row `userId` wrote, keyset-paged. */
 const userCommentRows = (userId: number) =>
   flattenPages(
@@ -2351,11 +2297,31 @@ const userCommentRows = (userId: number) =>
     })
   );
 
+const archiveAuthorPassPool = () =>
+  authorPassPool({
+    databaseUrl: env.DATABASE_URL,
+    replicaUrl: env.DATABASE_REPLICA_URL,
+    replicaLongUrl: env.DATABASE_REPLICA_LONG_URL,
+  });
+
 /** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
 export const userContentSections: {
   name: string;
-  rows: (userId: number) => AsyncIterable<unknown>;
-}[] = [{ name: 'comments', rows: userCommentRows }];
+  rows: (userId: number, incomplete?: Map<string, string>) => AsyncIterable<unknown>;
+}[] = [
+  { name: 'comments', rows: userCommentRows },
+  ...userContentReaders.map(({ name, rows }) => ({
+    name,
+    rows: (userId: number, incomplete?: Map<string, string>) =>
+      rows(
+        kyselyRead,
+        userId,
+        undefined,
+        incomplete,
+        archiveAuthorPassPool() === 'readLong' ? kyselyReadLong : kyselyRead
+      ),
+  })),
+];
 
 /**
  * Writes every comment `userId` wrote to `comments.json` in the CSAM bucket, beside their reports'
@@ -2831,6 +2797,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * Writes the base evidence bundle to disk, then uploads it: `user`, `reportId`, `models`,
    * `modelVersions`, `images`, then one section per `userContentSections` entry.
    *
+   * Paging cost: `Image` has `@@index([userId, id])`, which serves the one large scan. `Model` has no
+   * `userId` index and `ModelVersion`'s `modelId` index is a hash index (equality, no ordering);
+   * both are accepted because a user's model and version counts are small.
+   *
    * Streamed because `JSON.stringify` cannot exceed V8's maximum string length: a bundle past it
    * could never be archived. Rows are written `id ASC`, so a bundle is not byte-comparable with one
    * written before paging.
@@ -2903,6 +2873,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     }
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
+    const incomplete = new Map<string, string>();
     await writeJsonObject({
       sink: fs.createWriteStream(outPath),
       replacer: bigintReplacer,
@@ -2927,10 +2898,35 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         ['images', { items: flattenPages(scanUserImages()) }],
         ...userContentSections.map(
           ({ name, rows }) =>
-            [name, { items: rows(userId) }] as [string, { items: AsyncIterable<unknown> }]
+            [name, { items: rows(userId, incomplete) }] as [
+              string,
+              { items: AsyncIterable<unknown> }
+            ]
         ),
+        // Read when reached, after every section above has streamed.
+        [
+          'authorPassIncomplete',
+          {
+            get value() {
+              return incomplete.has('authorPass');
+            },
+          },
+        ],
       ],
     });
+    if (incomplete.size)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'warning',
+        subType: 'archive-section-incomplete',
+        message: 'a chat pass failed; the bundle was written without it',
+        payload: {
+          passes: [...incomplete.keys()],
+          causes: [...incomplete.values()],
+          count: incomplete.size,
+          pool: archiveAuthorPassPool(),
+        },
+      });
 
     const readableStream = fs.createReadStream(outPath);
     archived.push({
@@ -3218,11 +3214,13 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
       reportId: report.id,
       expected: imageUrls.length,
-      strikeUrls: strikeUrls.size,
-      namedUrls: namedUrls.size,
-      entries,
-      unreadable,
-      strikesNotFound,
+      payload: {
+        strikeUrls: strikeUrls.size,
+        namedUrls: namedUrls.size,
+        entries,
+        unreadable,
+        strikesNotFound,
+      },
     });
 
     archived.push({

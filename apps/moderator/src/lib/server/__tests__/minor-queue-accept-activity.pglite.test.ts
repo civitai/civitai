@@ -30,6 +30,10 @@ vi.mock('../image-moderation-effects', () => ({
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+// Covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 
 const { acceptImage } = await import('../image-moderation.service');
 const { getYouToday } = await import('../moderation-board.service');

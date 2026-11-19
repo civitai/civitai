@@ -139,6 +139,9 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
     ctx: {},
     scopes: ['collections:read:self'],
     maxBrowsingLevel: 3,
+    // The viewer at every level: these cases mock the DOMAIN clamp, so the viewer
+    // level must not narrow it unless a case says so (the viewer clamp's own cases do).
+    viewerBrowsingLevel: 31,
     ...over,
   } as BlockTokenClaims;
 }
@@ -238,6 +241,20 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     const { req, res } = createMocks({ query: { id: '7' } });
     await handler(req as never, res as never);
     expect(res._status()).toBe(404);
+  });
+
+  // The VIEWER's level held to the domain cap: a PG-only viewer on a mature domain
+  // is served PG items, never the domain's mature ones.
+  it('a PG-only viewer on a mature domain: the item service is read at PG', async () => {
+    mockMaturity.mockReturnValue({ browsingLevel: 31, isSfwCeiling: false });
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 31, viewerBrowsingLevel: 1 });
+    mockItems.mockResolvedValueOnce({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockItems).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ browsingLevel: 1 }) })
+    );
   });
 
   it('200: threads the clamped browsingLevel, maps image/video, drops non-media, sets followed', async () => {

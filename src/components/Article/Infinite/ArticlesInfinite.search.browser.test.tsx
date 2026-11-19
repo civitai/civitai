@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchQueries: [] as (string | undefined)[],
   feedCalls: [] as { query?: string; enabled?: boolean }[],
+  features: {} as Record<string, boolean>,
+  pageQuery: undefined as string | undefined,
 }));
 
 const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
@@ -40,6 +42,13 @@ vi.mock('~/components/Article/article.utils', async (importOriginal) => ({
       : { ...result([101, 102]), searchKey: query, correctedQuery: undefined };
   },
 }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useFeatureFlags: () => state.features,
+}));
+vi.mock('~/components/Filters/FeedSearchInput', () => ({
+  useFeedSearchQuery: () => state.pageQuery,
+}));
 vi.mock('~/components/Search/useSearchRefusal', () => ({
   useSearchRefusal: () => ({ refusal: state.refusal, profanityMatches: [] }),
 }));
@@ -60,10 +69,12 @@ describe('ArticlesInfinite with a search', () => {
     state.refusal = undefined;
     state.searchQueries = [];
     state.feedCalls = [];
+    state.features = { articleFeedSearch: true };
+    state.pageQuery = 'lora guide';
   });
 
   test("answers the page's query from the search, and leaves the feed query off", async () => {
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
+    await renderWithProviders(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('article 101')).toBeInTheDocument();
     await expect.element(page.getByText('Articles matching “lora guide”')).toBeInTheDocument();
     expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
@@ -73,14 +84,20 @@ describe('ArticlesInfinite with a search', () => {
 
   test("falls back to the feed's title match with a banner when the search fails", async () => {
     state.searchFails = true;
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
+    await renderWithProviders(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Retry search')).toBeInTheDocument();
     expect(state.feedCalls.at(-1)).toEqual({ query: 'lora guide', enabled: true });
   });
 
-  test('without a search, is the plain feed and never sends a query', async () => {
-    await renderWithProviders(<ArticlesInfinite filters={{ username: 'someone' }} />);
+  test('a feed that is not searchable, or without the flag, never sends the page query', async () => {
+    const { unmount } = await renderWithProviders(
+      <ArticlesInfinite filters={{ username: 'someone' }} />
+    );
+    await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
+    unmount();
+    state.features = {};
+    await renderWithProviders(<ArticlesInfinite searchable />);
     await expect.element(page.getByText('article 1', { exact: true })).toBeInTheDocument();
     expect(state.searchQueries).toEqual([]);
     expect(state.feedCalls.every((call) => call.query === undefined)).toBe(true);
@@ -88,7 +105,7 @@ describe('ArticlesInfinite with a search', () => {
 
   test('a refused query reaches neither source', async () => {
     state.refusal = 'illegal';
-    await renderWithProviders(<ArticlesInfinite searchText="lora guide" />);
+    await renderWithProviders(<ArticlesInfinite searchable />);
     await expect.poll(() => state.searchQueries.length).toBeGreaterThan(0);
     expect(page.getByText('article 1', { exact: true }).query()).toBeNull();
     expect(state.searchQueries.every((query) => query === undefined)).toBe(true);

@@ -69,3 +69,34 @@ describe('a 3D model page', () => {
     expect(items[0]?.thumbnailImage).not.toHaveProperty('meta');
   });
 });
+
+describe('a 3D model page whose images are restricted by their base model', () => {
+  const restricted = (id: number, nsfwLevel: number) => ({
+    ...image(id),
+    nsfwLevel,
+    modelRestricted: true,
+  });
+  const pageImages = async (nsfwLevel: number, user: unknown) => {
+    const model = {
+      ...MODEL,
+      thumbnailImage: restricted(1, nsfwLevel),
+      sourceImage: restricted(2, nsfwLevel),
+    };
+    dbMock.dbRead.model3D.findUnique.mockImplementation((async (args: { select: Select }) =>
+      applySelect(model, args.select)) as never);
+    const page = await getModel3DById({ id: 9, user: user as never });
+    return [page.thumbnailImage?.id ?? null, page.sourceImage?.id ?? null];
+  };
+
+  it.each([
+    ['a stranger', { id: 6 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('withholds mature ones from %s', async (_, user) => {
+    expect(await pageImages(4, user)).toEqual([null, null]);
+    expect(await pageImages(1, user)).toEqual([1, 2]);
+  });
+
+  it('shows them to their uploader', async () => {
+    expect(await pageImages(4, { id: 5 })).toEqual([1, 2]);
+  });
+});

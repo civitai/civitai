@@ -60,6 +60,7 @@ const USER = { id: 77, isModerator: true } as never;
 
 const approvedAppRow = {
   name: 'Custom Generators Client',
+  connectListings: [],
   appBlocks: [
     {
       status: 'approved',
@@ -191,6 +192,7 @@ describe('both reads use the exact builders, on the right client', () => {
     // dropping the parameter — collapses one of these onto the other.
     const mature = {
       ...approvedAppRow,
+      connectListings: [],
       appBlocks: [
         {
           ...approvedAppRow.appBlocks[0],
@@ -225,6 +227,7 @@ describe('both reads use the exact builders, on the right client', () => {
     // opted-in read onto the anonymous one. Level 5 (PG|R) is distinct from every ceiling constant.
     const withRIcon = {
       ...approvedAppRow,
+      connectListings: [],
       appBlocks: [
         {
           ...approvedAppRow.appBlocks[0],
@@ -240,6 +243,7 @@ describe('both reads use the exact builders, on the right client', () => {
               tosViolation: false,
               acceptableMinor: false,
               blockedFor: null,
+              modelRestricted: false,
             },
           },
         },

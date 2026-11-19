@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * Task 11: validate the required-resource rule (Challenge.modelVersionIds) BEFORE the
@@ -289,5 +290,47 @@ describe('validateContestCollectionEntry — creator block gate', () => {
         canAccessUserChallenges: true,
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('validateContestCollectionEntry — model-restricted mature images', () => {
+  const mockImageFindMany = mockDbRead.image.findMany;
+
+  beforeEach(() => {
+    mockChallengeFindFirst.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        Object.keys(where).length === 1 && 'collectionId' in where ? { id: 1 } : null
+    );
+  });
+
+  const enter = (isModerator = false) =>
+    validateContestCollectionEntry({
+      collectionId: COLLECTION_ID,
+      userId: USER_ID,
+      isModerator,
+      imageIds: [IMAGE_ID],
+      metadata: {},
+    });
+
+  it.each([false, true])(
+    'refuses a mature image whose model restricts mature images (moderator: %s)',
+    async (isModerator) => {
+      mockImageFindMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R, modelRestricted: true }]);
+
+      await expect(enter(isModerator)).rejects.toThrow("doesn't allow mature images");
+      expect(mockChargeEntryFees).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['a SFW image from a restricting model', { nsfwLevel: NsfwLevel.PG, modelRestricted: true }],
+    [
+      'a mature image from an unrestricted model',
+      { nsfwLevel: NsfwLevel.X, modelRestricted: false },
+    ],
+  ])('accepts %s', async (_label, image) => {
+    mockImageFindMany.mockResolvedValue([image]);
+
+    await expect(enter()).resolves.toBeUndefined();
   });
 });

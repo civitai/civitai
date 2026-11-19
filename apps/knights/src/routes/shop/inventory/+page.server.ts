@@ -10,7 +10,7 @@ import type { Actions, PageServerLoad } from './$types';
 const CLOSED_TEXT = "The shop isn't open yet.";
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const open = shopEnabled();
+  const open = await shopEnabled();
   const [items, membership, balance] = await Promise.all([
     open ? listInventory(db, locals.user.id) : [],
     membershipOf(db, locals.user.id, new Date()),
@@ -41,7 +41,7 @@ async function change(
     run,
   }: { verb: 'equip' | 'unequip'; run: (userId: number, cosmeticId: number) => Promise<void> }
 ) {
-  if (!shopEnabled()) return fail(403, { message: CLOSED_TEXT });
+  if (!(await shopEnabled())) return fail(403, { message: CLOSED_TEXT });
   const cosmeticId = Number((await request.formData()).get('cosmeticId'));
   if (!Number.isInteger(cosmeticId) || cosmeticId <= 0) {
     return fail(400, { message: 'That item could not be found.' });

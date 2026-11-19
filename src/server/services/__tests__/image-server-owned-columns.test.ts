@@ -660,6 +660,7 @@ describe('resolveCoverImageId', () => {
       assertUrlUsable: vi.fn().mockResolvedValue(undefined),
       createImage: createImageDep,
       logExistenceUnknown: vi.fn(),
+      assertNotRestricted: vi.fn().mockResolvedValue(undefined),
     };
     const { id: _id, ...cover } = withServerColumns();
 

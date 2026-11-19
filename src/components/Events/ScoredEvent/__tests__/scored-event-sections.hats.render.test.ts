@@ -95,6 +95,9 @@ vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () =>
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: () => null,
 }));
+vi.mock('~/components/Events/ScoredEvent/FlagRaceEventSection', () => ({
+  FlagRaceEventSection: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: () => null,
   TopHats: () => null,

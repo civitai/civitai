@@ -211,7 +211,7 @@ beforeEach(async () => {
   });
   db.write.oauthClient.update.mockResolvedValue({});
   // The ceiling a late hold would put back, read on the primary before step (3).
-  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0 });
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
   db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -231,7 +231,7 @@ beforeEach(async () => {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   });
   s3.send.mockImplementation(async () => ({
     Body: { transformToByteArray: async () => holder.zipBytes },

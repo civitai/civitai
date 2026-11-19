@@ -18,6 +18,18 @@ describe('escalationFields', () => {
     expect(escalationFields(['Sent-To-Support', 'a'], 2).tags).toEqual(['Sent-To-Support', 'a']);
   });
 
+  it('drops the mod-lead tag, whatever its case, and keeps the rest in order', () => {
+    expect(escalationFields(['a', 'Mod-Lead-Review', 'b'], 8).tags).toEqual([
+      'a',
+      'b',
+      SENT_TO_SUPPORT_TAG,
+    ]);
+    expect(escalationFields(['a', MOD_LEAD_REVIEW_TAG], 2).tags).toEqual([
+      'a',
+      SENT_TO_SUPPORT_TAG,
+    ]);
+  });
+
   it('moves "Waiting on Mod Lead" to Open and leaves any other status alone', () => {
     expect(escalationFields([], 8).status).toBe(2);
     for (const status of [2, 3, 6, 7, 9])

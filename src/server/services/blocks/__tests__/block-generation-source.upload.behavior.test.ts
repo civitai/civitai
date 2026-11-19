@@ -213,6 +213,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL,
       url text NOT NULL,
       "postId" int,
@@ -657,10 +658,13 @@ describe('🔴 ownership: no path hands an app another user’s row', () => {
 
 describe('the deadline bounds the request', () => {
   it('a call whose budget is already spent writes nothing', async () => {
+    // The budget's own timer never fires here, so a spent budget must be refused without it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const error = await persist({ budgetMs: 0 }).then(
       () => null,
       (e: unknown) => e
     );
+    vi.useRealTimers();
     expect(error).toMatchObject({ code: 'TIMEOUT' });
     expect(createImage).not.toHaveBeenCalled();
   });

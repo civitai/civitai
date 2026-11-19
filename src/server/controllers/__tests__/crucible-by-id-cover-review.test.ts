@@ -3,10 +3,27 @@ import type * as CrucibleService from '~/server/services/crucible.service';
 
 const h = vi.hoisted(() => ({ detail: null as unknown }));
 
-vi.mock('~/server/services/crucible.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof CrucibleService>()),
-  getCrucibleDetail: async () => h.detail,
-}));
+vi.mock('~/server/services/crucible.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof CrucibleService>();
+  return {
+    ...actual,
+    // As the service does: judged for the viewer on the stored cover.
+    getCrucibleDetail: async ({
+      userId,
+      isModerator,
+    }: {
+      userId?: number;
+      isModerator?: boolean;
+    }) =>
+      h.detail && {
+        ...(h.detail as object),
+        hiddenByScan: actual.isCrucibleHiddenByScan(h.detail as never, {
+          viewerId: userId,
+          isModerator,
+        }),
+      },
+  };
+});
 vi.mock('~/server/services/crucible-block-lists', () => ({
   getAllBlockedCreatorIds: async () => [],
   getBlockedCreatorIds: async () => [],

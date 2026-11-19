@@ -5,6 +5,13 @@ const BLOCK_REASON_LABELS: Record<string, string> = Object.fromEntries(
   KNIGHTS_BLOCK_REASONS.map((reason) => [reason.value, reason.label])
 );
 
+export type KnightsBlockReason = (typeof KNIGHTS_BLOCK_REASONS)[number]['value'];
+
+export const isKnightsBlockReason = (value: unknown): value is KnightsBlockReason =>
+  typeof value === 'string' && Object.hasOwn(BLOCK_REASON_LABELS, value);
+
+export const knightsBlockReasonLabel = (value: KnightsBlockReason) => BLOCK_REASON_LABELS[value];
+
 export type ConsensusBlockReason = {
   reason: string;
   label: string;

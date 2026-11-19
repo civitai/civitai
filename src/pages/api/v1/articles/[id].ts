@@ -18,6 +18,7 @@ import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * GET /api/v1/articles/[id] — public article detail.
@@ -56,7 +57,9 @@ import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
 // 500. `.int().gt(0)` also rejects non-integer / non-positive ids.
 export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: { anyOf: [TokenScope.ArticlesRead] } });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -110,6 +113,8 @@ export default MixedAuthEndpoint(async function handler(
       !Flags.intersects(publicArticle.coverImage.nsfwLevel, browsingLevel)
     ) {
       publicArticle.coverImage = undefined;
+      // The legacy `cover` is the same image's key.
+      publicArticle.cover = null;
     }
     // The banner is the same kind of image, and stands in for a missing cover on cards.
     if (
@@ -141,7 +146,7 @@ export default MixedAuthEndpoint(async function handler(
     // handleEndpointError maps it to a 404.
     return handleEndpointError(res, e);
   }
-});
+}
 
 /** Signed out, the public default; with a key, the holder's own level under the domain cap. */
 function bodyBrowsingLevel(

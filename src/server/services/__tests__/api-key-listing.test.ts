@@ -9,7 +9,14 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
 
 const { getUserApiKeys } = await import('~/server/services/api-key.service');
 
-type Row = { id: number; userId: number; type: string; name: string; expiresAt: Date | null };
+type Row = {
+  id: number;
+  userId: number;
+  type: string;
+  name: string;
+  tokenScope?: number;
+  expiresAt: Date | null;
+};
 const NOW = new Date('2026-10-27T12:00:00.000Z');
 const rows: Row[] = [
   { id: 1, userId: 7, type: 'User', name: 'live', expiresAt: null },
@@ -49,7 +56,8 @@ beforeEach(() => {
     where,
   }: {
     where: Record<string, unknown>;
-  }) => rows.filter((r) => applies(r, where))) as never);
+  }) =>
+    rows.filter((r) => applies(r, where)).map((r) => ({ tokenScope: 33554431, ...r }))) as never);
 });
 
 afterEach(() => {

@@ -14,7 +14,10 @@ import {
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
-import { projectAppWorkflowWithPositions } from '~/server/services/blocks/workflow.service';
+import {
+  orchestratorBlockStatus,
+  projectAppWorkflowWithPositions,
+} from '~/server/services/blocks/workflow.service';
 import {
   pendingOutputMessage,
   restrictedOutputMessage,
@@ -482,7 +485,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
   // No mint: the post fetches each position's media itself.
-  const { workflow: projected, positions } = projectAppWorkflowWithPositions(workflow, {
+  const { positions } = projectAppWorkflowWithPositions(workflow, {
     ...input.ceiling,
     mint: null,
   });
@@ -492,9 +495,9 @@ export async function resolveOwnedWorkflowOutputs(input: {
   // the two phases, so the viewer confirms N thumbnails and gets N+1 images. This
   // refuses the GENERATOR of that divergence rather than detecting the symptom
   // afterwards: a terminal workflow's output set is frozen, so both phases must
-  // see the same set. Free — `projectAppWorkflow` already computed the status on
-  // the projection this function was reading anyway — and it binds every caller,
-  // including any future one that renders no dialog.
+  // see the same set. Free — the status is already on the workflow this function
+  // was reading anyway — and it binds every caller, including any future one that
+  // renders no dialog.
   //
   // BAD_REQUEST, not FORBIDDEN: nothing about the caller is unauthorised. The
   // workflow is simply not finished, and the message says so because the app's
@@ -502,7 +505,11 @@ export async function resolveOwnedWorkflowOutputs(input: {
   // that reads as a permission problem. See
   // `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES` for which statuses count and why
   // `failed`/`expired`/`canceled` are admitted.
-  if (!isTerminalBlockPostWorkflowStatus(projected.status)) {
+  //
+  // The REAL status, not the projection's: an app is told `processing` while an
+  // output waits for its rating (`appWorkflowStatus`), but the output set is already
+  // frozen, and a rated position beside a held one is postable.
+  if (!isTerminalBlockPostWorkflowStatus(orchestratorBlockStatus(workflow))) {
     badRequest('workflow is still running — wait for it to finish before posting');
   }
 

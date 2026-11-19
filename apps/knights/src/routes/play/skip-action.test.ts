@@ -6,6 +6,11 @@ const castVote = vi.hoisted(() => vi.fn());
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
+const voteRefused = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/metrics', async (original) => {
+  const real = await original<typeof import('$lib/server/metrics')>();
+  return { ...real, metrics: { ...real.metrics, voteRefused } };
+});
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
@@ -15,7 +20,7 @@ vi.mock('$lib/server/skip-runtime', () => ({
     return store.current;
   },
 }));
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
@@ -25,6 +30,7 @@ vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', reset
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   answerHiddenCheck,
   pickHiddenCheck: vi.fn(),
   readHiddenNotices: vi.fn(),
@@ -55,6 +61,18 @@ beforeEach(() => {
   castVote.mockReset();
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
+  voteRefused.mockReset();
+});
+
+describe('skip refusals', () => {
+  it('records a muted player and a token that does not open, as skips', async () => {
+    getStanding.mockResolvedValueOnce({ banned: false, muted: true });
+    await skip(sealItem('secret', 7, { kind: 'queue', id: 3 }));
+    await skip('not-a-token');
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'muted', 'unknown', 7, null, 'skip');
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'bad-token', 'unknown', 7, null, 'skip');
+  });
 });
 
 describe('skip action', () => {

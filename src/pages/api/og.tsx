@@ -355,8 +355,12 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         title: true,
         content: true,
         user: { select: { username: true } },
-        coverImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
-        bannerImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
+        coverImage: {
+          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+        },
+        bannerImage: {
+          select: { ...ogImageSelect, ingestion: true, needsReview: true, modelRestricted: true },
+        },
       },
     }),
     dbRead.articleMetric

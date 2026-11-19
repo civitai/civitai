@@ -2,6 +2,7 @@ package feed
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -96,11 +97,83 @@ func TestParseUnknownKeyFallsBack(t *testing.T) {
 	for input, want := range map[string]string{
 		`{"collectionId":5,"someNewFilter":1}`: "input-collectionId",
 		`{"someNewFilter":1,"userId":7}`:       "input-userId",
-		`{"tags":[3],"aNewKey":true}`:          "input-tags",
+		`{"hidden":true,"aNewKey":true}`:       "input-hidden",
 		`{"userId":null,"someNewFilter":1}`:    "input-unknown-key",
 	} {
 		if _, err := Parse(parseObj(t, input)); fallback.Reason(err) != want {
 			t.Errorf("unknown + unsupported %s: reason %q, want %q", input, fallback.Reason(err), want)
+		}
+	}
+}
+
+// The site's images feeds put their URL query into image.getInfinite's input, and four of its keys
+// are not getInfiniteImagesSchema keys, so zod strips them and Node answers as if they were absent.
+// ParseInfinite must too: each parses, to exactly the Input the same request without it parses to.
+// The values are none of the schema's defaults and none of the base input's, so a parser that read
+// one into a field would change the Input.
+func TestParseInfiniteIgnoresStrippedURLKeys(t *testing.T) {
+	const base = `{"limit":10,"sort":"Newest","userId":7}`
+	want, err := ParseInfinite(parseObj(t, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Positive control: the base input is read, so a comparison against it can see a change.
+	if want.Limit != 10 || want.Sort != SortNewest || want.UserID != 7 {
+		t.Fatalf("base input parsed as limit %d sort %q userId %d, want 10, Newest, 7", want.Limit, want.Sort, want.UserID)
+	}
+	for _, extra := range []string{
+		`"view":"feed"`,
+		`"section":"reactions"`,
+		`"query":"red fox in snow"`,
+		`"similarTo":4242`,
+		`"view":"categories","section":"images","query":"x","similarTo":"99"`,
+	} {
+		input := base[:len(base)-1] + "," + extra + "}"
+		got, err := ParseInfinite(parseObj(t, input))
+		if err != nil {
+			t.Errorf("ParseInfinite %s: reason %q (err %v), want it parsed", input, fallback.Reason(err), err)
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ParseInfinite %s = %+v, want the input without it: %+v", input, *got, *want)
+		}
+	}
+	// Any other key outside the schema still falls back, alongside an ignored one too; and an
+	// unsupported key still names the parity gap.
+	for input, reason := range map[string]string{
+		`{"limit":10,"view":"feed","someNewFilter":true}`: "input-unknown-key",
+		`{"limit":10,"someNewFilter":true}`:               "input-unknown-key",
+		`{"section":"images","collectionId":5}`:           "input-collectionId",
+	} {
+		if _, err := ParseInfinite(parseObj(t, input)); fallback.Reason(err) != reason {
+			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", input, fallback.Reason(err), err, reason)
+		}
+	}
+	// Scoped to image.getInfinite: the posts gallery (Parse) still falls back on them.
+	if _, err := Parse(parseObj(t, `{"limit":10,"view":"feed"}`)); fallback.Reason(err) != "input-unknown-key" {
+		t.Errorf("Parse with view: reason %q (err %v), want input-unknown-key", fallback.Reason(err), err)
+	}
+}
+
+// The URL keys ParseInfinite ignores are ignored because zod strips them: none may be a
+// getInfiniteImagesSchema key (schemas.json, kept in step with zod by its schema-drift test). A key
+// the schema starts reading must be parsed instead, and feed-go must ship before the web change that
+// adds it (DESIGN.md §5.1). This checks one direction only: a key added to imagesQueryParamSchema
+// alone is not detected here and falls back as input-unknown-key.
+func TestStrippedURLKeysAreStrippedByZod(t *testing.T) {
+	if want := []string{"query", "section", "similarTo", "view"}; !reflect.DeepEqual(strippedURLKeys, want) {
+		t.Errorf("strippedURLKeys = %v, want %v (a change here is a reviewed parity decision)", strippedURLKeys, want)
+	}
+	inSchema := map[string]bool{}
+	for _, k := range imagesSchema.Keys() {
+		inSchema[k] = true
+	}
+	for _, k := range strippedURLKeys {
+		if inSchema[k] {
+			t.Errorf("%s is a getInfiniteImagesSchema key now: parse it (or classify it) instead of ignoring it", k)
+		}
+		if !infiniteAbsentKeys[k] {
+			t.Errorf("%s is not in infiniteAbsentKeys", k)
 		}
 	}
 }

@@ -20,7 +20,7 @@ import {
   mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
@@ -37,10 +37,10 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  * bare 404 (never 403), so the endpoint is not a private-collection existence
  * oracle. The permission decision reuses `getUserCollectionPermissionsById`.
  *
- * MATURITY: media items are clamped to the token's `maxBrowsingLevel` ceiling
- * (region-narrowed) by threading the clamped `browsingLevel` into
- * `getCollectionItemsByCollectionId` — the identical authority surface
- * /api/v1/blocks/images uses. Only image/video (playable) items are returned;
+ * MATURITY: media items are clamped to the VIEWER's level held to the token's
+ * domain ceiling (`resolveCatalogViewerBrowsingLevel`, region-narrowed) by
+ * threading the clamped `browsingLevel` into `getCollectionItemsByCollectionId`
+ * — the same clamp /api/v1/blocks/images uses. Only image/video (playable) items are returned;
  * model/post/article items are omitted.
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },
@@ -120,7 +120,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   try {
     // VISIBILITY gate. `read` is true for public/unlisted, and for the

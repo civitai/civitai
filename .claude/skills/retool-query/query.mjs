@@ -27,10 +27,7 @@ const skillDir = __dirname;
 const projectRoot = resolve(__dirname, '../../..');
 
 function loadEnv() {
-  const envFiles = [
-    resolve(skillDir, '.env'),
-    resolve(projectRoot, '.env'),
-  ];
+  const envFiles = [resolve(skillDir, '.env'), resolve(projectRoot, '.env')];
 
   for (const envPath of envFiles) {
     try {
@@ -117,14 +114,19 @@ Examples:
   process.exit(1);
 }
 
-// MODERATOR_DATABASE_URL first: the Retool and moderator databases were consolidated into one, so that
-// is the surviving name. RETOOL_DATABASE_URL still works for a checkout whose .env predates the merge.
-const connectionString = process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL;
+// Reads go through the read-only login and never fall back to the application login, so a query
+// without --writable can't see more than that login grants. --writable uses the application login:
+// MODERATOR_DATABASE_URL, or RETOOL_DATABASE_URL for a checkout whose .env predates the 2026-08 merge.
+const connectionString = writable
+  ? process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL
+  : process.env.MODERATOR_DATABASE_READONLY_URL;
 
 if (!connectionString) {
-  console.error('Error: MODERATOR_DATABASE_URL not set');
-  console.error('Create .claude/skills/retool-query/.env with MODERATOR_DATABASE_URL');
-  console.error('See .env.example for details');
+  const name = writable ? 'MODERATOR_DATABASE_URL' : 'MODERATOR_DATABASE_READONLY_URL';
+  console.error(`Error: ${name} not set`);
+  console.error(
+    `Add ${name} to .claude/skills/retool-query/.env (see .env.example); ask an infra owner for it.`
+  );
   process.exit(1);
 }
 
@@ -153,8 +155,8 @@ async function main() {
     await client.connect();
 
     if (!quiet) {
-      const mode = writable ? 'WRITABLE' : 'READ-ONLY';
-      console.error(`Connected to Retool DB (${mode}, timeout: ${timeoutSeconds}s)\n`);
+      const mode = writable ? 'WRITABLE, application login' : 'READ-ONLY, read-only login';
+      console.error(`Connected to the moderator DB (${mode}, timeout: ${timeoutSeconds}s)\n`);
     }
 
     const start = Date.now();
@@ -162,15 +164,21 @@ async function main() {
     const elapsed = Date.now() - start;
 
     if (jsonOutput) {
-      console.log(JSON.stringify({
-        rows: result.rows,
-        rowCount: result.rowCount,
-        elapsed,
-        fields: result.fields?.map(f => f.name)
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            rows: result.rows,
+            rowCount: result.rowCount,
+            elapsed,
+            fields: result.fields?.map((f) => f.name),
+          },
+          null,
+          2
+        )
+      );
     } else {
       if (!quiet && result.fields) {
-        console.log('Columns:', result.fields.map(f => f.name).join(', '));
+        console.log('Columns:', result.fields.map((f) => f.name).join(', '));
         console.log('\u2500'.repeat(60));
       }
 

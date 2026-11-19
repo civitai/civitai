@@ -29,6 +29,7 @@ import { sendMessagesToCollaborators } from '~/server/services/entity-collaborat
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import {
   getRequestBrowsingLevel,
+  requestServableLevels,
   resolveRequestBrowsingLevels,
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
@@ -44,7 +45,10 @@ import {
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { contentRestriction } from '~/server/common/content-restriction';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -96,8 +100,9 @@ export const getPostsInfiniteHandler = async ({
     // taken-down model's only to its owner, except to moderators, who must see what they may need
     // to remove.
     const selector = { ...input, postIds: input.ids };
-    const moderator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
-    const ownerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    const views = credentialViews(ctx);
+    const moderator = views.asModerator;
+    const ownerId = ctx.user && views.asOwner ? ctx.user.id : undefined;
     const [heldLevel, withheld] = moderator
       ? [undefined, false]
       : await Promise.all([
@@ -114,8 +119,7 @@ export const getPostsInfiniteHandler = async ({
     return await getPostsInfinite({
       ...input,
       user: ctx.user,
-      asModerator: moderator,
-      asOwner: ownerId !== undefined,
+      ...views,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -290,7 +294,7 @@ export const createPostWithImagesHandler = async ({
     await deletePost({
       id: post.id,
       isModerator: ctx.user.isModerator,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
     }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -725,7 +729,7 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({
       ...input,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
       viewerIsModerator: ctx.user.isModerator,
     });
     if (result) {
@@ -805,7 +809,11 @@ export const reorderPostImagesHandler = async ({
   // Text items move only with their flag; without it a reorder moves images alone.
   if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
-    return await reorderPostImages({ ...input });
+    return await reorderPostImages({
+      ...input,
+      user: ctx.user,
+      servableLevels: requestServableLevels(ctx),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -948,7 +956,9 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+    const views = credentialViews(ctx);
+    const viewer = views.asOwner ? ctx.user : undefined;
+    const visible = await assertPostVisibleToViewer({ ...input, user: viewer }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
       throw e;
     });
@@ -957,7 +967,8 @@ export const getPostContestCollectionDetailsHandler = async ({
     return await getPostContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator: views.asModerator,
+      ownerView: views.asOwner,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -2,11 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import {
   collectPage,
+  MAX_CANDIDATE_LIMIT,
   MAX_CANDIDATE_OFFSET,
   searchServiceSource,
   type CandidateFilter,
   type SearchCollection,
   type ViewerGate,
+  buildQdrantFilter,
+  withWordMatchesFirst,
+  withTagMatchesFirst,
+  type CandidateSource,
 } from '~/server/services/semantic-search-client';
 
 describe('the content gate', () => {
@@ -143,6 +148,13 @@ describe('collectPage', () => {
     expect(page.nextCursor).toBe(90);
   });
 
+  it("never asks for more candidates than the service's page maximum", async () => {
+    const { candidates, calls } = ranked(5000);
+    await collectPage({ candidates, hydrate: async () => [], offset: 0, limit: 50 });
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call.limit).toBeLessThanOrEqual(MAX_CANDIDATE_LIMIT);
+  });
+
   it('keeps an id once when a later round repeats it', async () => {
     // Tied scores reorder between requests: the second round starts with an id the first returned.
     const rounds = [
@@ -179,5 +191,123 @@ describe('collectPage', () => {
       limit: 10,
     });
     expect(beyond).toEqual({ items: [], nextCursor: undefined });
+  });
+});
+
+describe('withTagMatchesFirst', () => {
+  const gate: ViewerGate = { kind: 'level', nsfwLevels: [1] };
+  const TAG = 900;
+  // `tagged` is what the index holds with the tag; `semantic` is the ranking.
+  const index = (tagged: number[], semantic: number[]) => {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      const excluded = new Set(args.filter.excludedIds ?? []);
+      const pool = args.filter.tagIds?.includes(TAG)
+        ? tagged
+        : semantic.filter((id) => !excluded.has(id));
+      return { ids: pool.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  };
+  const page = (source: CandidateSource, offset: number, limit: number, tagIds?: number[]) =>
+    source({
+      query: { text: 'tiefling' },
+      filter: { gate, userIds: [5], tagIds },
+      offset,
+      limit,
+      viewer: { isModerator: false },
+    });
+
+  it('puts the tagged points first, then the ranking without them', async () => {
+    const { source } = index([7, 3], [1, 2, 3, 4, 5, 6, 7]);
+    expect((await page(withTagMatchesFirst(source, TAG), 0, 4)).ids).toEqual([7, 3, 1, 2]);
+  });
+
+  it('pages on past the tagged points without repeating them', async () => {
+    const { source } = index([7, 3], [1, 2, 3, 4, 5, 6, 7]);
+    const ranked = withTagMatchesFirst(source, TAG);
+    expect((await page(ranked, 1, 3)).ids).toEqual([3, 1, 2]);
+    expect((await page(ranked, 4, 3)).ids).toEqual([4, 5, 6]);
+  });
+
+  it('narrows the first pass within the same filter, keeping the tags already chosen', async () => {
+    const { source, calls } = index([7], [1, 7]);
+    await page(withTagMatchesFirst(source, TAG), 0, 2, [42]);
+    const first = calls.find((call) => call.filter.tagIds?.includes(TAG));
+    expect(first?.filter.tagIds).toEqual([42, TAG]);
+    expect(first?.filter.userIds).toEqual([5]);
+  });
+
+  it('is the plain ranking when nothing carries the tag', async () => {
+    const { source } = index([], [1, 2, 3]);
+    expect((await page(withTagMatchesFirst(source, TAG), 0, 3)).ids).toEqual([1, 2, 3]);
+  });
+});
+
+describe('withWordMatchesFirst', () => {
+  const gate: ViewerGate = { kind: 'level', nsfwLevels: [1] };
+  // The index: `words` holds the points whose text has every query word; `semantic` is the ranking.
+  const index = (words: number[], semantic: number[]) => {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      const excluded = new Set(args.filter.excludedIds ?? []);
+      const pool = args.filter.allWords ? words : semantic.filter((id) => !excluded.has(id));
+      return { ids: pool.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  };
+  const page = (source: CandidateSource, offset: number, limit: number, text = 'civetai') =>
+    source({ query: { text }, filter: { gate }, offset, limit, viewer: { isModerator: false } });
+
+  it('puts the points holding every word first, then the ranking without them', async () => {
+    const { source } = index([7, 3], [1, 2, 3, 4, 5, 6, 7]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    expect((await page(ranked, 0, 4)).ids).toEqual([7, 3, 1, 2]);
+  });
+
+  it('pages on past the word matches without repeating them', async () => {
+    const { source } = index([7, 3], [1, 2, 3, 4, 5, 6, 7]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    expect((await page(ranked, 1, 3)).ids).toEqual([3, 1, 2]);
+    expect((await page(ranked, 4, 3)).ids).toEqual([4, 5, 6]);
+  });
+
+  it('asks for the word matches once per search, on the given key', async () => {
+    const { source, calls } = index([7], [1, 2, 7]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    await page(ranked, 0, 2);
+    await page(ranked, 2, 2);
+    const wordCalls = calls.filter((call) => call.filter.allWords);
+    expect(wordCalls).toHaveLength(1);
+    expect(wordCalls[0].filter.allWords).toEqual({ key: 'search_text', text: 'civetai' });
+  });
+
+  it('asks for no word matches for blank text or "more like this"', async () => {
+    const { source, calls } = index([7], [1, 2]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    expect((await page(ranked, 0, 2, '  ')).ids).toEqual([1, 2]);
+    await ranked({
+      query: { similarTo: 5 },
+      filter: { gate },
+      offset: 0,
+      limit: 2,
+      viewer: { isModerator: false },
+    });
+    expect(calls.filter((call) => call.filter.allWords)).toEqual([]);
+  });
+
+  it('is the plain ranking when nothing holds every word', async () => {
+    const { source } = index([], [1, 2, 3]);
+    expect((await page(withWordMatchesFirst(source, 'search_text'), 0, 3)).ids).toEqual([1, 2, 3]);
+  });
+
+  it('sends the words as a full-text match in the Qdrant filter', () => {
+    const filter = buildQdrantFilter('models', {
+      gate,
+      allWords: { key: 'search_text', text: 'kiyami kuro' },
+    });
+    expect(filter.must).toContainEqual({ key: 'search_text', match: { text: 'kiyami kuro' } });
   });
 });

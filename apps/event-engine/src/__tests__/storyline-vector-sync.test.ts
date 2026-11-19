@@ -148,6 +148,7 @@ describe('storyline removal', () => {
   // point. Storyline 2 (another owner) is the control and keeps its point.
   const leaves: [string, string][] = [
     ['taken down', `UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`],
+    ['row deleted', `DELETE FROM "Storyline" WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
     ['owner deleted', `UPDATE "User" SET "deletedAt" = now() WHERE id = 7`],
     ['title flagged by the scan', `UPDATE "Storyline" SET "minorByScan" = true WHERE id = 1`],

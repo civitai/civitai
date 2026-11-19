@@ -21,7 +21,6 @@ import type {
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { imagesMetricsSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -41,14 +40,12 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
-  throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -433,9 +430,6 @@ export const createReport = async ({
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
-  // only mods can create csam reports
-  if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
-
   // User-only on purpose: reporting your own content is how a creator contests a
   // rating, so this must not widen to other entity types.
   if (type === ReportEntity.User && id === userId)
@@ -700,38 +694,6 @@ export const createReport = async ({
             });
           break;
       }
-
-    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
-      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
-      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
-      await dbWrite.report.updateMany({
-        where: {
-          reason: { not: ReportReason.CSAM },
-          status: { not: ReportStatus.Actioned },
-          image: { imageId: id },
-        },
-        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
-      });
-      const blocked = await dbWrite.image.update({
-        where: { id },
-        data: {
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.CSAM,
-        },
-        select: { postId: true },
-      });
-      // Right after the block, not after the transaction: the block above goes through dbWrite, so
-      // it autocommits and stands even if a search-index queue below throws, and a refresh placed
-      // after the transaction would then never run. Both refreshes read the primary, which already
-      // has the Blocked row, and never throw.
-      await refreshProfilePicturesForImagesLazy([id]);
-      if (blocked.postId) await bustCachesForPosts(blocked.postId).catch(handleLogError);
-      // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
-      await imagesMetricsSearchIndex.queueUpdate([
-        { id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
-    }
 
     return createdReport;
   };
@@ -1973,8 +1935,12 @@ export async function settleResolvedAppeals(
             await dropBlockedImageDeleteQueue([appeal.entityId]);
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
-            // with handleUnblockImages).
-            if (updated.pHash != null) await bulkRemoveBlockedImages([updated.pHash]);
+            // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
+            if (updated.pHash != null)
+              await bulkRemoveBlockedImages([updated.pHash], {
+                step: 'appeal-approve',
+                imageIds: [appeal.entityId],
+              });
           }
 
           await queueImageSearchIndexUpdate({

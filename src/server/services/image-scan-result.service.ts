@@ -12,6 +12,8 @@ import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
+import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
+import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -309,8 +311,8 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
-    // The showcase bust runs late in the side effects; a step before it may be what threw.
-    if (image.postId) await bustPostCaches(image.postId);
+    // Backstop: the in-pipeline showcase bust may not have run if an earlier step threw.
+    if (image.postId) await bustPostCachesLazy(image.postId);
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
@@ -445,7 +447,8 @@ export async function blockImageFromRating({
   pHash?: bigint;
   blockedReason?: string | null;
 }) {
-  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it.
+  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it. The block outlives an
+  // account restore: the grace-block breadcrumbs go in the same write.
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -456,7 +459,8 @@ export async function blockImageFromRating({
       "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
     blockedReason === undefined
   }
-        THEN "blockedFor" ELSE ${blockedReason ?? null} END
+        THEN "blockedFor" ELSE ${blockedReason ?? null} END,
+      "metadata" = ${withoutGraceMarkersSql()}
     WHERE id = ${imageId}
   `;
 }
@@ -468,17 +472,7 @@ async function bustPostOfImage(imageId: number) {
       where: { id: imageId },
       select: { postId: true },
     });
-    if (row?.postId) await bustPostCaches(row.postId);
-  } catch (error) {
-    handleLogError(error as Error);
-  }
-}
-
-/** Never throws. Call-site import: post.service loads most of the server, which this handler's tests stub. */
-async function bustPostCaches(postId: number) {
-  try {
-    const { bustCachesForPosts } = await import('~/server/services/post.service');
-    await bustCachesForPosts(postId);
+    if (row?.postId) await bustPostCachesLazy(row.postId);
   } catch (error) {
     handleLogError(error as Error);
   }

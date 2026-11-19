@@ -10,9 +10,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
     hiddenTags: [],
   }),
 }));
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
 
 import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
 import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-gated-images.service';

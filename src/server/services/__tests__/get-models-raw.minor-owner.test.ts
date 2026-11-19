@@ -71,3 +71,41 @@ describe('getModelsRaw minor exclusion', () => {
     expect(await exemptedIdFor(undefined, 'owner')).toBeNull();
   });
 });
+
+describe('getModelsRaw availability=Private', () => {
+  const MODERATOR = 5500;
+  async function privateListing(viewer: { id: number; isModerator?: boolean } | undefined) {
+    capturedQueries.length = 0;
+    dbMock.dbRead.user.findUnique.mockResolvedValueOnce({ id: OWNER } as never);
+    return getModelsRaw({
+      input: { browsingLevel: 1, take: 10, availability: 'Private', username: 'owner' } as never,
+      user: viewer ? ({ isModerator: false, ...viewer } as never) : undefined,
+    }).then(
+      () => {
+        const [query] = capturedQueries;
+        expect(query.text).toMatch(/"availability" = \$\d+::"Availability"/);
+        expect(query.values).toContain('Private');
+        return 'listed';
+      },
+      (error: { code?: string }) => error.code ?? 'error'
+    );
+  }
+
+  it('refuses a signed-out viewer', async () => {
+    expect(await privateListing(undefined)).toBe('UNAUTHORIZED');
+    expect(capturedQueries).toHaveLength(0);
+  });
+
+  it('refuses a signed-in viewer who is not the owner', async () => {
+    expect(await privateListing({ id: STRANGER })).toBe('UNAUTHORIZED');
+    expect(capturedQueries).toHaveLength(0);
+  });
+
+  it("lists the owner's own", async () => {
+    expect(await privateListing({ id: OWNER })).toBe('listed');
+  });
+
+  it('lists them for a moderator', async () => {
+    expect(await privateListing({ id: MODERATOR, isModerator: true })).toBe('listed');
+  });
+});

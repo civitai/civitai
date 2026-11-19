@@ -30,6 +30,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // Enabled: every non-moderator semantic search is held at the safe levels (the containment
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
+  // Evaluated per viewer (user id): segment rollouts only, never a percentage (threshold) rollout.
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
   // On: semantic searches send the search service the request id and the viewer's levels and
   // moderator status, and key the candidate cache on the guard's mode and version. Create the key
@@ -232,6 +233,8 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
+  MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -363,6 +366,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
   // either can be thrown without the other.
   POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
+  // Lets the hourly CSAM blocklist self-heal write. DEFAULT-OFF: while off (or Flipt is
+  // unreachable) each run logs its counts and writes nothing.
+  CSAM_BLOCKLIST_SELF_HEAL = 'csam-blocklist-self-heal',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
@@ -398,7 +404,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // document `pending`, and every read of that app's shared documents by anyone but their author
   // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
   // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
-  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  // above (entityId = the app block id, NO context). Off when the key reads `false`, but 🔴 NOT
+  // default-off: read with `readFliptBoolean`, an UNREADABLE flag (Flipt unreachable with no
+  // snapshot, or a missing key) counts as ON, so levels fail closed (`isSharedDocLevelsOn`). The key
+  // must exist in flag state (enabled: false) before the code that reads it serves traffic.
   APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
@@ -440,8 +449,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
-  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
-  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  // App Block host media serving, per viewer. See `decideBlockMediaServing` in
+  // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
@@ -452,6 +461,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Arms the nightly Hot rank snapshot into ClickHouse. A missing key reads as off; add the key ON
+  // only after the snapshot tables exist.
+  MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
+  // On: the message-as-civitai, headless-post and Stripe AIR idempotency keys are claimed in the
+  // Postgres `IdempotencyKey` table (still written to sysRedis too), so a sysRedis eviction cannot
+  // repeat a DM, a post or an AIR notice. Off, missing, or Flipt unreachable: sysRedis only, as
+  // before. Create the key DISABLED before the deploy (a missing key logs on every eval), and turn it
+  // on only after the hand-applied `20271119120000_idempotency_key` migration: with it on and the
+  // table missing, those three paths refuse (`idempotency-key.service.ts`).
+  IDEMPOTENCY_KEYS_PG = 'idempotency-keys-pg',
   // Lets the auto-feature job top up the Featured Images collection from the featured
   // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
   // so the homepage cannot change until both are deliberately turned on.
@@ -462,6 +481,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  /** Turns on the deal-file retention sweep; off, or missing, it marks nothing for deletion. */
+  SERVICE_DEAL_FILE_RETENTION = 'service-deal-file-retention',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
   // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
@@ -677,6 +698,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
   // flag matches nobody.
   TRAINING_STUDIO = 'trainingStudio',
+  // The Training Studio's v2 dataset rating (apps/training-studio/src/lib/server/dataset-rating.ts), a
+  // variant flag: a mature-level variant (s1-s4) is on; off, no match or unknown is off.
+  TRAINING_STUDIO_DATASET_RATING_V2 = 'trainingStudioDatasetRatingV2',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
   // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or
@@ -752,8 +776,14 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The off switch for the deal-file retention sweep, which deletes user files: a flip must reach
+  // the next run.
+  FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
+  // Evaluated once per user in a pass over every user, each entity once a week: cached entries
+  // would never be read again and would push out the ones that are.
+  FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.
@@ -768,9 +798,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //   1. Duplicated work per pod — two wasm engines and two 60s config polls.
 //   2. Any reader that closes over "the" client sees ONE of the two. That is
 //      exactly how `civitai_app_heavy_bulkhead_active`/`_rejects` emitted zero
-//      series for 74 days while looking registered, deployed and healthy (#4173),
-//      and it is why `src/server/utils/request-bulkhead.ts` is enrolled in
-//      scripts/server-graph-watchlist.mjs. `getFliptCacheStats` below is precisely
+//      series for 74 days while looking registered, deployed and healthy (#4173).
+//      `getFliptCacheStats` below is precisely
 //      such a reader, so an unpinned client would make the eval-cache metrics a
 //      confident half-measurement — worse than their absence, because the number
 //      they exist to arbitrate (TTL-bound vs capacity-bound) is biased by the
@@ -778,13 +807,7 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //      far less than one cache holding all of it, which reads as "TTL-bound" and
 //      sends you to the knob that changes nothing.
 //
-// Enrolled as SHARED_STATE on `__civitaiFliptClient` in server-graph-watchlist.mjs,
-// so a future refactor that drops this pin fails that gate. Vitest cannot see this
-// (it loads each module once).
-// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this EXACT shape
-// against comment-stripped source, so an aliased handle
-// (`const g = globalThis as …; g.__civitaiFliptClient ??= …`) does NOT satisfy it —
-// the gate must be able to recognise the pin inside a bundled chunk. `??=`
+// Vitest cannot see a dropped pin (it loads each module once). `??=`
 // specifically, not `=`: `=` makes the second copy REPLACE the first's client
 // instead of adopting it, which is the original bug in one character.
 declare global {
@@ -832,6 +855,9 @@ export const getFliptVariant = flipt.getVariant;
 export const getFliptVariantDetailSync = flipt.getVariantDetailSync;
 export const getFliptBoolean = flipt.getBoolean;
 export const isFliptSync = flipt.isEnabledSync;
+// `null` when the flag could not be read (Flipt unreachable with no snapshot, or an unknown key),
+// for a gate that must fail CLOSED; `isFlipt` answers `false` for both. Honors local overrides.
+export const readFliptBoolean = flipt.readBoolean;
 export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.

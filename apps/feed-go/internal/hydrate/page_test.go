@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -397,6 +398,82 @@ func TestPageNoEventsNoCosmeticsIsOnePipeline(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Page differs from the per-lookup answer:\n got %#v\nwant %#v", got, want)
+	}
+}
+
+// Without the 'cosmetics' include (image.getInfinite's `include: []`), neither the user-cosmetics
+// nor the frames cache is read, no cosmetic record is (stage 2), no cosmetic lookup runs on the
+// replica, both maps are empty, and every other lookup answers as the full page.
+func TestPageWithoutCosmetics(t *testing.T) {
+	f := basePageFixture(t)
+	s, r, db := f.load()
+	keys := recordKeys(r)
+	req := pageRequest()
+	req.NoCosmetics = true
+	got, err := s.Page(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserCosmetics == nil || len(got.UserCosmetics) != 0 || got.Frames == nil || len(got.Frames) != 0 {
+		t.Fatalf("UserCosmetics %#v, Frames %#v; want two empty maps", got.UserCosmetics, got.Frames)
+	}
+	// Exact key shapes: KeyCosmetics is also a prefix of the event-decoration key
+	// (`cosmetics2:event:v2:Image:<id>`), which this page still reads.
+	cosmeticRecord := regexp.MustCompile(`^` + regexp.QuoteMeta(pageNS+KeyCosmetics) + `:\d+$`)
+	for _, k := range keys() {
+		if strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k) {
+			t.Errorf("a cosmetic key was read: %s", k)
+		}
+	}
+	// Control: the matcher sees each of the three shapes, and not the decoration key.
+	for k, want := range map[string]bool{
+		pageNS + KeyUserCosmetics + ":1001": true, pageNS + KeyImageFrames + ":11": true, pageNS + KeyCosmetics + ":501": true,
+		pageNS + KeyImageEvents + ":11": false,
+	} {
+		got := strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k)
+		if got != want {
+			t.Fatalf("matcher control: %s matched %v, want %v", k, got, want)
+		}
+	}
+	for _, c := range db.Calls {
+		if strings.Contains(c, `"UserCosmetic"`) || strings.Contains(c, `FROM "Cosmetic"`) {
+			t.Fatalf("a cosmetic replica query ran: %s", c)
+		}
+	}
+	// Positive control: the full page reads both caches and their cosmetic records, and answers some.
+	s2, r2, _ := basePageFixture(t).load()
+	keys2 := recordKeys(r2)
+	full, err := s2.Page(context.Background(), pageRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullRead := strings.Join(keys2(), " ")
+	for _, k := range []string{pageNS + KeyUserCosmetics + ":1001", pageNS + KeyImageFrames + ":11", pageNS + KeyCosmetics + ":501"} {
+		if !strings.Contains(fullRead, k) {
+			t.Fatalf("control: the full page never read %s: %s", k, fullRead)
+		}
+	}
+	if len(full.UserCosmetics) == 0 || len(full.Frames) == 0 {
+		t.Fatalf("control: the full page answered user cosmetics %v and frames %v", full.UserCosmetics, full.Frames)
+	}
+	got.UserCosmetics, got.Frames, full.UserCosmetics, full.Frames = nil, nil, nil, nil
+	if !reflect.DeepEqual(got, full) {
+		t.Fatalf("the rest of the page differs:\n got %#v\nwant %#v", got, full)
+	}
+
+	// The probe's seam: Presence reads exactly the keys Page reads for this request, and reports no
+	// cosmetic cache (the full fixture misses three cosmetic records, which this page never names).
+	s3, r3, _ := basePageFixture(t).load()
+	presenceKeys := recordKeys(r3)
+	misses, err := s3.Presence(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := presenceKeys(), keys(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Presence read\n  %v\nPage read\n  %v", got, want)
+	}
+	if want := map[string]int{CacheBasicUsers: 1, CacheProfilePictures: 1, CacheThumbnails: 1}; !reflect.DeepEqual(misses, want) {
+		t.Fatalf("misses %v, want %v", misses, want)
 	}
 }
 

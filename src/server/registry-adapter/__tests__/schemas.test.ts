@@ -163,9 +163,13 @@ describe('the schemas of our own entities', () => {
     ['on', SWITCH_ON],
     ['off', APP_STORAGE_ENABLED_FEATURES],
   ])(
-    '🔴 every app, release and runtime entity validates against the schema it claims (switch %s)',
+    '🔴 every app, release, runtime and app search entity validates against the schema it claims (switch %s)',
     (_name, features) => {
-      const sets = buildEntities(CATALOG, { baseUrl: 'https://site.example', features });
+      const sets = buildEntities(CATALOG, {
+        baseUrl: 'https://site.example',
+        appSearchUrl: 'https://search.invalid/search',
+        features,
+      });
       const schemaOf = compiled(sets);
       const checked: string[] = [];
       const failures: unknown[] = [];
@@ -185,9 +189,30 @@ describe('the schemas of our own entities', () => {
         'urn:apps.civitai.com:app/orbit-notes@1.0.0',
         'urn:apps.civitai.com:app/orbit-notes@1.1.0',
         'urn:apps.civitai.com:runtime/iframe@1',
+        'urn:apps.civitai.com:service/app-search@1',
       ]);
     }
   );
+
+  it('the app search entity fills every field a service body can carry, and the schema can refuse it', () => {
+    const sets = buildEntities([], {
+      baseUrl: 'https://site.example',
+      appSearchUrl: 'https://search.invalid/search',
+    });
+    const validate = compiled(sets)(SERVICE_SCHEMA);
+    const search = (sets.get(SERVICE_SCHEMA) ?? []).find(
+      (e) => e.urn === 'urn:apps.civitai.com:service/app-search@1'
+    );
+    const body = search!.body as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(
+      ['description', 'endpoint', 'kind', 'name', 'parameters', 'reads'].sort()
+    );
+    expect(validate(body)).toBe(true);
+    // Negative controls: a missing endpoint and a non-string parameter are refused.
+    const { endpoint: _dropped, ...noEndpoint } = body;
+    expect(validate(noEndpoint)).toBe(false);
+    expect(validate({ ...body, parameters: { limit: 20 } })).toBe(false);
+  });
 
   // Coverage of the check above: a body field the catalog never fills is never validated. This
   // pins that the catalog fills every optional field the bodies have today.

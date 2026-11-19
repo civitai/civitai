@@ -1,5 +1,6 @@
 import { Anchor, Button, Group, Text } from '@mantine/core';
 import { IconBarbell, IconSparkles } from '@tabler/icons-react';
+import { NextLink } from '~/components/NextLink/NextLink';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -150,8 +151,34 @@ export function StudioOnlyModelsNotice() {
   );
 }
 
-export function SwitchToClassicTrainerAlert({ destination }: { destination: string }) {
+export function SwitchToClassicTrainerAlert({
+  destination,
+  pastRunsUrl,
+}: {
+  destination: string;
+  /** The user's classic-trainer runs, where their drafts can still be published. */
+  pastRunsUrl?: string;
+}) {
   const { switchTo, switching } = useTrainingStudioSwitch();
+  const { classicTrainerOff } = useFeatureFlags();
+  if (classicTrainerOff)
+    return pastRunsUrl ? (
+      <AlertWithIcon
+        icon={<IconBarbell size={16} />}
+        iconColor="blue"
+        color="blue"
+        size="sm"
+        mb="md"
+      >
+        <Text size="sm">
+          The classic trainer was retired. Models you trained there are still in{' '}
+          <Anchor component={NextLink} href={pastRunsUrl} size="sm">
+            your classic trainings
+          </Anchor>
+          , where you can review and publish them.
+        </Text>
+      </AlertWithIcon>
+    ) : null;
 
   return (
     <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm" mb="md">

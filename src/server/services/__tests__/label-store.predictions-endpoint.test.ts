@@ -176,7 +176,7 @@ describe('who may submit', () => {
   });
 
   it('refuses a grant holder presenting a key that is not full scope', async () => {
-    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1 });
+    bearerSession.mockResolvedValue({ ...fullKey(PIPELINE), tokenScope: TokenScope.Full - 1n });
 
     expect((await call({ predictions: [prediction()] })).status).toBe(403);
     expect(await stored()).toEqual([]);

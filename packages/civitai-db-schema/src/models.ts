@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "ImageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -1750,6 +1750,7 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   tags?: TagsOnImageDetails[];
@@ -2224,6 +2225,7 @@ export interface ApiKey {
   key: string;
   name: string;
   tokenScope: number;
+  tokenScopeWide: bigint | null;
   userId: number;
   user?: User;
   createdAt: Date;
@@ -2246,7 +2248,7 @@ export interface OauthClient {
   redirectUris: string[];
   allowedOrigins: string[];
   grants: string[];
-  allowedScopes: number;
+  allowedScopes: bigint;
   isConfidential: boolean;
   accessMode: string;
   skipConsent: boolean;
@@ -2983,7 +2985,7 @@ export interface OauthConsent {
   user?: User;
   clientId: string;
   client?: OauthClient;
-  scope: number;
+  scope: bigint;
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
@@ -7227,6 +7229,15 @@ export interface ServiceDealEvent {
   createdAt: Date;
 }
 
+export interface ServiceDealFilePurge {
+  id: number;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Date;
+}
+
 export interface ServiceDealFile {
   id: number;
   dealId: number;
@@ -7255,6 +7266,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
   attestedAt: Date | null;
   removedAt: Date | null;
   createdAt: Date;

@@ -5,6 +5,17 @@ import { servableImage } from './servable-image';
 
 /** The moderator-curated collection the original game's rating guide drew its examples from. */
 export const RATING_GUIDE_COLLECTION_ID = 10615797;
+
+/** A database view of that collection's items; it is not in the generated schema. */
+type RatingGuideView = {
+  KnightsRatingGuideItem: {
+    id: number;
+    collectionId: number;
+    imageId: number;
+    status: string;
+    createdAt: Date;
+  };
+};
 export const EXAMPLES_PER_LEVEL = 8;
 const EXAMPLE_WIDTH = 450;
 
@@ -54,7 +65,8 @@ export async function ratingExamples(db: Kysely<DB>, now = Date.now()): Promise<
   if (failedAt !== undefined && now - failedAt < FAILURE_BACKOFF_MS) return held?.examples ?? {};
   try {
     const rows = await db
-      .selectFrom('CollectionItem as ci')
+      .withTables<RatingGuideView>()
+      .selectFrom('KnightsRatingGuideItem as ci')
       .innerJoin('Image as img', 'img.id', 'ci.imageId')
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .select(['img.id', 'img.url', 'img.nsfwLevel', 'img.width', 'img.height'])

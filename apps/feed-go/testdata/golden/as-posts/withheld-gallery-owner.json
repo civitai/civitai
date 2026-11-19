@@ -78,7 +78,7 @@
       },
       "packed": "3gADrGVxdWlwcGVkVG9JZM0g0ahub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -207,6 +207,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6201,
@@ -618,6 +619,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {

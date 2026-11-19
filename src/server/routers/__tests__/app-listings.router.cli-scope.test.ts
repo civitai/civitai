@@ -176,13 +176,13 @@ function authedCtx(userId: number, isModerator = true) {
 
 // A token-authenticated caller (apiKeyId set) carrying `scope`. isModerator stays
 // true so the author gate is satisfied and the ONLY thing under test is the scope gate.
-function tokenCtx(userId: number, scope: number) {
+function tokenCtx(userId: number, scope: bigint) {
   return { ...authedCtx(userId, true), apiKeyId: 999, tokenScope: scope };
 }
 
-const FULL = 33554431; // TokenScope.Full — a Full personal API key
-const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
-const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel = 67108865 — scoped, lacks AppBlocksSubmit
+const FULL = 33554431n; // TokenScope.Full — a Full personal API key
+const CLI = 1n | (1n << 25n) | (1n << 26n); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+const NO_SUBMIT = 1n | (1n << 26n); // UserRead|AppBlocksDevTunnel = 67108865 — scoped, lacks AppBlocksSubmit
 
 // The listing-media authoring procs annotated for CLI reach + a schema-valid input +
 // the service mock each should reach once the scope gate passes.
@@ -278,7 +278,7 @@ beforeEach(() => {
 describe('app-listings CLI scope gate — bitmask sanity', () => {
   it('the hard-coded bitmasks match the enum', () => {
     expect(TokenScope.Full).toBe(FULL);
-    expect(TokenScope.AppBlocksSubmit).toBe(1 << 25);
+    expect(TokenScope.AppBlocksSubmit).toBe(1n << 25n);
     expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
       CLI
     );

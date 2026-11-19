@@ -124,14 +124,17 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/sdk':
         specifier: ^0.24.0
         version: 0.24.0
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
+      '@civitai/storage':
+        specifier: workspace:*
+        version: link:packages/civitai-storage
       '@clavata/sdk':
         specifier: ^0.2.3
         version: 0.2.3
@@ -372,9 +375,6 @@ importers:
       blurhash:
         specifier: ^2.0.4
         version: 2.0.5
-      chalk:
-        specifier: ^5.2.0
-        version: 5.5.0
       chart.js:
         specifier: ^4.4.0
         version: 4.5.0
@@ -639,15 +639,9 @@ importers:
       socket.io-client:
         specifier: ^4.5.4
         version: 4.8.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
-      source-map:
-        specifier: ^0.7.4
-        version: 0.7.6
       sqids:
         specifier: ^0.3.0
         version: 0.3.0
-      stacktrace-parser:
-        specifier: ^0.1.10
-        version: 0.1.11
       standardwebhooks:
         specifier: ^1.1.1
         version: 1.1.1
@@ -965,6 +959,9 @@ importers:
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
@@ -974,6 +971,9 @@ importers:
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
       '@node-oauth/oauth2-server':
         specifier: ^5.3.0
         version: 5.3.0
@@ -1339,8 +1339,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-notifications
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1497,8 +1497,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1623,8 +1623,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1652,6 +1652,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.3.2
@@ -1786,6 +1789,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../civitai-shared
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
@@ -1948,6 +1954,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.490.0
+        version: 3.862.0
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
@@ -2473,6 +2482,7 @@ packages:
   '@civitai/client@0.2.0-beta.98':
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
+    deprecated: Moved to @civitai/orchestration-client. See https://github.com/civitai/civitai-client-javascript#renamed-from-civitaiclient
 
   '@civitai/components-chat@0.35.0':
     resolution: {integrity: sha512-VjOCqSvYBNoKd6A86djpi62GSe8CZcThyJT+HHdFjv0XQSAY/yOIyrrUIBgAMmKcYO2AJj1AW1UGehbg2E5TTA==}
@@ -2520,8 +2530,8 @@ packages:
     peerDependencies:
       next: ^12.1.4 || ^13 || ^14
 
-  '@civitai/orchestration-client@0.2.4':
-    resolution: {integrity: sha512-lzn8T8Z797lxaIP3TAC8M710dYa+++jlBamLKv8PmkHhyGH18x0uGXptasreXP9GdT4C/7wF2Hp3NRu/z6Qu/Q==}
+  '@civitai/orchestration-client@0.2.6':
+    resolution: {integrity: sha512-94iQStA5wOW6dm9sL1TaZiYS8DaWGWb45ACSKUsMvURXqg37aCMaNDggPIlto+eEnQj7ouSYXKlfo8pdRKFbxQ==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/sdk@0.24.0':
@@ -11391,10 +11401,6 @@ packages:
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
-  stacktrace-parser@0.1.11:
-    resolution: {integrity: sha512-WjlahMgHmCJpqzU8bIBy4qtsZdU9lRlcZE3Lvyej6t4tuOuv1vk57OW3MBrj6hXBFx/nNoC9MPMTcr5YA7NQbg==}
-    engines: {node: '>=6'}
-
   standardwebhooks@1.1.1:
     resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
 
@@ -11916,10 +11922,6 @@ packages:
   type-fest@0.20.2:
     resolution: {integrity: sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==}
     engines: {node: '>=10'}
-
-  type-fest@0.7.1:
-    resolution: {integrity: sha512-Ne2YiiGN8bmrmJJEuTWTLJR32nh/JdL1+PSicowtNb0WFpn59GK8/lfD61bVtzguz7b3PBt74nxpv/Pw5po5Rg==}
-    engines: {node: '>=8'}
 
   type-fest@4.41.0:
     resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
@@ -13583,7 +13585,7 @@ snapshots:
       next: 16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
-  '@civitai/orchestration-client@0.2.4':
+  '@civitai/orchestration-client@0.2.6':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -13591,7 +13593,7 @@ snapshots:
 
   '@civitai/sdk@0.24.0':
     dependencies:
-      '@civitai/orchestration-client': 0.2.4
+      '@civitai/orchestration-client': 0.2.6
 
   '@civitai/theme@0.5.2': {}
 
@@ -24100,10 +24102,6 @@ snapshots:
 
   stackback@0.0.2: {}
 
-  stacktrace-parser@0.1.11:
-    dependencies:
-      type-fest: 0.7.1
-
   standardwebhooks@1.1.1:
     dependencies:
       '@stablelib/base64': 1.0.1
@@ -24778,8 +24776,6 @@ snapshots:
       prelude-ls: 1.2.1
 
   type-fest@0.20.2: {}
-
-  type-fest@0.7.1: {}
 
   type-fest@4.41.0: {}
 

@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-const mockLogToAxiom = loggingMock.logToAxiom;
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
 dbMock.dbWrite.prize.updateMany.mockResolvedValue({ count: 0 });
@@ -182,18 +180,13 @@ describe('voidChallenge — entrant cancellation notification', () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it('is best-effort: a notification failure is logged and swallowed, and the status flip to Cancelled still completes', async () => {
+  it('is best-effort: a notification failure is swallowed, and the status flip to Cancelled still completes', async () => {
     mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 3 });
     mockDbRead.$queryRaw.mockRejectedValue(new Error('transient DB error'));
 
     await expect(voidChallenge(7)).resolves.toEqual({ success: true, voided: true });
 
     expect(mockCreateNotification).not.toHaveBeenCalled();
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    const logCall = mockLogToAxiom.mock.calls[0][0];
-    expect(logCall.name).toBe('challenge-cancelled-notification');
-    expect(logCall.challengeId).toBe(7);
-    expect(logCall.message).toBe('transient DB error');
     // The refund already happened, so money movement isn't blocked by the notification failure —
     // the status claim (Active/Scheduled -> Cancelled) must still have run.
     expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledWith({

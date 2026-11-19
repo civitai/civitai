@@ -61,9 +61,9 @@ type PrivacyDefaults struct{ Buzz, Downloads, Generations bool }
 // (users, profile pictures, user cosmetics, model data, model tags, model frames, decorations, the
 // metric-privacy defaults), then one for the records the first stage names (cosmetics for the user
 // cosmetics and the frames, basic tags for the model tags). The replica reads for misses run after,
-// concurrently. With s.Compute the frame and decoration misses are computed (fillModelFrames,
-// fillModelEvents: the image lookups over the models); the other misses that Node fills from the
-// primary or by a lag-aware read fall back (model data, model tags, user cosmetics); the rest are
+// concurrently. With s.Compute the frame, decoration, model-data and model-tags misses are computed
+// (fillModelFrames, fillModelEvents: the image lookups over the models; fillModelData,
+// fillModelTags: the model caches' own lookups); a user-cosmetics miss falls back; the rest are
 // read from the replica as the image feed's are (basic users, profile pictures, cosmetics) or as
 // Node's origin does (tags by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
 func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPage, error) {
@@ -98,7 +98,7 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
-		out.Data, err = s.modelDataFrom(gctx, models, data.Entries(), tags.Entries())
+		out.Data, err = s.modelData(gctx, models, data, tags)
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
@@ -136,7 +136,7 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 	}
 	if miss := Missing(models, frameEntries); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the frame lookup reads the primary.
-		return nil, nil, fallback.Newf("model-frame-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("model-frame-miss", "%d ids", len(miss))
 	}
 	var frameCIDs []int
 	for _, e := range frameEntries {
@@ -175,20 +175,43 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 // s.Compute, fillModelEvents has computed the misses into got first).
 func modelDecorations(ids []int, got map[int]Entry, visible map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, fallback.Newf("model-decoration-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-decoration-miss", "%d ids", len(miss))
 	}
 	return VisibleEventDecorations(ids, got, visible)
 }
 
-// modelDataFrom is dataForModelsCache.fetch with its appendFn: each model's tags are modelTagCache's
-// tag ids that tagCache resolves (`.filter(isDefined)`), in modelTagCache's order; a model the tag
-// cache has no entry for keeps the tags its data entry was written with. A data miss, or a model-tags
-// miss for a model the data cache answered, falls back (Node reads them lag-aware, or from the
-// primary); a basic-tags miss is read from the
+// modelData is dataForModelsCache.fetch: the data misses computed (fillModelData), then the appendFn's
+// modelTagCache.fetch over the models the data cache answered, its misses computed (fillModelTags),
+// then modelDataFrom. Without s.Compute a miss on either falls back there.
+func (s *Sources) modelData(ctx context.Context, models []int, data, tags *PackedRead) (map[int]ModelData, error) {
+	dataGot, dataWritable := data.read()
+	if err := s.fillModelData(ctx, models, dataGot, dataWritable); err != nil {
+		return nil, err
+	}
+	tagGot, tagWritable := tags.read()
+	if miss := Missing(models, dataGot); len(miss) == 0 {
+		var found []int
+		for _, id := range models {
+			if !dataGot[id].NotFound {
+				found = append(found, id)
+			}
+		}
+		if err := s.fillModelTags(ctx, found, tagGot, tagWritable); err != nil {
+			return nil, err
+		}
+	}
+	return s.modelDataFrom(ctx, models, dataGot, tagGot)
+}
+
+// modelDataFrom is dataForModelsCache.fetch with its appendFn over the entries read (and computed):
+// each model's tags are modelTagCache's tag ids that tagCache resolves (`.filter(isDefined)`), in
+// modelTagCache's order; a model the tag cache has no entry for keeps the tags its data entry was
+// written with. A data miss, or a model-tags miss for a model the data cache answered, falls back
+// (only without s.Compute: with it modelData computed them); a basic-tags miss is read from the
 // replica, existence being all that is read of a tag here.
 func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags map[int]Entry) (map[int]ModelData, error) {
 	if miss := Missing(models, data); len(miss) > 0 {
-		return nil, fallback.Newf("model-data-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-data-miss", "%d ids", len(miss))
 	}
 	// The appendFn asks the tag cache for the models the data cache answered only.
 	var found []int
@@ -198,7 +221,7 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 		}
 	}
 	if miss := Missing(found, tags); len(miss) > 0 {
-		return nil, fallback.Newf("model-tags-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-tags-miss", "%d ids", len(miss))
 	}
 	out := make(map[int]ModelData, len(models))
 	tagIDsOf := map[int][]int{}
@@ -366,7 +389,7 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the lookup is lag-aware.
-		return nil, fallback.Newf("model-images-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-images-miss", "%d ids", len(miss))
 	}
 	var imageIDs []int
 	for _, id := range ids {
@@ -447,7 +470,7 @@ func (s *Sources) CreatorMemberships(ctx context.Context, userIDs []int) (map[in
 			if errors.Is(err, redis.Nil) {
 				return nil, fallback.New("membership-miss")
 			}
-			return nil, fallback.Newf("membership-read-failed", "%v", err)
+			return nil, fallback.Wrap("membership-read-failed", err)
 		}
 		v, err := Unpack(raw)
 		if err != nil {

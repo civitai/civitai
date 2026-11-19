@@ -30,7 +30,7 @@ let keys: KeyRow[] = [];
 function add() {
   return addApiKeyHandler({
     ctx: { user: { id: USER_ID, muted: false, mutedAt: null } } as never,
-    input: { name: 'k', tokenScope: 1 } as never,
+    input: { name: 'k', tokenScope: 1n } as never,
   });
 }
 

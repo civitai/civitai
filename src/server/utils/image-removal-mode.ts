@@ -13,3 +13,8 @@ export function imageRemovalMode(removeImages?: boolean): ImageRemovalMode {
  */
 export const PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 export const PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
+/**
+ * The image's `needsReview` before the grace block, which clears every review but 'csam' on the
+ * rows it hides. A row written before this key existed has none, and the restore leaves its flag.
+ */
+export const PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';

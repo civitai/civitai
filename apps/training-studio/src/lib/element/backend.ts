@@ -74,11 +74,11 @@ export interface StudioElementHost {
      *  affordance disables with a membership explanation instead of silently doing nothing. Omit
      *  when the host doesn't know (behaves as before). */
     canGenerateUnpublished?: boolean;
-    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
-     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
-     *  the host doesn't know. */
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, a mature
+     *  run's samples are blurred when Blue paid any of it, and Review says so. Omit when the host
+     *  doesn't know. */
     isPaidMember?: boolean;
-    /** The host's membership-plans page, linked from that explanation. Relative = same-tab
+    /** The host's membership-plans page, linked from the membership explanations. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;
     /** The host's support ticket portal, offered on a run held for review past the raise
@@ -213,6 +213,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     submitTraining: server.submitTraining,
 
     datasetRating: host.studioServer ? server.datasetRating : undefined,
+    pendingLicenses: host.studioServer ? server.pendingLicenses : undefined,
+    acceptLicense: host.studioServer ? server.acceptLicense : undefined,
 
     listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
 
@@ -242,7 +244,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     quoteRun: (input) =>
       input.engine === 'kohya' && !kohyaAllowed()
         ? Promise.reject(new Error(train.KOHYA_UNAVAILABLE))
-        : call((client) => orch.trainingWhatIf(client, input)),
+        : call((client) => orch.trainingPreview(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 

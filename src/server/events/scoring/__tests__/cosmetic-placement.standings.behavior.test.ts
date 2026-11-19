@@ -798,7 +798,8 @@ describe('referee snapshot', () => {
       ALTER TABLE "Image"
         ADD COLUMN "postId" int, ADD COLUMN ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
         ADD COLUMN "tosViolation" boolean DEFAULT false, ADD COLUMN "needsReview" text,
-        ADD COLUMN "nsfwLevel" int DEFAULT 1;
+        ADD COLUMN "nsfwLevel" int DEFAULT 1,
+        ADD COLUMN "modelRestricted" boolean NOT NULL DEFAULT false;
       CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz);
       CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "nsfwLevel" int);
       CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);

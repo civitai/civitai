@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
@@ -96,9 +97,11 @@ export const semanticImageSearchRouter = router({
       const result = await searchSemanticImages({
         input: searched,
         user: ctx.user,
+        ...credentialViews(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
         refuseNarrowing: !!ownImagesOf,
+        tagMatchesFirst: !!ownImagesOf,
       }).catch(async (error) => {
         if (ownImagesOf) await holdOwnImages(started);
         throw error;

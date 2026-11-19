@@ -91,7 +91,7 @@ const tunnel = (host: string) => ({
   spendCapBuzz: 5000,
 });
 const { TokenScope } = await import('~/shared/constants/token-scope.constants');
-const personalKey = (tokenScope: number) => ({
+const personalKey = (tokenScope: bigint) => ({
   apiKeyId: 1,
   apiKeyType: 'User',
   subject: { type: 'apiKey', id: 1 },

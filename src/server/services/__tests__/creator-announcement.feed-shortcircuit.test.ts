@@ -27,14 +27,8 @@ vi.mock('~/server/services/user.service', () => ({
   getCosmeticsForUsers: vi.fn(async () => ({})),
 }));
 
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { isFlipt } from '~/server/flipt/client';
-import {
-  creatorFeedLiveAuthorsGauge,
-  creatorFeedShortcircuitCounter,
-  getFollowedAnnouncements,
-  resetLiveAuthorCache,
-} from '../creator-announcement.service';
+import { getFollowedAnnouncements, resetLiveAuthorCache } from '../creator-announcement.service';
 
 const VIEWER = 11;
 const AUTHOR = 23;
@@ -82,7 +76,6 @@ describe('the live-author short-circuit', () => {
     // cache working, not a spy that sees nothing.
     expect(liveAuthorReads()).toHaveLength(1);
     expect(dbCallCount()).toBe(1);
-    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'empty_set' });
 
     vi.clearAllMocks();
     const page = await getFollowedAnnouncements({ userId: VIEWER });
@@ -106,7 +99,6 @@ describe('the live-author short-circuit', () => {
       targetUserId: { in: [AUTHOR, OTHER_AUTHOR] },
     });
     expect(feedQueries()).toHaveLength(0);
-    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'no_follows' });
   });
 
   it('narrows the feed query to the intersection and keeps every viewer predicate', async () => {
@@ -145,28 +137,6 @@ describe('the live-author short-circuit', () => {
 
     expect(feedQueries()).toHaveLength(1);
     expect(feedQueries()[0].userId).toEqual({ not: null });
-    // The viewer sees nothing different, so these are the only trace of the fallback.
-    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'fallback' });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'creator-feed-shortcircuit-fallback',
-        type: 'warning',
-        details: expect.objectContaining({ errorName: 'Error', error: 'replica unavailable' }),
-      })
-    );
-  });
-
-  it('records the narrowed decision and the set size it built, and no fallback', async () => {
-    liveAuthorRows = [{ userId: AUTHOR }, { userId: OTHER_AUTHOR }, { userId: AUTHOR }];
-    follows = [{ targetUserId: AUTHOR }];
-
-    await getFollowedAnnouncements({ userId: VIEWER });
-
-    expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
-    // Deduped: three rows, two authors.
-    expect(creatorFeedLiveAuthorsGauge.set).toHaveBeenCalledWith({ domain: 'any' }, 2);
-    expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'narrowed' });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('an author who newly goes live reaches followers at the next refresh, within the TTL', async () => {

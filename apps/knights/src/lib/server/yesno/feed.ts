@@ -34,6 +34,7 @@ function unanswered(
     playableItems(db)
       .where('i.questionKey', '=', axis)
       .where('i.minRank', 'in', stages)
+      .where('img.userId', 'is distinct from', userId)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(

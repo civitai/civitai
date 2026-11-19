@@ -1,3 +1,5 @@
+import { credentialViews } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -136,6 +138,7 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
+  const views = credentialViews({ ...getRequestCredential(req), user });
   const {
     limit,
     skip,
@@ -262,6 +265,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     user,
+    ...views,
     disableMinor: true,
     disablePoi: true,
     includeBaseModel: true,
@@ -278,7 +282,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     currentUserId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: views.asModerator,
     disableMinor: true,
     disablePoi: true,
     actor,

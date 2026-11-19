@@ -38,7 +38,8 @@ const SCHEMA = `
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
     "tosViolation" boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
     minor boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
-    "blockedFor" text
+    "blockedFor" text, "hideMeta" boolean NOT NULL DEFAULT false, "userId" int,
+    "modelRestricted" boolean NOT NULL DEFAULT false
   );
   CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished',
     'UnpublishedViolation', 'GatherInterest', 'Deleted');
@@ -176,6 +177,13 @@ describe('getModelShowcaseImages: the version and its model', () => {
     expect(await servedMature()).toEqual([EXCLUDED]);
   });
 
+  it('serves a mature image restricted by its base model only to its uploader', async () => {
+    await harness.pg.exec(`UPDATE "Image" SET "modelRestricted" = true`);
+    expect(await servedMature()).toEqual([]);
+    await harness.pg.exec(`UPDATE "Image" SET "userId" = ${MATURE_VIEWER.userId}`);
+    expect(await servedMature()).toEqual([EXCLUDED]);
+  });
+
   it.each([
     ['a minor model', `UPDATE "Model" SET minor = true`],
     ['a SFW-only model', `UPDATE "Model" SET "sfwOnly" = true`],
@@ -206,5 +214,20 @@ describe('getModelShowcaseImages: the version and its model', () => {
   it('serves nothing for a version that does not exist', async () => {
     await harness.pg.exec(`DELETE FROM "ModelVersion"`);
     expect(await servedMature()).toEqual([]);
+  });
+});
+
+describe('getModelShowcaseImages: generation data', () => {
+  it('sends no prompt or seed for an image whose owner hid them, and keeps them on the rest', async () => {
+    const HIDDEN = 2;
+    await image(CLEAN, PUBLISHED, null);
+    await image(HIDDEN, PUBLISHED, null);
+    await harness.pg.exec(`
+      UPDATE "Image" SET meta = '{"prompt": "a red fox", "seed": 42}';
+      UPDATE "Image" SET "hideMeta" = true WHERE id = ${HIDDEN};
+    `);
+    const byId = new Map((await getModelShowcaseImages(VERSION)).map((i) => [i.id, i]));
+    expect(byId.get(HIDDEN)).toMatchObject({ prompt: null, seed: null });
+    expect(byId.get(CLEAN)).toMatchObject({ prompt: 'a red fox', seed: 42 });
   });
 });

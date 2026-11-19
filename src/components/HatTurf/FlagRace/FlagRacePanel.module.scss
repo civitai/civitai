@@ -5,7 +5,7 @@
   border-radius: 18px;
   grid-template-columns: minmax(0, 1fr);
 
-  @container (min-width: 1100px) {
+  @container (min-width: 1200px) {
     grid-template-columns: 300px minmax(0, 1fr);
   }
 }
@@ -55,7 +55,7 @@
   object-position: 85% 45%;
   mask-image: linear-gradient(90deg, transparent, #000 45%);
 
-  @container (min-width: 1100px) {
+  @container (min-width: 1200px) {
     left: -16px;
     top: -16px;
     width: calc(100% + 34px);
@@ -68,7 +68,7 @@
 }
 
 .artSpace {
-  @container (min-width: 1100px) {
+  @container (min-width: 1200px) {
     height: 104px;
   }
 }
@@ -80,7 +80,7 @@
   font-weight: 800;
   line-height: 1.1;
 
-  @container (min-width: 1100px) {
+  @container (min-width: 1200px) {
     font-size: 26px;
   }
 }
@@ -95,7 +95,7 @@
     color: #ffd43b;
   }
 
-  @container (min-width: 1100px) {
+  @container (min-width: 1200px) {
     font-size: 15px;
   }
 }
@@ -145,6 +145,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: none;
   margin-top: 12px;
   border-radius: 12px;
   padding: 8px;
@@ -164,8 +165,113 @@
     font-size: 11px;
     color: #5c5f66;
   }
+
+  // On a phone and side by side it follows the flags held; stacked but wide, it sits beside the title.
+  order: 1;
+
+  @container (min-width: 640px) and (max-width: 1199px) {
+    order: 0;
+    flex: 0 0 280px;
+    margin-top: 0;
+  }
+
+  @container (min-width: 1200px) {
+    flex: none;
+    margin: auto 0 0;
+  }
 }
 
 .wrap {
   container-type: inline-size;
+}
+
+// Stacked (under 1200px): one wrapping bar of the clock, the points and the flags held, so a wide
+// stacked panel fills its width. Side by side, the bar's children are the panel's own.
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  margin-top: 10px;
+
+  @container (min-width: 1200px) {
+    display: contents;
+  }
+}
+
+.pills {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+
+  @container (min-width: 1200px) {
+    flex-direction: column;
+    align-items: flex-start;
+    margin-top: 10px;
+  }
+}
+
+.held {
+  position: relative;
+
+  @container (min-width: 640px) and (max-width: 1199px) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+
+    .label {
+      margin: 0;
+    }
+  }
+}
+
+.steps {
+  display: grid;
+  gap: 8px;
+
+  @container (min-width: 640px) and (max-width: 1199px) {
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 24px;
+  }
+}
+
+// Side by side, the way in sits at the bottom, at least this far below what comes before it.
+.howto,
+.bar:last-child .held {
+  @container (min-width: 1200px) {
+    margin-bottom: 12px;
+  }
+}
+
+// The title and the way in: a row only when stacked but wide. Elsewhere their children are the
+// panel's own, so the way in can come after the flags held.
+.head,
+.titles {
+  display: contents;
+}
+
+.head {
+  @container (min-width: 640px) and (max-width: 1199px) {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+}
+
+.titles {
+  @container (min-width: 640px) and (max-width: 1199px) {
+    display: block;
+  }
+}
+
+// On a phone the how-it-works box comes after the way in.
+.howto {
+  @container (max-width: 639px) {
+    order: 2;
+  }
 }

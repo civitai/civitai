@@ -14,6 +14,7 @@ import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
 import type { MembershipCodeTier } from '$lib/membership-code';
+import type { PayoutReviewAction } from '$lib/payout-review';
 import type {
   MembershipCancelPreview,
   MembershipCancelResult,
@@ -297,6 +298,9 @@ export type ModEndpoint =
   | 'strike/create'
   | 'strike/void'
   | 'text-scan'
+  | 'text-scan/csam-hold/refer'
+  | 'text-scan/csam-hold/mark-reported'
+  | 'text-scan/csam-hold/set-report-choice'
   | 'text-scan/csam-hold/resolve'
   | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
@@ -341,7 +345,8 @@ export type ModReadEndpoint =
   | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
   | 'user/membership-resync-preview'
-  | 'user/reactions';
+  | 'user/reactions'
+  | 'whoami';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (
@@ -357,6 +362,25 @@ export const readModEndpoint = (
     label,
     auth: 'session',
     timeoutMs,
+  });
+
+/** The pre-payout review's decision route. It is a session `ModEndpoint` under `/api/admin/`, which
+ *  `callModEndpoint` cannot reach; it checks the row's `version` and records the session user. */
+export const decidePayoutReview = (body: {
+  id: number;
+  userId: number;
+  period: string;
+  action: PayoutReviewAction;
+  version: number;
+  note: string;
+  askRef?: string;
+}): Promise<JsonResult> =>
+  postJson({
+    path: '/api/admin/creator-program-payout-review',
+    body,
+    label: 'Payout review decision',
+    auth: 'session',
+    timeoutMs: 30_000,
   });
 
 /** `callModEndpoint` for work that outlives its request, with a cookie read earlier by `requestCookie`. */

@@ -70,7 +70,8 @@ var goldenProbeCases = []goldenProbeCase{
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
 		[]string{hydrate.CacheMetrics}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics, CacheModelData}, []string{CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs}, false},
+		[]string{hydrate.CacheUserCosmetics}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
+			CacheOfficialModels}, false},
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -207,6 +208,9 @@ var goldenPerIDKey = regexp.MustCompile(`^(.*):(\d+)$`)
 func goldenKeyCache(key string) string {
 	if key == feed.BlockedTagsKey {
 		return CacheBlockedTags
+	}
+	if key == hydrate.KeyOfficialModels {
+		return CacheOfficialModels
 	}
 	m := goldenPerIDKey.FindStringSubmatch(key)
 	if m == nil {

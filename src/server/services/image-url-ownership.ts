@@ -1,3 +1,4 @@
+import { storedKeySql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { NextApiResponse } from 'next';
@@ -39,8 +40,13 @@ const SCHEME = /^[\x00-\x20]*([a-z][a-z0-9+.-]*):/i;
  * before its upload finishes. It names no stored object, so it holds no upload key.
  */
 export function isUnfinishedUploadUrl(url: string | null | undefined) {
-  const scheme = url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
+  const scheme = urlScheme(url);
   return !!scheme && scheme !== 'http' && scheme !== 'https';
+}
+
+/** The url's scheme, lowercased, as a url parser reads it; undefined for a relative url or key. */
+export function urlScheme(url: string | null | undefined) {
+  return url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
 }
 
 /** Refuses a save holding an image url that names no stored object. */
@@ -69,9 +75,10 @@ export type DecodeBudget = { left: number };
 
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
- * on its own.
+ * on its own, with the characters a url parser drops (tab, CR, LF) removed. Shared with the
+ * content-level rater's image-url scan (`doc-rating-media.ts`).
  */
-function decodedForms(value: string, budget?: DecodeBudget) {
+export function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
@@ -163,15 +170,8 @@ export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] 
   return [...new Set(keysInForms(forms))];
 }
 
-/**
- * The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url: shop
- * columns hold whatever the client sent. 🔴 Must match the expression indexes in migration
- * `20261211120000_shop_artwork_key_indexes` exactly, or every image create scans these tables.
- */
-export const keyIn = (column: string) =>
-  Prisma.raw(
-    `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
-  );
+/** The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url. */
+export const keyIn = (column: string) => Prisma.raw(storedKeySql(column));
 
 /** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
 const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;

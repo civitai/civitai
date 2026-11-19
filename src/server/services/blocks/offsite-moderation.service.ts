@@ -36,6 +36,12 @@ import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/a
 import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
 import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
 import {
+  forgetRevokedAppTokens,
+  lockAppBlockClientRows,
+  revokeAppBlockOauthTokens,
+  type RevokedAppTokens,
+} from '~/server/services/blocks/app-block-token-revoke.service';
+import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
   resolveListingRatingFloorInTx,
@@ -556,14 +562,22 @@ async function flipBackingBlockStatus(
     to: string;
     /** The owner, not a moderator, is restoring: refusals must not reveal moderation state. */
     ownerFacing?: boolean;
+    /** A suspension puts the tokens it revoked here, for the caller's post-commit cleanup. */
+    revoked?: { value: RevokedAppTokens | null };
   }
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
   if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId, opts.ownerFacing);
+  if (opts.to === 'suspended') await lockAppBlockClientRows(tx, opts.appBlockId);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
+  // On a 0-count too: an already-suspended block keeps no tokens. The helper checks the status.
+  if (opts.to === 'suspended') {
+    const revoked = await revokeAppBlockOauthTokens(tx, opts.appBlockId);
+    if (opts.revoked) opts.revoked.value = revoked;
+  }
   return flip.count > 0;
 }
 
@@ -666,6 +680,7 @@ export async function delistListing(opts: {
   const isOnsite = listing.kind === 'onsite';
   const eventId = newAppListingModerationEventId();
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     // Allow approved → removed AND removed → removed (the enforced-takedown lock). The
     // idempotent removed→removed write keeps status `removed` but still counts (1 row),
@@ -693,6 +708,7 @@ export async function delistListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
     await tx.appListingModerationEvent.create({
       data: {
@@ -741,6 +757,7 @@ export async function delistListing(opts: {
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }
@@ -1656,6 +1673,7 @@ export async function resetOnsiteListingToPending(opts: {
   const eventId = newAppListingModerationEventId();
   const publishRequestId = `pubreq_${newUlid()}`;
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   try {
     await dbWrite.$transaction(async (tx) => {
       // (1) guard-flip listing approved → pending (onsite + status-guarded TOCTOU).
@@ -1678,6 +1696,7 @@ export async function resetOnsiteListingToPending(opts: {
         appBlockId,
         from: 'approved',
         to: 'suspended',
+        revoked,
       });
 
       // (3) re-enter the review queue: clone the latest approved request into a FRESH
@@ -1762,6 +1781,7 @@ export async function resetOnsiteListingToPending(opts: {
   await bustAppListingCatalogCache().catch(() => undefined);
   // The re-approval publishes again; until then the subdomain must not serve the old version.
   const live = await takeDownLiveAppAfterCommit(listing.slug);
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'pending', publishRequestId, ...live };
 }
@@ -1859,6 +1879,7 @@ export async function unpublishOwnListing(opts: {
   // The on-site slug, for the post-commit live unpublish (set only once the tx authorized it).
   let onsiteSlug: string | null = null;
 
+  const revoked: { value: RevokedAppTokens | null } = { value: null };
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'approved') {
@@ -1884,6 +1905,7 @@ export async function unpublishOwnListing(opts: {
       appBlockId: listing.appBlockId,
       from: 'approved',
       to: 'suspended',
+      revoked,
     });
     if (isOnsite && listing.appBlockId) onsiteSlug = listing.slug;
     // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
@@ -1921,6 +1943,7 @@ export async function unpublishOwnListing(opts: {
   // Widened back from the closure assignment (TypeScript cannot see through it).
   const slugToTakeDown = onsiteSlug as string | null;
   const live = slugToTakeDown ? await takeDownLiveAppAfterCommit(slugToTakeDown) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }

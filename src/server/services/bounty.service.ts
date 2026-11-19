@@ -11,7 +11,6 @@ import {
   BountyEntryMode,
   Currency,
   EntityType,
-  ImageIngestionStatus,
   JobQueueType,
   MetricTimeframe,
   TagTarget,
@@ -82,6 +81,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -962,6 +962,14 @@ export const upsertBounty = async ({
   }
 };
 
+const autoNsfwBountySelect = {
+  name: true,
+  nsfw: true,
+  moderatorNsfwLevel: true,
+  lockedProperties: true,
+  details: true,
+} satisfies Prisma.BountySelect;
+
 /**
  * The one path for "a bounty's description changed", for a caller holding only new HTML — the
  * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
@@ -990,16 +998,7 @@ export async function applyBountyContentChange({
   // catch it — same reason `applyArticleContentChange` re-checks.
   await throwOnBlockedUserContent(description, { surface: 'bounty' });
 
-  const stored = await dbWrite.bounty.findUnique({
-    where: { id },
-    select: {
-      name: true,
-      nsfw: true,
-      moderatorNsfwLevel: true,
-      lockedProperties: true,
-      details: true,
-    },
-  });
+  const stored = await dbWrite.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
   if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
 
   // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
@@ -1021,31 +1020,39 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
-  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
-    ? evaluateAutoNsfw({
-        name: stored.name,
-        description,
-        alreadyNsfw: stored.nsfw,
-        lockedProperties: stored.lockedProperties,
-      })
-    : null;
-  if (flagged) {
-    const details = {
-      ...((stored.details as MixedObject | null) ?? {}),
-      ...flagged.metaPatch,
-    } as Prisma.InputJsonObject;
-    // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
-    // the jsonb + text[] binds is where that trade stops being worth it.
+  const evaluate = (row: typeof stored) =>
+    evaluateAutoNsfw({
+      name: row.name,
+      description,
+      alreadyNsfw: row.nsfw,
+      lockedProperties: row.lockedProperties,
+    });
+  // The unlocked read only decides whether to open the transaction; the write is decided again
+  // under the row lock, as `updateBountyById` does, so a moderator rating written in between is
+  // not lowered to R by the stale-rating raise.
+  const flaggedNsfw =
+    (await legacyProfanityAutoNsfwApplies('Bounty', id)) &&
+    !!evaluate(stored) &&
     // One transaction with the retry job: the next fan-out pass sees nsfw already set and would
     // never recompute a stored level left stale by a failed enqueue.
-    await dbWrite.$transaction(async (tx) => {
+    (await dbWrite.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
+      const current = await tx.bounty.findUnique({ where: { id }, select: autoNsfwBountySelect });
+      const flagged = current && evaluate(current);
+      if (!flagged) return false;
+      const details = {
+        ...((current.details as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and
+      // hand-rolling the jsonb + text[] binds is where that trade stops being worth it.
       await tx.bounty.update({
         where: { id },
         data: flagged.lock
           ? {
               nsfw: true,
-              ...staleRatingRaise(stored, true),
-              lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
+              ...staleRatingRaise(current, true),
+              lockedProperties: uniq([...current.lockedProperties, 'nsfw']),
               details,
             }
           : { details },
@@ -1055,13 +1062,13 @@ export async function applyBountyContentChange({
           [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
           tx
         );
-    });
-    // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
-    if (flagged.lock)
-      await updateBountyNsfwLevels([id]).catch((e) =>
-        handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
-      );
-  }
+      return flagged.lock;
+    }));
+  // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
+  if (flaggedNsfw)
+    await updateBountyNsfwLevels([id]).catch((e) =>
+      handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
+    );
 
   await queueBountySearchIndexUpdate(id);
   scanEntityInBackground({ entityType: 'Bounty', entityId: id });
@@ -1221,23 +1228,38 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
+/** The ids of the bounties' images the viewer may see, by the entity image rules. */
+async function getVisibleBountyImageIds({
+  bountyIds,
+  userId,
+  isModerator,
+}: {
+  bountyIds: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  if (bountyIds.length === 0) return [];
+  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ic."imageId"
+    FROM "ImageConnection" ic
+    JOIN "Image" i ON i.id = ic."imageId"
+    WHERE ic."entityType" = 'Bounty'
+      AND ic."entityId" IN (${Prisma.join(bountyIds)})
+      ${AND.length ? Prisma.sql`AND ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
+  `;
+  return rows.map(({ imageId }) => imageId);
+}
+
 export const getBountyImages = async ({
   id,
   userId,
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-
-  if (userId) imageOr.push({ userId });
+  const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: 'Bounty',
-      image: { OR: imageOr },
-    },
+    where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
@@ -1379,17 +1401,10 @@ export const getImagesForBounties = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-  if (userId) imageOr.push({ userId });
+  const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityType: 'Bounty',
-      entityId: { in: bountyIds },
-      image: { OR: imageOr },
-    },
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
       image: { select: { ...imageSelect, poi: true, minor: true } },

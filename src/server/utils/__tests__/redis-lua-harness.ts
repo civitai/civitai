@@ -407,3 +407,15 @@ function toRedisReply(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * A stand-in for `HINCRBY key field 1` that hands out `next()` instead of counting, and stores it in
+ * `lua`'s hash as the real command would, so a script that reads the field back sees the counter.
+ */
+export function hashTicketFrom(lua: LuaRedis, next: () => number) {
+  return async (key: string, field: string) => {
+    const ticket = next();
+    lua.setHash(key, { ...(lua.hash(key) ?? {}), [field]: String(ticket) });
+    return ticket;
+  };
+}

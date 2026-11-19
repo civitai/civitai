@@ -37,7 +37,7 @@ describe('bounties search index transformData', () => {
 describe('bounties search index images', () => {
   const CHILD_TAG = childBrowsingTagIds[0];
   const OTHER_TAG = 999001;
-  const withImages = (images: { id: number; nsfwLevel: number }[]) =>
+  const withImages = (images: { id: number; nsfwLevel: number; minor?: boolean }[]) =>
     ({ ...(bounty({}) as object), images } as never);
   const tag = (imageId: number, tagId: number) => ({ imageId, tagId, tag: { name: 't' } });
 
@@ -55,6 +55,23 @@ describe('bounties search index images', () => {
     });
 
     expect(record.images.map((i: { id: number }) => i.id)).toEqual([11, 12]);
+  });
+
+  it('🔴 leaves out a restricted minor image, without the flag on the rest', async () => {
+    const [record] = await transformData({
+      bounties: [
+        withImages([
+          { id: 10, nsfwLevel: NsfwLevel.R, minor: true },
+          { id: 11, nsfwLevel: NsfwLevel.PG13, minor: true },
+          { id: 12, nsfwLevel: NsfwLevel.R, minor: false },
+        ]),
+      ],
+      imageTags: [],
+      profilePictures: [],
+    });
+
+    expect(record.images.map((i: { id: number }) => i.id)).toEqual([11, 12]);
+    expect(record.images[0]).not.toHaveProperty('minor');
   });
 
   it('counts every image of a bounty marked nsfw as mature, as the feed does', async () => {

@@ -37,7 +37,7 @@ export default defineModeratorEndpoint('textScan.harness', {
     'putPrompt for label:model-com-face-intent also requires textScanPromptPublishIntent, unless the content is exactly an earlier version by a current holder that no later stamped note revokes (a restore). A holder retires a version with revokes:<id> in a later note, saved stamped as holder-revokes:<id>; the stamp outlives the grant of whoever wrote it. A note by a non-holder is saved unstamped (any stamp it types is undone) and retires nothing; a holder lifts a revocation by saving that version again.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
-    'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
+    'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only; composeComFaceIntent { modelIds } returns the fields the live intent check reads for each model (name, description, owner trigger words).',
     "scanEntity/batchEntities/scanTexts/quoteEntities/quoteTexts take pass: 'main' (default; every profile label, no tools) or 'web-search' (only poi/minor, with the civitai:web_search tool, as production's Model web-search pass runs them; other entity types are refused). Run both passes for a full picture: results carry pass, labels and, for scans, costTotal.",
     'literalModelRules matches texts against the saved Model rules (no LLM, no workflow, nothing billed); its ruleOverrides (lab only) apply to that action alone: a positive id replaces that Model rule, a negative id adds an unsaved one, enabled:false drops it. Every other action ignores ruleOverrides.',
     'suggestModelRuleAliases { subject, description?, existingAliases? } submits ONE billed orchestrator chat completion with web search (never retried) and waits at most a few seconds: { ok: true, status: "pending", workflowId } while it runs, { ok: true, status: "done", suggestions: [{ alias, kind, note?, source? }], costTotal } when it finished, or { ok: false, error }.',
@@ -57,7 +57,8 @@ export default defineModeratorEndpoint('textScan.harness', {
       });
     const intentPut = input.action === 'putPrompt' && input.key === INTENT_PROMPT_KEY;
     const intentHolder = !!ctx.actor.permissions?.includes(INTENT_PROMPT_PUBLISH_PERMISSION);
-    if (input.action === 'putPrompt' && intentPut && !intentHolder) {
+    // A restore is the fast rollback, so it may only bring back unrevoked text, whoever asks.
+    if (input.action === 'putPrompt' && intentPut && (!intentHolder || input.restore)) {
       const holders = (await getSystemPermissions())[INTENT_PROMPT_PUBLISH_PERMISSION] ?? [];
       const restorable = await isRestorableTextScanPrompt({
         key: input.key,
@@ -67,7 +68,9 @@ export default defineModeratorEndpoint('textScan.harness', {
       if (!restorable)
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `Permission "${INTENT_PROMPT_PUBLISH_PERMISSION}" required to publish new ${INTENT_PROMPT_KEY} text`,
+          message: input.restore
+            ? `That ${INTENT_PROMPT_KEY} version was revoked or not written by a holder: save it as new text instead`
+            : `Permission "${INTENT_PROMPT_PUBLISH_PERMISSION}" required to publish new ${INTENT_PROMPT_KEY} text`,
         });
     }
     if (input.action === 'putPrompt' && intentPut)

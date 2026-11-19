@@ -20,6 +20,7 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 const sparkHooks = vi.hoisted(() => ({
   onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
   onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
@@ -2785,6 +2786,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     // The PG-13 after the reader's level is the minor ceiling in the ceiling's CASE.
     expect(values).toEqual([
       [501],
+      nsfwBrowsingLevelsFlag,
       STRANGER,
       NsfwLevel.PG,
       NsfwLevel.PG13,
@@ -3913,7 +3915,16 @@ describe('covers and cast', () => {
       expect(read.text).toContain(
         'AND (i."nsfwLevel" & ~((CASE WHEN st."minorByScan" THEN LEAST(st."maxNsfwLevel", ?) ELSE st."maxNsfwLevel" END) * 2 - 1)) = 0'
       );
-      expect(read.values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([
+        [101],
+        nsfwBrowsingLevelsFlag,
+        99,
+        PG,
+        NsfwLevel.PG13,
+        [77],
+        [5],
+        99,
+      ]);
       expect(getAllHiddenForUser).toHaveBeenCalledWith({ userId: 99 });
     });
   });
@@ -3944,7 +3955,16 @@ describe('covers and cast', () => {
     const reads = rawCalls().filter((call) => isFirstImageRead(call.text));
     expect(reads).toHaveLength(1);
     // The same bound values as the path's read: posts, the reader, their level, hidden lists.
-    expect(reads[0].values).toEqual([[101], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+    expect(reads[0].values).toEqual([
+      [101],
+      nsfwBrowsingLevelsFlag,
+      99,
+      PG,
+      NsfwLevel.PG13,
+      [77],
+      [5],
+      99,
+    ]);
     // One row past the cap, so the read can tell a full map from a cut one without reading more.
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
       take: STORYLINE_GRAPH_LIMIT + 1,
@@ -4165,7 +4185,17 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.values).toEqual([[10, 10], [7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([
+        [10, 10],
+        [7, 8],
+        nsfwBrowsingLevelsFlag,
+        99,
+        PG,
+        NsfwLevel.PG13,
+        [77],
+        [5],
+        99,
+      ]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
     });

@@ -75,6 +75,8 @@ export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
   'orchestrator',
   // run / start / advance / testStart quote and submit Buzz-paid orchestrator workflows.
   'remixApp',
+  // Each upload is a scan and an embed paid by the site; its global daily cap must not degrade open.
+  'imageSearchUpload',
   'training',
 ];
 
@@ -243,26 +245,32 @@ export const FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS = 2000;
 const failClosedReadDeadlineMs = () =>
   env.REDIS_CACHE_READ_DEADLINE_MS > 0 ? FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS : 0;
 
+/** Stored attempts as numbers: an entry stored as a msgpack int64 decodes as a bigint. */
+const toAttempts = (stored: readonly (number | bigint)[] | null | undefined) =>
+  stored?.map(Number) ?? [];
+
 /** The bucket's attempts, from the store when it answers, else this process's local count. */
 async function readAttemptsOrLocal(
   bucket: RateLimitBucket,
   failClosed: boolean
 ): Promise<{ attempts: number[]; degraded: boolean }> {
   try {
-    const stored = await clusterCacheGuard.call(
-      'rate-limit-bucket.read',
-      () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
-      {
-        logExtra: { cacheKey: bucket.cacheKey },
-        ...(failClosed ? { deadlineMs: failClosedReadDeadlineMs() } : {}),
-      }
+    const stored = toAttempts(
+      await clusterCacheGuard.call(
+        'rate-limit-bucket.read',
+        () => redis.packed.hGet<(number | bigint)[]>(bucket.cacheKey, bucket.hashKey),
+        {
+          logExtra: { cacheKey: bucket.cacheKey },
+          ...(failClosed ? { deadlineMs: failClosedReadDeadlineMs() } : {}),
+        }
+      )
     );
     // The store answers for this bucket: merge in the attempts this process counted while its
     // reads failed, which the store never saw (see localAttempts). The write carries them.
     sweepExpiredLocalBuckets(Date.now());
     const local = localAttempts.get(localKeyOf(bucket));
     return {
-      attempts: local ? mergeAttempts(stored ?? [], local.attempts) : stored ?? [],
+      attempts: local ? mergeAttempts(stored, local.attempts) : stored,
       degraded: false,
     };
   } catch {
@@ -285,10 +293,10 @@ export async function readRateLimitAttempts(bucket: RateLimitBucket) {
   try {
     const stored = await clusterCacheGuard.call(
       'rate-limit-bucket.peek',
-      () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
+      () => redis.packed.hGet<(number | bigint)[]>(bucket.cacheKey, bucket.hashKey),
       { logExtra: { cacheKey: bucket.cacheKey } }
     );
-    return stored ?? [];
+    return toAttempts(stored);
   } catch (err) {
     throw err instanceof ClusterCacheUnavailableError && err.cause ? err.cause : err;
   }
