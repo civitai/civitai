@@ -267,6 +267,45 @@ describe('the trigger word check', () => {
   });
 });
 
+describe('the base model licence check', () => {
+  const h3Image = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'minimaxh3image',
+    batchSize: 1,
+    textEncoderLr: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  });
+
+  it('asks about a licensed model once, before submitting any run', async () => {
+    const events: unknown[] = [];
+    const check = async (input: unknown) => void events.push(input);
+    submitWorkflow
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-7' } }))
+      .mockImplementationOnce(async () => (events.push('submit'), { data: { id: 'wf-8' } }));
+    await submitTrainingBatch(client, [h3Image(), { ...h3Image(), steps: 999 }], {
+      checkText: check,
+    });
+    expect(events).toEqual([
+      { triggerWord: baseRun().trigger },
+      { licenseEcosystem: 'minimaxh3image' },
+      'submit',
+      'submit',
+    ]);
+  });
+
+  it('a licence not yet accepted stops the whole batch, so nothing is charged', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    };
+    await expect(
+      submitTrainingBatch(client, [baseRun(), h3Image()], { checkText: refuse })
+    ).rejects.toBeInstanceOf(TrainingTextRefusedError);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
 describe('keep-training currencies', () => {
   const sourceRun = {
     data: {
@@ -336,6 +375,28 @@ describe('keep-training currencies', () => {
       TrainingTextRefusedError
     );
     expect(refuse).toHaveBeenCalledWith({ triggerWord: 'mystyle' });
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it("checks the licence of the source run's model again, and submits nothing when it is not accepted", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            ...sourceRun.data.steps[0],
+            input: { ...sourceRun.data.steps[0].input, ecosystem: 'minimaxh3image' },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    const refuse = vi.fn(async (input: Parameters<TrainingTextCheck>[0]) => {
+      if ('licenseEcosystem' in input) throw new TrainingTextRefusedError('Accept the licence.');
+    });
+    await expect(continueTraining(client, opts, { checkText: refuse })).rejects.toBeInstanceOf(
+      TrainingTextRefusedError
+    );
+    expect(refuse).toHaveBeenCalledWith({ licenseEcosystem: 'minimaxh3image' });
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 

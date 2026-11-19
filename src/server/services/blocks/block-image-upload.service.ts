@@ -562,7 +562,7 @@ function throwForTerminalOutcome(outcome: BlockImageUploadScanOutcome): never {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message:
-          'that image is above the safe-for-work limit for a public image — choose a SFW image',
+          'that image is above the safe-for-work limit for app uploads — choose a SFW image',
       });
     case 'blocked-flagged':
       throw new TRPCError({
