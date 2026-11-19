@@ -8,7 +8,7 @@ import { parseBody } from '$lib/server/oauth/http';
 import { hasScope, isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
 import {
   APP_TOKEN_DEFAULT_TTL,
   APP_TOKEN_MAX_TTL,
@@ -77,12 +77,18 @@ export const POST: RequestHandler = async ({ request }) => {
     return bad('access_denied', 'Account unavailable', 403);
   }
 
-  const { accessToken, expiresAt } = await createAppAccessToken(
-    userId,
-    clientId,
-    scope,
-    ttlSeconds
-  );
+  let minted: Awaited<ReturnType<typeof createAppAccessToken>>;
+  try {
+    minted = await createAppAccessToken(userId, clientId, scope, ttlSeconds, {
+      refuseSuspendedAppBlock: true,
+    });
+  } catch (err) {
+    if (err instanceof AppBlockSuspendedError) {
+      return bad('access_denied', 'This application is not currently available.', 403);
+    }
+    throw err;
+  }
+  const { accessToken, expiresAt } = minted;
 
   logOAuthEvent({
     type: 'token.issued',

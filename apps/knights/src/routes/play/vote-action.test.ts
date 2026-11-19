@@ -19,7 +19,7 @@ vi.mock('$lib/server/standing', async (original) => ({
 vi.mock('$lib/server/skip-runtime', async () => ({
   skipStore: (await import('$lib/server/skips')).memorySkipStore(),
 }));
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 const guard = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/vote-limits/runtime', () => ({ voteGate: { guard }, lockoutFor: vi.fn() }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));

@@ -4,7 +4,12 @@ import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
-import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
+import {
+  BlocklistStoreError,
+  blocklistCall,
+  canCheckBlockedImageHash,
+  getIsImageBlocked,
+} from '~/server/services/blocked-image-hash';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -7041,30 +7046,7 @@ function blocklistClient() {
   return clickhouse;
 }
 
-/**
- * A blocklist store call failed. Only the driver error's class and code are kept: its message can
- * quote the statement, hashes included (`$query` appends the whole query), and callers log it.
- */
-export class BlocklistStoreError extends Error {
-  readonly code: unknown;
-  constructor(failure: unknown) {
-    const code = (failure as { code?: unknown })?.code;
-    super('blocked_images: the blocklist call failed', {
-      cause: { name: (failure as Error)?.name, code },
-    });
-    this.name = 'BlocklistStoreError';
-    this.code = code;
-  }
-}
-
-/** Runs one blocklist store call, rethrowing its failure as a BlocklistStoreError. */
-async function blocklistCall<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    throw new BlocklistStoreError(error);
-  }
-}
+export { BlocklistStoreError };
 
 /** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
 function logBlocklistCheckFailed(

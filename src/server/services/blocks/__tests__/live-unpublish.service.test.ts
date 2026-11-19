@@ -394,6 +394,12 @@ describe('the Redis store', () => {
       }
     );
     redisMock.sysRedis.del.mockImplementation(async (k: string) => (kv.delete(k) ? 1 : 0));
+    // The takedown mark is in system Redis, the lock and the dirty mark on the cache cluster; one
+    // map backs both, since their keys never collide.
+    for (const command of ['get', 'set', 'del'] as const)
+      redisMock.redis[command].mockImplementation(
+        redisMock.sysRedis[command].getMockImplementation()!
+      );
     return kv;
   }
   const withoutStore = (deps: LiveUnpublishDeps): Partial<LiveUnpublishDeps> => {
