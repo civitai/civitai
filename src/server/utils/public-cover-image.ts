@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { isWithheldMatureCover } from '~/server/search-index/utils/tagged-mature-image';
 import { Flags } from '~/shared/utils/flags';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -21,6 +22,7 @@ export const publicCoverImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   minor: true,
   acceptableMinor: true,
   postId: true,
+  tags: { where: { disabled: false }, select: { tagId: true } },
 });
 
 export type PublicCoverImage = Prisma.ImageGetPayload<{ select: typeof publicCoverImageSelect }>;
@@ -45,6 +47,7 @@ export function isPublicCoverImage(
     image.acceptableMinor === false &&
     image.nsfwLevel > 0 &&
     Flags.hasFlag(browsingLevel, image.nsfwLevel) &&
+    !isWithheldMatureCover({ nsfwLevel: image.nsfwLevel, tags: image.tags?.map((t) => t.tagId) }) &&
     (image.type === MediaType.image || image.type === MediaType.video)
   );
 }

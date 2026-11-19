@@ -30,6 +30,7 @@ import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
 import { imageNotRestrictedSql, imageRestrictedSql } from '~/server/common/image-visibility';
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
+import { taggedMatureImageSql } from '~/server/search-index/utils/tagged-mature-image';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 
@@ -266,6 +267,7 @@ export async function getFallbackCoverImages(
         AND i."acceptableMinor" != TRUE
         AND i."tosViolation" != TRUE
         AND i."blockedFor" IS NULL
+        AND NOT ${taggedMatureImageSql()}
         AND p."publishedAt" < now()
         AND p."availability" != 'Private'
         AND ${imageNotRestrictedSql()}

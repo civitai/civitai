@@ -1,3 +1,4 @@
+import { childBrowsingTagIds } from '@civitai/shared';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -149,6 +150,9 @@ beforeAll(async () => {
       "blockedFor" text,
       "modelRestricted" boolean DEFAULT false
     );
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" int NOT NULL, "tagId" int NOT NULL, disabled boolean NOT NULL DEFAULT false
+    );
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY,
       "collectionId" int NOT NULL,
@@ -167,7 +171,7 @@ beforeEach(async () => {
     const sql = Prisma.sql(strings, ...(values as never[]));
     return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
-  await holder.db.exec(`TRUNCATE "Image", "CollectionItem", "Post";`);
+  await holder.db.exec(`TRUNCATE "Image", "CollectionItem", "Post", "TagsOnImageDetails";`);
   coverLevels.held.clear();
 });
 
@@ -230,6 +234,34 @@ describe('getFallbackCoverImages against Postgres', () => {
     const map = await getFallbackCoverImages([10], SFW);
     expect(map.has(10)).toBe(false);
     expect(map.size).toBe(0);
+  });
+
+  describe('child tags', () => {
+    const CHILD_TAG = childBrowsingTagIds[0];
+    const tag = (imageId: number, tagId: number, disabled = false) =>
+      holder.db.exec(
+        `INSERT INTO "TagsOnImageDetails" VALUES (${imageId}, ${tagId}, ${disabled});`
+      );
+
+    it('skips a newest R item carrying a child tag and serves the older clean one', async () => {
+      await insertImage(1, { nsfwLevel: 4 });
+      await insertImage(2, { nsfwLevel: 4 });
+      await tag(2, CHILD_TAG);
+      await insertItem(10, 1, '2026-01-01');
+      await insertItem(10, 2, '2026-01-02');
+      expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+    });
+
+    it.each([
+      ['a PG-13 item with a child tag', 2, CHILD_TAG, false],
+      ['an R item with another tag', 4, 777, false],
+      ['an R item whose child tag is disabled', 4, CHILD_TAG, true],
+    ])('keeps %s', async (_, nsfwLevel, tagId, disabled) => {
+      await insertImage(1, { nsfwLevel });
+      await tag(1, tagId, disabled);
+      await insertItem(10, 1, '2026-01-01');
+      expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+    });
   });
 
   describe('restricted base model', () => {

@@ -1,3 +1,4 @@
+import { childBrowsingTagIds } from '@civitai/shared';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as GatedImagesLogic from '~/server/services/blocks/block-gated-images.logic';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
@@ -95,6 +96,8 @@ vi.mock('~/server/services/collection.service', () => ({
   getCollectionItemCount: mockItemCount,
   getUserCollectionsWithPermissions: mockUserCollections,
 }));
+const mockTagRows = vi.hoisted(() => vi.fn());
+vi.mock('~/server/redis/image-tag-rows', () => ({ getImageTagRows: mockTagRows }));
 vi.mock('~/server/services/collection-cover-visibility', () => ({
   getServableCoverCollectionIds: mockServableCovers,
 }));
@@ -255,6 +258,7 @@ beforeEach(() => {
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', isModerator: true });
   mockFollowed.mockResolvedValue(new Set<number>([10]));
   mockFallbackCovers.mockResolvedValue(new Map());
+  mockTagRows.mockResolvedValue([]);
   // Default: nothing sampled for any id → `meetsPlayableFloor` reads "nothing to
   // judge, keep", so tests that are not about the floor see no drops.
   mockPlayableSample.mockResolvedValue(new Map());
@@ -1545,6 +1549,40 @@ describe('cover moderation and scan gate', () => {
       expect('coverNsfwLevel' in item).toBe(false);
     }
   );
+
+  describe('child-tagged primary cover on a mature ceiling', () => {
+    const MATURE = 31;
+    beforeEach(() => {
+      mockMaturity.mockReturnValue({ browsingLevel: MATURE, isSfwCeiling: false });
+      mockRestricted.mockResolvedValue(new Set());
+      mockFallbackCovers.mockResolvedValue(
+        new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 1 }]])
+      );
+    });
+
+    it('mode=public: an R primary cover carrying a child tag is replaced by the fallback', async () => {
+      mockGetAll.mockResolvedValueOnce([publicRow({ nsfwLevel: 4 })]);
+      mockTagRows.mockResolvedValueOnce([
+        { imageId: 110, tagId: childBrowsingTagIds[0], source: 'WD14' },
+      ]);
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockTagRows).toHaveBeenCalledWith(expect.anything(), [110]);
+      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-10');
+    });
+
+    it.each([
+      ['another tag', [{ imageId: 110, tagId: 777, source: 'WD14' }]],
+      ['no tags', []],
+    ])('mode=public: an R primary cover with %s is kept', async (_, rows) => {
+      mockGetAll.mockResolvedValueOnce([publicRow({ nsfwLevel: 4 })]);
+      mockTagRows.mockResolvedValueOnce(rows);
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      expect((res._json() as any).items[0].coverImageUrl).not.toBe('edge:fallback-10');
+      expect((res._json() as any).items[0].coverImageUrl).toMatch(/^edge:/);
+    });
+  });
 
   describe('restricted base model on a mature ceiling', () => {
     // 1|2|4|8|16: a ceiling that admits mature levels.

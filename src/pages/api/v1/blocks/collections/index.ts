@@ -36,6 +36,9 @@ import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-li
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { dbRead } from '~/server/db/client';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
+import { isWithheldMatureCover } from '~/server/search-index/utils/tagged-mature-image';
 import { Flags } from '~/shared/utils/flags';
 import {
   CollectionItemStatus,
@@ -283,18 +286,27 @@ async function getUsablePrimaryCovers(
   const matureIds = candidates
     .filter((c) => Flags.intersects(c.image!.nsfwLevel, nsfwBrowsingLevelsFlag))
     .map((c) => c.image!.id);
-  const [restricted, levelOf] = await Promise.all([
+  const [restricted, matureTagRows, levelOf] = await Promise.all([
     matureIds.length ? getModelRestrictedImageIds(matureIds) : new Set<number>(),
+    getImageTagRows(dbRead, matureIds),
     getCoverBrowsingLevels(
       candidates.map((c) => c.image),
       browsingLevel
     ),
   ]);
+  // Every mature candidate's tags were read, so an image with no rows is untagged.
+  const tagsOf = new Map<number, number[]>(matureIds.map((id) => [id, []]));
+  for (const row of matureTagRows) tagsOf.get(row.imageId)?.push(row.tagId);
   return new Set(
     candidates
       .filter(
         (c) =>
-          !restricted.has(c.image!.id) && Flags.intersects(levelOf(c.image), c.image!.nsfwLevel)
+          !restricted.has(c.image!.id) &&
+          !isWithheldMatureCover({
+            nsfwLevel: c.image!.nsfwLevel,
+            tags: tagsOf.get(c.image!.id),
+          }) &&
+          Flags.intersects(levelOf(c.image), c.image!.nsfwLevel)
       )
       .map((c) => c.id)
   );
