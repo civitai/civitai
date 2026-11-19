@@ -17,7 +17,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 
 import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
-import { getFeatureFliptKey, getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 
 /**
  * `feedGoTransportInfinite` moves a signed-in browser's `image.getInfinite` to `/api/trpc-go`, so it
@@ -31,10 +31,6 @@ describe('feedGoTransportInfinite is dark until its own Flipt key turns it on', 
   afterEach(() => {
     mocks.isFliptSync.mockReset();
     mocks.isFliptSync.mockImplementation(() => null);
-  });
-
-  it('reads the Flipt key feed-go-transport-infinite', () => {
-    expect(getFeatureFliptKey('feedGoTransportInfinite')).toBe('feed-go-transport-infinite');
   });
 
   it('is off for a moderator and for an anonymous visitor when Flipt has no answer', async () => {

@@ -20,8 +20,7 @@ import type { AppRouter } from '~/server/routers';
  * The Go-transport procedures (`GO_TRANSPORT_PROCEDURES` in `~/utils/trpc-go-transport`) this link
  * measures; a subset of that set (trpc-feed-transport-timing.test.ts pins it). Kept as its own
  * literal list because adding a procedure here is itself a production change: the node arm records
- * every signed-in request of it, its Go-transport flag on or off. `image.getInfinite` has a Go
- * transport (dark) but is not measured yet; adding it here is a separate, approved step.
+ * every signed-in request of it, its Go-transport flag on or off.
  */
 export const FEED_TRANSPORT_TIMED_PROCEDURES: ReadonlySet<string> = new Set([
   'image.getImagesAsPostsInfinite',
