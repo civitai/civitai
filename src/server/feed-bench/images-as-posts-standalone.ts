@@ -46,8 +46,8 @@ import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
  *   - an API credential (an `Authorization` header or `?token=`) is refused with 400: tRPC would
  *     enforce the procedure's token scope, which this arm does not port;
  *   - the response is always superjson. tRPC writes devalue only to a signed-in web bundle that
- *     announces it can read it (`TRPC_WRITE_DEVALUE`); the benchmark replays signed-out requests
- *     with no client headers, which tRPC answers in superjson too;
+ *     announces it can read it (`TRPC_WRITE_DEVALUE`); the benchmark's requests (signed in or
+ *     out) carry no client-version headers, which tRPC answers in superjson too;
  *   - an error answers `{ error: { code, message } }` with tRPC's HTTP status for its code, not
  *     tRPC's error shape. Error bodies are never compared across arms.
  */

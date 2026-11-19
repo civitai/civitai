@@ -39,16 +39,113 @@ function captureRowsFromTempoSearch(json) {
         if (url.pathname !== PROCEDURE_PATH) continue;
         if (url.searchParams.has('token') || url.searchParams.has('batch')) continue;
         if (span.spanID) seen.add(span.spanID);
+        const input = url.searchParams.get('input') ?? '';
         rows.push({
           t: Number(BigInt(span.startTimeUnixNano) / 1000000n),
           host: url.host,
-          input: url.searchParams.get('input') ?? '',
+          input,
+          // The web client's own "signed in" marker in the input (`authed: true`).
+          authed: inputIsAuthed(input),
           durMs: Number(span.durationNanos) / 1e6,
         });
       }
     }
   }
   return rows;
+}
+
+/** Whether a raw tRPC input (`{"json":{…}}`) carries the web client's `authed: true`. */
+function inputIsAuthed(input) {
+  try {
+    const parsed = JSON.parse(input);
+    return !!(parsed && parsed.json && parsed.json.authed === true);
+  } catch {
+    return false;
+  }
+}
+
+/** The durations (ms) of every distinct span in one Tempo search response. */
+function spanDurationsFromTempoSearch(json) {
+  const out = [];
+  const seen = new Set();
+  for (const trace of (json && json.traces) || []) {
+    const sets = trace.spanSets || (trace.spanSet ? [trace.spanSet] : []);
+    for (const set of sets) {
+      for (const span of set.spans || []) {
+        if (span.spanID) {
+          if (seen.has(span.spanID)) continue;
+          seen.add(span.spanID);
+        }
+        out.push(Number(span.durationNanos) / 1e6);
+      }
+    }
+  }
+  return out;
+}
+
+// --- signed-in replay -----------------------------------------------------------------------------
+
+/**
+ * The bench account's session, from the text of its mounted secret: either ONE Cookie header value
+ * used for every host (`__Secure-civ-token=…`), or a JSON object mapping host -> Cookie header
+ * value (the session cookie's name differs by site cookie mode). Never returns, logs or throws the
+ * value itself: an unreadable file is an error naming only the shape that was expected.
+ */
+function parseSessionFile(text) {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) throw new Error('the session file is empty');
+  if (trimmed.startsWith('{')) {
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error('the session file starts with "{" but is not JSON');
+    }
+    const byHost = {};
+    for (const [host, cookie] of Object.entries(parsed)) {
+      if (typeof cookie !== 'string' || !cookie.includes('='))
+        throw new Error(`the session for host ${host} is not a "name=value" cookie`);
+      byHost[host] = cookie;
+    }
+    if (!Object.keys(byHost).length) throw new Error('the session file names no host');
+    return { all: undefined, byHost };
+  }
+  if (!trimmed.includes('=') || trimmed.includes('\n'))
+    throw new Error('the session file is not one "name=value" cookie line');
+  return { all: trimmed, byHost: {} };
+}
+
+/** The Cookie header for a host, or undefined when the session names none for it. */
+function cookieFor(session, host) {
+  if (!session) return undefined;
+  return session.byHost[host] ?? session.all;
+}
+
+/**
+ * The rows a run replays: signed in, only rows the web client sent signed in (`authed`) whose host
+ * the session covers; signed out, every row. Returns the kept rows and why the rest were dropped.
+ */
+function selectRows(rows, { signedIn, session }) {
+  const kept = [];
+  const dropped = { notAuthed: 0, noSessionForHost: 0 };
+  for (const r of rows) {
+    if (signedIn && !r.authed) dropped.notAuthed++;
+    else if (signedIn && !cookieFor(session, r.host)) dropped.noSessionForHost++;
+    else kept.push(r);
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Refuse to measure on too little: throws when nothing is available, or fewer rows than requested
+ * (a short run would report percentiles over a different sample than the one asked for).
+ */
+function requireRows(available, requested, what) {
+  if (!(available > 0)) throw new Error(`${what}: 0 rows — nothing to measure`);
+  if (requested > available)
+    throw new Error(
+      `${what}: ${available} rows, ${requested} requested — capture more or ask for fewer`
+    );
 }
 
 /** The request path for a capture row: the procedure's URL with its `input`, if it had one. */
@@ -212,6 +309,55 @@ function cpuPerRequestMs({ busyCpuSeconds, busySeconds, idleCpuSeconds, idleSeco
   return ((busyCpuSeconds - idleRate * busySeconds) / requests) * 1000;
 }
 
+/**
+ * An arm-run's CPU, stated against both denominators the latency side could mean. Container CPU
+ * cannot be split by request, so it cannot be restricted to the common-200 set the latency uses;
+ * instead: per request SENT, per request the arm answered 200, and the share it did not answer 200
+ * (feed-go's fallbacks are cheap 502s, so a high share makes its per-sent figure flatter it).
+ */
+function cpuReport({ busyCpuSeconds, busySeconds, idleCpuSeconds, idleSeconds, sent, ok }) {
+  const base = { busyCpuSeconds, busySeconds, idleCpuSeconds, idleSeconds };
+  return {
+    msPerSent: cpuPerRequestMs({ ...base, requests: sent }),
+    msPerOk: cpuPerRequestMs({ ...base, requests: ok }),
+    notOkShare: sent > 0 ? (sent - ok) / sent : NaN,
+  };
+}
+
+/**
+ * The sanity gate: the benchmark's Next-vs-Go p50 gap against production's (the api-heavy pods'
+ * p50 vs feed-go's served p50 over the capture window). Flagged when either gap is not a number,
+ * the signs differ, or they are further apart than half the production gap (25 ms at least).
+ * A flagged run is not wrong by itself, but its gap does not reproduce production's and must be
+ * explained before it is quoted.
+ */
+function gapCheck({ benchNextMs, benchGoMs, prodNodeMs, prodGoMs }) {
+  const benchGapMs = benchNextMs - benchGoMs;
+  const prodGapMs = prodNodeMs - prodGoMs;
+  if (!Number.isFinite(benchGapMs) || !Number.isFinite(prodGapMs))
+    return { benchGapMs, prodGapMs, flagged: true, reason: 'missing a p50' };
+  if (Math.sign(benchGapMs) !== Math.sign(prodGapMs))
+    return { benchGapMs, prodGapMs, flagged: true, reason: 'gaps have opposite signs' };
+  const tolerance = Math.max(Math.abs(prodGapMs) / 2, 25);
+  if (Math.abs(benchGapMs - prodGapMs) > tolerance)
+    return {
+      benchGapMs,
+      prodGapMs,
+      flagged: true,
+      reason: `bench gap differs from production's by more than ${tolerance} ms`,
+    };
+  return { benchGapMs, prodGapMs, flagged: false, reason: 'within tolerance' };
+}
+
+/** Whether every value in a summary is a finite number (a NaN summary must never read as a result). */
+function isFiniteSummary(s) {
+  return (
+    !!s &&
+    s.n > 0 &&
+    ['min', 'mean', 'p50', 'p95', 'p99', 'max'].every((k) => Number.isFinite(s[k]))
+  );
+}
+
 module.exports = {
   PROCEDURE,
   PROCEDURE_PATH,
@@ -224,4 +370,13 @@ module.exports = {
   commonOkIndexes,
   compareBodies,
   cpuPerRequestMs,
+  cpuReport,
+  gapCheck,
+  isFiniteSummary,
+  inputIsAuthed,
+  spanDurationsFromTempoSearch,
+  parseSessionFile,
+  cookieFor,
+  selectRows,
+  requireRows,
 };

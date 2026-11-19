@@ -307,7 +307,7 @@ describe('captureRowsFromTempoSearch', () => {
       traces: [{ spanSets: [{ spans: [span('s1', gallery, 1795039195633, 20078130)] }] }],
     });
     expect(rows).toEqual([
-      { t: 1795039195633, host: 'green.example.test', input, durMs: 20.07813 },
+      { t: 1795039195633, host: 'green.example.test', input, authed: false, durMs: 20.07813 },
     ]);
   });
 
@@ -354,5 +354,158 @@ describe('captureRowsFromTempoSearch', () => {
     expect(lib.requestPath({ host: 'h', input: '' })).toBe(
       '/api/trpc/image.getImagesAsPostsInfinite'
     );
+  });
+});
+
+describe('signed-in replay: the session file', () => {
+  const SECRET = '__Secure-civ-token=hdr.payload.sig-NOT-REAL';
+
+  it('one cookie line applies to every host', () => {
+    const s = lib.parseSessionFile(`${SECRET}\n`);
+    expect(lib.cookieFor(s, 'civitai.com')).toBe(SECRET);
+    expect(lib.cookieFor(s, 'civitai.red')).toBe(SECRET);
+  });
+
+  it('a JSON map applies per host, and an unnamed host has none (kills: falling back to any)', () => {
+    const s = lib.parseSessionFile(
+      JSON.stringify({ 'civitai.com': '__Secure-civ-token=a', 'civitai.red': '__Host-civ-token=b' })
+    );
+    expect(lib.cookieFor(s, 'civitai.com')).toBe('__Secure-civ-token=a');
+    expect(lib.cookieFor(s, 'civitai.red')).toBe('__Host-civ-token=b');
+    expect(lib.cookieFor(s, 'other.example.test')).toBeUndefined();
+    expect(lib.cookieFor(undefined, 'civitai.com')).toBeUndefined();
+  });
+
+  it.each([
+    ['', 'empty'],
+    ['not a cookie', 'not one "name=value" cookie line'],
+    ['a=1\nb=2', 'not one "name=value" cookie line'],
+    ['{"civitai.com": 5}', 'not a "name=value" cookie'],
+    ['{bad json', 'not JSON'],
+    ['{}', 'names no host'],
+  ])('%j is refused (%s)', (text, message) => {
+    expect(() => lib.parseSessionFile(text)).toThrow(message);
+  });
+
+  it('never quotes the session in an error (kills: echoing the file in the message)', () => {
+    const leaky = `${SECRET}\nsecond line`;
+    let message = '';
+    try {
+      lib.parseSessionFile(leaky);
+    } catch (e) {
+      message = String((e as Error).message);
+    }
+    expect(message).not.toBe('');
+    expect(message).not.toContain('hdr.payload.sig');
+  });
+});
+
+describe('selectRows / requireRows', () => {
+  const rows = [
+    { host: 'civitai.com', authed: true, input: '1' },
+    { host: 'civitai.com', authed: false, input: '2' },
+    { host: 'civitai.red', authed: true, input: '3' },
+    { host: 'elsewhere.test', authed: true, input: '4' },
+  ];
+  const session = lib.parseSessionFile(
+    JSON.stringify({ 'civitai.com': 'c=1', 'civitai.red': 'c=2' })
+  );
+
+  it('signed in keeps authed rows on a covered host (kills: no authed filter, no host filter)', () => {
+    const { kept, dropped } = lib.selectRows(rows, { signedIn: true, session });
+    expect(kept.map((r: { input: string }) => r.input)).toEqual(['1', '3']);
+    expect(dropped).toEqual({ notAuthed: 1, noSessionForHost: 1 });
+  });
+
+  it('signed out keeps every row', () => {
+    const { kept, dropped } = lib.selectRows(rows, { signedIn: false, session: undefined });
+    expect(kept).toHaveLength(4);
+    expect(dropped).toEqual({ notAuthed: 0, noSessionForHost: 0 });
+  });
+
+  it('refuses 0 rows and fewer rows than requested (kills: silently shortening the run)', () => {
+    expect(() => lib.requireRows(0, 10, 'run')).toThrow('run: 0 rows');
+    expect(() => lib.requireRows(5, 6, 'run')).toThrow('run: 5 rows, 6 requested');
+    expect(() => lib.requireRows(6, 6, 'run')).not.toThrow();
+  });
+
+  it('inputIsAuthed reads the client marker only', () => {
+    expect(lib.inputIsAuthed('{"json":{"limit":3,"authed":true}}')).toBe(true);
+    expect(lib.inputIsAuthed('{"json":{"limit":3,"authed":"true"}}')).toBe(false);
+    expect(lib.inputIsAuthed('{"json":{"limit":3}}')).toBe(false);
+    expect(lib.inputIsAuthed('')).toBe(false);
+  });
+});
+
+describe('cpuReport', () => {
+  it('states CPU per sent and per 200, and the non-200 share (kills: one denominator only)', () => {
+    // Net CPU: 30 - 0.01 * 600 = 24 cpu-s. 1200 sent -> 20 ms; 960 answered 200 -> 25 ms.
+    expect(
+      lib.cpuReport({
+        busyCpuSeconds: 30,
+        busySeconds: 600,
+        idleCpuSeconds: 1.2,
+        idleSeconds: 120,
+        sent: 1200,
+        ok: 960,
+      })
+    ).toEqual({
+      msPerSent: expect.closeTo(20, 10),
+      msPerOk: expect.closeTo(25, 10),
+      notOkShare: 0.2,
+    });
+  });
+});
+
+describe('gapCheck (the sanity gate)', () => {
+  it('a bench gap near production is not flagged', () => {
+    // bench 150-40 = 110; prod 160-40 = 120; |110-120| = 10 <= max(60, 25).
+    expect(
+      lib.gapCheck({ benchNextMs: 150, benchGoMs: 40, prodNodeMs: 160, prodGoMs: 40 })
+    ).toEqual({ benchGapMs: 110, prodGapMs: 120, flagged: false, reason: 'within tolerance' });
+  });
+
+  it('a gap far off production is flagged (kills: no tolerance check)', () => {
+    // bench 30; prod 120; |30-120| = 90 > 60.
+    expect(
+      lib.gapCheck({ benchNextMs: 70, benchGoMs: 40, prodNodeMs: 160, prodGoMs: 40 })
+    ).toMatchObject({ benchGapMs: 30, prodGapMs: 120, flagged: true });
+  });
+
+  it('opposite signs and a missing p50 are flagged', () => {
+    expect(
+      lib.gapCheck({ benchNextMs: 30, benchGoMs: 40, prodNodeMs: 50, prodGoMs: 40 })
+    ).toMatchObject({ flagged: true, reason: 'gaps have opposite signs' });
+    expect(
+      lib.gapCheck({ benchNextMs: NaN, benchGoMs: 40, prodNodeMs: 50, prodGoMs: 40 })
+    ).toMatchObject({ flagged: true, reason: 'missing a p50' });
+  });
+
+  it('the 25 ms floor applies to a small production gap', () => {
+    // prod gap 10, tolerance max(5, 25) = 25; bench gap 30 differs by 20 -> not flagged.
+    expect(
+      lib.gapCheck({ benchNextMs: 70, benchGoMs: 40, prodNodeMs: 50, prodGoMs: 40 })
+    ).toMatchObject({ flagged: false });
+  });
+});
+
+describe('isFiniteSummary', () => {
+  it('a summary of nothing is not a result (kills: NaN reported as a number)', () => {
+    expect(lib.isFiniteSummary(lib.summarize([]))).toBe(false);
+    expect(lib.isFiniteSummary(lib.summarize([1, 2, 3]))).toBe(true);
+  });
+});
+
+describe('spanDurationsFromTempoSearch', () => {
+  it('one duration per distinct span', () => {
+    const span = (id: string, ns: number) => ({ spanID: id, durationNanos: String(ns) });
+    expect(
+      lib.spanDurationsFromTempoSearch({
+        traces: [
+          { spanSets: [{ spans: [span('a', 2e6)] }, { spans: [span('a', 2e6)] }] },
+          { spanSet: { spans: [span('b', 5.5e6)] } },
+        ],
+      })
+    ).toEqual([2, 5.5]);
   });
 });

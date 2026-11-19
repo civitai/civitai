@@ -18,34 +18,52 @@ standalone function's doc lists exactly what it keeps and drops from the tRPC pa
 the tRPC route's bytes for feed-go's golden inputs.
 
 The difference `next - node` is the Next.js + tRPC cost; `node - go` is Node against Go for the same
-work; the captured in-situ span durations against `next` show what sharing a pool with other
-endpoints adds (garbage collection and event-loop contention included).
+work; the captured in-situ span durations of the Next pool against `next` show what sharing a pool
+with other endpoints adds (garbage collection and event-loop contention included).
 
 ## Harness (`bench.cjs`)
 
 ```bash
-# 1. Capture: production requests from head-sampled traces in Tempo, written as JSONL
-#    { t, host, input, durMs }: no address, user agent, cookie or user id is kept.
+# 1. Capture: production requests served by the Next pool, from head-sampled traces in Tempo, as
+#    JSONL { t, host, input, authed, durMs }: no address, user agent, cookie or user id is kept.
+#    Also writes <out>.prod.json: that pool's in-situ p50 and feed-go's served p50, same window.
 node feed-bench/bench.cjs capture --tempo <tempo-url> --minutes 60 --out /data/inputs.jsonl
 
 # 2. Parity: a sample of inputs to every arm back to back; bodies compared (first target = reference).
-node feed-bench/bench.cjs parity --inputs /data/inputs.jsonl --sample 200 \
-  --target next=<url> --target node=<url> --target go=<url>
+FEED_BENCH_SESSION_FILE=<file> node feed-bench/bench.cjs parity --inputs /data/inputs.jsonl \
+  --sample 200 --target next=<url> --target node=<url> --target go=<url>
 
 # 3. Run: warm-up pass on every arm (in the order given), idle CPU baseline, then --rounds rounds
 #    with the arm order rotated, each arm replaying the same --count inputs at --rps (open loop).
-node feed-bench/bench.cjs run --inputs /data/inputs.jsonl --rps 2 --count 3600 --rounds 3 \
-  --target next=<url> --target node=<url> --target go=<url> \
+FEED_BENCH_SESSION_FILE=<file> node feed-bench/bench.cjs run --inputs /data/inputs.jsonl \
+  --rps 2 --count 1200 --rounds 3 --target next=<url> --target node=<url> --target go=<url> \
   --prom <prometheus-url> --cpu 'next=namespace="…",pod=~"…",container="…"' … --out /data/run1
 ```
 
-Requests are replayed **signed out**: no session can be replayed without a user's credential, and a
-signed-out request takes the same path through all three arms. Each carries the captured `Host` and
-a same-site `Referer` (both origin checks need one).
+**Signed in by default**, as a dedicated bench account with its own real session (no special
+roles), so the replay takes the signed-in path production's feed-go cohort takes. The session is
+read from the file `FEED_BENCH_SESSION_FILE` names: one `Cookie` header value
+(`<session-cookie-name>=<token>`) for every host, or a JSON object mapping each host to its value
+(the session cookie's name depends on the site's cookie mode). It is sent to all three arms and is
+never printed, logged or written. Only captured rows the web client sent signed in (`authed: true`)
+on a host the session covers are replayed. `--signed-out` replays every row with no cookie, for
+comparison. Each request also carries the captured `Host` and a same-site `Referer` (both origin
+checks need one).
+
+Fails instead of reporting: 0 captured rows, fewer usable rows than `--count`/`--sample`, a round
+where no request was answered 200 by every arm, a NaN latency or CPU figure, or a parity pair that
+compared nothing.
 
 Latency is compared only over the requests every arm answered 200 in that round (`commonOk`): a
 feed-go fallback (it proxies a shape it does not port) or an error on one arm removes that request
-from all three. `allOkLatency` keeps each arm's own 200s. CPU per request is the container's CPU
-over the run, less its idle rate, over the requests sent (`lib.cjs` `cpuPerRequestMs`).
+from all three. `allOkLatency` keeps each arm's own 200s. Container CPU cannot be split by request,
+so each arm-run reports it both ways — per request sent (`msPerSent`) and per request answered 200
+(`msPerOk`) — with the share not answered 200 (`notOkShare`) next to them.
+
+**Sanity gate** (`sanity` in the run summary): the bench gap `next − go` (median of the rounds'
+common-200 p50s) against production's gap (the Next pool's in-situ p50 for the replayed cohort minus
+feed-go's served p50, from the capture). Flagged when the signs differ or they are further apart
+than half the production gap (25 ms at least): such a run does not reproduce production's gap and
+must be explained before it is quoted.
 
 Pure logic is in `lib.cjs` (tested in `__tests__/lib.test.ts`); `bench.cjs` is the I/O around it.
