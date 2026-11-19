@@ -183,11 +183,13 @@ const queuedImageText = (alias: string) =>
 
 /**
  * The user's own image a `User.image` key names that can become their profile picture: servable as a
- * picture and with no queued job (a queued delete would reap it after the move).
+ * picture, in no post, and with no queued job (a queued delete would reap it after the move).
  */
 const movableImageText = `(
   SELECT i.id FROM "Image" i
   WHERE ${ownImageNamedByUserImage('i')} AND ${servablePictureText} AND NOT ${queuedImageText('i')}
+    -- A replaced profile picture is queued for deletion, so an image in a post never becomes one.
+    AND i."postId" IS NULL
     -- Another of the user's rows stored under the same key, held or blocked, withholds the file.
     AND NOT EXISTS (
       SELECT 1 FROM "Image" twin

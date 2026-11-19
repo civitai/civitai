@@ -30,7 +30,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1, "userId" int NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
       metadata jsonb, "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text, "postId" int
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, image text, meta jsonb);
     CREATE TABLE "JobQueue" ("entityId" int NOT NULL, "entityType" text NOT NULL, type text NOT NULL);
@@ -253,6 +253,16 @@ describe('the one-off clean-up of User.image keys', () => {
     expect(row).toMatchObject({ id: 1, pictureId: null });
     // The key names a held own image, so its value is withheld from the result.
     expect(row.previousImage).toBeNull();
+  });
+
+  it('🔴 does not move an image that is in a post', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", "postId") VALUES (1, '${KEY(9)}', 1, 77);
+      INSERT INTO "User" VALUES (1, NULL, '${KEY(9)}', NULL);
+    `);
+    const [row] = await clearUserImageKeys(db, [1]);
+    expect(row).toMatchObject({ id: 1, pictureId: null, previousImage: KEY(9) });
+    expect((await user(1)).image).toBeNull();
   });
 
   it('moves it once no twin is held (control)', async () => {

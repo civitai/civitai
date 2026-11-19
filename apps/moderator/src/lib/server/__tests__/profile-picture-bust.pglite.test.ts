@@ -200,10 +200,11 @@ describe('moderator writes to an image that is a profile picture', () => {
 
   it('🔴 acceptImage after a block leaves User.image empty: the picture serves the avatar', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
+    del.mockClear();
     await acceptImage({ imageId: AVATAR_ID, userId: 1 });
 
     expect(await ownerRow()).toEqual({ image: null, meta: {} });
-    // The picture's cache entry is evicted again, so the accepted picture is read afresh.
+    // The accept itself evicts the picture's cache entry, so the accepted picture is read afresh.
     expect(bustedKeys()).toContain(avatarKey);
   });
 
