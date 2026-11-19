@@ -888,6 +888,66 @@ describe('the index breaker', () => {
     ]);
   });
 
+  it('failures still in flight when it opens neither re-open it nor push the cooldown back', async () => {
+    // Twenty searches are in flight against an index that has not answered any of them; each
+    // index call fails only when the test releases it.
+    const pending: Array<() => void> = [];
+    stubIndex(
+      () =>
+        new Promise<Response>((_, reject) => {
+          pending.push(() => reject(new TypeError('fetch failed')));
+        })
+    );
+    const inFlight = Array.from({ length: 20 }, () => search());
+    await settle();
+    expect(pending).toHaveLength(20);
+    // The first THRESHOLD fail at T0 and open it.
+    for (const fail of pending.slice(0, THRESHOLD)) fail();
+    await settle();
+    // The rest fail later, while it is open.
+    vi.setSystemTime(T0 + COOLDOWN_MS - 1);
+    for (const fail of pending.slice(THRESHOLD)) fail();
+    await Promise.all(inFlight);
+    expect(breakerLines()).toEqual([
+      `app-index-search: breaker closed->open consecutive_failures=${THRESHOLD} reason=error`,
+    ]);
+    // The cooldown still counts from T0: the probe is admitted at T0 + COOLDOWN_MS.
+    healthy();
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    expect((await search()).search).toBe('index');
+    expect(fetchCalls).toHaveLength(21);
+  });
+
+  it('a probe that never reports is replaced by a fresh one after a full cooldown', async () => {
+    await trip();
+    vi.setSystemTime(T0 + COOLDOWN_MS);
+    // The probe's index call never settles (until the test ends); every later call answers.
+    let releaseStuck: () => void = () => undefined;
+    const stuck = new Promise<Response>((resolve) => {
+      releaseStuck = () => resolve(new Response('{"error":"internal"}', { status: 500 }));
+    });
+    let calls = 0;
+    stubIndex(() =>
+      calls++ === 0 ? stuck : Response.json({ results: [indexed(DELTA), indexed(ALPHA)] })
+    );
+    const stuckSearch = search();
+    await settle();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+
+    // Within a cooldown of the stuck probe: no second probe.
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS - 1);
+    expect((await search()).search).toBeUndefined();
+    expect(fetchCalls).toHaveLength(THRESHOLD + 1);
+    // A full cooldown after it: a fresh probe, whose answer closes the breaker.
+    vi.setSystemTime(T0 + 2 * COOLDOWN_MS);
+    expect((await search()).search).toBe('index');
+    expect(fetchCalls).toHaveLength(THRESHOLD + 2);
+    expect(await breakerState()).toBe(0);
+
+    releaseStuck();
+    await stuckSearch;
+  });
+
   it('a failed probe re-opens it for another full cooldown', async () => {
     await trip();
     vi.setSystemTime(T0 + COOLDOWN_MS);
