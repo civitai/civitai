@@ -251,7 +251,8 @@ describe('the candidate SQL, on real Postgres', () => {
   let pg: PGlite;
   const query = async <T>(sql: string, params: unknown[] = []) =>
     (await pg.query<T>(sql, params)).rows;
-  const candidates = () => query<{ id: number; pHash: string }>(REPORTED_CANDIDATES_SQL);
+  const candidates = () =>
+    query<{ id: number; pHash: string; reportedAt: Date }>(REPORTED_CANDIDATES_SQL);
 
   beforeAll(async () => {
     pg = new PGlite();
