@@ -52,10 +52,10 @@ describe('isPublicCoverImage and child tags', () => {
     expect(isPublicCoverImage(image, ALL_LEVELS)).toBe(true);
   });
 
-  it('selects only enabled tags', () => {
-    expect(publicCoverImageSelect.tags).toEqual({
-      where: { disabled: false },
-      select: { tagId: true },
+  it('selects only enabled child tags', () => {
+    expect(publicCoverImageSelect.tags.where).toEqual({
+      disabled: false,
+      tagId: { in: [...childBrowsingTagIds] },
     });
   });
 });

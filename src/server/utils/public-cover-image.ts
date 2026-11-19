@@ -1,3 +1,4 @@
+import { childBrowsingTagIds } from '@civitai/shared';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isWithheldMatureCover } from '~/server/search-index/utils/tagged-mature-image';
@@ -22,7 +23,11 @@ export const publicCoverImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   minor: true,
   acceptableMinor: true,
   postId: true,
-  tags: { where: { disabled: false }, select: { tagId: true } },
+  // Only the tags `isWithheldMatureCover` reads.
+  tags: {
+    where: { disabled: false, tagId: { in: [...childBrowsingTagIds] } },
+    select: { tagId: true },
+  },
 });
 
 export type PublicCoverImage = Prisma.ImageGetPayload<{ select: typeof publicCoverImageSelect }>;
