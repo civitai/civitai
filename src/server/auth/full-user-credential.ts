@@ -55,3 +55,15 @@ export function withholdsModerator(
   if (!user.isModerator || isFullScopeUserKey(credential)) return false;
   return !(user.id === constants.system.user.id && credential?.subject?.type === 'apiKey');
 }
+
+/**
+ * The viewer a request reads as: moderator rights come only with a browser session or a full-scope
+ * personal key, as on the moderator procedures. Any other key reads as its user without them.
+ */
+export function withModeratorRightsFor<T extends { id: number; isModerator?: boolean | null }>(
+  user: T | undefined,
+  credential: BearerCredential & { apiKeyId?: number | null }
+): T | undefined {
+  if (!user?.isModerator || isSessionOrFullUserKey(credential)) return user;
+  return withholdsModerator(user, credential) ? { ...user, isModerator: false } : user;
+}

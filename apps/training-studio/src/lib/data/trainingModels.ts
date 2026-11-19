@@ -1,6 +1,7 @@
 import { aiToolkitOptionSupport, type AiToolkitOptions } from '@civitai/shared/training-options';
 import type {
   MingAiToolkitTrainingInput,
+  MiniMaxH3ImageAiToolkitTrainingInput,
   MossImageBaseAiToolkitTrainingInput,
   MossImageSftAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
@@ -10,7 +11,7 @@ import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
 /**
  * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
  * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
- * 2026-09-25). That module lives in the main Next.js app's `src/`, which an
+ * 2026-11-18). That module lives in the main Next.js app's `src/`, which an
  * `apps/*` package can't import, so it's mirrored here; when the trainer adds or
  * changes a base model, re-mirror it by hand — keep the same version `key`,
  * `air`, `baseModel`, ecosystem and `modelVariant`. (If `trainingModelInfo` ever
@@ -38,7 +39,7 @@ import { isTextEncoderLockedBase } from '@civitai/shared/training-text-encoder';
  * the mirror date. `sd3_medium/large` (commented out) and `wan_2_1_i2v_14b_720p`
  * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
- * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
+ * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3, minimaxh3image) are copied as-is.
  * `flux3klein` (2026-10-15) and `mossimage` (2026-10-16) train in the Training Studio
  * only: their source entries are `disabled: true`, there so the main app can publish
  * their runs, so a re-mirror must keep them here.
@@ -491,6 +492,26 @@ export const MODEL_CARDS: ModelCard[] = [
         air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
         baseModel: 'Ideogram 4.0',
         ecosystem: 'ideogram4',
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'minimaxh3image',
+    flagKey: 'minimaxh3-image-training',
+    name: 'MiniMax H3 Image',
+    code: 'H3I',
+    media: 'image',
+    label: 'caption',
+    description: 'Open-weights image model from the MiniMax H3 family.',
+    released: '2026-11',
+    versions: [
+      {
+        key: 'minimaxh3image',
+        label: 'Base',
+        air: 'urn:air:minimaxh3image:repository:huggingface:Comfy-Org/MiniMax-H3-Image@892de7cb61df49753bf15145a711154803a355cb.tar',
+        baseModel: 'MiniMax H3 Image',
+        ecosystem: 'minimaxh3image' satisfies MiniMaxH3ImageAiToolkitTrainingInput['ecosystem'],
         isNew: true,
       },
     ],
@@ -1440,6 +1461,18 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  minimaxh3image: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 16,
+    networkAlpha: 16,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
   // Ernie is newly added upstream with no param overrides — inherits the ai-toolkit base.
   ernie: {
     epochs: 10,
@@ -1630,7 +1663,14 @@ export function paramsForVersion(
  * change. Callers resolve a "Custom…" run to a catalog version before asking, so the only unknown
  * keys are future unmirrored ones — those take the source's `otherwise` arm (2000).
  */
-const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3']);
+const STEP_DEFAULT_3000 = new Set([
+  'ltx2',
+  'ltx23',
+  'ltx25',
+  'boogu',
+  'minimaxh3',
+  'minimaxh3image',
+]);
 export function versionStepDefault(versionKey: string): number {
   return STEP_DEFAULT_3000.has(versionKey) ? 3000 : versionKey === 'anima' ? 1500 : 2000;
 }

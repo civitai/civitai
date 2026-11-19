@@ -10,7 +10,9 @@
  * `serveImagesAsPostsStandalone` function its default export carries for every request.
  *
  * Routes: GET /api/trpc/image.getImagesAsPostsInfinite (the procedure's own URL, so one replay
- * target list fits every arm) and GET /healthz (200 once booted, 503 before). Anything else: 404.
+ * target list fits every arm) and /healthz (200 once booted). Until boot finishes every request,
+ * /healthz included, answers 503; after that other paths answer 404 and a non-GET on the
+ * procedure's path 405.
  *
  * Start (from the image root, /app): `node -- feed-bench/server.cjs`. Port: $PORT (default 3000).
  */
@@ -23,8 +25,7 @@ const path = require('node:path');
 const dir = path.join(__dirname, '..');
 const PAGE = '/api/internal/feed-bench';
 
-// --- what the generated server.js does before starting Next (as trpc-server/server.cjs) ---------
-
+// What the generated server.js does before starting Next, as trpc-server/server.cjs does.
 process.env.NODE_ENV = 'production';
 process.chdir(dir);
 
@@ -58,8 +59,6 @@ const pagesManifest = JSON.parse(
   fs.readFileSync(path.join(distDir, 'server', 'pages-manifest.json'), 'utf8')
 );
 if (!pagesManifest[PAGE]) throw new Error(`[feed-bench] ${PAGE} is not in pages-manifest.json`);
-
-// --- serve ----------------------------------------------------------------------------------------
 
 /** `serveImagesAsPostsStandalone(req, res)`, once boot has loaded it. */
 let serve = null;

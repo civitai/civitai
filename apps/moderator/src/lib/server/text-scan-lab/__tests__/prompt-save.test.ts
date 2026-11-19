@@ -4,7 +4,17 @@ import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const harness = vi.hoisted(() => ({ getPrompts: vi.fn(), putPrompt: vi.fn() }));
+const harness = vi.hoisted(() => ({
+  getPrompts: vi.fn(),
+  putPrompt: vi.fn(),
+  holdsMainPermission: vi.fn(),
+}));
+const gate = vi.hoisted(() => ({ checkIntentPublish: vi.fn() }));
+vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: () => ({}) }));
+vi.mock('$lib/server/text-scan-tests/publish-gate', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...gate,
+}));
 vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
   ...(await importOriginal<typeof HarnessClient>()),
   ...harness,
@@ -14,6 +24,9 @@ const { restorePrompt, restoreSchema, savePrompt, saveSchema } = await import('.
 const { LabHarnessError, StalePromptError } = await import(
   '$lib/server/text-scan-lab/harness-client'
 );
+
+const USER = 990200013;
+const INTENT = 'label:model-com-face-intent' as const;
 
 const version = (id: number, content: string) => ({
   id,
@@ -33,6 +46,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   harness.getPrompts.mockResolvedValue(prompts(3));
   harness.putPrompt.mockResolvedValue({ id: 4, key: 'base' });
+  harness.holdsMainPermission.mockResolvedValue(true);
+  gate.checkIntentPublish.mockResolvedValue({ ok: true, runId: 7 });
 });
 
 describe('saveSchema', () => {
@@ -62,7 +77,9 @@ describe('saveSchema', () => {
 
 describe('savePrompt', () => {
   it('saves with the draft base and no note', async () => {
-    expect(await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined })).toEqual({
+    expect(
+      await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined }, USER)
+    ).toEqual({
       saved: { key: 'base', id: 4 },
     });
     expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('base', 'X', {
@@ -74,7 +91,7 @@ describe('savePrompt', () => {
   it('returns 409 and names the key when the draft base is stale', async () => {
     harness.putPrompt.mockRejectedValue(new StalePromptError('newer'));
     expect(
-      await savePrompt({ key: 'label:scam', content: 'X', baseId: 3, note: undefined })
+      await savePrompt({ key: 'label:scam', content: 'X', baseId: 3, note: undefined }, USER)
     ).toMatchObject({
       status: 409,
       data: { stale: 'label:scam' },
@@ -83,7 +100,7 @@ describe('savePrompt', () => {
 
   it('says a refused save was not saved', async () => {
     harness.putPrompt.mockRejectedValue(new LabHarnessError('invalid request', true));
-    const res = await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined });
+    const res = await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined }, USER);
     expect(res).toMatchObject({ status: 502 });
     const { error } = (res as { data: { error: string } }).data;
     expect(error).toMatch(/was not saved/);
@@ -92,9 +109,61 @@ describe('savePrompt', () => {
 
   it('says a failed save may or may not have gone through', async () => {
     harness.putPrompt.mockRejectedValue(new LabHarnessError('harness down'));
-    const res = await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined });
+    const res = await savePrompt({ key: 'base', content: 'X', baseId: 3, note: undefined }, USER);
     expect(res).toMatchObject({ status: 502 });
     expect((res as { data: { error: string } }).data.error).toMatch(/may or may not/);
+  });
+});
+
+describe('savePrompt for the intent key', () => {
+  const save = () => savePrompt({ key: INTENT, content: 'NEW', baseId: 3, note: undefined }, USER);
+
+  it('saves once the saver holds the intent grant and their run passed', async () => {
+    expect(await save()).toEqual({ saved: { key: INTENT, id: 4 } });
+    expect(harness.holdsMainPermission).toHaveBeenCalledWith('textScanPromptPublishIntent');
+    expect(gate.checkIntentPublish).toHaveBeenCalledWith(
+      {},
+      { content: 'NEW', userId: USER, live: prompts(3) }
+    );
+  });
+
+  it('refuses, and saves nothing, when the run check refuses', async () => {
+    gate.checkIntentPublish.mockResolvedValue({ ok: false, reason: 'no run' });
+    const res = await save();
+    expect(res).toMatchObject({ status: 409, data: { error: 'no run' } });
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
+  it('refuses a saver without the intent grant before checking any run', async () => {
+    harness.holdsMainPermission.mockResolvedValue(false);
+    expect(await save()).toMatchObject({ status: 403 });
+    expect(gate.checkIntentPublish).not.toHaveBeenCalled();
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the live prompts cannot be read', async () => {
+    harness.getPrompts.mockRejectedValue(new LabHarnessError('down', false));
+    expect(await save()).toMatchObject({ status: 502 });
+    expect(harness.putPrompt).not.toHaveBeenCalled();
+  });
+
+  it('leaves the other keys ungated', async () => {
+    await savePrompt({ key: 'label:scam', content: 'X', baseId: 3, note: undefined }, USER);
+    expect(gate.checkIntentPublish).not.toHaveBeenCalled();
+    expect(harness.putPrompt).toHaveBeenCalled();
+  });
+
+  it('restores an intent version with no run', async () => {
+    gate.checkIntentPublish.mockResolvedValue({ ok: false, reason: 'no run' });
+    harness.getPrompts.mockResolvedValue({
+      ...prompts(3),
+      active: { [INTENT]: { id: 3, key: INTENT, content: 'TEXT 3' } },
+      history: [version(3, 'TEXT 3'), version(2, 'TEXT 2')].map((v) => ({ ...v, key: INTENT })),
+    });
+    expect(await restorePrompt({ key: INTENT, id: 2, baseId: 3, note: undefined })).toEqual({
+      saved: { key: INTENT, id: 4 },
+    });
+    expect(gate.checkIntentPublish).not.toHaveBeenCalled();
   });
 });
 
@@ -109,12 +178,19 @@ describe('restorePrompt', () => {
     expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('base', 'TEXT 2', {
       note: 'Restored #2',
       baseId: 3,
+      restore: true,
     });
   });
 
-  it('keeps a note the moderator wrote', async () => {
+  it('keeps a note the moderator wrote, after the version it restores', async () => {
     await restorePrompt(input({ note: 'roll back' }));
-    expect(harness.putPrompt.mock.calls[0][2]).toEqual({ note: 'roll back', baseId: 3 });
+    const [, content, opts] = harness.putPrompt.mock.calls[0];
+    expect(opts).toEqual({
+      note: `Restored #${input({}).id}: roll back`,
+      baseId: 3,
+      restore: true,
+    });
+    expect(content).toBe(`TEXT ${input({}).id}`);
   });
 
   it('returns 404 for an id outside the loaded versions', async () => {
