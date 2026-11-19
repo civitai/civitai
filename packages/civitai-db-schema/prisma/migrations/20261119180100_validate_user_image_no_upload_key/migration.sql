@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- HAND-APPLIED with psql on a direct primary connection (not the transaction pooler). Validates the
 -- constraint added NOT VALID by 20261119180000, off-peak.
 --
@@ -9,7 +10,8 @@
 -- lock_timeout: SHARE UPDATE EXCLUSIVE waits behind autovacuum and other DDL on "User"; on a timeout
 -- nothing changes, re-run. statement_timeout: set explicitly so a role default cannot stop the scan.
 -- VALIDATE on a missing constraint errors, but on one already valid it succeeds as a no-op, so the
--- guard checks the constraint is the one 20261119180000 adds.
+-- guard checks the constraint is the one 20261119180000 adds. This file commits: dry-run it with the
+-- statements in the PR body, never by wrapping the file in BEGIN ... ROLLBACK.
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '30min';

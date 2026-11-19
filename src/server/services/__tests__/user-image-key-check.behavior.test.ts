@@ -18,6 +18,9 @@ const VALIDATE = readFileSync(
 );
 const KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
 
+// psql meta-commands (\set ON_ERROR_STOP on) are not SQL; PGlite runs the rest.
+const sqlOf = (file: string) => file.replace(/^\\.*$/gm, '');
+
 let pg: PGlite;
 beforeEach(async () => {
   pg = new PGlite();
@@ -29,12 +32,20 @@ const setImage = (id: number, image: string | null) =>
   pg.query('INSERT INTO "User" (id, image) VALUES ($1, $2)', [id, image]);
 
 describe('the User.image upload-key constraint', () => {
+  it('🔴 stops psql at the first error in both files', () => {
+    for (const file of [ADD, VALIDATE]) expect(file.split('\n')[0]).toBe('\\set ON_ERROR_STOP on');
+  });
+
+  it('the guard reads every key form the constraint does', () => {
+    expect(ADD).toContain(`AND ${holdsUploadKeyText('image').slice(1, -1)}`);
+  });
+
   it('is the shared key rule, word for word', () => {
     expect(ADD).toContain(`CHECK (image IS NULL OR NOT ${holdsUploadKeyText('image')}) NOT VALID`);
   });
 
   it('🔴 refuses an upload key in any form the rule reads, once added', async () => {
-    await pg.exec(ADD);
+    await pg.exec(sqlOf(ADD));
     for (const [id, image] of [
       [1, KEY],
       [2, KEY.toUpperCase()],
@@ -44,7 +55,7 @@ describe('the User.image upload-key constraint', () => {
   });
 
   it('accepts NULL and an avatar url with no key (control)', async () => {
-    await pg.exec(ADD);
+    await pg.exec(sqlOf(ADD));
     await setImage(1, null);
     await setImage(2, 'https://avatars.githubusercontent.com/u/1?v=4');
     await setImage(3, 'https://cdn.discordapp.com/avatars/123456789/a1b2c3d4e5f6.png');
@@ -53,8 +64,8 @@ describe('the User.image upload-key constraint', () => {
   });
 
   it('🔴 will not be added while a row still holds a key', async () => {
-    await setImage(1, KEY);
-    await expect(pg.exec(ADD)).rejects.toThrow(/run the clean-up first/);
+    await setImage(1, KEY.toUpperCase().replace(/-/g, '%2D'));
+    await expect(pg.exec(sqlOf(ADD))).rejects.toThrow(/run the clean-up first/);
     await pg.exec('ROLLBACK');
     const { rows } = await pg.query(
       `SELECT 1 FROM pg_constraint WHERE conname = 'User_image_no_upload_key'`
@@ -63,11 +74,11 @@ describe('the User.image upload-key constraint', () => {
   });
 
   it('validates after it is added, and refuses to run without it', async () => {
-    await expect(pg.exec(VALIDATE)).rejects.toThrow(/apply 20261119180000 first/);
+    await expect(pg.exec(sqlOf(VALIDATE))).rejects.toThrow(/apply 20261119180000 first/);
     await pg.exec('ROLLBACK');
     await setImage(1, 'https://avatars.githubusercontent.com/u/1?v=4');
-    await pg.exec(ADD);
-    await pg.exec(VALIDATE);
+    await pg.exec(sqlOf(ADD));
+    await pg.exec(sqlOf(VALIDATE));
     const { rows } = await pg.query<{ convalidated: boolean }>(
       `SELECT convalidated FROM pg_constraint WHERE conname = 'User_image_no_upload_key'`
     );

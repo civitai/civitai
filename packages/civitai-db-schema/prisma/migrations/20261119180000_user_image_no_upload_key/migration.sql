@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- HAND-APPLIED with psql on a direct primary connection (not the transaction pooler). "User".image
 -- never holds one of our upload keys: an uploaded avatar is the profile picture, and the profile save
 -- refuses a key in image (civitai/civitai#9680 removed the last writer of one). This constraint makes
@@ -9,6 +10,10 @@
 -- Apply only after: the web release and a moderator-v* tag carrying #9680 are live, and the one-off
 -- clean-up of existing keys has run. NOT VALID skips the scan of existing rows; 20261119180100
 -- validates them, and catches a key written between the guard and the ALTER.
+--
+-- ON_ERROR_STOP: the guard and the ALTER are separate transactions, so psql must stop at the guard's
+-- error or the ALTER would still run. This file commits: dry-run it with the statements in the PR body,
+-- never by wrapping the file in BEGIN ... ROLLBACK.
 
 -- 1. The guard, a read on its own: no row may still hold a key (a NOT VALID constraint still fails
 --    any later UPDATE of such a row). It scans "User"; the regex runs only on non-NULL image.
