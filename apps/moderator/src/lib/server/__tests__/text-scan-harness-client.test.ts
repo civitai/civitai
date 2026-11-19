@@ -535,6 +535,22 @@ describe('putPrompt', () => {
     ]);
   });
 
+  it('sends restore: true only for a restore', async () => {
+    call.mockResolvedValue({ ok: true, body: { id: 4, key: 'base' } });
+    await putPrompt('label:model-com-face-intent', 'X', { baseId: 3, restore: true });
+    await putPrompt('label:model-com-face-intent', 'X', { baseId: 3, restore: false });
+    expect(call.mock.calls.map((c) => c[1])).toEqual([
+      {
+        action: 'putPrompt',
+        key: 'label:model-com-face-intent',
+        content: 'X',
+        baseId: 3,
+        restore: true,
+      },
+      { action: 'putPrompt', key: 'label:model-com-face-intent', content: 'X', baseId: 3 },
+    ]);
+  });
+
   it('turns a 409 into StalePromptError and anything else into LabHarnessError', async () => {
     call.mockResolvedValueOnce({ ok: false, status: 409, error: 'x: newer', reason: 'newer' });
     await expect(putPrompt('base', 'X', { baseId: 3 })).rejects.toBeInstanceOf(StalePromptError);

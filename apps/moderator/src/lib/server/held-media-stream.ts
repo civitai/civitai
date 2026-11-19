@@ -27,11 +27,15 @@ export async function streamStoredMedia(input: {
   setCookie?: string;
   /** Audit every response carrying bytes, mid-file ranges included, not just those from byte 0. */
   auditEveryRange?: boolean;
+  /** Write the audit row before any storage call, so every answer after eligibility (a 416, a missing
+   *  file, a refused type) is recorded, not only those carrying bytes. */
+  auditFirst?: boolean;
   /** Refuse, ranges included, an object larger than this, or of an unknown or encoded size. */
   maxBytes?: number;
 }): Promise<Response> {
   const { media, imageId, request } = input;
   if (!isProbeableMediaKey(media.url)) error(404, 'Not available here.');
+  if (input.auditFirst && !(await recorded(input.audit))) error(503, 'Could not record this view.');
 
   const signed = await getStorage()
     .getGetUrl({ backend: 'b2Image', key: media.url, expiresIn: 60 })
@@ -101,14 +105,12 @@ export async function streamStoredMedia(input: {
     })
   );
   // Awaited, so the row is there before the page that loads these bytes reports them shown.
-  if (request.method !== 'HEAD' && (input.auditEveryRange || isAuditedServe(upstream))) {
-    const written = await input.audit().then(
-      () => true,
-      (e) => {
-        console.error('[held-media] view row not written', e);
-        return false;
-      }
-    );
+  if (
+    !input.auditFirst &&
+    request.method !== 'HEAD' &&
+    (input.auditEveryRange || isAuditedServe(upstream))
+  ) {
+    const written = await recorded(input.audit);
     if (!written) {
       void upstream.body.cancel();
       error(503, 'Could not record this view.');
@@ -119,3 +121,12 @@ export async function streamStoredMedia(input: {
   if (input.setCookie) headers['set-cookie'] = input.setCookie;
   return new Response(upstream.body, { status: upstream.status, headers });
 }
+
+const recorded = (audit: () => Promise<unknown>) =>
+  audit().then(
+    () => true,
+    (e) => {
+      console.error('[held-media] view row not written', e);
+      return false;
+    }
+  );

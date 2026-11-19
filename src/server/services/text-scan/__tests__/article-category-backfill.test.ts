@@ -59,7 +59,7 @@ describe('runArticleCategoryBackfill', () => {
     });
     expect(submit).not.toHaveBeenCalled();
     expect(result).toMatchObject({ selected: 4, nextAfterId: 8, byStatus: { 'dry-run': 4 } });
-    expect(queryRaw).toHaveBeenCalledWith(expect.any(String), 0, 4, false);
+    expect(queryRaw).toHaveBeenCalledWith(expect.any(String), 0, 4, false, expect.any(Date));
   });
 
   it('sends one call per public article and counts each outcome, a failed submit included', async () => {

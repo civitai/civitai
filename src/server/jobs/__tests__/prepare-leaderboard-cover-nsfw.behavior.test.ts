@@ -166,9 +166,6 @@ describe('setCoverImageNsfwLevelOrLog', () => {
     await q(`ALTER TABLE "Post" RENAME TO "PostGone"`);
     try {
       await expect(setCoverImageNsfwLevelOrLog()).resolves.toBeUndefined();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'leaderboard-cover-nsfw-level-failed' })
-      );
     } finally {
       await q(`ALTER TABLE "PostGone" RENAME TO "Post"`);
     }

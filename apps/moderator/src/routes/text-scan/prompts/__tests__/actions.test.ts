@@ -89,6 +89,7 @@ describe('restore', () => {
     expect(harness.putPrompt).toHaveBeenCalledExactlyOnceWith('base', 'TEXT 2', {
       note: 'Restored #2',
       baseId: 3,
+      restore: true,
     });
   });
 });
