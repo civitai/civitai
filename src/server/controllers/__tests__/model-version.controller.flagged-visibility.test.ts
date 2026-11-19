@@ -26,6 +26,8 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads6>()),
   getModelVersionOwnerWithCosmetics: mockOwnerRow,
+  // The signed-out donation goal read checks the version exists here first: none do.
+  listExistingModelVersionIds: vi.fn(async () => []),
 }));
 // The first read after the version is loaded and checked. Reaching it means it was served.
 vi.mock('~/server/services/generation/coverage-source', () => ({
@@ -415,6 +417,16 @@ describe('the public sibling reads of a version', () => {
       serveRows([row(100)]);
       expect(await license('other')).toBe('served');
       expect(await goal('other')).toBe('served');
+    });
+
+    it("a donation goal read on a scoped key never takes the owner's path", async () => {
+      serveRows([row(100)]);
+      // The owner's path reads the version for its owner; the signed-out path does not.
+      await goal('owner', SCOPED_KEY).catch(() => undefined);
+      expect(dbMock.dbWrite.modelVersion.findFirstOrThrow).not.toHaveBeenCalled();
+      // Control: a signed-in viewer on a session does take it.
+      await goal('other');
+      expect(dbMock.dbWrite.modelVersion.findFirstOrThrow).toHaveBeenCalled();
     });
 
     it('a missing version answers the same as a hidden one', async () => {
