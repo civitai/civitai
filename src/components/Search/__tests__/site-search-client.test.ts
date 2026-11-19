@@ -167,12 +167,12 @@ describe('searchFetch on the token path: collections go through /api/search only
     expect(fetchMock.mock.calls[1][0]).toBe('http://search.test/multi-search');
   });
 
-  it('a federated multi-search naming collections goes to the proxy whole', async () => {
+  it('a federated multi-search, which the proxy does not serve, stays on the token path', async () => {
     vi.stubGlobal('fetch', fetchMock);
     token();
     respond(200, { hits: [] });
     await multi([{ indexUid: COLLECTIONS }, { indexUid: 'models_v9' }], { federation: {} });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/search/multi-search');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://search.test/multi-search');
   });
 });

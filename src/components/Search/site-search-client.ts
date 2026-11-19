@@ -55,8 +55,8 @@ type MultiSearchBody = { queries?: { indexUid?: unknown }[]; federation?: unknow
 /**
  * How a token-path request reaches a proxy-only index: a single-index request by its path, a
  * multi-search by the indexes it names. A multi-search mixing both is split, so the other indexes
- * still go straight to Meilisearch exactly as before; a federated one cannot be split and goes to
- * the proxy whole.
+ * still go straight to Meilisearch exactly as before. A federated one (which the proxy does not
+ * serve) goes straight to Meilisearch, whose token refuses the collections part.
  */
 function proxyOnlyRoute(path: string, init: RequestInit) {
   const index = /^\/indexes\/([^/?]+)/.exec(path)?.[1];
@@ -71,7 +71,8 @@ function proxyOnlyRoute(path: string, init: RequestInit) {
   const queries = Array.isArray(body?.queries) ? body.queries : [];
   const proxied = queries.map((query) => isProxyOnly(query?.indexUid));
   if (!proxied.some(Boolean)) return 'direct';
-  if (body.federation !== undefined || proxied.every(Boolean)) return 'proxy';
+  if (body.federation !== undefined) return 'direct';
+  if (proxied.every(Boolean)) return 'proxy';
   return { body, proxied };
 }
 

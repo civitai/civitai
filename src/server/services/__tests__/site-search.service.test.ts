@@ -410,6 +410,12 @@ describe('collection images', () => {
       expect(hit._formatted).not.toHaveProperty('srcs');
     });
 
+    it('a hits value that is not a list is dropped, not passed through', async () => {
+      respond({ hits: { 0: { id: 1, image: { id: 20, nsfwLevel: NsfwLevel.R } } } });
+      const { body } = await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg);
+      expect((body as { hits: unknown }).hits).toEqual([]);
+    });
+
     it('keeps a cover within that level', async () => {
       respond({ hits: [{ id: 1, image: pg, images: [pg] }] });
       const [hit] = hitsOf(
