@@ -451,6 +451,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
     // Reads back the rating columns and rating id the rater stored, and seeds a moderator override.
     'server/services/apps/__tests__/doc-store.rater.pglite.test.ts',
+    // Reads back the record_id the column default gave each write, and seeds rows with none for
+    // the backfill.
+    'server/services/apps/__tests__/doc-store.record-id.pglite.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
@@ -477,6 +480,12 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.down.sql',
     'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.sql',
     'server/services/apps/migrations/20261118120100_appdata_doc_rating_id_idx.sql',
+    // The record_id column on doc and its rollback (DDL only), its batched backfill (a data
+    // script run by hand), and its unique index (DDL only).
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.down.sql',
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
+    'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
+    'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
