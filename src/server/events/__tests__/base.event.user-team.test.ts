@@ -7,8 +7,13 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 // team-coloured item on a guessed team charges someone assigned by hand for a
 // colour that isn't theirs.
 
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
+  mockLogSysRedisFailOpen: vi.fn(),
+}));
+
 // sysRedis comes from the canonical redis mock (setup.ts registers it).
 const mockHGet = redisMock.sysRedis.hGet;
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 
 import { createEvent } from '~/server/events/base.event';
@@ -28,6 +33,7 @@ const USER = 42;
 describe('getUserTeam', () => {
   beforeEach(() => {
     mockHGet.mockReset();
+    mockLogSysRedisFailOpen.mockReset();
   });
 
   it('returns a manual assignment over the computed team', async () => {
@@ -49,11 +55,13 @@ describe('getUserTeam', () => {
     mockHGet.mockRejectedValue(new Error('sysRedis down'));
 
     expect(await event.getUserTeam(USER)).toBe(computed);
+    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
   });
 
   it('with strict, rejects when the read fails instead of guessing', async () => {
     mockHGet.mockRejectedValue(new Error('sysRedis down'));
 
     await expect(event.getUserTeam(USER, { strict: true })).rejects.toThrow('sysRedis down');
+    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 });

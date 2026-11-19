@@ -18,8 +18,10 @@ const {
   exists,
   set,
   withSysReadDeadline,
+  logSysRedisFailOpen,
   executeRaw,
   queryRaw,
+  logToAxiom,
   state,
 } = vi.hoisted(() => {
   // Real-ish wall-clock deadline race. Mirrors sys-read-deadline.ts so the
@@ -39,8 +41,10 @@ const {
     del: vi.fn(() => Promise.resolve(1)),
     exists: vi.fn(() => Promise.resolve(0)),
     set: vi.fn(() => Promise.resolve('OK')),
+    logSysRedisFailOpen: vi.fn(),
     executeRaw: vi.fn(() => Promise.resolve(1)),
     queryRaw: vi.fn(() => Promise.resolve([] as { key: string; value: unknown }[])),
+    logToAxiom: vi.fn(() => Promise.resolve()),
     state: holder,
     withSysReadDeadline: vi.fn(<T>(p: Promise<T>, ms?: number): Promise<T> => {
       if (holder.deadlineDisabled) return p;
@@ -65,6 +69,10 @@ vi.mock('~/server/redis/client', () => ({
   withSysReadDeadline,
 }));
 
+// The fail-open logger fires to Axiom; stub it so the tests don't touch the
+// logging client (which opens its own IO) and so we can assert it was called.
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
+
 // The Postgres parking lot for dropped enqueues. Mocked at the client so the raw
 // SQL shape stays observable — the tests below assert that ids were handed to it,
 // which is the only way a lost delete is distinguishable from a dropped one.
@@ -72,6 +80,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: { $executeRaw: executeRaw, $queryRaw: queryRaw },
   dbRead: { $executeRaw: executeRaw, $queryRaw: queryRaw },
 }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 import { addToQueue, checkoutQueue, drainDroppedEnqueues, mergeQueue } from '~/server/redis/queues';
 
@@ -181,6 +190,18 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
     // bucket-reference overwrite (which would orphan pre-existing buckets).
     expect(hSet).not.toHaveBeenCalled();
     expect(sAdd).not.toHaveBeenCalled();
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'queues.getBucketNames hGet',
+      expect.any(Error),
+      expect.objectContaining({ key: 'images_v6:Update' })
+    );
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue skipped-degraded-read',
+      expect.any(Error),
+      expect.objectContaining({ key: 'images_v6:Update' })
+    );
   });
 
   it('addToQueue: a rejecting bucket registration parks the ids instead of writing them nowhere', async () => {
@@ -189,10 +210,22 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
     sAdd.mockImplementation(DOWN);
 
     await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue hSet',
+      expect.any(Error),
+      expect.any(Object)
+    );
     // A bucket whose registration failed is unreachable by every consumer, so the
     // ids must NOT be written into it — they go to the parking lot instead.
     expect(sAdd).not.toHaveBeenCalled();
     expect(callsMatching(queryRaw, 'INSERT INTO "KeyValue"')).toHaveLength(1);
+    expect(logSysRedisFailOpen).not.toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue sAdd',
+      expect.any(Error),
+      expect.any(Object)
+    );
   });
 
   it('checkoutQueue: a rejecting sMembers read yields empty content — does not throw', async () => {
@@ -201,6 +234,12 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
 
     const queue = await checkoutQueue('images_v6:Update', false, true);
     expect(queue.content).toEqual([]);
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'queues.checkoutQueue sMembers',
+      expect.any(Error),
+      expect.any(Object)
+    );
   });
 
   it('mergeQueue: a rejecting lock write does not throw', async () => {
@@ -223,6 +262,12 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
     // Degraded read → skip; never clobbers the (unknown) real bucket list.
     expect(hSet).not.toHaveBeenCalled();
     expect(sAdd).not.toHaveBeenCalled();
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'queues.getBucketNames hGet',
+      expect.objectContaining({ message: expect.stringMatching(/timed out/) }),
+      expect.any(Object)
+    );
   });
 
   it('checkoutQueue: a HANGING sMembers read is deadline-bounded and yields empty content', async () => {
@@ -231,6 +276,12 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
 
     const queue = await checkoutQueue('images_v6:Update', false, true);
     expect(queue.content).toEqual([]);
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'queues.checkoutQueue sMembers',
+      expect.objectContaining({ message: expect.stringMatching(/timed out/) }),
+      expect.any(Object)
+    );
   });
 
   it('addToQueue: a HANGING write (hSet) is deadline-bounded and swallowed', async () => {
@@ -238,6 +289,12 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
     hSet.mockImplementation(never);
 
     await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue hSet',
+      expect.objectContaining({ message: expect.stringMatching(/timed out/) }),
+      expect.any(Object)
+    );
   });
 });
 
@@ -275,6 +332,12 @@ describe('waitForMerge — terminates under a persistent stall (does not loop fo
 
     try {
       await expect(checkoutQueue('images_v6:Update', false, true)).resolves.toBeDefined();
+      expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+        'read-degraded',
+        'queues.waitForMerge cap-reached',
+        expect.any(Error),
+        expect.any(Object)
+      );
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
@@ -354,6 +417,12 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
 
     expect(hSet).not.toHaveBeenCalled(); // no clobbering bucket-list overwrite
     expect(sAdd).not.toHaveBeenCalled(); // no write into a guessed bucket
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'write-degraded',
+      'queues.addToQueue skipped-degraded-read',
+      expect.any(Error),
+      expect.objectContaining({ key: 'images_v6:Update' })
+    );
   });
 
   it('checkoutQueue happy path (all reads succeed): retires exactly the processed buckets', async () => {
@@ -422,6 +491,21 @@ describe('dropped-enqueue parking lot', () => {
     await expect(addToQueue('images_v6:Delete', [1, 2, 3])).resolves.toBe(true);
     expect(queryRaw).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('reports the cap so a full parking lot is not a silent discard', async () => {
+    hGet.mockImplementation(DOWN);
+    queryRaw.mockResolvedValue([{ capped: true }]);
+
+    await addToQueue('images_v6:Delete', [1, 2, 3]);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'search-index-queue-fallback',
+        message: expect.stringContaining('cap'),
+      })
+    );
   });
 
   describe('drain', () => {
