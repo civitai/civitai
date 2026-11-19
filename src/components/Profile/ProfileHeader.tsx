@@ -8,7 +8,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
 import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
 import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
-import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -162,7 +161,6 @@ export function ProfileHeader({ username }: { username: string }) {
           <ProfileSidebar username={username} />
         </div>
         {renderCoverImage()}
-        <ProfileNavigation username={username} />
         {renderAnnouncements()}
       </div>
     );
