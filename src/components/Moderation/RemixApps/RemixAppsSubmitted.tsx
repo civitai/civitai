@@ -78,6 +78,8 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess, onError });
   const clearMark = trpc.remixApp.admin.clearMinorThemed.useMutation({ onSuccess, onError });
   const marked = !!user.minorThemed;
+  // The server bars mature on every app of an author with a mark on any of them.
+  const authorMarked = marked || others.some((o) => !!o.user.minorThemed);
 
   return (
     <Stack gap="xs" className="rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4">
@@ -131,8 +133,8 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
         <Group gap="xs" align="flex-end">
           <Checkbox
             label="Allow mature sources (adds the mature engine)"
-            checked={mature && !marked}
-            disabled={marked}
+            checked={mature && !authorMarked}
+            disabled={authorMarked}
             onChange={(e) => setMature(e.currentTarget.checked)}
           />
           {marked && (
@@ -186,7 +188,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
                 sha256: seen.sha256,
                 seenReview: seen.review,
                 decision: 'approved',
-                mature: mature && !marked,
+                mature: mature && !authorMarked,
               })
             }
           >

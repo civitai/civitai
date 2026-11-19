@@ -292,7 +292,8 @@ export type RemixAppSubmitInput = z.infer<typeof remixAppSubmitSchema>;
 
 /** A user app's slug starts with its author's id, so no author can write another's or a system app. */
 export const userRemixSlugPrefix = (authorId: number) => `u${authorId}-`;
-export const USER_REMIX_SLUG = /^u[1-9][0-9]*-/;
+/** Its group is the author's user id. */
+export const USER_REMIX_SLUG = /^u([1-9][0-9]*)-/;
 
 /**
  * The manifest stored on the row. `version` mirrors `app_blocks.version`. `author` and `review`

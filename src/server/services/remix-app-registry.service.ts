@@ -257,13 +257,11 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug));
 }
 
-const USER_SLUG_AUTHOR = /^u([1-9][0-9]*)-/;
-
 /** Authors with a minor-themed mark on any row, one that no longer validates included. */
 function minorThemedAuthors(rows: RemixAppRow[]) {
   const authors = new Set<number>();
   for (const row of rows) {
-    const author = USER_SLUG_AUTHOR.exec(row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length));
+    const author = USER_REMIX_SLUG.exec(row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length));
     if (author && hasMinorThemedMark(row.manifest)) authors.add(Number(author[1]));
   }
   return authors;
@@ -644,7 +642,8 @@ export async function reviewUserRemixApp({
   if (withMature && (await authorHasMinorThemedApp(stored.author?.userId ?? 0)))
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'This app was rejected as minor-themed, so it can only be approved for safe sources',
+      message:
+        'This author has an app rejected as minor-themed, so this one can only be approved for safe sources',
     });
 
   const spec: RemixUserSpec = {
