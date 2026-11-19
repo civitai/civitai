@@ -262,7 +262,7 @@ describe('image.getDetail visibility', () => {
 });
 
 describe('image.getDetail for a moderator on an API key', () => {
-  it.each(HIDDEN.slice(0, 4))(
+  it.each(HIDDEN)(
     'an image %s is NOT_FOUND on a scoped key, and answers on a full-scope key',
     async (_, state) => {
       await seed(state);

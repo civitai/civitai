@@ -23,6 +23,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { trpcViewer } from '~/server/auth/api-auth-session';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
@@ -108,7 +109,7 @@ export const getServerProxySSGHelpers = async (
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      ...trpcViewer(session?.user),
+      ...trpcViewer(withModeratorRightsFor(session?.user, getRequestCredential(ctx.req))),
       acceptableOrigin: true,
       features,
       track: new Tracker(),

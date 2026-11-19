@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import { OnboardingSteps } from '~/server/common/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A banned cookie session is no viewer to a public tRPC procedure: it gets the signed-out answer.
@@ -24,6 +25,8 @@ const flagsFor = (user: unknown) =>
   ({
     trpcFlagGuardPerRequest: guard.perRequest,
     ...(user ? { siteAppealForm: true } : {}),
+    // Stands in for a moderator-only flag.
+    ...((user as { isModerator?: boolean } | undefined)?.isModerator ? { adminTags: true } : {}),
   } as never);
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
@@ -38,6 +41,9 @@ vi.mock('~/server/routers', async () => {
       viewer: publicProcedure.query(({ ctx }) => ctx.user?.id ?? 'anonymous'),
       account: protectedProcedure.query(({ ctx }) => ctx.user.id),
       appealState: restrictedAccountAppealProcedure.query(({ ctx }) => ctx.user.id),
+      moderates: publicProcedure
+        .meta({ requiredScope: TokenScope.MediaRead })
+        .query(({ ctx }) => !!ctx.user?.isModerator),
     }),
   };
 });
@@ -46,11 +52,13 @@ const { createContext } = await import('~/server/createContext');
 const { createCallerFactory } = await import('~/server/trpc');
 const { appRouter } = await import('~/server/routers');
 const { getServerProxySSGHelpers } = await import('~/server/utils/server-side-helpers');
+const { createPlannerCaller } = await import('~/server/utils/planner-endpoint');
 
 const call = createCallerFactory(appRouter as never) as unknown as (ctx: unknown) => {
   viewer: () => Promise<number | 'anonymous'>;
   account: () => Promise<number>;
   appealState: () => Promise<number>;
+  moderates: () => Promise<boolean>;
 };
 
 const ACTIVE = {
@@ -63,12 +71,13 @@ const ACTIVE = {
 };
 const BANNED = { ...ACTIVE, id: 42, bannedAt: new Date('2026-10-01') };
 
-function request() {
+function request(context?: Record<string, unknown>) {
   const req = {
     headers: { host: 'civitai.com', cookie: 'civ-token=x' },
     url: '/api/trpc/viewer',
     query: {},
     cookies: {},
+    ...(context ? { context } : {}),
   } as unknown as NextApiRequest;
   const res = Object.assign(new EventEmitter(), {
     writableEnded: false,
@@ -150,5 +159,50 @@ describe('SSR prefetch over a cookie session', () => {
   it('still prefetches the personalized answer for an active user', async () => {
     const ssg = await ssgFor(ACTIVE);
     await expect(ssg.viewer.fetch()).resolves.toBe(ACTIVE.id);
+  });
+});
+
+// A moderator on an API key that is not full-scope reads as its user, on tRPC and in the SSR
+// prefetch, with the flags evaluated for that user.
+describe('a moderator on a scoped API key', () => {
+  const MOD = { ...ACTIVE, id: 43, isModerator: true };
+  const scopedKey = {
+    tokenScope: TokenScope.MediaRead,
+    apiKeyId: 7,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 7 },
+  };
+
+  it('has no moderator rights or moderator-only flags on tRPC; a session keeps both', async () => {
+    state.session = { user: MOD };
+    const scoped = await createContext(request(scopedKey));
+    await expect(call(scoped).moderates()).resolves.toBe(false);
+    expect(scoped.features).not.toHaveProperty('adminTags');
+
+    const cookie = await createContext(request());
+    await expect(call(cookie).moderates()).resolves.toBe(true);
+    expect(cookie.features).toHaveProperty('adminTags', true);
+  });
+
+  it('has no moderator rights in the SSR prefetch; a session keeps them', async () => {
+    const ssgFor = (context?: Record<string, unknown>) =>
+      getServerProxySSGHelpers(
+        request(context) as never,
+        { user: MOD } as never,
+        flagsFor(MOD)
+      ) as unknown as Promise<{ moderates: { fetch: () => Promise<boolean> } }>;
+    await expect((await ssgFor(scopedKey)).moderates.fetch()).resolves.toBe(false);
+    await expect((await ssgFor()).moderates.fetch()).resolves.toBe(true);
+  });
+
+  it('has no moderator rights through the REST planner caller; a session keeps them', async () => {
+    const plannerFor = (context?: Record<string, unknown>) => {
+      const { req, res } = request(context);
+      return createPlannerCaller(req, res, MOD as never) as unknown as {
+        moderates: () => Promise<boolean>;
+      };
+    };
+    await expect(plannerFor(scopedKey).moderates()).resolves.toBe(false);
+    await expect(plannerFor().moderates()).resolves.toBe(true);
   });
 });

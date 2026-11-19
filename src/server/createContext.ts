@@ -90,17 +90,19 @@ export const createContext = async ({
   // already knows the request is token-auth'd.
   const credential = getRequestCredential(req);
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
+  // A banned viewer stays here (trpcViewer moves it to `bannedUser`), so the appeal flags still reach it.
+  const viewer = withModeratorRightsFor(session?.user, credential);
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    ...trpcViewer(withModeratorRightsFor(session?.user, credential)),
+    ...trpcViewer(viewer),
     acceptableOrigin,
     // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
     // account must still reach them.
-    features: getFeatureFlagsLazy({ user: session?.user, req }),
+    features: getFeatureFlagsLazy({ user: viewer, req }),
     track,
     ip,
     cache,

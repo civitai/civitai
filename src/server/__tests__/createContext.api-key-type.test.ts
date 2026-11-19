@@ -109,10 +109,21 @@ describe('createContext moderator rights by credential', () => {
     expect(await moderatorFlag(system, userKey(TokenScope.UserRead, 9))).toBe(true);
   });
 
+  it("withholds the system account's on an app token", async () => {
+    const system = { id: constants.system.user.id, isModerator: true };
+    const oauth = {
+      ...userKey(TokenScope.UserRead, 9),
+      subject: { type: 'oauth', id: 'client-abc' },
+    };
+    expect(await moderatorFlag(system, oauth)).toBe(false);
+  });
+
   it('leaves the rest of the viewer as the session has it', async () => {
     session.user = { ...moderator, username: 'mod' };
-    const ctx = await createContext({ req: req(userKey(TokenScope.MediaRead)), res: res() });
-    session.user = null;
+    const ctx = await createContext({
+      req: req(userKey(TokenScope.MediaRead)),
+      res: res(),
+    }).finally(() => (session.user = null));
     expect(ctx.user).toMatchObject({ id: 42, username: 'mod', isModerator: false });
   });
 });
