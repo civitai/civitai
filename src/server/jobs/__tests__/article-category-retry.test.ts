@@ -2,29 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import type * as Backfill from '~/server/services/text-scan/article-category-backfill';
-import type * as Mode from '~/server/services/text-scan/mode';
 
-const { select, submit, enabled, mode } = vi.hoisted(() => ({
-  select: vi.fn(),
-  submit: vi.fn(),
-  enabled: vi.fn(),
-  mode: vi.fn(),
-}));
-vi.mock('~/server/services/text-scan/article-category-backfill', async (importOriginal) => ({
-  ...(await importOriginal<typeof Backfill>()),
-  selectUncategorizedArticles: select,
-  submitArticleCategoryCalls: submit,
-}));
-vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
-  ...(await importOriginal<typeof Mode>()),
-  isTextScanEnabled: enabled,
-  getTextScanMode: mode,
-}));
+const select = vi.fn();
+const submit = vi.fn();
+const enabled = vi.fn();
+const mode = vi.fn();
 
 const { retryArticleCategories, MAX_CATEGORY_RETRIES, MAX_SUBMITS_PER_RUN } = await import(
   '~/server/jobs/article-category-retry'
 );
+const run = (now: Date) =>
+  retryArticleCategories(now, { isEnabled: enabled, modeOf: mode, select, submit } as never);
 
 const NOW = new Date('2026-11-19T12:00:00Z');
 const incrBy = vi.mocked(redisMock.redis.incrBy);
@@ -48,7 +36,7 @@ beforeEach(() => {
 describe('retryArticleCategories', () => {
   it('resends the category call for R+ articles still unclassified an hour after publish', async () => {
     select.mockResolvedValueOnce([990000001, 990000002]);
-    const result = await retryArticleCategories(NOW);
+    const result = await run(NOW);
     expect(select).toHaveBeenCalledWith({
       afterId: 0,
       limit: 200,
@@ -65,7 +53,7 @@ describe('retryArticleCategories', () => {
     const attempts = [1, 2, 3, 4, 5];
     for (const n of attempts) {
       incrBy.mockResolvedValueOnce(n as never);
-      await retryArticleCategories(NOW);
+      await run(NOW);
     }
     expect(submittedIds()).toEqual(Array(MAX_CATEGORY_RETRIES).fill(7));
     expect(capLogs()).toHaveLength(1);
@@ -74,7 +62,7 @@ describe('retryArticleCategories', () => {
   it('sends nothing for an article whose attempt Redis could not count', async () => {
     select.mockResolvedValueOnce([7]);
     incrBy.mockRejectedValueOnce(new Error('redis down'));
-    const result = await retryArticleCategories(NOW);
+    const result = await run(NOW);
     expect(submit).not.toHaveBeenCalled();
     expect(result).toMatchObject({ uncounted: 1 });
   });
@@ -84,7 +72,7 @@ describe('retryArticleCategories', () => {
     select.mockResolvedValueOnce(page(1)).mockResolvedValueOnce(page(201));
     incrBy.mockImplementation((async (key: string) =>
       Number(key.split(':').pop()) <= 200 ? MAX_CATEGORY_RETRIES + 1 : 1) as never);
-    await retryArticleCategories(NOW);
+    await run(NOW);
     expect(select.mock.calls.map(([arg]) => arg.afterId)).toEqual([0, 200]);
     expect(submittedIds()).toEqual(page(201).slice(0, MAX_SUBMITS_PER_RUN));
   });
@@ -96,7 +84,7 @@ describe('retryArticleCategories', () => {
       return Array.from({ length: 200 }, (_, i) => afterId + i + 1);
     });
     incrBy.mockResolvedValue((MAX_CATEGORY_RETRIES + 1) as never);
-    await retryArticleCategories(NOW);
+    await run(NOW);
     expect(select).toHaveBeenCalledTimes(50);
     expect(submit).not.toHaveBeenCalled();
   });
@@ -104,7 +92,7 @@ describe('retryArticleCategories', () => {
   it('sends nothing for an article its rollout leaves off, and spends no attempt on it', async () => {
     select.mockResolvedValueOnce([990000001, 990000002]);
     mode.mockImplementation(async (_: string, id: number) => (id === 990000001 ? 'off' : 'shadow'));
-    const result = await retryArticleCategories(NOW);
+    const result = await run(NOW);
     expect(submittedIds()).toEqual([990000002]);
     expect(incrBy).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ outOfRollout: 1 });
@@ -112,7 +100,7 @@ describe('retryArticleCategories', () => {
 
   it('selects nothing while text scanning is off', async () => {
     enabled.mockResolvedValue(false);
-    await retryArticleCategories(NOW);
+    await run(NOW);
     expect(select).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
   });

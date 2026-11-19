@@ -38,8 +38,16 @@ async function recordRetry(articleId: number) {
  * unclassified an hour after publish. The live call has no retry of its own: a failed submit or
  * workflow leaves the category NULL.
  */
-export async function retryArticleCategories(now = new Date()) {
-  if (!(await isTextScanEnabled())) return { disabled: true };
+const defaultDeps = {
+  isEnabled: isTextScanEnabled,
+  modeOf: getTextScanMode,
+  select: selectUncategorizedArticles,
+  submit: submitArticleCategoryCalls,
+};
+
+export async function retryArticleCategories(now = new Date(), deps = defaultDeps) {
+  const { isEnabled, modeOf, select, submit } = deps;
+  if (!(await isEnabled())) return { disabled: true };
   const publishedBefore = new Date(now.getTime() - SETTLE_MS);
   const due: number[] = [];
   let selected = 0;
@@ -48,7 +56,7 @@ export async function retryArticleCategories(now = new Date()) {
   let outOfRollout = 0;
   let afterId = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const ids = await selectUncategorizedArticles({
+    const ids = await select({
       afterId,
       limit: PAGE_SIZE,
       includeMature: true,
@@ -59,7 +67,7 @@ export async function retryArticleCategories(now = new Date()) {
     for (const id of ids) {
       if (due.length >= MAX_SUBMITS_PER_RUN) break;
       // The live path sends no category call for an article its rollout leaves off.
-      if ((await getTextScanMode('Article', id)) === 'off') {
+      if ((await modeOf('Article', id)) === 'off') {
         outOfRollout++;
         continue;
       }
@@ -82,9 +90,7 @@ export async function retryArticleCategories(now = new Date()) {
     afterId = ids[ids.length - 1];
   }
 
-  const byStatus = countByStatus(
-    due.length ? await submitArticleCategoryCalls(due, CONCURRENCY) : []
-  );
+  const byStatus = countByStatus(due.length ? await submit(due, CONCURRENCY) : []);
   const result = { selected, capped, uncounted, outOfRollout, byStatus };
   // `failed` is an existing Axiom field; the other counts are not, so they go under payload.
   const { failed, ...otherStatuses } = byStatus;
