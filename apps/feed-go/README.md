@@ -49,8 +49,15 @@ answers with Node's for fixed inputs (`testdata/golden/`). The integration tier 
 See `.env.example`. Variable names match the main app's where the value is the same thing. The
 `FEED_GO_*` flag mirrors default to ON (`FEED_GO_FRAME_CACHE_NEGATIVE` and `FEED_GO_PRIORITIZED_VERSION_CACHE` to off); set each to its Flipt flag's real value (DESIGN.md §8).
 The per-entity cache misses of DESIGN.md §3.1 (and model.getAll's official-models entry, §15.2.2)
-are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only with
-`FEED_GO_CACHE_WRITEBACK=true` (default off; it then needs `DATABASE_URL`, the primary; DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
+are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only for the
+caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
+are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
+`tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
+`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
+`model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
+`feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
+`FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
+(DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
 falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds

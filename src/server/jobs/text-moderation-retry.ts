@@ -1,5 +1,9 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import {
+  TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
+  TEXT_MODERATION_RETRY_LIMIT,
+} from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import {
@@ -11,8 +15,8 @@ import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const TEXT_MODERATION_RETRY_DELAY_MINUTES = 60; // 1 hour for terminal failures
-export const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
-export const TEXT_MODERATION_RETRY_LIMIT = 9;
+
+export { TEXT_MODERATION_PENDING_TIMEOUT_MINUTES, TEXT_MODERATION_RETRY_LIMIT };
 const FETCH_LIMIT = 500; // max rows pulled per job tick
 const SUBMIT_CONCURRENCY = 5; // parallel orchestrator submissions
 

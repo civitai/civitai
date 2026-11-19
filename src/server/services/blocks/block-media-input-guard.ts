@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
+import { recordBlockMediaInputRefused } from '~/server/metrics/app-block-runtime.metrics';
 import {
   BLOCK_MEDIA_PATH,
   BLOCK_MEDIA_TOKEN_PREFIX,
@@ -73,6 +74,7 @@ export function assertNoBlockMediaInputs(
   log: { appBlockId: string; phase: 'estimate' | 'submit' }
 ) {
   if (!containsBlockMediaReference(body)) return;
+  recordBlockMediaInputRefused(log.phase);
   logToAxiom({
     type: 'info',
     name: 'app-block-media-input-refused',

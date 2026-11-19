@@ -1,3 +1,6 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
@@ -51,7 +54,8 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch, true, {
+        const result = await deleteImages(batch, {
+          actor: { system: 'mod-delete-user-images' },
           onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
           moderatorDelete: true,
         });
@@ -62,14 +66,13 @@ export default ModEndpoint(
       if (postIds.length) {
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
-        deletedPosts = await dbWrite.$executeRaw`
-          WITH doomed AS (
-            SELECT id FROM "Post"
-            WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
-              AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}
-          )
-          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-        `;
+        const deleted = await deletePostRows(kyselyOver(dbWrite), {
+          ids: postIds,
+          actor: { system: 'mod-delete-user-images' },
+          where: fromPrismaSql(Prisma.sql`"userId" = ${userId} AND ${unlessHeld}
+            AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}`),
+        });
+        deletedPosts = deleted.length;
       }
 
       // A hold that landed mid-run stopped the deletes above without an error.

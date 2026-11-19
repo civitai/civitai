@@ -286,7 +286,8 @@ const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
 
 const IMAGE_CDN_HOSTS = CIVITAI_IMAGE_HOSTS.map((h) => `image.${h}`);
 
-function imageCdnHosts() {
+/** The civitai image CDN hosts: the configured image location's, and `image.<civitai host>`. */
+export function imageCdnHosts() {
   try {
     const configured = new URL(clientEnv.NEXT_PUBLIC_IMAGE_LOCATION).host.toLowerCase();
     return [configured, ...IMAGE_CDN_HOSTS];

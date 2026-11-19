@@ -684,8 +684,10 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
+    // From the primary: the unchanged-value pass below must not compare against a lagging replica.
     const user = await getUserById({
       id,
+      db: dbWrite,
       select: {
         username: true,
         image: true,
@@ -713,6 +715,9 @@ export const updateUserHandler = async ({
         newPictureUrls.flatMap((url) => keysIn(url))
       )
     )
+      throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
       throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
@@ -775,7 +780,7 @@ export const updateUserHandler = async ({
 
     // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
     //
-    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // This used to be an inline image delete, which destroyed the row and the stored
     // object the instant the new picture saved. The write is instant; the references are
     // not — the image CDN caches its redirect for 24h, the account-switcher roster in
     // localStorage is durable by design, and other surfaces hold rendered avatar urls. None

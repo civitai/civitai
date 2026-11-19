@@ -131,6 +131,7 @@ export async function searchSemanticModels({
   // Refused before any search: the audit may run it after the response, for its row only.
   if (queryRefused)
     return audit.refused(
+      'refused_query',
       none,
       browsingLevel,
       refusedTextCandidates(cachedSource, { text: query, filter, viewer })
@@ -189,6 +190,11 @@ export async function searchSemanticModels({
 
   audit.candidates(search.state.first);
   if (search.state.refused)
-    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+    return audit.refused(
+      'refused_correction',
+      none,
+      browsingLevel,
+      async () => search.state.first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

@@ -953,13 +953,10 @@ jobs:
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
       #
-      # VITEST_MAX_WORKERS=2 (read by vitest.config.mts): uncapped, Vitest runs one fork per
-      # core and shard 4's PGlite-heavy files exhausted the hosted runner's 16 GB. At 3 workers
-      # (2026-11-18, four runs) memory still reached 15.4 GB used with 3 GB swap full inside
-      # 2 minutes, and one of the four runs was killed.
+      # No worker cap: Vitest runs its default fork count. Shard 4 once exhausted the hosted
+      # runner's 16 GB because the resource-intent PGlite tests never freed an instance; their
+      # harness now frees each one after its test (#9535).
       - name: Unit tests
-        env:
-          VITEST_MAX_WORKERS: 2
         # The [mem] line also goes into this step's log, which streams live: a runner killed for
         # memory never reaches the upload step below (observed 2026-11-18), but its log keeps
         # every line up to the kill.
@@ -1334,12 +1331,55 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
+      # ── SYSTEM-PACKAGE CACHE: THE .debs `install-deps` DOWNLOADS ─────────
+      #
+      # The browser cache above leaves the system libraries to apt, and apt is
+      # the slow part when the runner's Ubuntu mirror is: from 2026-11-18 ~00:00Z
+      # this step went from 10-35 s per shard to 140-630 s on most runs
+      # (`Fetched 32.1 MB in 7min 53s (67.8 kB/s)`, mostly fonts and mesa), and
+      # with three shards one of them nearly always drew a slow download, so it
+      # sat on the Lint critical path. So the .deb files are cached too, and
+      # copied into apt's own archive dir before the install: apt reuses a .deb
+      # it finds there with the file name and size the index lists (it does not
+      # re-hash it), and downloads only what is missing or newer. The package
+      # set and versions stay exactly what `install-deps` asks apt for; only
+      # where the bytes come from changes. Trust boundary: the same as the
+      # browser cache above, a `main`-scoped Actions cache entry.
+      #
+      # Keyed by ISO week (with a prefix restore-key) so the entry is
+      # re-saved once a week as Ubuntu's -updates move on, instead of freezing
+      # on the first save and downloading every newer package forever. Saved
+      # on a push to `main` only, like the browser cache, for the same reason.
+      # `ImageOS` is the runner's machine env (ubuntu24), which the `env` expression context
+      # does not see, so it is read here.
+      - name: Resolve system-package cache key
+        id: apt-key
+        run: echo "prefix=playwright-apt-${ImageOS:?}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-" >> "$GITHUB_OUTPUT" && echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
+          restore-keys: |
+            ${{ steps.apt-key.outputs.prefix }}
+
       - name: Install Chromium for Playwright
         id: chromium
         env:
           CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
           set -euo pipefail
+          # Keep what apt downloads, so the step below can collect it for the cache.
+          echo 'Binary::apt-get::APT::Keep-Downloaded-Packages "true"; APT::Keep-Downloaded-Packages "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99-keep-playwright-debs >/dev/null
+          cached=0
+          if compgen -G "$HOME/playwright-apt-debs/*.deb" >/dev/null; then
+            sudo cp "$HOME"/playwright-apt-debs/*.deb /var/cache/apt/archives/
+            cached=$(find "$HOME/playwright-apt-debs" -name '*.deb' | wc -l)
+          fi
+          echo "system-package cache: $cached .deb file(s) restored"
           if [ "$CACHE_HIT" = true ]; then
             echo "browser cache hit: installing system dependencies only"
             pnpm exec playwright install-deps chromium
@@ -1347,6 +1387,30 @@ jobs:
           else
             pnpm exec playwright install --with-deps chromium
           fi
+          # Every .deb apt now holds: the restored ones plus whatever it fetched. The cache
+          # save below stores this directory; the count is the positive control that apt
+          # kept its downloads (0 here would mean the cache can never fill).
+          # `autoclean` first drops .debs the index no longer lists (versions -updates has
+          # superseded), so the weekly re-save does not carry every old version forward.
+          # Best-effort: Chromium is installed by now, and a failure collecting the cache
+          # must not fail this step (`steps.chromium.outcome` gates the suites).
+          if ! {
+            sudo apt-get autoclean -qq &&
+              mkdir -p "$HOME/playwright-apt-debs" &&
+              find "$HOME/playwright-apt-debs" -name '*.deb' -delete &&
+              find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$HOME/playwright-apt-debs" {} +
+          }; then
+            echo "::warning title=Playwright system-package cache::collecting the .debs failed; the next run downloads them again"
+          fi
+          echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
+
+      - name: Save Playwright system packages
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
 
       # Right after the install, so a red suite later still leaves the entry saved.
       # `continue-on-error`: best-effort infrastructure, like the Vite cache save.

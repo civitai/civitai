@@ -570,11 +570,14 @@ export async function deleteEntryScanCopies({ limit = 50 } = {}) {
     WHERE e."imageId" IS NOT NULL AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     ORDER BY e."id" LIMIT ${limit}::int`;
   if (!rows.length) return 0;
-  const { deleteImageById } = await import('~/server/services/image.service');
+  const { deleteImages } = await import('~/server/services/image.service');
   let deleted = 0;
   for (const row of rows) {
     try {
-      await deleteImageById({ id: row.imageId, updatePost: false });
+      await deleteImages([row.imageId], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-unpack' },
+      });
       if (row.fileId === null)
         await dbWrite.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "id" = ${row.id}::int`;
       else

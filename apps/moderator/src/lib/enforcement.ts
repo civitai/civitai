@@ -1,3 +1,5 @@
+import { BAN_REASONS_ALWAYS_REMOVING_MEDIA as MINOR_SAFETY_BANS } from '@civitai/shared/held-url';
+
 /**
  * Closed lists shared by enforcement pages AND the services behind them.
  *
@@ -42,11 +44,7 @@ export const BAN_REASONS_REMOVING_CONTENT: BanReasonCode[] = ['SpamBot'];
  * `removeMedia` regardless. Mirrors the main app's `banReasonsAlwaysRemovingMedia`, which
  * `toggleBan` enforces whatever this app sends.
  */
-export const BAN_REASONS_ALWAYS_REMOVING_MEDIA: readonly BanReasonCode[] = [
-  'SexualMinor',
-  'SexualMinorGenerator',
-  'SexualMinorTraining',
-];
+export const BAN_REASONS_ALWAYS_REMOVING_MEDIA: readonly BanReasonCode[] = MINOR_SAFETY_BANS;
 
 export const alwaysRemovesMedia = (reasonCode: string | undefined) =>
   BAN_REASONS_ALWAYS_REMOVING_MEDIA.includes(reasonCode as BanReasonCode);
