@@ -4308,42 +4308,24 @@ export const removeCollectionItem = async ({
   };
 };
 
+// Whether the caller's own collection holds their own work. The table comes from the item's id
+// field, not `Collection.type`, which is NULL on folders.
 export async function checkUserOwnsCollectionAndItem({
-  itemId,
+  item,
   collectionId,
   userId,
 }: {
-  itemId: number;
+  item: Parameters<typeof getCollectionItemOwnerId>[0];
   collectionId: number;
   userId: number;
 }) {
   const collection = await dbRead.collection.findFirst({
     where: { id: collectionId, userId },
-    select: { type: true, userId: true },
+    select: { id: true },
   });
   if (!collection) return false;
 
-  const tableKey =
-    collection.type === CollectionType.Model
-      ? 'Model'
-      : collection.type === CollectionType.Article
-      ? 'Article'
-      : collection.type === CollectionType.Image
-      ? 'Image'
-      : collection.type === CollectionType.Post
-      ? 'Post'
-      : collection.type === CollectionType.Model3D
-      ? 'Model3D'
-      : null;
-
-  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
-
-  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
-    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
-  `;
-  if (!item) return false;
-
-  return item.userId === collection.userId;
+  return (await getCollectionItemOwnerId(item)) === userId;
 }
 
 export const setItemScore = async ({
