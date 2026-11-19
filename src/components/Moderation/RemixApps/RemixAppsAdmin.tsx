@@ -297,7 +297,6 @@ function RemixAppEditor({
   const [target, setTarget] = useState<string>(initial.target);
   const [specText, setSpecText] = useState(JSON.stringify(initial.spec, null, 2));
 
-  // The server runs the same schema, and also checks the slug and the target.
   const parsed = useMemo(() => {
     let spec: unknown;
     try {

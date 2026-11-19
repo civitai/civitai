@@ -177,6 +177,7 @@
     "@civitai/orchestration-client": "0.2.6",
     "@civitai/sdk": "^0.24.0",
     "@civitai/shared": "workspace:*",
+    "@civitai/storage": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^1.23.1",
     "@coinbase/cdp-sdk": "^1.13.0",

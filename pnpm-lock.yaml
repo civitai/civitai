@@ -132,6 +132,9 @@ importers:
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
+      '@civitai/storage':
+        specifier: workspace:*
+        version: link:packages/civitai-storage
       '@clavata/sdk':
         specifier: ^0.2.3
         version: 0.2.3
@@ -1951,6 +1954,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.490.0
+        version: 3.862.0
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
@@ -2476,6 +2482,7 @@ packages:
   '@civitai/client@0.2.0-beta.98':
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
+    deprecated: Moved to @civitai/orchestration-client. See https://github.com/civitai/civitai-client-javascript#renamed-from-civitaiclient
 
   '@civitai/components-chat@0.35.0':
     resolution: {integrity: sha512-VjOCqSvYBNoKd6A86djpi62GSe8CZcThyJT+HHdFjv0XQSAY/yOIyrrUIBgAMmKcYO2AJj1AW1UGehbg2E5TTA==}
@@ -17683,9 +17690,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.4(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:

@@ -36,7 +36,10 @@ import {
   viewerOf,
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
-import { getRegisteredRemixApp } from '~/server/services/remix-app-registry.service';
+import {
+  getRegisteredRemixApp,
+  type RegisteredRemixApp,
+} from '~/server/services/remix-app-registry.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type {
   RemixAnswer,
@@ -51,8 +54,8 @@ import { isDefined } from '~/utils/type-guards';
 import {
   remixAnswerRefusal,
   RemixReplayError,
-  replayRemixApp,
   type RemixLogEntry,
+  type RemixReplayer,
 } from '~/shared/remix-apps/replay';
 import {
   readRemixTag,
@@ -71,6 +74,8 @@ export const MAX_RUN_SEGMENTS = 8;
 export type RemixRunMetadata = {
   app: string;
   version: number;
+  /** The app's `shape` when this segment was submitted. */
+  shape?: string;
   /** Answers given before this segment's workflow. */
   answers: RemixAnswer[];
   /** Answers given after it, when the run finished on them with no further workflow. */
@@ -119,7 +124,13 @@ function readMeta(workflow: Workflow): RemixRunMetadata | undefined {
   if (!raw || typeof raw.app !== 'string' || typeof raw.version !== 'number') return undefined;
   const answers = readAnswers(raw.answers) ?? [];
   const tail = readAnswers(raw.tail);
-  return { app: raw.app, version: raw.version, answers, ...(tail?.length ? { tail } : {}) };
+  return {
+    app: raw.app,
+    version: raw.version,
+    answers,
+    ...(typeof raw.shape === 'string' ? { shape: raw.shape } : {}),
+    ...(tail?.length ? { tail } : {}),
+  };
 }
 
 function readAnswers(raw: unknown): RemixAnswer[] | undefined {
@@ -223,6 +234,7 @@ function viewerPick(
  */
 async function optionPrices({
   app,
+  replay,
   image,
   source,
   log,
@@ -231,6 +243,7 @@ async function optionPrices({
   currencies,
 }: {
   app: RemixApp;
+  replay: RemixReplayer;
   image: RemixSourceImage;
   source: RemixAppSource;
   log: RemixLogEntry[];
@@ -238,7 +251,11 @@ async function optionPrices({
   caller: RemixAppCaller;
   currencies: ReturnType<typeof getAllowedAccountTypes>;
 }) {
-  const effects = await remixOptionEffects(app, source, log, spec);
+  // An option whose next step the checks refuse is left unpriced; tapping it refuses the run.
+  const effects = await remixOptionEffects(replay, source, log, spec).catch((error) => {
+    if (error instanceof RemixReplayError) return [];
+    throw error;
+  });
   const priced = await Promise.all(
     effects.map(async ({ value, next }) => {
       if (!next) return [value, 0] as const;
@@ -298,7 +315,7 @@ function recordTail(workflowId: string, tail: RemixAnswer[], caller: RemixAppCal
  */
 async function advance({
   runId,
-  app,
+  entry: { app, replay: replayer, shape },
   image,
   segments,
   answers: given,
@@ -307,7 +324,7 @@ async function advance({
   priceOptions = true,
 }: {
   runId: string;
-  app: RemixApp;
+  entry: Pick<RegisteredRemixApp, 'app' | 'replay' | 'shape'>;
   image: RemixSourceImage;
   segments: Segment[];
   answers: RemixAnswer[];
@@ -344,7 +361,7 @@ async function advance({
   const source = runtimeSourceOf(image);
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
   const replay = () =>
-    replayRemixApp(app, source, log).catch((error) => {
+    replayer(source, log).catch((error) => {
       throw error instanceof RemixReplayError ? damaged(error.message) : error;
     });
   const pending = [...answers];
@@ -393,7 +410,7 @@ async function advance({
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
     if (!priceOptions) return { status: 'ask', runId, ask };
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
-      optionPrices({ app, image, source, log, spec, caller, currencies })
+      optionPrices({ app, replay: replayer, image, source, log, spec, caller, currencies })
     );
     return { status: 'ask', runId, ask, prices };
   }
@@ -417,7 +434,7 @@ async function advance({
   assertWithinQuote(priced.cost, quote);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index, runtime: true });
-  const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, answers };
+  const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
   // mint names it again so the graph signs it into this segment's metadata and output files.
   const mint = signProvenance({ userId: caller.user.id, sourceImageIds: [image.id], kind: 'mint' });
@@ -454,13 +471,13 @@ export async function startRemixRun({
   caller: RemixAppCaller;
   allowDisabled?: boolean;
 }) {
-  const { app } = await getRegisteredRemixApp(slug, { allowDisabled });
+  const entry = await getRegisteredRemixApp(slug, caller, { allowDisabled });
   const image = await loadSource(imageId, caller, true);
   const runId = remixRunId({ userId: caller.user.id, slug, imageId, nonce });
   const segments = await readRun(runId, caller);
   // Started already: its first workflow holds these answers, and a repeat tap only reloads it.
   const given = segments.length ? [] : answers;
-  return advance({ runId, app, image, segments, answers: given, quote, caller });
+  return advance({ runId, entry, image, segments, answers: given, quote, caller });
 }
 
 export async function advanceRemixRun({
@@ -474,8 +491,8 @@ export async function advanceRemixRun({
   quote?: number;
   caller: RemixAppCaller;
 }) {
-  const { segments, app, image } = await loadRun(runId, caller);
-  return advance({ runId, app, image, segments, answers, quote, caller });
+  const { segments, entry, image } = await loadRun(runId, caller);
+  return advance({ runId, entry, image, segments, answers, quote, caller });
 }
 
 async function loadRun(runId: string, caller: RemixAppCaller) {
@@ -484,12 +501,24 @@ async function loadRun(runId: string, caller: RemixAppCaller) {
   const { meta } = segments[segments.length - 1];
   const changed = () => damaged('the app changed since it started. Start it again from the image.');
   // A disabled app's run still finishes: it was paid for.
-  const { app } = await getRegisteredRemixApp(meta.app, { allowDisabled: true }).catch((error) => {
-    throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
-  });
-  if (app.version !== meta.version) throw changed();
+  const entry = await getRegisteredRemixApp(meta.app, caller, { allowDisabled: true }).catch(
+    (error) => {
+      throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
+    }
+  );
+  // A rejected or pulled user app runs again only for its author or a mod: everyone else's runs
+  // stop here, finished ones too.
+  const { author } = entry;
+  if (author && !entry.enabled && author.userId !== caller.user.id && !caller.user.isModerator)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'This app is no longer available',
+    });
+  // Runs from before shapes were recorded carry none; no user app predates them.
+  const shape = meta.shape ?? (author ? undefined : entry.shape);
+  if (entry.app.version !== meta.version || shape !== entry.shape) throw changed();
   const image = await loadSource(runSourceId(segments), caller, true);
-  return { segments, app, image };
+  return { segments, entry, image };
 }
 
 type PostableResult = {
@@ -530,11 +559,11 @@ async function workflowResult(workflowId: string, caller: RemixAppCaller): Promi
 
 /** A runtime run: what the app returned, which may be fewer than its last workflow made. */
 async function runResult(runId: string, caller: RemixAppCaller): Promise<PostableResult> {
-  const { segments, app, image } = await loadRun(runId, caller);
+  const { segments, entry, image } = await loadRun(runId, caller);
   // No quote: replaying a run that has not finished can price its next step, never submit it.
   const state = await advance({
     runId,
-    app,
+    entry,
     image,
     segments,
     answers: [],

@@ -1,6 +1,5 @@
 import { DeleteObjectCommand, ListObjectVersionsCommand, type S3Client } from '@aws-sdk/client-s3';
-
-export type PurgeVersionsResult = { versionsDeleted: number; remaining: number };
+import type { PurgeObjectVersionsResult } from './schema';
 
 type Sender = Pick<S3Client, 'send'>;
 
@@ -35,7 +34,7 @@ async function listKeyVersions(
 /**
  * Deletes every version and delete marker of `key` by VersionId, then lists again: `remaining` is what
  * that second listing found, not a count of what was sent. On a versioned bucket a key-only delete
- * only adds a delete marker. The storage service has the same operation (`apps/storage`).
+ * only adds a delete marker. Server-side only: it is a subpath export so the client never loads the SDK.
  */
 export async function purgeObjectVersions({
   client,
@@ -47,7 +46,7 @@ export async function purgeObjectVersions({
   bucket: string;
   key: string;
   abortSignal?: AbortSignal;
-}): Promise<PurgeVersionsResult> {
+}): Promise<PurgeObjectVersionsResult> {
   const versionIds = await listKeyVersions(client, bucket, key, abortSignal);
   for (const VersionId of versionIds)
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId }), {

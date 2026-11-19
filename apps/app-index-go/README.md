@@ -28,8 +28,10 @@ in a sandboxed iframe can call it from the browser: it answers only public listi
 credentials. `OPTIONS /search` answers a CORS preflight (204, `GET`, `Access-Control-Max-Age`).
 `/healthz`, `/readyz` and `/metrics` send no CORS header.
 
-A 200 from `/search` is `Cache-Control: public, max-age=30`, so a shared cache in front of the
-service can absorb repeated searches; every other response, errors included, is `no-store`.
+A 200 from `/search` is `Cache-Control: public, max-age=0, s-maxage=30`: a shared cache in front
+of the service may hold it for 30 s and absorb repeated searches, while browsers revalidate every
+time. Every other response, errors included, is `no-store`. A CDN only applies this to `/search`
+once it treats the path as cacheable: the TTL lives here, and the CDN rule only opts the path in.
 
 ## Following the stream
 

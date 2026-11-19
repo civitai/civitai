@@ -312,8 +312,8 @@ func TestSearchCacheControl(t *testing.T) {
 		code int
 		want string
 	}{
-		{ready.URL + "/search?q=app", http.StatusOK, "public, max-age=30"},
-		{ready.URL + "/search?q=zzz", http.StatusOK, "public, max-age=30"},
+		{ready.URL + "/search?q=app", http.StatusOK, "public, max-age=0, s-maxage=30"},
+		{ready.URL + "/search?q=zzz", http.StatusOK, "public, max-age=0, s-maxage=30"},
 		{ready.URL + "/search?kind=web", http.StatusBadRequest, "no-store"},
 		{failing.URL + "/search", http.StatusInternalServerError, "no-store"},
 		{notReady.URL + "/search?q=a", http.StatusServiceUnavailable, "no-store"},
