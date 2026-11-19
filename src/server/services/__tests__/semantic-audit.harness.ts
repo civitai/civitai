@@ -78,14 +78,21 @@ export function describeSemanticAuditContract({
         withholdIds: false,
         guard: { outcome: 'flag', rules: ['block:rule_a'], mode: 'shadow' },
         cacheHit: false,
+        searchPath: 'served',
         resultIds: result.items.map((x) => x.id),
       });
     });
 
-    it('marks a narrowed minor search so its row keeps no ids', async () => {
+    it('records what a narrowed minor search served', async () => {
       narrowToMinor();
-      await run({ source: source(shadowFlag), user: AUDIT_VIEWER });
-      expect(entry()).toMatchObject({ wordVerdict: 'minor', withholdIds: true });
+      const result = await run({ source: source(shadowFlag), user: AUDIT_VIEWER });
+      expect(result.items.length).toBeGreaterThan(0);
+      expect(entry()).toMatchObject({
+        wordVerdict: 'minor',
+        withholdIds: false,
+        searchPath: 'narrowed',
+        resultIds: result.items.map((x) => x.id),
+      });
     });
 
     it('records a refused search, with no guard verdict and nothing served', async () => {
@@ -97,6 +104,7 @@ export function describeSemanticAuditContract({
         guard: { outcome: 'none' },
         resultIds: [],
         resultsServed: true,
+        searchPath: 'refused_query',
       });
     });
 
