@@ -3,8 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 
-// feed-go (Go) and the event engine cannot import @civitai/shared, so their copies of the owner-hidden
-// review list are pinned to it here.
+// feed-go (Go) cannot import @civitai/shared, so its copies of the owner-hidden review list are pinned
+// to it here.
 const ROOT = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const sorted = (values: string[]) => [...values].sort();
