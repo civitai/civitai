@@ -294,7 +294,7 @@ export const createPostWithImagesHandler = async ({
     await deletePost({
       id: post.id,
       isModerator: ctx.user.isModerator,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
     }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -729,7 +729,7 @@ export const deletePostHandler = async ({
   try {
     const result = await deletePost({
       ...input,
-      deletedById: ctx.user.id,
+      actor: ctx.user,
       viewerIsModerator: ctx.user.isModerator,
     });
     if (result) {

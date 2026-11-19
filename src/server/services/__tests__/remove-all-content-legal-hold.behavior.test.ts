@@ -1,3 +1,4 @@
+import { DELETED_ROW_COLUMNS_SQL } from './deleted-row-columns.fixture';
 import { readFileSync } from 'node:fs';
 import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import path from 'node:path';
@@ -109,18 +110,16 @@ vi.mock('~/server/metrics', async (importOriginal) => ({
 // The DELETE `deleteImages` issues, with its `onlyWhere`; storage and caches are not under test.
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  deleteImages: vi.fn(
-    async (ids: number[], _posts?: boolean, opts?: { onlyWhere?: Prisma.Sql }) => {
-      if (!ids.length) return [];
-      if (holder.beforeImages) {
-        await holder.beforeImages();
-        holder.beforeImages = null;
-      }
-      const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
-      const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
-      return (await holder.db.query(sql.text, sql.values)).rows;
+  deleteImages: vi.fn(async (ids: number[], opts?: { onlyWhere?: Prisma.Sql }) => {
+    if (!ids.length) return [];
+    if (holder.beforeImages) {
+      await holder.beforeImages();
+      holder.beforeImages = null;
     }
-  ),
+    const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
+    const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
+    return (await holder.db.query(sql.text, sql.values)).rows;
+  }),
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -328,6 +327,7 @@ beforeAll(async () => {
       (${GIVEN_BY_HELD}, ${HELD}, 'create'), (${GIVEN_BY_HELD}, ${CLEAN}, 'transfer'),
       (${GIVEN_BY_BYSTANDER}, ${BYSTANDER}, 'create'), (${GIVEN_BY_BYSTANDER}, ${CLEAN}, 'transfer');
   `);
+  await holder.db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 
 beforeEach(async () => {
@@ -532,15 +532,34 @@ describe('removeAllContent', () => {
     });
     expect(metrics.user.queueUpdate).toHaveBeenCalledWith(CLEAN);
     expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
-    // Rows, storage objects and caches, once, held to the hold.
-    expect(deleteImages).toHaveBeenCalledTimes(1);
-    expect(deleteImages).toHaveBeenCalledWith([CLEAN * 100, CLEAN * 100 + 1], true, {
+    // Rows, storage objects and caches, held to the hold: the listed images, then any uploaded
+    // since the list was read (none here).
+    expect(deleteImages).toHaveBeenCalledTimes(2);
+    expect(deleteImages).toHaveBeenNthCalledWith(1, [CLEAN * 100, CLEAN * 100 + 1], {
+      actor: { system: 'remove-all-content' },
+      onlyWhere: expect.anything(),
+      moderatorDelete: true,
+    });
+    expect(deleteImages).toHaveBeenNthCalledWith(2, [], {
+      actor: { system: 'remove-all-content' },
       onlyWhere: expect.anything(),
       moderatorDelete: true,
     });
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
       expect.objectContaining({ targetUserId: CLEAN })
     );
+  });
+
+  // A moderator's wipe deletes as that moderator, so no member ownership limit applies.
+  it('deletes the images as the moderator who ordered the wipe', async () => {
+    await removeAllContent({ id: CLEAN, actorUserId: 9 });
+
+    expect(await remaining(CLEAN)).toEqual(all(0));
+    const actors = vi.mocked(deleteImages).mock.calls.map(([, opts]) => opts.actor);
+    expect(actors).toEqual([
+      { id: 9, isModerator: true },
+      { id: 9, isModerator: true },
+    ]);
   });
 
   // Its content is every reporter's page captures; each one is acted on as an image instead.

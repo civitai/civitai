@@ -77,7 +77,7 @@ faithful choice (no callback, no query/packed-write duplication).
 - [n/a] Owner ingestion notifications — the legacy's `article-published`/`article-images-blocked` are gated on `status='Processing'`; restore sets `status='Published'` first, so they don't fire on the restore path (they belong to the scan pipeline). Replication-lag guards omitted (lag routing off by default).
 
 ### Article delete — `deleteArticle`  ·  (articles) — ✅ complete
-- [x] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — done via the spoke's storage client; see `docs/moderator-app/side-effect-parity-checklist.md`
+- [x] Delete cover image + orphaned content images (the moderator app's `deleteImages`, which shares `deleteImageRows` with the main app) — **DB + storage + CDN** — storage queued for the main app's `image-storage-deletes` job; see `docs/moderator-app/side-effect-parity-checklist.md`
 - [x] Comments go with the article, as in the main app's delete: `CommentTopic` delete first, for lock order
 
 ### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review) — ✅ complete
