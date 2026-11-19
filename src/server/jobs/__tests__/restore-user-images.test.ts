@@ -44,7 +44,7 @@ import { restoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-
  * the real `readPendingImageRestores`/`clearPendingImageRestore`, so an id is only gone from it
  * because the job removed it.
  */
-type UserRow = { id: number; deletedAt: Date | null };
+type UserRow = { id: number; deletedAt: Date | null; bannedAt?: Date | null };
 
 let users: UserRow[] = [];
 let pendingSet: (string | Buffer)[] = [];
@@ -70,6 +70,7 @@ function evaluateOwnerGate(sql: string, values: unknown[]) {
       if (/^\s*u\."deletedAt" IS NOT NULL/.test(clause))
         return (row: UserRow) => row.deletedAt != null;
       if (/^\s*u\."deletedAt" IS NULL/.test(clause)) return (row: UserRow) => row.deletedAt == null;
+      if (/^\s*u\."bannedAt" IS NULL/.test(clause)) return (row: UserRow) => row.bannedAt == null;
       throw new Error(`unrecognized owner-gate predicate: ${clause.trim()}`);
     });
 
@@ -96,7 +97,7 @@ beforeEach(() => {
   mockUnblock.mockResolvedValue({ unblocked: 3, stillBlocked: 0, skipped: 0, drained: true });
 });
 
-type RunResult = { pending: number; finished: number; unblocked: number; reDeleted: number };
+type RunResult = { pending: number; finished: number; unblocked: number; dropped: number };
 
 const run = () => (restoreUserImages as unknown as () => Promise<RunResult>)();
 
@@ -138,7 +139,18 @@ describe('restoreUserImages', () => {
     // reclaims it; `restoreUser` re-adds it if the account genuinely comes back.
     expect(mockSysRedis.sRem).toHaveBeenCalledWith('system:pending-image-restores', '7');
     expect(pendingSet).toEqual([]);
-    expect(result).toMatchObject({ reDeleted: 1, finished: 0 });
+    expect(result).toMatchObject({ dropped: 1, finished: 0 });
+  });
+
+  it('drops an account banned since its restore instead of reversing it', async () => {
+    users = [{ id: 7, deletedAt: null, bannedAt: new Date('2026-07-29T00:00:00Z') }];
+    pendingSet = ['7'];
+
+    const result = await run();
+
+    expect(mockUnblock).not.toHaveBeenCalled();
+    expect(pendingSet).toEqual([]);
+    expect(result).toMatchObject({ dropped: 1, finished: 0 });
   });
 
   it('does not query again for an account it dropped as re-deleted', async () => {
@@ -149,7 +161,7 @@ describe('restoreUserImages', () => {
     const second = await run();
 
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(second).toMatchObject({ pending: 0, reDeleted: 0 });
+    expect(second).toMatchObject({ pending: 0, dropped: 0 });
   });
 
   it('still takes on the accounts behind one it drops as re-deleted', async () => {
@@ -161,7 +173,7 @@ describe('restoreUserImages', () => {
     // The drop is a `continue`, so getting it wrong strands every account queued behind it.
     expect(mockUnblock).toHaveBeenCalledWith(8);
     expect(pendingSet).toEqual([]);
-    expect(result).toMatchObject({ reDeleted: 1, finished: 1 });
+    expect(result).toMatchObject({ dropped: 1, finished: 1 });
   });
 
   it('drops the account off the worklist once its reversal drains', async () => {

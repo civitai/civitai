@@ -1567,13 +1567,23 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
   // list that moved since would make some accounts unrestorable.
-  await dbWrite.$transaction([
-    dbWrite.user.update({
-      where: { id },
-      data: { deletedAt: null, username, email, meta },
-    }),
-    disarmAccountDeletionImagePurge(id),
-  ]);
+  // The state is re-checked by the write itself: a ban landing after the check above rolls back
+  // the whole restore, purge disarm included.
+  try {
+    await dbWrite.$transaction([
+      dbWrite.user.update({
+        where: { id, deletedAt: { not: null }, bannedAt: null },
+        data: { deletedAt: null, username, email, meta },
+      }),
+      disarmAccountDeletionImagePurge(id),
+    ]);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+      throw throwBadRequestError(
+        `User ${id} was banned or restored meanwhile; unban the account before restoring it`
+      );
+    throw error;
+  }
   await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.

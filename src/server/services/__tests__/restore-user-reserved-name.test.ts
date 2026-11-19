@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -109,6 +110,20 @@ describe('restoreUser and a banned account', () => {
     expect(disarmAccountDeletionImagePurge).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls the restore back when a ban lands before its write', async () => {
+    deleted(null);
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record found', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    await expect(restore('back')).rejects.toThrow(/banned or restored meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: USER_ID, bannedAt: null }) })
+    );
   });
 
   it('restores an account that is not banned', async () => {
