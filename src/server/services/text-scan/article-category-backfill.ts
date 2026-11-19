@@ -34,6 +34,7 @@ export async function selectUncategorizedArticles({
   limit: number;
   includeMature: boolean;
   publishedBefore?: Date;
+  // dbWrite by default: a lagging replica would reselect articles an earlier chunk just classified.
   client?: Pick<typeof dbWrite, '$queryRawUnsafe'>;
 }) {
   const rows = await client.$queryRawUnsafe<{ id: number }[]>(
@@ -103,7 +104,6 @@ export async function runArticleCategoryBackfill({
   dryRun: boolean;
   includeMature: boolean;
 }) {
-  // dbWrite: a replica lagging behind an earlier chunk's writes would reselect classified articles.
   const ids = await selectUncategorizedArticles({ afterId, limit, includeMature });
   const nextAfterId = ids.length ? ids[ids.length - 1] : null;
   const summary = (results: ArticleCategoryResult[]) => ({

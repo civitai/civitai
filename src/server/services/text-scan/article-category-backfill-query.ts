@@ -2,7 +2,8 @@
  * Unclassified articles the Story Writers board could score: the eligibility filters of its live query
  * (Leaderboard row 'story-writer', last changed by 20271116120000_story_writer_count_mature) minus the
  * category one. $1 = id to page after, $2 = limit, $3 = also select articles rated R and above, which
- * the board counts from that migration on, $4 = published and last edited before. Keep in step with that query's WHERE.
+ * the board counts from that migration on, $4 = published and last edited before (the retry job's settle).
+ * Keep in step with that query's WHERE, apart from $3 and $4.
  */
 export const ARTICLE_CATEGORY_BACKFILL_SQL = `
 SELECT a.id

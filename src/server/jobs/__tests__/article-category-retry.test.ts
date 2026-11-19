@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as Backfill from '~/server/services/text-scan/article-category-backfill';
+import type * as Mode from '~/server/services/text-scan/mode';
 
 const { select, submit, enabled, mode } = vi.hoisted(() => ({
   select: vi.fn(),
@@ -15,7 +16,8 @@ vi.mock('~/server/services/text-scan/article-category-backfill', async (importOr
   selectUncategorizedArticles: select,
   submitArticleCategoryCalls: submit,
 }));
-vi.mock('~/server/services/text-scan/mode', () => ({
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof Mode>()),
   isTextScanEnabled: enabled,
   getTextScanMode: mode,
 }));
@@ -85,6 +87,16 @@ describe('retryArticleCategories', () => {
     await retryArticleCategories(NOW);
     expect(select.mock.calls.map(([arg]) => arg.afterId)).toEqual([0, 200]);
     expect(submittedIds()).toEqual(page(201).slice(0, MAX_SUBMITS_PER_RUN));
+  });
+
+  it('ends the run after a bounded number of pages, even if every page is full', async () => {
+    select.mockImplementation(async ({ afterId }: { afterId: number }) =>
+      Array.from({ length: 200 }, (_, i) => afterId + i + 1)
+    );
+    incrBy.mockResolvedValue((MAX_CATEGORY_RETRIES + 1) as never);
+    await retryArticleCategories(NOW);
+    expect(select).toHaveBeenCalledTimes(50);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it('sends nothing for an article its rollout leaves off, and spends no attempt on it', async () => {

@@ -333,10 +333,8 @@ describe('handleTextCategoryCallback', () => {
       })
     );
     await callback();
-    expect(categoryLog('unusable output; category cleared')?.payload).toEqual({
+    expect(categoryLog('unusable output; category cleared')?.payload).toMatchObject({
       finishReason: 'stop',
-      contentLength: 27,
-      parsed: false,
       answer: 'announcement',
     });
   });

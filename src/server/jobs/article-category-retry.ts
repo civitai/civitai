@@ -16,6 +16,8 @@ export const MAX_CATEGORY_RETRIES = 3;
 // Outlives the 30-day selection window, so a capped article is not retried again.
 const RETRIES_TTL_SECONDS = 31 * 24 * 60 * 60;
 const PAGE_SIZE = 200;
+// A bound, so a paging bug ends the run instead of looping.
+const MAX_PAGES = 50;
 export const MAX_SUBMITS_PER_RUN = 50;
 const CONCURRENCY = 2;
 
@@ -45,7 +47,7 @@ export async function retryArticleCategories(now = new Date()) {
   let uncounted = 0;
   let outOfRollout = 0;
   let afterId = 0;
-  for (;;) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const ids = await selectUncategorizedArticles({
       afterId,
       limit: PAGE_SIZE,
