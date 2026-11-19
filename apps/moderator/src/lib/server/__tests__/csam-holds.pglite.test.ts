@@ -66,6 +66,7 @@ let db: PGlite;
 type Seed = {
   id: number;
   entityType?: string;
+  entityId?: number;
   label?: string;
   status?: string;
   userId?: number | null;
@@ -87,7 +88,7 @@ const seed = (rows: Seed[]) =>
         [
           r.id,
           r.entityType ?? 'Post',
-          r.id * 10,
+          r.entityId ?? r.id * 10,
           r.label ?? 'csam',
           `h-${r.id}`,
           r.status ?? 'Pending',
@@ -284,6 +285,97 @@ describe('listCsamHolds', () => {
     expect(items[0].decidedAt).toBeInstanceOf(Date);
     const [pending] = (await listCsamHolds(OLDEST_PENDING)).items;
     expect(pending).toMatchObject({ decidedAt: null, decidedByUsername: null, decision: null });
+  });
+});
+
+describe('the lead-review and report-not-filed views', () => {
+  beforeEach(async () => {
+    await db.exec(`CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER,
+      "details" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'imagery' },
+      },
+      {
+        id: 9,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'none' },
+      },
+      // Confirmed alongside another hold: no choice made for this item.
+      {
+        id: 14,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reviewedDecision: false },
+      },
+      // Confirmed on its own by a moderator app that predates the choice.
+      {
+        id: 15,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reviewedDecision: true },
+      },
+      {
+        id: 16,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'none', reviewedDecision: false },
+      },
+      // Confirmed before decisions recorded whether they were reviewed on their own.
+      {
+        id: 17,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove' },
+      },
+      // Dismissed alongside another hold.
+      {
+        id: 18,
+        createdAt: '2026-09-12',
+        status: 'Dismissed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'dismiss', reviewedDecision: false },
+      },
+      {
+        id: 12,
+        createdAt: '2026-09-14',
+        meta: { needsLeadReview: { by: 11, at: '2026-09-15T00:00:00Z' } },
+      },
+    ]);
+  });
+  const ids = async (status: CsamHoldQuery['status']) =>
+    (await listCsamHolds({ ...OLDEST_PENDING, status })).items.map((h) => h.id);
+
+  it('lists only the pending holds sent to the lead, with when', async () => {
+    expect(await ids('lead-review')).toEqual([12]);
+    const [held] = (await listCsamHolds({ ...OLDEST_PENDING, status: 'lead-review' })).items;
+    expect(held).toMatchObject({ leadReviewAt: '2026-09-15T00:00:00Z', reportChoice: null });
+  });
+
+  it('lists a reportable confirm and one confirmed with another hold that has no choice yet', async () => {
+    expect(await ids('report-not-filed')).toEqual([8, 14]);
+    const rows = (await listCsamHolds({ ...OLDEST_PENDING, status: 'report-not-filed' })).items;
+    expect(rows.map((h) => [h.id, h.needsReportChoice])).toEqual([
+      [8, false],
+      [14, true],
+    ]);
   });
 });
 
@@ -1202,5 +1294,121 @@ describe('version text hits on Model holds', () => {
     await expect(getHoldVersionTexts(1)).resolves.toBeNull();
     await expect(getHoldVersionTexts(999)).resolves.toBeNull();
     expect(await item(98)).toMatchObject({ versionTextHits: null, versionTextHitsStale: false });
+  });
+});
+
+describe('the report-not-filed view matches a report to the held item', () => {
+  beforeEach(async () => {
+    await db.exec(`DROP TABLE IF EXISTS "CsamReport"; CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY,
+      "userId" INTEGER, "details" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+    const confirmed = {
+      createdAt: '2026-09-12',
+      status: 'Confirmed' as const,
+      decidedById: 11,
+      decidedAt: '2026-09-13',
+      meta: { decision: 'remove', reportChoice: 'imagery' },
+    };
+    await seed([
+      { id: 21, entityType: 'PostText', ...confirmed },
+      { id: 22, entityType: 'CommentV3', ...confirmed },
+      { id: 23, entityType: 'Post', ...confirmed },
+      { id: 24, entityType: 'ChatMessage', ...confirmed },
+    ]);
+  });
+  const listed = async () =>
+    (await listCsamHolds({ ...OLDEST_PENDING, status: 'report-not-filed' })).items.map((h) => h.id);
+  const report = (contextText: object[] | null, createdAt = '2026-09-14') =>
+    db.query(
+      `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, $2)`,
+      [contextText === null ? null : JSON.stringify({ contextText }), createdAt]
+    );
+  // Decided 2026-09-13.
+  const after = '2026-09-14T00:00:00.000Z';
+  const before = '2026-09-01T00:00:00.000Z';
+
+  it('keeps listing an item when a later report on its author captured something else', async () => {
+    await report([
+      { source: 'postDescription', id: 999, capturedAt: after },
+      { source: 'comment', id: 998, capturedAt: after },
+    ]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
+  it.each([
+    [21, 'postText', 210],
+    [22, 'comment', 220],
+    [23, 'postDescription', 230],
+  ])('drops hold %i once a report captured its text (%s %i)', async (id, source, itemId) => {
+    await report([{ source, id: itemId, capturedAt: after }]);
+    expect(await listed()).not.toContain(id);
+    expect((await listed()).length).toBe(3);
+  });
+
+  // A filing folds into the author's unsent report, which can predate the decision.
+  it('drops an item captured after the decision into a report created before it', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: after }], '2026-09-01');
+    expect(await listed()).toEqual([22, 23, 24]);
+  });
+
+  it('keeps an item whose only capture predates the decision, in a report of any date', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: before }], '2026-09-01');
+    await report([{ source: 'postText', id: 210, capturedAt: before }]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
+  it('keeps an item edited and held again when the report captured it for the earlier hold', async () => {
+    await seed([
+      {
+        id: 25,
+        entityType: 'PostText',
+        entityId: 210,
+        createdAt: '2026-09-15',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-16',
+        meta: { decision: 'remove', reportChoice: 'imagery', kind: 'redetected', priorHoldId: 21 },
+      },
+    ]);
+    await report([{ source: 'postText', id: 210, capturedAt: after }]);
+    expect(await listed()).toEqual([22, 23, 24, 25]);
+  });
+
+  it('covers an item captured at the decision instant, not one captured after the hold was created but before it was decided', async () => {
+    await report([{ source: 'postText', id: 210, capturedAt: '2026-09-13T00:00:00.000Z' }]);
+    await report([{ source: 'comment', id: 220, capturedAt: '2026-09-12T12:00:00.000Z' }]);
+    expect(await listed()).toEqual([22, 23, 24]);
+  });
+
+  it('keeps an item whose captured entry has no capture time, or one not in ISO form', async () => {
+    await report([{ source: 'comment', id: 220, capturedAt: '2026-09-14' }]);
+    await report([{ source: 'postText', id: 210 }]);
+    expect(await listed()).toEqual([21, 22, 23, 24]);
+  });
+
+  it('keeps an item a report never captures listed after any later report on its author', async () => {
+    await report(null);
+    await report([{ source: 'postText', id: 210, capturedAt: after }]);
+    expect(await listed()).toEqual([22, 23, 24]);
+  });
+
+  it.each([24, 21])('drops hold %i once a moderator marks it included in a report', async (id) => {
+    await db.query(
+      `UPDATE "TextScanHold" SET meta = meta || '{"reportIncluded":{"by":11,"at":"2026-09-20T00:00:00Z"}}' WHERE id = $1`,
+      [id]
+    );
+    expect(await listed()).not.toContain(id);
+    const held = (await listCsamHolds({ ...OLDEST_PENDING, status: 'removed' })).items.find(
+      (h) => h.id === id
+    );
+    expect(held?.reportIncludedAt).toBe('2026-09-20T00:00:00Z');
+  });
+
+  it('puts an unmarked hold back on the queue', async () => {
+    await db.query(
+      `UPDATE "TextScanHold" SET meta = meta || '{"reportIncluded":{"by":11,"at":"2026-09-20T00:00:00Z"}}' WHERE id = 24`
+    );
+    expect(await listed()).not.toContain(24);
+    await db.query(`UPDATE "TextScanHold" SET meta = meta - 'reportIncluded' WHERE id = 24`);
+    expect(await listed()).toContain(24);
   });
 });
