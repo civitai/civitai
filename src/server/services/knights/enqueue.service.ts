@@ -34,6 +34,7 @@ export type EnqueueRefusal =
   | 'image-not-found'
   | 'held-for-review'
   | 'not-servable'
+  | 'not-still-image'
   | 'no-post'
   | 'unpublished'
   | 'publishes-after-expiry';
@@ -63,6 +64,8 @@ export type EnqueueOptions = {
    * sampled at most once however often it is scanned or published.
    */
   oncePerImage?: boolean;
+  /** Refuse anything but a still image (`not-still-image`): Knights serves only those. Owner ratings pass it. */
+  stillImagesOnly?: boolean;
 };
 
 export type EnqueueOutcome = { imageId: number } & (
@@ -91,6 +94,7 @@ export async function enqueueKnightsItems(
     requirePost = false,
     requirePublished = false,
     oncePerImage = false,
+    stillImagesOnly = false,
   }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
@@ -106,7 +110,13 @@ export async function enqueueKnightsItems(
 
   const images = new Map<
     number,
-    { held: boolean; servable: boolean; hasPost: boolean; publishesAt: Date | null }
+    {
+      held: boolean;
+      still: boolean;
+      servable: boolean;
+      hasPost: boolean;
+      publishesAt: Date | null;
+    }
   >(
     input.items.length === 0
       ? []
@@ -118,6 +128,7 @@ export async function enqueueKnightsItems(
               'img.id',
               'img.needsReview',
               'img.acceptableMinor',
+              'img.type',
               'p.id as postRowId',
               // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
               sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
@@ -131,6 +142,7 @@ export async function enqueueKnightsItems(
           row.id,
           {
             held: row.needsReview !== null || row.acceptableMinor,
+            still: row.type === 'image',
             servable: Boolean(row.servable),
             hasPost: row.postRowId !== null,
             publishesAt:
@@ -162,6 +174,7 @@ export async function enqueueKnightsItems(
     const image = images.get(item.imageId);
     if (image === undefined) return refuse('image-not-found');
     if (image.held) return refuse('held-for-review');
+    if (stillImagesOnly && !image.still) return refuse('not-still-image');
     if (servableOnly && !image.servable) return refuse('not-servable');
     if ((requirePost || requirePublished) && !image.hasPost) return refuse('no-post');
     if (

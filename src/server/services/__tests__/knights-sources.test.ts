@@ -202,7 +202,7 @@ describe('queueOwnerRatingForKnights', () => {
         items: [{ imageId: 7, priority: 1 }],
       },
       undefined,
-      { requirePost: true }
+      { requirePost: true, stillImagesOnly: true }
     );
   });
 

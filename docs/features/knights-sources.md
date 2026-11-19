@@ -13,8 +13,8 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both pass `requirePost`: an image with no post is refused (`no-post`). An owner rating on a post
   scheduled to publish after the item would close unvoted is refused (`publishes-after-expiry`: later than `knightsLatestStageEnd` in
-  `@civitai/shared/new-order`, 144 h after queueing with the default window, two `KNIGHTS_STAGE_TTL_HOURS`), since Knights could never serve it; an
-  owner rating on a draft stays queued. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
+  `@civitai/shared/new-order`, 144 h after queueing with the default window, two `KNIGHTS_STAGE_TTL_HOURS`), since Knights could never serve it, and so is an
+  owner rating on a video (`not-still-image`; the scan hook only ever passes still images). An owner rating on a draft stays queued. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
   **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
   deploy needed.

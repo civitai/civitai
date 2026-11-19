@@ -186,6 +186,27 @@ describe('enqueueKnightsItems', () => {
     expect((await items()).map((i) => i.imageId)).toEqual([2, 3, 4]);
   });
 
+  it('refuses a video when the caller asks for still images only, and queues still images', async () => {
+    await pg.exec(`UPDATE "Image" SET type = 'video' WHERE id = 1;`);
+    const input = {
+      source: 'owner-rating',
+      questionKey: Q,
+      items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+    };
+
+    expect(await enqueueKnightsItems(db, input, NOW, { stillImagesOnly: true })).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-still-image' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2]);
+
+    // A caller that does not ask still queues the video.
+    expect(await enqueueKnightsItems(db, input, NOW)).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'duplicate' },
+    ]);
+  });
+
   it('refuses a post scheduled to publish after the item would close unvoted (144h after queueing), when the caller requires a post', async () => {
     // NOW is 2026-12-11 10:00 UTC, so an item queued now is open until 2026-12-17 10:00 at the latest.
     await pg.exec(`
