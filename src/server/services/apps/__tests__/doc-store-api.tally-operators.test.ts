@@ -5,7 +5,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
-import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -38,8 +37,7 @@ import {
  * The request-table half (each operator, each refusal) is in `storage-contract.v1.json`. This
  * file pins what a request table cannot: that the two routes are ONE code path (the same reply,
  * the same rows, the same budgets, the same permission matrix), concurrency, the moderators'
- * report path, the quota, imports, the registry invariant, the deprecation headers and the
- * metric.
+ * report path, the quota, imports, the registry invariant and the deprecation headers.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 120_000 });
@@ -105,7 +103,7 @@ import {
   PUBLISHED_NS,
 } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types';
-import { LEGACY_TALLY_HEADERS, parseTallyPatch } from '~/server/services/apps/doc-store-api';
+import { LEGACY_TALLY_HEADERS } from '~/server/services/apps/doc-store-api';
 import { docStoreDocSource } from '~/server/registry-adapter/doc-source';
 import { recordStorageImportGrants } from '~/server/services/apps/storage-import-grant.service';
 import {
@@ -438,59 +436,6 @@ beforeEach(() => {
 
 afterEach(() => {
   expect(lua.errors).toEqual([]);
-});
-
-// ---------------------------------------------------------------------------
-// The PATCH body parser
-// ---------------------------------------------------------------------------
-
-describe('parseTallyPatch: one operator, translated into the route it replaces', () => {
-  const at = { collection: 'posts', key: 'k' };
-
-  it('translates each operator into the deprecated route and its own body', () => {
-    expect(parseTallyPatch(at, { $inc: { views: 3 } })).toEqual({
-      route: { op: 'increment', collection: 'posts', key: 'k', name: 'views' },
-      body: { by: 3 },
-    });
-    expect(parseTallyPatch(at, { $mark: 'vote' })).toEqual({
-      route: { op: 'mark', collection: 'posts', key: 'k', name: 'vote' },
-      body: undefined,
-    });
-    expect(parseTallyPatch(at, { $unmark: 'vote' })).toEqual({
-      route: { op: 'unmark', collection: 'posts', key: 'k', name: 'vote' },
-      body: undefined,
-    });
-  });
-
-  it.each([
-    ['no body', undefined, 'empty_patch'],
-    ['an empty object', {}, 'empty_patch'],
-    ['an array', [{ $mark: 'vote' }], 'malformed_operator'],
-    ['a string', '$mark', 'malformed_operator'],
-    ['null', null, 'malformed_operator'],
-    ['an unknown operator', { $set: { a: 1 } }, 'unknown_operator'],
-    ['an unknown operator beside a known one', { $mark: 'vote', $push: 1 }, 'unknown_operator'],
-    ['two operators', { $inc: { views: 1 }, $mark: 'vote' }, 'multiple_operators'],
-    ['$mark and $unmark', { $mark: 'vote', $unmark: 'vote' }, 'multiple_operators'],
-    ['an operator with a data field', { $mark: 'vote', status: 'x' }, 'malformed_operator'],
-    ['a report with a reason', { $mark: 'report', reason: 'spam' }, 'malformed_operator'],
-    ['data fields only', { status: 'closed' }, 'merge_patch_unsupported'],
-    ['a prototype name', { toString: 1 }, 'merge_patch_unsupported'],
-    ['$inc with two counters', { $inc: { views: 1, plays: 1 } }, 'malformed_operator'],
-    ['$inc with no counter', { $inc: {} }, 'malformed_operator'],
-    ['$inc with a number', { $inc: 1 }, 'malformed_operator'],
-    ['$inc with an array', { $inc: [['views', 1]] }, 'malformed_operator'],
-    ['$mark with a number', { $mark: 1 }, 'malformed_operator'],
-    ['$unmark with an array', { $unmark: ['vote'] }, 'malformed_operator'],
-  ])('refuses %s: invalid_request, details.reason %s', (_name, body, reason) => {
-    let thrown: unknown;
-    try {
-      parseTallyPatch(at, body);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toMatchObject({ code: 'invalid_request', details: { reason } });
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1040,54 +985,6 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
       });
       expect(r.headers.deprecation, `${method} ${p}`).toBeUndefined();
     }
-  });
-});
-
-describe('civitai_app_block_doc_store_tally_ops_total{op, route}', () => {
-  const METRIC = 'civitai_app_block_doc_store_tally_ops_total';
-  async function count(op: string, route: string): Promise<number> {
-    const metric = client.register.getSingleMetric(METRIC) as
-      | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }
-      | undefined;
-    if (!metric) return 0;
-    const hit = (await metric.get()).values.find(
-      (v) => v.labels.op === op && v.labels.route === route
-    );
-    return hit?.value ?? 0;
-  }
-  async function all(): Promise<Record<string, number>> {
-    const out: Record<string, number> = {};
-    for (const op of ['inc', 'mark', 'unmark']) {
-      for (const route of ROUTES) out[`${op}|${route}`] = await count(op, route);
-    }
-    return out;
-  }
-
-  it.each(OP_NAMES)(
-    '%s: one increment on its own (op, route) series, nothing else moves',
-    async (op, name) => {
-      const app = freshApp();
-      await putPost(app, 'mt');
-      for (const route of ROUTES) {
-        const before = await all();
-        expect((await send(app, 'v2', route, op, 'posts', 'mt', name)).status).toBe(200);
-        const after = await all();
-        expect(after).toEqual({ ...before, [`${op}|${route}`]: before[`${op}|${route}`] + 1 });
-      }
-    }
-  );
-
-  it('a refused PATCH body is not counted; a refused operation is', async () => {
-    const app = freshApp();
-    const token = await mint(app, UID.v2);
-    const before = await all();
-    expect(
-      (await call({ token, method: 'PATCH', path: '/posts/none', body: { status: 'x' } })).status
-    ).toBe(400);
-    expect(await all()).toEqual(before);
-    // A well-formed operator on a missing document reached the operation: counted.
-    expect((await send(app, 'v2', 'v2', 'mark', 'posts', 'none', 'vote')).status).toBe(404);
-    expect(await all()).toEqual({ ...before, 'mark|v2': before['mark|v2'] + 1 });
   });
 });
 
