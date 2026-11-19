@@ -134,6 +134,7 @@ import {
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { delIfValue } from '~/server/redis/atomic';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import {
   redis,
   sysRedis,
@@ -3029,7 +3030,9 @@ export const submitEntry = async ({
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   const [voted = [], clusterOutcomes, dismissed = []] = await Promise.all([
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    boundedClusterCall('crucibleVotedPairs', () =>
+      redis.sMembers(getVotedPairsKey(crucibleId, userId))
+    ),
     loadVoteOutcomes(
       () => redis.sCard(outcomesKey),
       () => redis.sMembers(outcomesKey)
@@ -3118,6 +3121,9 @@ const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
  * Adds the pair to the judge's voted set and, for a vote against an anchor, records the anchor in
  * the same script. The Bradley-Terry fit reads the anchor to freeze that side as Elo does, and the
  * prize guard's count of voted pairs then also accounts for every anchor. Returns 1 when added.
+ *
+ * Runs on the cache cluster: KEYS[1] and KEYS[2] carry the same `{crucibleId:userId}` tag
+ * (crucible-redis-keys.ts), or the cluster refuses the script with CROSSSLOT.
  */
 export const RECORD_VOTED_PAIR_SCRIPT = `
 local added = redis.call('SADD', KEYS[1], ARGV[1])
@@ -3224,23 +3230,6 @@ export async function dismissJudgingPair({
       'This pair is no longer available. Please wait for the next pair to load.'
     );
   return { dismissed: true };
-}
-
-/**
- * Mark pair as voted by user
- */
-export async function markPairVoted(
-  crucibleId: number,
-  userId: number,
-  entryId1: number,
-  entryId2: number
-): Promise<void> {
-  const key = getVotedPairsKey(crucibleId, userId);
-  const pairKey = createPairKey(entryId1, entryId2);
-  // sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
-  await sysRedis.sAdd(key, pairKey);
-  // Set TTL to 30 days (for crucible cleanup)
-  await sysRedis.expire(key, 30 * 24 * 60 * 60);
 }
 
 /**
@@ -4154,8 +4143,11 @@ export const submitVote = async ({
     }
 
     // Marks the pair voted before the rating update; 0 means it already was (a duplicate vote).
+    // Not through boundedClusterCall: its 1s deadline abandons a command that may still run, which
+    // here records the pair (and its anchor) for a vote the caller was told had failed. The
+    // client's own, longer command timeout makes that rarer, not impossible.
     const addResult = Number(
-      await sysRedis.eval(RECORD_VOTED_PAIR_SCRIPT, {
+      await redis.eval(RECORD_VOTED_PAIR_SCRIPT, {
         keys: [getVotedPairsKey(crucibleId, userId), getAnchorVotesKey(crucibleId, userId)],
         arguments: [
           pairKey,
@@ -4227,7 +4219,7 @@ export const submitVote = async ({
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function
-  // for race condition protection - no need to call markPairVoted again
+  // for race condition protection (RECORD_VOTED_PAIR_SCRIPT)
 
   // Track vote in ClickHouse (fire-and-forget)
   const tracker = new Tracker();

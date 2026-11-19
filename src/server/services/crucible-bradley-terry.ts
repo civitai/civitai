@@ -1,6 +1,6 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 import { CRUCIBLE_DEFAULT_ELO } from '~/server/redis/crucible-elo.redis';
 import { createPairKey } from '~/server/services/crucible-judge-closure';
 import {
@@ -170,7 +170,11 @@ const JUDGE_BATCH = 100;
 
 /**
  * Per judge, in bounded batches: the pairs Redis counts as judged (the sum of every judge's
- * voted-pairs set, which the prize guard compares) and the anchors Elo recorded.
+ * voted-pairs set, which the prize guard compares) and the anchors Elo recorded. The judges set is
+ * on sysRedis; each judge's voted pairs and anchors are on the cache cluster. Not deadline-bounded:
+ * a spurious timeout here would pay a crucible by Elo. The cluster can evict a key before its TTL:
+ * an evicted voted set makes the count short, so prizes fall back to Elo; an anchor hash evicted
+ * while its voted set stays is not detected, and those votes fit with no side frozen.
  */
 async function readRedisJudging(crucibleId: number) {
   const judges = ((await sysRedis.sMembers(getJudgesKey(crucibleId))) ?? []).map(Number);
@@ -179,8 +183,8 @@ async function readRedisJudging(crucibleId: number) {
   for (let i = 0; i < judges.length; i += JUDGE_BATCH) {
     const batch = judges.slice(i, i + JUDGE_BATCH);
     const [counts, anchorHashes] = await Promise.all([
-      Promise.all(batch.map((userId) => sysRedis.sCard(getVotedPairsKey(crucibleId, userId)))),
-      Promise.all(batch.map((userId) => sysRedis.hGetAll(getAnchorVotesKey(crucibleId, userId)))),
+      Promise.all(batch.map((userId) => redis.sCard(getVotedPairsKey(crucibleId, userId)))),
+      Promise.all(batch.map((userId) => redis.hGetAll(getAnchorVotesKey(crucibleId, userId)))),
     ]);
     judgedPairs += counts.reduce((sum, n) => sum + n, 0);
     batch.forEach((userId, j) => {

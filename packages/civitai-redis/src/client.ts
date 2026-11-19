@@ -3040,13 +3040,10 @@ export const REDIS_SYS_KEYS = {
   },
   CRUCIBLE: {
     ELO: 'crucible:elo',
-    VOTED_PAIRS: 'crucible:voted',
     // Per judge: `winner>loser` for each vote, from before the set moved to the cache cluster
     // (REDIS_KEYS.CRUCIBLE.VOTE_OUTCOMES). Read only, never written.
     // 🔴 Delete with the fallback read after VOTE_OUTCOMES_SYS_FALLBACK_UNTIL (crucible.service.ts).
     VOTE_OUTCOMES: 'crucible:vote-outcomes',
-    // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
-    ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
     // Per judge: pair keys they chose never to be shown again.
     DISMISSED_PAIRS: 'crucible:dismissed-pairs',
@@ -3661,6 +3658,23 @@ const REDIS_KEYS_UNPREFIXED = {
       TTL 30d. A cache: a lost or missing set only serves a pair the judge could have skipped.
      */
     VOTE_OUTCOMES: 'crucible:vote-outcomes',
+    /*
+      Use: the pairs a judge has voted on, which refuses a second vote on a pair, counts the
+      judge's progress, and is summed into the votes the prize fit expects to find in ClickHouse.
+      Structure: set of pair keys `small:large`, key = `crucible:voted:{${crucibleId}:${userId}}`,
+      TTL 30d from the judge's last vote.
+      Written only with ANCHOR_VOTES, in one script (RECORD_VOTED_PAIR_SCRIPT in
+      crucible.service.ts); the `{crucibleId:userId}` tag puts both in one slot. Moved from sysRedis
+      between crucibles; values written there before the move are not read.
+     */
+    VOTED_PAIRS: 'crucible:voted',
+    /*
+      Use: per judge, pair key -> the entry Elo left frozen on that vote (it was at the judge's
+      cap), read by the prize fit so it freezes exactly what Elo froze.
+      Structure: hash, key = `crucible:anchor-votes:{${crucibleId}:${userId}}`, TTL 30d,
+      refreshed with VOTED_PAIRS on every vote. Same tag and script as VOTED_PAIRS.
+     */
+    ANCHOR_VOTES: 'crucible:anchor-votes',
   },
   BOT_CACHE: {
     /*
