@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { REVIEWS_KEPT_ON_APPEAL_APPROVAL } from '@civitai/shared/image-review-types';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
@@ -830,7 +831,19 @@ export async function resolveImageAppeal({
   if (status === 'Approved') {
     const { numUpdatedRows } = await dbWrite
       .updateTable('Image')
-      .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
+      // On a row an account deletion blocked, the approval settles the appeal but not a review the
+      // deletion recorded, which comes back.
+      .set({
+        needsReview: sql<string | null>`CASE
+          WHEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
+          ...REVIEWS_KEPT_ON_APPEAL_APPROVAL,
+        ]}::text[])
+          THEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+        END`,
+        blockedFor: null,
+        ingestion: 'Scanned',
+        metadata: sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text`,
+      })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)

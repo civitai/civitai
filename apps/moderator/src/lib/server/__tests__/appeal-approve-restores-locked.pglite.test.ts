@@ -207,6 +207,36 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
   });
 });
 
+describe('approving an appeal on an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['poi', 'poi'],
+    // The appeal is what the approval settles; a dismissed csam review is not put back.
+    ['appeal', null],
+    ['csam', null],
+    ['not-a-review', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [IMAGE_ID, review]
+    );
+
+    await approve();
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
 describe('rejecting an appeal on a rating-locked Blocked image', () => {
   it('leaves the level, the lock and the blocklist alone', async () => {
     await resolveImageAppeal({

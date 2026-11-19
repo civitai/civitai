@@ -104,7 +104,8 @@ beforeAll(async () => {
       "needsReview" text,
       "postId" int,
       "pHash" bigint,
-      "updatedAt" timestamp(3)
+      "updatedAt" timestamp(3),
+      metadata jsonb
     );
     -- Enums as in prod, so a literal outside the enum fails here too.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -700,5 +701,54 @@ describe('reportCsamImages on an image a plain block already removed', () => {
 
     expect(await imageRow(DECIDED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
     expect(await held()).toContain(DECIDED);
+  });
+});
+
+describe('approving an appeal on an image an account deletion blocked', () => {
+  const recorded = async (review: string) => {
+    // Only the pending appeal: the harness's claim also hands back an earlier decided one.
+    await holder.db.query(`DELETE FROM "Appeal" WHERE "entityId" = $1 AND status = 'Approved'`, [
+      APPEALED,
+    ]);
+    await holder.db.query(
+      `UPDATE "Image" SET metadata = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE id = $1`,
+      [APPEALED, review]
+    );
+  };
+  const approved = async () => {
+    await resolveEntityAppeal({
+      ids: [APPEALED],
+      entityType: 'Image',
+      status: 'Approved',
+      userId: 2,
+    } as never);
+    return (
+      await holder.db.query<{ needsReview: string | null; ingestion: string; metadata: unknown }>(
+        `SELECT "needsReview", ingestion, metadata FROM "Image" WHERE id = $1`,
+        [APPEALED]
+      )
+    ).rows[0];
+  };
+
+  it.each([
+    ['minor', 'minor'],
+    ['poi', 'poi'],
+    // The appeal is what the approval settles; a dismissed csam review is not put back.
+    ['appeal', null],
+    ['csam', null],
+    ['not-a-review', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await recorded(review);
+
+    expect(await approved()).toEqual({
+      needsReview: flag,
+      ingestion: 'Scanned',
+      metadata: { keep: 1 },
+    });
   });
 });
