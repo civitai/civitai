@@ -120,7 +120,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -430,12 +430,23 @@ const loadModelVersion = async ({
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
       // Training data keeps its own public view (the router's strip); other non-Public files are the
-      // owner's and moderators'.
-      files: (isOwnerOrMod || !version.files
-        ? version.files
-        : version.files.filter(
+      // owner's and moderators'. Only they get downloadName, which the editor shows in place of a
+      // trainer blob id: it is built from the real model name, which a .com face hides.
+      files: (isOwnerOrMod
+        ? version.files?.map((file) => ({
+            ...file,
+            downloadName: getDownloadFilename({
+              model,
+              modelVersion: version,
+              file,
+              versionFiles: version.files,
+            }),
+          }))
+        : version.files?.filter(
             (file) => file.visibility === 'Public' || file.type === 'Training Data'
-          )) as unknown as Array<Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }>,
+          )) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
+      >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
       linkedComponents,
