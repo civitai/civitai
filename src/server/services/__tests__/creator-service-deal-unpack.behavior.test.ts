@@ -2691,6 +2691,32 @@ describe('a video Final', () => {
     expect(await disputeReview()).toBeNull();
   });
 
+  it('keeps a blocked video from dispute review once its scan image is gone', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const [{ id: imageId }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, "nsfwLevel") VALUES ('blocked', 32) RETURNING id`
+    );
+    await q(
+      `UPDATE "ServiceDealFileEntry" SET "imageId" = $2, "nsfwLevel" = 32 WHERE "fileId" = $1`,
+      [fileId, imageId]
+    );
+    const disputeReview = () =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch: true,
+        servableLevels: 31,
+      });
+    expect(await disputeReview()).toMatchObject({ versionId: 'ver1' });
+    // Purged after its retention: nothing is left to show it was not held for CSAM or a minor.
+    await q(`DELETE FROM "Image" WHERE id = $1`, [imageId]);
+    expect(await disputeReview()).toBeNull();
+  });
+
   it('gives a video not yet rated only to dispute review', async () => {
     const { fileId } = await videoFinal(4);
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });

@@ -1181,6 +1181,7 @@ export async function resolveServiceDealFileDownload({
       scannedVersionId: string | null;
       contentLevel: number | null;
       csamHeld: boolean;
+      ratedImageGone: boolean;
     }[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
@@ -1188,6 +1189,9 @@ export async function resolveServiceDealFileDownload({
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
         WHERE e."fileId" = f."id" AND ${captureImageStateHeldSql('i')}) AS "csamHeld",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+        WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -1241,9 +1245,10 @@ export async function resolveServiceDealFileDownload({
     const disputeReview = isModerator && !!moderatorFetch;
     // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
     if (row.csamHeld) return null;
-    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold.
-    const levelShown =
-      disputeReview || (!!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels));
+    const levelInDomain = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
+    // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold,
+    // but only while the scan image that shows it is not held is still there to say so.
+    const levelShown = levelInDomain || (disputeReview && !row.ratedImageGone);
     if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
     if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
   }
