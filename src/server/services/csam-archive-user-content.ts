@@ -66,7 +66,7 @@ type Reader = (db: Db, userId: number, pageSize?: number) => AsyncIterable<unkno
  * `BountyEntry` have `userId` indexes the schema does not declare; `Collection` and `ChatMember`
  * have declared `userId` btree indexes, `Bounty` and `ResourceReview` hash indexes;
  * `ServiceOffering` has `(sellerId, status)`. `PostText`, `Question` and `Answer` have none and
- * are small. `ChatMessage` is paged per chat; see `chatMessages`. All reads use the read pool.
+ * are small. For `ChatMessage`, see `chatMessages`. All reads use the read pool.
  */
 export const userContentReaders: { name: string; rows: Reader }[] = [
   {
@@ -287,11 +287,26 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
   },
 ];
 
+const CHAT_MESSAGE_COLUMNS = [
+  'id',
+  'chatId',
+  'userId',
+  'content',
+  'createdAt',
+  'editedAt',
+  'deletedAt',
+  'referenceMessageId',
+] as const;
+
 /**
- * Every message, from either side and including deleted ones, with the text each edit replaced, in each chat the user has a membership
- * row in, whatever its status, in chat then id order. Paged per chat because `ChatMessage` has no
- * index leading with `userId`. The `(chatId, id)` index is partial on undeleted messages, so it
+ * Every message, from either side and including deleted ones, in each chat the user has a
+ * membership row in, whatever its status, in chat then id order; then, in id order, every message
+ * the user wrote in a chat they have no membership row in. Each carries the text its edits replaced.
+ *
+ * Member chats are paged per chat. The `(chatId, id)` index is partial on undeleted messages, so it
  * cannot serve this read: each page sorts the chat's messages, which only a very long chat feels.
+ * The user's other messages need a primary-key walk filtered on `userId`, since no index leads
+ * with it; the cursor resumes, so that is about one pass over the table across all pages.
  */
 async function* chatMessages(db: Db, userId: number, pageSize?: number) {
   const memberships = await db
@@ -300,51 +315,69 @@ async function* chatMessages(db: Db, userId: number, pageSize?: number) {
     .where('userId', '=', userId)
     .orderBy('chatId', 'asc')
     .execute();
-  for (const chatId of new Set(memberships.map((m) => m.chatId))) {
-    const pages = scanPagesById(({ afterId, take }) => {
+  const memberChats = [...new Set(memberships.map((m) => m.chatId))];
+  for (const chatId of memberChats)
+    yield* withEdits(
+      db,
+      userId,
+      scanPagesById(({ afterId, take }) => {
+        let q = db
+          .selectFrom('ChatMessage')
+          .select(CHAT_MESSAGE_COLUMNS)
+          .where('chatId', '=', chatId)
+          .orderBy('id', 'asc')
+          .limit(take);
+        if (afterId !== undefined) q = q.where('id', '>', afterId);
+        return q.execute();
+      }, pageSize)
+    );
+  yield* withEdits(
+    db,
+    userId,
+    scanPagesById(({ afterId, take }) => {
       let q = db
         .selectFrom('ChatMessage')
-        .select([
-          'id',
-          'chatId',
-          'userId',
-          'content',
-          'createdAt',
-          'editedAt',
-          'deletedAt',
-          'referenceMessageId',
-        ])
-        .where('chatId', '=', chatId)
+        .select(CHAT_MESSAGE_COLUMNS)
+        .where('userId', '=', userId)
         .orderBy('id', 'asc')
         .limit(take);
+      if (memberChats.length) q = q.where('chatId', 'not in', memberChats);
       if (afterId !== undefined) q = q.where('id', '>', afterId);
       return q.execute();
-    }, pageSize);
-    for await (const page of pages) {
-      // An edit overwrites `content`; the text it replaced is kept only here.
-      const edits = await db
-        .selectFrom('ChatMessageEdit')
-        .select(['id', 'messageId', 'editorId', 'previousContent', 'createdAt'])
-        .where(
-          'messageId',
-          'in',
-          page.map((m) => m.id)
-        )
-        .orderBy('messageId', 'asc')
-        .orderBy('id', 'asc')
-        .execute();
-      const editsOf = new Map<number, Omit<(typeof edits)[number], 'messageId'>[]>();
-      for (const { messageId, ...edit } of edits) {
-        const list = editsOf.get(messageId) ?? [];
-        list.push(edit);
-        editsOf.set(messageId, list);
-      }
-      for (const row of page)
-        yield {
-          ...row,
-          isReportedUser: row.userId === userId,
-          previousVersions: editsOf.get(row.id) ?? [],
-        };
+    }, pageSize)
+  );
+}
+
+/** Tags each message with its author side and the text each edit replaced, a page at a time. */
+async function* withEdits<T extends { id: number; userId: number }>(
+  db: Db,
+  userId: number,
+  pages: AsyncIterable<T[]>
+) {
+  for await (const page of pages) {
+    // An edit overwrites `content`; the text it replaced is kept only here.
+    const edits = await db
+      .selectFrom('ChatMessageEdit')
+      .select(['id', 'messageId', 'editorId', 'previousContent', 'createdAt'])
+      .where(
+        'messageId',
+        'in',
+        page.map((m) => m.id)
+      )
+      .orderBy('messageId', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
+    const editsOf = new Map<number, Omit<(typeof edits)[number], 'messageId'>[]>();
+    for (const { messageId, ...edit } of edits) {
+      const list = editsOf.get(messageId) ?? [];
+      list.push(edit);
+      editsOf.set(messageId, list);
     }
+    for (const row of page)
+      yield {
+        ...row,
+        isReportedUser: row.userId === userId,
+        previousVersions: editsOf.get(row.id) ?? [],
+      };
   }
 }

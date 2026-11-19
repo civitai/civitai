@@ -389,8 +389,8 @@ describe('the archive text sections', () => {
         (4, ${ME}, 'Ignored', NULL), (5, ${OTHER}, 'Joined', NULL), (6, ${OTHER}, 'Joined', NULL),
         (3, ${OTHER}, 'Joined', NULL), (7, ${OTHER}, 'Joined', NULL), (7, 40, 'Joined', NULL),
         (8, ${OTHER}, 'Joined', NULL)`);
-      // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear. Chat 8
-      // holds a message from the user but no membership row of theirs, so it must not appear either.
+      // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear. Chat 8 has no
+      // membership row of the user's: their own message there is archived, the other side's is not.
       await message(11, 3, OTHER, { createdAt: new Date(Date.UTC(2026, 9, 5)) });
       await message(12, 2, OTHER);
       await message(13, 1, OTHER);
@@ -405,6 +405,9 @@ describe('the archive text sections', () => {
         [6, 7, 40],
         [5, 5, ME],
         [9, 8, ME],
+        [15, 8, OTHER],
+        [17, 8, ME],
+        [16, 9, ME],
       ])
         await message(id, chat, from);
       const editedAt = new Date(Date.UTC(2026, 9, 2));
@@ -436,6 +439,9 @@ describe('the archive text sections', () => {
         [5, 8, false],
         [5, 10, true],
         [6, 4, false],
+        [8, 9, true],
+        [9, 16, true],
+        [8, 17, true],
       ]);
       expect(rows.find((r) => r.id === 10)).toMatchObject({
         content: '',
