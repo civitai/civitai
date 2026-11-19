@@ -81,7 +81,7 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
-vi.mock('~/utils/s3-purge-versions', () => ({
+vi.mock('@civitai/storage/s3-purge-versions', () => ({
   purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
     await s3.deleteObject(bucket, key);
     return { versionsDeleted: 1, remaining: 0 };

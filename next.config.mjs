@@ -179,6 +179,7 @@ export default defineNextConfig(
       '@civitai/db',
       '@civitai/db-queries',
       '@civitai/shared',
+      '@civitai/storage',
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
