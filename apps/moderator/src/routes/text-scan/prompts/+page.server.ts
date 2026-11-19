@@ -12,6 +12,8 @@ import {
 import { runTry } from '$lib/server/text-scan-lab/try';
 import { readerOf } from '$lib/server/chat-read-audit';
 import { loadPrompts, promptAuthors } from '$lib/server/text-scan-lab/version';
+import { getModeratorDb } from '$lib/server/moderator-db';
+import { checkLiveIntent, INTENT_PROMPT_KEY } from '$lib/server/text-scan-tests/publish-gate';
 import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
 
@@ -21,7 +23,15 @@ export const load: PageServerLoad = async ({ url }) => {
   const q = parseQuery(url, querySchema);
   const prompts = await loadPrompts(q.key, 'prompts');
   const authors = await promptAuthors(prompts.ok ? prompts.value : null);
-  return { key: q.key, prompts, authors, wide: true };
+  // A restore needs no run, so the live intent text can be unchecked against the live base, model and cases.
+  const intentCheck =
+    q.key === INTENT_PROMPT_KEY && prompts.ok
+      ? await checkLiveIntent(getModeratorDb(), prompts.value).catch(() => ({
+          ok: false as const,
+          reason: 'Could not check the intent test set.',
+        }))
+      : null;
+  return { key: q.key, prompts, authors, intentCheck, wide: true };
 };
 
 export const actions: Actions = {

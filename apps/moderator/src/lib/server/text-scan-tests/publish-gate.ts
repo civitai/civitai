@@ -28,14 +28,9 @@ export async function checkIntentPublish(
   const baseId = live.active.base?.id;
   if (baseId === undefined) return refuse('The base prompt has no saved version.');
 
-  const candidates = await db
-    .selectFrom('text_scan_test_run')
-    .select(['id', 'prompt_ids', 'prompt_overrides', 'model', 'thinking', 'created_at'])
-    .where('set_id', '=', String(INTENT_EVAL_SET_ID))
+  const candidates = await doneRuns(db)
     .where('kind', '=', 'draft')
-    .where('status', '=', 'done')
     .where('run_by', '=', userId)
-    .orderBy('id', 'desc')
     .execute();
   const run = candidates.find(
     (r) => (r.prompt_overrides as Record<string, unknown> | null)?.[INTENT_PROMPT_KEY] === content
@@ -44,7 +39,51 @@ export async function checkIntentPublish(
     return refuse(
       'Run this exact text on the intent test set first. Only a finished run you started counts.'
     );
+  return judgeRun(db, run, baseId, live);
+}
 
+/**
+ * Whether the live intent text has a run that would pass the publish gate today (anyone's run: a
+ * baseline of the live version, or a draft of the same text). False after a restore until one runs.
+ */
+export async function checkLiveIntent(
+  db: Db,
+  live: Pick<LabPrompts, 'active' | 'config'>
+): Promise<PublishCheck> {
+  const baseId = live.active.base?.id;
+  const intent = live.active[INTENT_PROMPT_KEY];
+  if (baseId === undefined || !intent) return refuse('The intent prompt has no saved version.');
+  const candidates = await doneRuns(db).execute();
+  const run = candidates.find((r) =>
+    r.kind === 'baseline'
+      ? (r.prompt_ids as Record<string, unknown>)[INTENT_LABEL] === intent.id
+      : (r.prompt_overrides as Record<string, unknown> | null)?.[INTENT_PROMPT_KEY] ===
+        intent.content
+  );
+  if (!run) return refuse('No finished run of this version on the intent test set.');
+  return judgeRun(db, run, baseId, live);
+}
+
+const doneRuns = (db: Db) =>
+  db
+    .selectFrom('text_scan_test_run')
+    .select(['id', 'kind', 'prompt_ids', 'prompt_overrides', 'model', 'thinking', 'created_at'])
+    .where('set_id', '=', String(INTENT_EVAL_SET_ID))
+    .where('status', '=', 'done')
+    .orderBy('id', 'desc');
+
+type DoneRun = Awaited<ReturnType<ReturnType<typeof doneRuns>['execute']>>[number];
+
+async function judgeRun(
+  db: Db,
+  run: DoneRun,
+  baseId: number,
+  live: Pick<LabPrompts, 'config'>
+): Promise<PublishCheck> {
+  // A draft of any other key (the base above all) tested a combination that will not be live.
+  const drafted = Object.keys((run.prompt_overrides as Record<string, unknown> | null) ?? {});
+  if (drafted.some((key) => key !== INTENT_PROMPT_KEY))
+    return refuse('The run also drafted another prompt. Run the intent text alone.');
   const ids = run.prompt_ids as Record<string, unknown>;
   if (
     ids.base !== baseId ||
@@ -52,7 +91,7 @@ export async function checkIntentPublish(
     run.thinking !== live.config.thinking
   )
     return refuse(
-      'The base prompt, model or thinking setting changed since your run. Run the text again.'
+      'The base prompt, model or thinking setting changed since the run. Run the text again.'
     );
 
   const [cases, results] = await Promise.all([
@@ -93,11 +132,11 @@ export async function checkIntentPublish(
   }
   if (uncovered)
     return refuse(
-      `Your run is missing a verdict for ${uncovered} current case(s), or they changed after it. Run the text again.`
+      `The run is missing a verdict for ${uncovered} current case(s), or they changed after it. Run the text again.`
     );
   if (falseClears || falseFlags)
     return refuse(
-      `Your run cleared ${falseClears} case(s) expected to be detected and flagged ${falseFlags} expected to be clear. Both must be 0.`
+      `The run cleared ${falseClears} case(s) expected to be detected and flagged ${falseFlags} expected to be clear. Both must be 0.`
     );
   return { ok: true, runId: Number(run.id) };
 }

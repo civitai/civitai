@@ -117,8 +117,9 @@ export async function restorePrompt(input: z.infer<typeof restoreSchema>) {
   if (active?.id === version.id || active?.content === version.content)
     return fail(400, { error: 'That text is already the current version.' });
   if ((active?.id ?? null) !== input.baseId) return stale(input.key);
+  // The note always names the version restored: it is the audit record's "to" (baseId is its "from").
   return put(input.key, version.content, {
-    note: input.note ?? `Restored #${version.id}`,
+    note: input.note ? `Restored #${version.id}: ${input.note}` : `Restored #${version.id}`,
     baseId: input.baseId,
   });
 }

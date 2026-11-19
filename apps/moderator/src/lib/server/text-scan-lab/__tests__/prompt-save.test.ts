@@ -123,7 +123,7 @@ describe('savePrompt for the intent key', () => {
     expect(harness.holdsMainPermission).toHaveBeenCalledWith('textScanPromptPublishIntent');
     expect(gate.checkIntentPublish).toHaveBeenCalledWith(
       {},
-      expect.objectContaining({ content: 'NEW', userId: USER })
+      { content: 'NEW', userId: USER, live: prompts(3) }
     );
   });
 
@@ -181,9 +181,12 @@ describe('restorePrompt', () => {
     });
   });
 
-  it('keeps a note the moderator wrote', async () => {
+  it('keeps a note the moderator wrote, after the version it restores', async () => {
     await restorePrompt(input({ note: 'roll back' }));
-    expect(harness.putPrompt.mock.calls[0][2]).toEqual({ note: 'roll back', baseId: 3 });
+    const [, content, opts] = harness.putPrompt.mock.calls[0];
+    // The audit row of the put records this note and baseId: the restore's to- and from-version.
+    expect(opts).toEqual({ note: `Restored #${input({}).id}: roll back`, baseId: 3 });
+    expect(content).toBe(`TEXT ${input({}).id}`);
   });
 
   it('returns 404 for an id outside the loaded versions', async () => {
