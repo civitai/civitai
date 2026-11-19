@@ -10,8 +10,9 @@
 -- lock_timeout: SHARE UPDATE EXCLUSIVE waits behind autovacuum and other DDL on "User"; on a timeout
 -- nothing changes, re-run. statement_timeout: set explicitly so a role default cannot stop the scan.
 -- VALIDATE on a missing constraint errors, but on one already valid it succeeds as a no-op, so the
--- guard checks the constraint is the one 20261119180000 adds. This file commits: dry-run it with the
--- statements in the PR body, never by wrapping the file in BEGIN ... ROLLBACK.
+-- guard checks the constraint is the one 20261119180000 adds. This file commits, so never dry-run it by
+-- wrapping it in BEGIN ... ROLLBACK: on a dev clone that has 20261119180000, run
+-- BEGIN; SET LOCAL lock_timeout = '3s'; ALTER TABLE "User" VALIDATE CONSTRAINT "User_image_no_upload_key"; ROLLBACK;
 BEGIN;
 SET LOCAL lock_timeout = '3s';
 SET LOCAL statement_timeout = '30min';

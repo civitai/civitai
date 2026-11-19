@@ -12,8 +12,9 @@
 -- validates them, and catches a key written between the guard and the ALTER.
 --
 -- ON_ERROR_STOP: the guard and the ALTER are separate transactions, so psql must stop at the guard's
--- error or the ALTER would still run. This file commits: dry-run it with the statements in the PR body,
--- never by wrapping the file in BEGIN ... ROLLBACK.
+-- error or the ALTER would still run. This file commits, so never dry-run it by wrapping it in
+-- BEGIN ... ROLLBACK: on a dev clone, run the guard's condition as a SELECT count(*) (it reads 0), then
+-- the ALTER below between BEGIN; SET LOCAL lock_timeout = '3s'; and ROLLBACK;.
 
 -- 1. The guard, a read on its own: no row may still hold a key (a NOT VALID constraint still fails
 --    any later UPDATE of such a row). It scans "User"; the regex runs only on non-NULL image.
