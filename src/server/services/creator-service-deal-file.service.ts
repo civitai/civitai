@@ -7,7 +7,6 @@ import {
   HeadObjectCommand,
   type S3Client,
 } from '@aws-sdk/client-s3';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type {
@@ -1233,10 +1232,13 @@ export async function resolveServiceDealFileDownload({
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
   if (isFinalVideoName(row.fileName)) {
-    // A video is served only as the version its scan copy was made from, and to a party only where
-    // its rating may be shown. One never stamped (refused, or not scanned yet) goes to no party.
-    const levelShown = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
-    if (!isModerator && (!row.scannedEtag || !levelShown)) return null;
+    // A video is served only as the version its scan copy was made from, and only where its rating
+    // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
+    const disputeReview = isModerator && !!moderatorFetch;
+    const levelShown = row.contentLevel
+      ? Flags.intersects(row.contentLevel, servableLevels)
+      : disputeReview;
+    if (!levelShown || (!row.scannedEtag && !disputeReview)) return null;
     if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
   }
   return {

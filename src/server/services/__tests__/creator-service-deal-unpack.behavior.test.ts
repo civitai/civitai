@@ -162,7 +162,6 @@ const orchestrator = await import('@civitai/orchestration-client');
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
 const {
   SERVICE_FINAL_OVER_LEVEL_REASON,
-  SERVICE_FINAL_VIDEO_IN_ZIP,
   SERVICE_FINAL_VIDEO_TOO_LONG,
   SERVICE_FINAL_SCAN_GIVE_UP_MS,
   SERVICE_FINAL_SCAN_MAX_ATTEMPTS,
@@ -2089,6 +2088,44 @@ describe('a video Final', () => {
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
     expect(await download(fileId, BUYER, 3)).toBeNull();
     expect(await download(fileId, 99)).toBeNull();
+  });
+
+  it('holds a moderator on the download route to the domain, and unscanned bytes to dispute review', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const asModerator = (servableLevels: number, moderatorFetch = false) =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch,
+        servableLevels,
+      });
+    expect(await asModerator(3)).toBeNull();
+    expect(await asModerator(31)).toMatchObject({ versionId: 'ver1' });
+    await q(
+      `UPDATE "ServiceDealFile" SET "scannedEtag" = NULL, "scannedVersionId" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    expect(await download(fileId, BUYER)).toBeNull();
+    expect(await asModerator(31)).toBeNull();
+    expect(await asModerator(31, true)).toMatchObject({ fileName: 'clip.mp4' });
+  });
+
+  it('reads a missing scanned version as a mismatch, and any other store failure as no answer', async () => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockRejectedValue(
+      Object.assign(new Error('gone'), { $metadata: { httpStatusCode: 404 } })
+    );
+    expect(await download(fileId, BUYER)).toBeNull();
+    s3.send.mockRejectedValue(
+      Object.assign(new Error('busy'), { $metadata: { httpStatusCode: 503 } })
+    );
+    await expect(download(fileId, BUYER)).rejects.toThrow('busy');
   });
 
   it("fails an R video on a PG-13 deal, saying it is rated above the deal's level", async () => {

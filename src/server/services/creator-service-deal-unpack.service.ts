@@ -375,8 +375,10 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     SET "scannedEtag" = ${object.ETag}::text, "scannedVersionId" = ${object.VersionId ?? null}::text
     WHERE "id" = ${file.id}::int`;
   // A crash after the Image was made leaves it to be found, so it is never ingested twice.
-  const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`;
+  const [existing] = entry.scanKey
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`
+    : [];
   const imageId =
     existing?.id ??
     (
