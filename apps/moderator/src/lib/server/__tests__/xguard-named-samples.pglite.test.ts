@@ -14,6 +14,7 @@ import {
   namedSampleClickhouseConfig,
   REFUSED_PROMPT_HASH_SQL,
 } from '../xguard-named-samples';
+import { domainForSource } from '../../../../xguard-lab/labels';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LAB_SCHEMA = readFileSync(join(HERE, '../../../../xguard-lab/schema.sql'), 'utf8');
@@ -176,6 +177,24 @@ describe('importNamedSamples', () => {
         prompt_created_at: null,
       });
     }
+  });
+
+  it('writes only sources the AI rater reads as prompts, blind or not', async () => {
+    const refused = [{ hash: '3', date: '2026-11-15' }];
+    await importNamedSamples(
+      { batch: 'plain', generated: ['1'], refused },
+      { query: manyClickhouse(), db }
+    );
+    await importNamedSamples(
+      { batch: 'blind', generated: ['1'], refused, blind: { seed: 7 } },
+      { query: manyClickhouse(), db }
+    );
+    const sources = (
+      await db.selectFrom('sample').select('source').distinct().orderBy('source').execute()
+    ).map((r) => r.source);
+
+    expect(sources).toEqual(['named', 'prohibitedRequests', 'xguardPromptResults']);
+    expect(sources.map(domainForSource)).toEqual(['prompt', 'prompt', 'prompt']);
   });
 
   it('blind: stores rows in a seeded shuffle, the same for the same seed', async () => {
