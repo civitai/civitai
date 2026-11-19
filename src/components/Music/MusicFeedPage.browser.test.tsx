@@ -34,15 +34,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({
   default: ({
     filters,
+    filterType,
     listItem,
     songListName,
   }: {
-    filters: { types?: string[]; tags?: number[] };
+    filters: { types?: string[]; tags?: number[]; period?: string; baseModels?: string[] };
+    filterType?: string;
     listItem?: unknown;
     songListName?: string;
   }) => (
     <div
       data-testid="feed"
+      data-filter-type={filterType}
+      data-period={filters.period}
+      data-base-models={filters.baseModels?.join(',') ?? ''}
       data-types={filters.types?.join(',')}
       data-tags={filters.tags?.join(',') ?? ''}
       data-view={listItem ? 'list' : 'card'}
@@ -118,6 +123,22 @@ afterEach(() => {
 });
 
 describe('the /music page', () => {
+  // /music keeps its own saved filters ("music-filters"), apart from /images ("image-filters").
+  test('reads its own saved filters, never those saved on /images', async () => {
+    localStorage.setItem(
+      'image-filters',
+      JSON.stringify({ period: 'AllTime', baseModels: ['SDXL 1.0'] })
+    );
+    localStorage.setItem('music-filters', JSON.stringify({ period: 'Month' }));
+    await render();
+
+    const feed = page.getByTestId('feed');
+    await expect.element(feed).toHaveAttribute('data-filter-type', 'music');
+    await expect.element(feed).toHaveAttribute('data-period', 'Month');
+    await expect.element(feed).toHaveAttribute('data-base-models', '');
+    await expect.element(feed).toHaveAttribute('data-types', 'audio');
+  });
+
   test('shows the title, the genre chips and the audio feed named "All music"', async () => {
     await render();
     await expect.element(page.getByRole('heading', { name: 'Music', level: 1 })).toBeVisible();

@@ -50,6 +50,7 @@ const sortOptions = {
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
+  music: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
   generation: Object.values(GenerationSort),
   tools: Object.values(ToolSort),

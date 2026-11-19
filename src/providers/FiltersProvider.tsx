@@ -184,6 +184,10 @@ const crucibleFilterSchema = z.object({
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema;
 
+// /music: the image feed's filters, saved apart from /images so neither feed narrows the other.
+type MusicFilterSchema = z.infer<typeof musicFilterSchema>;
+const musicFilterSchema = imageFilterSchema;
+
 type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
 const threadFilterSchema = z.object({
   sort: z.enum(ThreadSort).default(ThreadSort.Newest),
@@ -238,6 +242,7 @@ type StorageState = {
   bounties: BountyFilterSchema;
   crucibles: CrucibleFilterSchema;
   videos: VideoFilterSchema;
+  music: MusicFilterSchema;
   threads: ThreadFilterSchema;
   generation: GenerationFilterSchema;
   tools: ToolFilterSchema;
@@ -275,6 +280,7 @@ type StoreState = FilterState & {
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
   setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
+  setMusicFilters: (filters: Partial<MusicFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setGenerationFilters: (filters: Partial<GenerationFilterSchema>) => void;
   setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
@@ -299,6 +305,7 @@ const localStorageSchemas: LocalStorageSchema = {
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
   crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
+  music: { key: 'music-filters', schema: musicFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   generation: { key: 'generation-filters', schema: generationFilterSchema },
   tools: { key: 'tool-filters', schema: toolFilterSchema },
@@ -459,6 +466,8 @@ const createFilterStore = ({ isRed }: { isRed: boolean }) =>
         set((state) => handleLocalStorageChange({ key: 'crucibles', data, state })),
       setVideoFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
+      setMusicFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'music', data, state })),
       setThreadFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
       setGenerationFilters: (data) =>
@@ -525,6 +534,7 @@ export function useSetFilters(type: FilterSubTypes | CollectionFeedKey) {
           bounties: state.setBountyFilters,
           crucibles: state.setCrucibleFilters,
           videos: state.setVideoFilters,
+          music: state.setMusicFilters,
           threads: state.setThreadFilters,
           generation: state.setGenerationFilters,
           tools: state.setToolFilters,

@@ -22,7 +22,7 @@ export function isSortAvailable(
 // The feeds whose sort is resolved on read. The rule below withholds Newest and
 // Oldest from every feed type, but it exists because a freshly posted IMAGE may
 // not be rated yet — so a feed of anything else keeps whatever it holds.
-const resolvedSortTypes: FilterSubTypes[] = ['images', 'videos', 'modelImages'];
+const resolvedSortTypes: FilterSubTypes[] = ['images', 'videos', 'music', 'modelImages'];
 
 /**
  * The sort a viewer is actually served. Filtering the menu options hides a

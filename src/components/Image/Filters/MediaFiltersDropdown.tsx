@@ -152,6 +152,8 @@ export function MediaFiltersDropdown({
         ? state.setImageFilters
         : filterType === 'videos'
         ? state.setVideoFilters
+        : filterType === 'music'
+        ? state.setMusicFilters
         : state.setModelImageFilters,
   }));
 
@@ -773,7 +775,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   onChange?: (params: Partial<GetInfiniteImagesOutput>) => void;
   isFeed?: boolean;
   isSameUser?: boolean;
-  filterType?: 'images' | 'videos' | 'modelImages';
+  filterType?: 'images' | 'videos' | 'music' | 'modelImages';
   hideBaseModels?: boolean;
   hideMediaTypes?: boolean;
   hideTools?: boolean;
