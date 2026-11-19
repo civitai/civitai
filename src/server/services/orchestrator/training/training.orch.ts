@@ -46,6 +46,7 @@ import type {
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
 import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
+import { assertTrainingLicenseAccepted } from '~/server/services/generation-license.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -511,6 +512,10 @@ export const createTrainingWorkflow = async ({
     features
   );
   if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
+  // The licence binds the weights, whichever engine trains them.
+  const paramsEcosystem = 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined;
+  for (const ecosystem of new Set([paramsEcosystem, catalogEntry?.aiToolkit?.ecosystem]))
+    await assertTrainingLicenseAccepted({ ecosystem, userId });
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })

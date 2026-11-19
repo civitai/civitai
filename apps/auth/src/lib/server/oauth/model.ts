@@ -307,10 +307,21 @@ export const oauthModel = {
 
     const apiKey = await db
       .selectFrom('ApiKey')
-      .select(['userId', 'tokenScope', 'tokenScopeWide', 'expiresAt', 'clientId'])
-      .where('key', '=', hash)
-      .where('type', '=', 'Refresh')
-      .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
+      .innerJoin('User', 'User.id', 'ApiKey.userId')
+      .select([
+        'ApiKey.userId',
+        'ApiKey.tokenScope',
+        'ApiKey.tokenScopeWide',
+        'ApiKey.expiresAt',
+        'ApiKey.clientId',
+      ])
+      .where('ApiKey.key', '=', hash)
+      .where('ApiKey.type', '=', 'Refresh')
+      .where((eb) => eb.or([eb('ApiKey.expiresAt', '>=', now), eb('ApiKey.expiresAt', 'is', null)]))
+      // A disabled owner cannot renew: the grant fails as invalid_grant. Deletion is soft, so the
+      // join alone catches nothing.
+      .where('User.deletedAt', 'is', null)
+      .where('User.bannedAt', 'is', null)
       .executeTakeFirst();
 
     if (!apiKey) return false;

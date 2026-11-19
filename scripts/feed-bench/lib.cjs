@@ -9,8 +9,6 @@
 const PROCEDURE = 'image.getImagesAsPostsInfinite';
 const PROCEDURE_PATH = `/api/trpc/${PROCEDURE}`;
 
-// --- capture ---------------------------------------------------------------------------------------
-
 /**
  * The capture rows in one Tempo search response (`GET /api/search`): one per matched span whose
  * `http.url` is a single unbatched GET of the procedure. A row keeps ONLY what the replay needs:
@@ -83,8 +81,6 @@ function spanDurationsFromTempoSearch(json) {
   return out;
 }
 
-// --- signed-in replay -----------------------------------------------------------------------------
-
 /**
  * The bench account's session, from the text of its mounted secret: either ONE Cookie header value
  * used for every host (`__Secure-civ-token=…`), or a JSON object mapping host -> Cookie header
@@ -153,8 +149,6 @@ function requestPath(row) {
   return row.input ? `${PROCEDURE_PATH}?input=${encodeURIComponent(row.input)}` : PROCEDURE_PATH;
 }
 
-// --- pacing ----------------------------------------------------------------------------------------
-
 /**
  * Fire `send(item, index)` for every item at a FIXED rate, open loop: item i is sent at
  * `start + i * 1000 / rps` whether or not earlier requests have answered, so a slow arm cannot slow
@@ -205,8 +199,6 @@ function armOrders(arms, rounds) {
   return Array.from({ length: rounds }, (_, r) => arms.map((_, i) => arms[(r + i) % arms.length]));
 }
 
-// --- statistics ------------------------------------------------------------------------------------
-
 /** Nearest-rank percentile of an ASCENDING array (p in 0..100). NaN for an empty array. */
 function percentile(sorted, p) {
   if (!sorted.length) return NaN;
@@ -243,8 +235,6 @@ function commonOkIndexes(byArm) {
   for (let i = 0; i < n; i++) if (arms.every((r) => r[i] && r[i].status === 200)) out.push(i);
   return out;
 }
-
-// --- parity ----------------------------------------------------------------------------------------
 
 function typeOf(v) {
   if (v === null) return 'null';
@@ -295,8 +285,6 @@ function compareBodies(a, b, { maxDiffs = 10 } = {}) {
   diffJson(ja, jb, '$', diffs, maxDiffs);
   return { bytesEqual, jsonEqual: diffs.length === 0, diffs };
 }
-
-// --- CPU -------------------------------------------------------------------------------------------
 
 /**
  * Container CPU milliseconds per request: the run's CPU seconds less what the container burns idle

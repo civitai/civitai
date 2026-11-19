@@ -423,9 +423,9 @@ describe('log mode', () => {
           name: 'app-block-pass-through-prompt-audit',
           appBlockId: 'apb_test',
           stepTypes: 'videogen',
-          literal: true,
           outcome: 'hard',
           wouldRefuse: true,
+          payload: expect.objectContaining({ literal: true }),
         })
       )
     );
@@ -507,7 +507,11 @@ describe('log mode, what it records', () => {
     await submit(stepBody({ prompt: 'a calm lake' })).catch(() => undefined);
     await vi.waitFor(() =>
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'pass', literal: true, wouldRefuse: false })
+        expect.objectContaining({
+          outcome: 'pass',
+          wouldRefuse: false,
+          payload: expect.objectContaining({ literal: true }),
+        })
       )
     );
   });
@@ -520,7 +524,10 @@ describe('log mode, what it records', () => {
     ).catch(() => undefined);
     await vi.waitFor(() =>
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ literal: false, argumentRefs: 1, wouldRefuse: true })
+        expect.objectContaining({
+          wouldRefuse: true,
+          payload: expect.objectContaining({ literal: false, argumentRefs: 1 }),
+        })
       )
     );
   });

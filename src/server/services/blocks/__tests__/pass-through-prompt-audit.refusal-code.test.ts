@@ -146,8 +146,8 @@ describe('log mode, the positive control', () => {
     await vi.waitFor(() => expect(auditRows()).toHaveLength(1));
     expect(auditRows()[0]).toMatchObject({
       outcome: 'error',
-      externalError: true,
       wouldRefuse: true,
+      payload: expect.objectContaining({ externalError: true }),
     });
   });
 
@@ -157,8 +157,8 @@ describe('log mode, the positive control', () => {
     await vi.waitFor(() => expect(auditRows()).toHaveLength(1));
     expect(auditRows()[0]).toMatchObject({
       outcome: 'unconfigured',
-      externalSkipped: true,
       wouldRefuse: true,
+      payload: expect.objectContaining({ externalSkipped: true }),
     });
   });
 });

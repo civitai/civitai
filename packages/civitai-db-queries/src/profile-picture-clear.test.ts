@@ -1,23 +1,10 @@
-import {
-  DummyDriver,
-  Kysely,
-  PostgresAdapter,
-  PostgresIntrospector,
-  PostgresQueryCompiler,
-} from 'kysely';
 import { describe, expect, it } from 'vitest';
 import { servablePictureSql, servablePictureText } from './profile-picture-clear.db';
+import { compileHarness } from './test/harness';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
 
-const db = new Kysely<object>({
-  dialect: {
-    createAdapter: () => new PostgresAdapter(),
-    createDriver: () => new DummyDriver(),
-    createIntrospector: (kysely) => new PostgresIntrospector(kysely),
-    createQueryCompiler: () => new PostgresQueryCompiler(),
-  },
-});
+const { db } = compileHarness();
 
 describe('servablePictureSql', () => {
   it('binds each placeholder of servablePictureText to its parameter, never inlined', () => {
