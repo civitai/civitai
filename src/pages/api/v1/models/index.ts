@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { Session } from '~/types/session';
-import { CollectionType } from '~/shared/utils/prisma/enums';
+import { Availability, CollectionType } from '~/shared/utils/prisma/enums';
 import type { GetAllModelsInput } from '~/server/schema/model.schema';
 import { modelsEndpointSchema } from '~/server/schema/model.schema';
 import {
@@ -27,7 +27,7 @@ import {
 import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 import { requestHoldsScope } from '~/server/auth/session-scope';
 import { getRequestCredential } from '~/server/auth/request-credential';
-import { isSessionOrFullUserKey, withholdsModerator } from '~/server/auth/full-user-credential';
+import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 type Metadata = {
@@ -183,7 +183,10 @@ async function handler(
         // region holds the level to SFW.
         browsingLevel,
         nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
-        user: searchViewer(req, user, !!data.hidden || !!data.followed || !!data.favorites),
+        user: searchViewer(req, user, {
+          ownList: !!data.hidden || !!data.followed || !!data.favorites,
+          privateListing: data.availability === Availability.Private,
+        }),
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),
       }
@@ -208,14 +211,19 @@ async function handler(
 }
 
 /**
- * The viewer the search runs as. Moderator rights and the owner's view come only from a session or a
- * full-scope personal key, whatever the route's scope mode; a narrower credential searches as signed
- * out, except for the caller's own `hidden`, `followed` and `favorites` lists, read by their id.
+ * The viewer the search runs as. A narrower credential than a session or a full-scope personal key
+ * searches as signed out, except for the caller's own `hidden`, `followed` and `favorites` lists,
+ * which are read by their id; those never include their Private models.
  */
-function searchViewer(req: NextApiRequest, user: Session['user'] | undefined, ownList: boolean) {
+function searchViewer(
+  req: NextApiRequest,
+  user: Session['user'] | undefined,
+  { ownList, privateListing }: { ownList: boolean; privateListing: boolean }
+) {
   const credential = getRequestCredential(req);
-  if (!user || isSessionOrFullUserKey(credential)) return user;
+  const viewer = withModeratorRightsFor(user, credential);
+  if (!viewer || isSessionOrFullUserKey(credential)) return viewer;
   // The internal system account keeps its rights by id on its own keys.
-  if (user.isModerator && !withholdsModerator(user, credential)) return user;
-  return ownList ? { ...user, isModerator: false } : undefined;
+  if (viewer.isModerator) return viewer;
+  return ownList && !privateListing ? viewer : undefined;
 }

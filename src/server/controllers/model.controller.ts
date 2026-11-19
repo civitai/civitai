@@ -1,8 +1,5 @@
 import type { SessionUser } from '~/types/session';
-import {
-  credentialViews,
-  isSessionOrFullUserKey,
-} from '~/server/services/oauth/enforce-token-scope';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -697,8 +694,7 @@ export async function modelFeedQueryOptions(ctx: Context) {
   // applies either way (see model-getall-images).
   const slim = ctx.features.getAllModelImagesSlim;
   return {
-    // Moderator rights hold only on a session or a full-access key.
-    user: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
+    user: ctx.user,
     heldViewer: isSessionOrFullUserKey(ctx),
     domain: getRequestBoardDomainColor(ctx.req),
     imagesPerModel: slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL,
@@ -772,17 +768,16 @@ export const getModelsPagedSimpleHandler = async ({
 }) => {
   const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...restInput } = input || {};
   const { take, skip } = getPagination(limit, page);
-  const isModerator = credentialViews(ctx).asModerator;
   const results = await getModels({
     input: { ...restInput, take, skip },
-    user: ctx.user && { ...ctx.user, isModerator },
+    user: ctx.user,
     select: {
       id: true,
       name: true,
       nsfw: true,
       meta: true,
       modelVersions:
-        input.needsReview && isModerator
+        input.needsReview && ctx.user?.isModerator
           ? {
               select: { id: true, name: true, meta: true },
               where: { meta: { path: ['needsReview'], equals: true } },
@@ -796,6 +791,7 @@ export const getModelsPagedSimpleHandler = async ({
   // set it returned depends on who asked, which no cache key can express.
   if (results.isPrivate && ctx.cache) ctx.cache.canCache = false;
 
+  const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,
     items: results.items.map(({ modelVersions = [], ...model }) => {

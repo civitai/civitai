@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { constants } from '~/server/common/constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 import {
   publicBrowsingLevelsFlag,
@@ -213,8 +214,8 @@ describe('/api/v1/models moderator view follows the credential', () => {
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 9 },
   });
-  const FULL = 33554431n;
-  const MODELS_READ = 1n << 4n;
+  const FULL = TokenScope.Full;
+  const MODELS_READ = TokenScope.ModelsRead;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -282,6 +283,12 @@ describe('/api/v1/models moderator view follows the credential', () => {
     const res = fakeRes();
     await handler(req, res);
     expect(mockRunModelSearch.mock.calls[0][1].user).toEqual(system);
+  });
+
+  it('searches as signed out for an own list filtered to Private models', async () => {
+    expect(
+      await searchedAs(personalKey(MODELS_READ), { hidden: 'true', availability: 'Private' })
+    ).toBeUndefined();
   });
 
   it.each(['hidden', 'followed', 'favorites'])(
