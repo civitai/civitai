@@ -196,6 +196,29 @@ describe('the count of what a scan newly sets after a moderator review', () => {
     expect(lines()).toEqual([]);
   });
 
+  it('does not credit the scan with a CSAM block that landed on the row during the scan', async () => {
+    reviewed(true);
+    scan.associatedMinor = false;
+    const base = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => Promise<unknown>;
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('SELECT "blockedFor" FROM "Image"')
+        ? Promise.resolve([{ blockedFor: 'CSAM' }])
+        : base(strings, ...values)) as never);
+    await resolveScanOutcome({
+      image: { ...image, ingestion: 'Scanned' },
+      workflowId: 'wf',
+    } as never);
+    await settle();
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0].payload).toMatchObject({ priorReview: true, newlyBlocked: false });
+  });
+
   it('does not hold the outcome for a slow review lookup', async () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockReturnValue(new Promise(() => undefined) as never);
     await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
