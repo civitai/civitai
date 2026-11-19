@@ -121,10 +121,13 @@ export function remixReplayChecks(
       const index = next++;
       if (index >= REMIX_RUN_LIMITS.effects)
         throw new RemixReplayError(`${slug} asked for more than ${REMIX_RUN_LIMITS.effects} steps`);
-      if (!effectSchema.safeParse(effect).success)
+      const parsed = effectSchema.safeParse(effect);
+      if (!parsed.success)
         throw new RemixReplayError(
           `${slug} asked for a step the host does not run, at step ${index}`
         );
+      // The checked copy, so nothing after this reads an effect other than the one checked.
+      effect = parsed.data;
       if (imagesOf(effect).some(({ url }) => url !== source.url && !made.has(url)))
         throw new RemixReplayError(
           `${slug} named an image that is neither the source nor from this run, at step ${index}`

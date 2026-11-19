@@ -251,7 +251,11 @@ async function optionPrices({
   caller: RemixAppCaller;
   currencies: ReturnType<typeof getAllowedAccountTypes>;
 }) {
-  const effects = await remixOptionEffects(replay, source, log, spec);
+  // An option whose next step the checks refuse is left unpriced; tapping it refuses the run.
+  const effects = await remixOptionEffects(replay, source, log, spec).catch((error) => {
+    if (error instanceof RemixReplayError) return [];
+    throw error;
+  });
   const priced = await Promise.all(
     effects.map(async ({ value, next }) => {
       if (!next) return [value, 0] as const;
@@ -502,7 +506,8 @@ async function loadRun(runId: string, caller: RemixAppCaller) {
       throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
     }
   );
-  // A disabled user app was rejected or pulled: its runs stop at their next step.
+  // A disabled user app was rejected or pulled: its code is not replayed again, so its runs stop,
+  // finished ones included (their outputs stay in the viewer's generations).
   const { author } = entry;
   if (author && !entry.enabled && author.userId !== caller.user.id && !caller.user.isModerator)
     throw new TRPCError({

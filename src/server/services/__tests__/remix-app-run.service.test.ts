@@ -298,6 +298,30 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
       return images;
     },
   });
+  /** A choice whose `bad` option leads to an upscale of a url no workflow of the run made. */
+  const badOption = defineRemixApp({
+    slug: 'bad-option',
+    name: 'Bad option',
+    icon: 'sparkles',
+    version: 1,
+    engine: DEFAULT_ENGINE,
+    async run(ctx) {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'one take',
+        images: [ctx.source],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      const options = [
+        { value: 'good', label: 'Good' },
+        { value: 'bad', label: 'Bad' },
+      ];
+      const pick = await ctx.ask({ kind: 'choice', prompt: 'Which?', options });
+      const image = pick === 'bad' ? foreign : images[0];
+      return (await ctx.workflow({ kind: 'upscale', image, scale: 2 })).images;
+    },
+  });
   /** A choice about a url no workflow of the run made. */
   const aboutForeign = defineRemixApp({
     slug: 'about-foreign',
@@ -323,10 +347,16 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
     },
   });
   const apps = new Map(
-    [pickThenEdit, endless, asksFirst, thenChoose, smuggles, aboutTake, aboutForeign].map((app) => [
-      app.slug,
-      app,
-    ])
+    [
+      pickThenEdit,
+      endless,
+      asksFirst,
+      thenChoose,
+      smuggles,
+      aboutTake,
+      aboutForeign,
+      badOption,
+    ].map((app) => [app.slug, app])
   );
   const { replayRemixApp } = await import('~/shared/remix-apps/replay');
   // Apps with shapes no row has, beside the real registry (the seed, or the rows a test serves).
@@ -878,6 +908,28 @@ describe('remix app runs', () => {
       FOREIGN
     );
   });
+});
+
+it('leaves an option unpriced when its next step is refused, and refuses the run once it is tapped', async () => {
+  addImage(SOURCE_ID);
+  const { runId } = await startRemixRun({
+    slug: 'bad-option',
+    imageId: SOURCE_ID,
+    nonce: 'nonce-bad-option',
+    quote: 30,
+    caller: caller(),
+  });
+  finish(submits()[0].id, [blob('one')], { [blob('one')]: 'pg' });
+
+  const asked = await advanceRemixRun({ runId, caller: caller() });
+  expect(asked).toMatchObject({ status: 'ask', ask: { prompt: 'Which?' }, prices: {} });
+  await expect(
+    advanceRemixRun({ runId, answers: ['bad'], quote: 30, caller: caller() })
+  ).rejects.toMatchObject({ code: 'CONFLICT' });
+  // POSITIVE CONTROL: the good option goes on.
+  await expect(
+    advanceRemixRun({ runId, answers: ['good'], quote: 30, caller: caller() })
+  ).resolves.toMatchObject({ status: 'running' });
 });
 
 describe('posting a finished run', () => {
@@ -1609,9 +1661,15 @@ describe('a user app', () => {
     });
   });
 
-  it('never replays a run recorded on another shape of the app', async () => {
+  it('never replays a run recorded on another shape of the app, or on none', async () => {
     const runId = await runOfMine(flagOn());
-    (submits()[0].metadata!.remixRun as Record<string, unknown>).shape = 'a-deleted-app';
+    const meta = submits()[0].metadata!.remixRun as Record<string, unknown>;
+    meta.shape = 'a-deleted-app';
+    await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    // Only a system app's run may predate shapes; a user app's with none is refused, not replayed.
+    delete meta.shape;
     await expect(advanceRemixRun({ runId, caller: flagOn() })).rejects.toMatchObject({
       code: 'CONFLICT',
     });

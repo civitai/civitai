@@ -182,4 +182,19 @@ describe('replay checks', () => {
     });
     await refused(replayRemixApp(stubborn, source, []));
   });
+
+  it('stays suspended when the app catches the suspension and finishes', async () => {
+    const stubborn = appOf(async (ctx) => {
+      try {
+        await ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 });
+      } catch {
+        // swallowed: the replay must still stop here, never finish
+      }
+      return [];
+    });
+    await expect(replayRemixApp(stubborn, source, [])).resolves.toMatchObject({
+      status: 'effect',
+      index: 0,
+    });
+  });
 });

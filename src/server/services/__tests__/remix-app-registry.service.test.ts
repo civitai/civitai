@@ -437,6 +437,15 @@ describe('a user app row', () => {
     });
     expect(dbMock.dbWrite.appBlock.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
+    // A user row is read off the stored manifest, whatever its slug looks like.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({
+      ...userRow(),
+      blockId: 'remix-comic-it',
+    } as never);
+    await expect(saveRemixApp({ ...pixelArt, slug: 'comic-it' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
     // POSITIVE CONTROL: a system slug saves.
     await saveRemixApp({ ...pixelArt, slug: 'comic-it' });
     expect(dbMock.dbWrite.appBlock.create).toHaveBeenCalledTimes(1);
