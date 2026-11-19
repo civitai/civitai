@@ -37,7 +37,10 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
-import { withCuratedShowcases } from '~/server/services/version-showcase.service';
+import {
+  hasCuratedShowcase,
+  withCuratedShowcases,
+} from '~/server/services/version-showcase.service';
 import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
 import {
   getShowcaseImageFilter,
@@ -438,7 +441,8 @@ export async function resModelVersionDetails(
     isPrivateModelVersion(modelVersion) ||
     browsingLevel !== allBrowsingLevelsFlag ||
     modelVersion.model.sfwName != null ||
-    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
+    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images)) ||
+    (await hasCuratedShowcase([modelVersion.id]))
   )
     res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);

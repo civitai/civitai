@@ -4,20 +4,29 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 /**
- * For the image's author: takes it out of every model showcase that features it. Shown only when
- * it is featured somewhere, and available whatever the feature flag says.
+ * Takes an image out of every model showcase that features it, for its author or, as a moderator,
+ * for anyone's image. Either way the creator can't feature it again. Available whatever the
+ * feature flag says.
  */
-export function RemoveFromVersionShowcasesMenuItem({ imageId }: { imageId: number }) {
+export function RemoveFromVersionShowcasesMenuItem({
+  imageId,
+  asModerator = false,
+}: {
+  imageId: number;
+  asModerator?: boolean;
+}) {
   const utils = trpc.useUtils();
   const { data: features = [] } = trpc.versionShowcase.getMyImageFeatures.useQuery({ imageId });
   const removeMine = trpc.versionShowcase.removeMine.useMutation();
+  const moderatorRemove = trpc.versionShowcase.moderatorRemove.useMutation();
+  const remove = asModerator ? moderatorRemove : removeMine;
   const versionIds = [...new Set(features.map((feature) => feature.modelVersionId))];
   if (!versionIds.length) return null;
 
   const handleClick = async () => {
     try {
       for (const modelVersionId of versionIds)
-        await removeMine.mutateAsync({ modelVersionId, imageId });
+        await remove.mutateAsync({ modelVersionId, imageId });
       await utils.versionShowcase.getMyImageFeatures.invalidate({ imageId });
       showSuccessNotification({ message: 'Removed from model showcases' });
     } catch (error) {

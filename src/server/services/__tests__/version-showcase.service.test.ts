@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   bustPublicModelResponseCache: vi.fn(async () => undefined),
   queueUpdate: vi.fn(async () => undefined),
   entityChanges: vi.fn(async () => undefined),
+  ownerImages: [] as { id: number; nsfwLevel: number }[],
 }));
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
@@ -32,17 +33,31 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   }),
 }));
 const notify = vi.hoisted(() => vi.fn(async (_args: unknown) => undefined));
-vi.mock('~/server/services/notification.service', () => ({ createNotification: notify }));
-vi.mock('~/server/services/model.service', () => ({
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createNotification: notify,
+}));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getGallerySettingsByModelId: async () => null,
 }));
-vi.mock('~/server/services/model-com-face-recheck.service', () => ({
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   queueComFaceRecheck: mocks.queueComFaceRecheck,
 }));
-vi.mock('~/server/services/nsfwLevels.service', () => ({
+vi.mock('~/server/services/nsfwLevels.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   updateModelNsfwLevels: mocks.updateModelNsfwLevels,
 }));
-vi.mock('~/server/services/model-version.service', () => ({
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  imagesForModelVersionsCache: {
+    fetch: async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { images: mocks.ownerImages }])),
+  },
+}));
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustPublicModelResponseCache: mocks.bustPublicModelResponseCache,
 }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
@@ -579,5 +594,49 @@ describe('removeMyImageFromVersionShowcase', () => {
     await expect(
       showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
     ).rejects.toThrow(/isn’t featured/);
+  });
+});
+
+describe('getVersionShowcaseEditor: what the editor is sent', () => {
+  const pg = { id: 1, nsfwLevel: 1 };
+  const x = { id: 2, nsfwLevel: 16 };
+  beforeEach(() => {
+    publishedVersion();
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      nsfw: false,
+      sfwName: null,
+      coverImageId: null,
+      sfwCoverImageId: null,
+      modelVersions: [{ id: VERSION }],
+    } as never);
+    dbMock.dbWrite.modelVersionShowcaseItem.findMany.mockResolvedValue([]);
+    mocks.ownerImages = [pg, x];
+    mocks.entry = {
+      modelVersionId: VERSION,
+      rows: [],
+      community: [
+        { ...pg, id: 3 },
+        { ...x, id: 4 },
+      ],
+    };
+  });
+  const editor = (safeOnly: boolean) =>
+    showcase.getVersionShowcaseEditor({
+      modelVersionId: VERSION,
+      userId: 5,
+      isModerator: false,
+      safeOnly,
+    });
+
+  it('sends a viewer who cannot view mature content no image above PG-13', async () => {
+    const data = await editor(true);
+    expect(data.ownerImages.map((image) => image.id)).toEqual([1]);
+    expect(data.community.map((image) => image.id)).toEqual([3]);
+  });
+
+  it('sends every image to a viewer who can', async () => {
+    const data = await editor(false);
+    expect(data.ownerImages.map((image) => image.id)).toEqual([1, 2]);
+    expect(data.community.map((image) => image.id)).toEqual([3, 4]);
   });
 });

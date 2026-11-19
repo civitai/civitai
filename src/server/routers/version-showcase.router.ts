@@ -32,6 +32,7 @@ export const versionShowcaseRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: !!ctx.user.isModerator,
+        safeOnly: !ctx.features.canViewNsfw,
       })
     ),
   set: guardedProcedure
@@ -52,7 +53,13 @@ export const versionShowcaseRouter = router({
     ),
   getMyImageFeatures: protectedProcedure
     .input(myImageShowcaseFeaturesSchema)
-    .query(({ input, ctx }) => getMyImageShowcaseFeatures({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getMyImageShowcaseFeatures({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: !!ctx.user.isModerator,
+      })
+    ),
   removeMine: protectedProcedure
     .input(versionShowcaseImageSchema)
     .mutation(({ input, ctx }) =>

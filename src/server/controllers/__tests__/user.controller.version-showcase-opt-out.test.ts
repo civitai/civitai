@@ -22,8 +22,12 @@ vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
   refreshSession: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/model.service', () => ({ queueModelMetricPrivacyReindex: vi.fn() }));
-vi.mock('~/server/services/version-showcase.service', () => ({
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelMetricPrivacyReindex: vi.fn(),
+}));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustVersionShowcasesForUser: mockBustForUser,
 }));
 

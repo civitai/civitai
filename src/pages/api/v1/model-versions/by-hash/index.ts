@@ -1,3 +1,4 @@
+import { hasCuratedShowcase } from '~/server/services/version-showcase.service';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
@@ -98,7 +99,8 @@ export default PublicEndpoint(
         (file) =>
           isPrivateModelVersion(file.modelVersion) || file.modelVersion.model.sfwName != null
       ) ||
-      variesByRegion.some(Boolean)
+      variesByRegion.some(Boolean) ||
+      (await hasCuratedShowcase(modelVersionIds))
     )
       res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(modelVersions);

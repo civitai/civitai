@@ -191,6 +191,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       )}
       {isModerator && (
         <>
+          {!isOwner && <RemoveFromVersionShowcasesMenuItem imageId={imageId} asModerator />}
           <Menu.Item
             leftSection={<IconFlag size={14} stroke={1.5} />}
             onClick={() =>

@@ -18,6 +18,7 @@ import { SortableContext, arrayMove, rectSortingStrategy } from '@dnd-kit/sortab
 import { IconEye, IconEyeOff, IconPhotoStar, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
@@ -47,7 +48,9 @@ export default function VersionShowcaseEditor({
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.versionShowcase.getEditor.useQuery({ modelVersionId });
-  const [site, setSite] = useState<VersionShowcaseSite>('red');
+  // On civitai.com only the civitai.com showcase is edited, and no mature image is shown.
+  const { canViewNsfw } = useFeatureFlags();
+  const [site, setSite] = useState<VersionShowcaseSite>(canViewNsfw ? 'red' : 'com');
   const [items, setItems] = useState<Item[]>([]);
   const [link, setLink] = useState('');
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -102,9 +105,12 @@ export default function VersionShowcaseEditor({
     setLink('');
   };
 
+  // A featured image becomes a cover only once saved in this site's own showcase.
   const canBeCover = (item: Item) =>
     !!data?.isLatestPublished &&
     !item.excluded &&
+    !!item.url &&
+    !(item.source === 'Community' && !!data && !!inheritedSite(data, site)) &&
     (site !== 'com' || item.nsfwLevel === undefined || isComSafeLevel(item.nsfwLevel));
 
   return (
@@ -115,14 +121,16 @@ export default function VersionShowcaseEditor({
         </div>
       ) : (
         <Stack>
-          <SegmentedControl
-            value={site}
-            onChange={(value) => setSite(value as VersionShowcaseSite)}
-            data={[
-              { value: 'red', label: siteLabel.red },
-              { value: 'com', label: siteLabel.com },
-            ]}
-          />
+          {canViewNsfw && (
+            <SegmentedControl
+              value={site}
+              onChange={(value) => setSite(value as VersionShowcaseSite)}
+              data={[
+                { value: 'red', label: siteLabel.red },
+                { value: 'com', label: siteLabel.com },
+              ]}
+            />
+          )}
           <Text size="sm" c="dimmed">
             Drag to reorder what {siteLabel[site]} shows for this version. The first image on the
             latest version is the model&apos;s {siteLabel[site]} cover. You can feature up to{' '}
@@ -130,6 +138,15 @@ export default function VersionShowcaseEditor({
             remove them.
             {site === 'com' && ' civitai.com only shows images rated PG or PG-13.'}
           </Text>
+          {site === 'com' && data.listedOnComByOwnCover && (
+            <Alert color="yellow" p="xs">
+              <Text size="xs">
+                This mature model is listed on civitai.com through your own civitai.com cover.
+                Making an image by another creator the cover takes the model off civitai.com
+                listings.
+              </Text>
+            </Alert>
+          )}
           {inheritedSite(data, site) && (
             <Alert color="gray" p="xs">
               <Text size="xs">

@@ -47,7 +47,8 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 // The guard sits after enforceBlockedBrowsingTags — stub it to a non-empty result
 // so getAllImages proceeds into the prioritizeUser branch.
-vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 

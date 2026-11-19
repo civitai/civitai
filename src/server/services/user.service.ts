@@ -4400,13 +4400,12 @@ export function splitSettingsPatch(settings: UserSettingsInput): UserSettingsPat
  * `undefined` is deleted; everything else is written as given.
  */
 export async function setUserSetting(userId: number, settings: UserSettingsInput) {
-  const result = await patchUserSettings(userId, {
+  return patchUserSettings(userId, {
     ...splitSettingsPatch(settings),
     // Was two statements with two labels (`:set` and `:remove`); it is one statement now,
     // so it reports one.
     location: 'user.service:setUserSetting:set',
   });
-  return result;
 }
 
 /**

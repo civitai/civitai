@@ -2473,8 +2473,8 @@ const getAllImagesUncaptured = async (
     prefetchedNewCreators,
     prefetchedCollectionPermissions,
     prefetchedCollectionSeed,
-    // A version whose creator curated its showcase for this site serves that list, in its order,
-    // whichever branch the flag below picks for everyone else.
+    // A version whose creator curated its showcase (for this site, or else the other) serves that
+    // list, in its order, whichever branch the flag below picks for everyone else.
     showcaseIds,
   ] = await Promise.all([
     hidden && userId

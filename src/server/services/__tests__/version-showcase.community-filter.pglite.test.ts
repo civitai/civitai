@@ -12,7 +12,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const gallery = vi.hoisted(() => ({ settings: null as unknown }));
-vi.mock('~/server/services/model.service', () => ({
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getGallerySettingsByModelId: async () => gallery.settings,
 }));
 // A plain in-memory cache over the real lookup: entries stay until refreshed, like Redis does, so a
@@ -46,7 +47,15 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   },
 }));
 const saveModelCovers = vi.hoisted(() => vi.fn(async (_args: unknown) => true));
-vi.mock('~/server/services/model-cover.service', () => ({ saveModelCovers }));
+vi.mock('~/server/services/model-cover.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  saveModelCovers,
+}));
+const bustPublicModelResponseCache = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustPublicModelResponseCache,
+}));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   preventReplicationLagBatch: vi.fn(async () => undefined),
@@ -320,6 +329,29 @@ describe('when a featured image stops qualifying', () => {
     );
   });
 
+  it('keeps a cover whose image is only waiting on a review, for when it clears', async () => {
+    const pending = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [pending, MODEL]);
+    await db.query(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = $1`, [pending]);
+
+    await dropInvalidCommunityCovers([MODEL]);
+
+    expect(await served()).not.toContain(pending);
+    expect(saveModelCovers).not.toHaveBeenCalled();
+  });
+
+  it('clears a cover whose image was removed for a ToS violation', async () => {
+    const removed = await featured();
+    await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [removed, MODEL]);
+    await db.query(`UPDATE "Image" SET "tosViolation" = true WHERE id = $1`, [removed]);
+
+    await dropInvalidCommunityCovers([MODEL]);
+
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
+  });
+
   it('leaves a community cover whose author is still in good standing', async () => {
     const fine = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [fine, MODEL]);
@@ -347,6 +379,9 @@ describe('when a featured image stops qualifying', () => {
       await withCuratedShowcases({ [VERSION]: { images: [] as ImagesForModelVersions[] } }, 'red')
     )[VERSION].images;
     expect(images.map((image) => [image.id, image.tags])).toEqual([[id, [7, 8]]]);
+    // The creator's image shape: the showcase's own fields don't reach the public response.
+    expect(images[0]).not.toHaveProperty('site');
+    expect(images[0]).not.toHaveProperty('authorUsername');
   });
 
   it('the public API stops serving a deleted image at once, though the cache still holds it', async () => {
@@ -423,6 +458,7 @@ describe("an author's removal", () => {
       model: { id: MODEL, name: 'M', userId: CREATOR, nsfw: false, status: 'Published' },
     } as never);
 
+    bustPublicModelResponseCache.mockClear();
     await removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: id, userId: id });
 
     const { rows } = await db.query<{ site: string; removed: boolean; position: number | null }>(
@@ -441,6 +477,8 @@ describe("an author's removal", () => {
     );
     expect(inserted.affectedRows).toBe(0);
     expect(await served('com')).not.toContain(id);
+    // The public model response carries the showcase, so it is dropped too.
+    expect(bustPublicModelResponseCache).toHaveBeenCalledWith([MODEL]);
   });
 });
 

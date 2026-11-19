@@ -13,6 +13,12 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const mockGetImages = vi.hoisted(() => vi.fn());
+const curated = vi.hoisted(() => ({ value: false }));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  withCuratedShowcases: async (byVersion: unknown) => byVersion,
+  hasCuratedShowcase: async () => curated.value,
+}));
 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -219,6 +225,7 @@ const HOSTS = ['civitai.com', 'civitai.red'];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  curated.value = false;
   region.restricted = false;
   mockGetImages.mockImplementation(async (args: any) => fakeGetImages(args));
 });
@@ -305,6 +312,14 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
         expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_PG13.id]);
       }
     );
+
+    it("keeps out a version with a curated showcase, whose featured images its level doesn't show", async () => {
+      region.restricted = false;
+      serve(NsfwLevel.PG, [UNTAGGED_PG]);
+      curated.value = true;
+      const { res } = await call(route, 'civitai.com');
+      expect(noStore(res)).toBe(true);
+    });
 
     it('keeps out a region held to SFW even when its version is stored as SFW', async () => {
       region.restricted = true;
