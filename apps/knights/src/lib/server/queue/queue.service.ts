@@ -262,7 +262,8 @@ async function stageWindow(
       kept.push(row.id);
     }
     if (rows.length < size || filled === BUCKET_LEVELS.length) break;
-    const last = rows[rows.length - 1];
+    // Annotated so the cursor's type does not depend on the rows its own round read.
+    const last: { id: number; priority: number; createdAtKey: string } = rows[rows.length - 1];
     after = { priority: last.priority, createdAt: last.createdAtKey, id: last.id };
   }
 
