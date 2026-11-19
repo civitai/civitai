@@ -2274,6 +2274,10 @@ export const REDIS_SYS_KEYS = {
     CRED_LINKS: 'dl:links:cred',
   },
   APP: {
+    // Review batches written before they moved to the cluster (REDIS_KEYS.APP.REVIEW_BATCH): read by
+    // the moderator app only as the fallback for those batches. Remove with that fallback, after
+    // REVIEW_BATCH_SYS_FALLBACK_UNTIL in apps/moderator/src/lib/server/review-batch.ts.
+    REVIEW_BATCH: 'app:review-batch',
     // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
     // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
     PAGE_ACCESS: 'app:page-access',

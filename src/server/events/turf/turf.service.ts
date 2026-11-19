@@ -1071,6 +1071,9 @@ function computeImages(
   return { entries, counts, stickers };
 }
 
+/** The stamp hash's ticket counter field; never an image's `Image:<id>` field. */
+export const TURF_TICKET_FIELD = '#ticket';
+
 // Per image (ARGV: ticket, then field, map value, counts value, rank value; '' = none): writes the map
 // entry and counts only when the ticket is above the image's stamp, so an older read never lands after
 // a newer one. Returns a code per image: 1 map changed, 2 counts changed, 4 stale (nothing written).
@@ -1078,14 +1081,23 @@ function computeImages(
 // rewritten on every write that lands, changed or not, so they hold what the counts hold and a
 // reconcile, which writes every image in either, repairs them. The rank value is encodeTurfRank's; it carries the scores as strings, so the
 // script does no arithmetic.
-const WRITE_TURF_SCRIPT = `
+//
+// The stamp hash also holds the ticket counter (TURF_TICKET_FIELD). A ticket above it was taken
+// from a counter the cluster has since lost (the hash was evicted while its read ran), so it is
+// refused like a stale one; and a stored stamp above it was written from such a lost counter, so it
+// reads as absent. Without both, one in-flight write after an eviction would leave stamps no ticket
+// from the restarted counter could pass until it caught up.
+export const WRITE_TURF_SCRIPT = `
 local ticket = tonumber(ARGV[1])
+local top = tonumber(redis.call('HGET', KEYS[3], '${TURF_TICKET_FIELD}') or '0')
 local teams = #KEYS - 5
 local out = {}
 for i = 2, #ARGV, 4 do
   local f, mv, cv, rv = ARGV[i], ARGV[i + 1], ARGV[i + 2], ARGV[i + 3]
   local code = 0
-  if ticket > tonumber(redis.call('HGET', KEYS[3], f) or '0') then
+  local stamp = tonumber(redis.call('HGET', KEYS[3], f) or '0')
+  if stamp > top then stamp = 0 end
+  if ticket <= top and ticket > stamp then
     redis.call('HSET', KEYS[3], f, ARGV[1])
     for j, v in ipairs({ mv, cv }) do
       local cur = redis.call('HGET', KEYS[j], f)
@@ -1196,12 +1208,12 @@ const turfRanks = (event: TurfEvent, counts: Map<string, TurfCounts>, contest: S
 
 /**
  * A ticket for a sync or reconcile about to read: one taken later reads newer stickers. The counter
- * is a field of the stamp hash (`TURF_TICKET_FIELD`, never an image's `Image:<id>` field), not a key
- * of its own: the cache cluster evicts keys one at a time, and a counter lost apart from the stamps
- * would restart below them, so every later write, reconcile included, would be refused as stale.
- * Lost together, both restart from nothing and the next reconcile rewrites every image.
+ * is a field of the stamp hash (`TURF_TICKET_FIELD`), not a key of its own: the cache cluster evicts
+ * keys one at a time, and a counter lost apart from the stamps would restart below them. Lost
+ * together, both restart from nothing; a write still holding a ticket from before the loss is
+ * refused, and any stamp it left above the restarted counter is ignored (WRITE_TURF_SCRIPT), so
+ * the next sync or reconcile writes every image again.
  */
-export const TURF_TICKET_FIELD = '#ticket';
 const takeTicket = (event: TurfEvent) =>
   redis.hIncrBy(turfKeys(event.name).stamp, TURF_TICKET_FIELD, 1);
 

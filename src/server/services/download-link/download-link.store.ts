@@ -16,9 +16,9 @@ import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/clust
  * key. Every cluster call is bounded by the cluster cache guard and throws on a failure or timeout.
  *
  * The cluster can evict a key before its TTL. A lost link hash 404s that link (the client mints
- * another); a lost `linkid` or credential-set entry means a revoke misses that link, which then
- * lives until its expiry (at most MAX_LINK_TTL_SECONDS). A revoked or rotated credential is still
- * refused at every use by its liveness check; a single-link revoke has no such second check.
+ * another). A single-link revoke rebuilds the hash from the linkId when the secret is set, so it
+ * needs the `linkid` index only for a link the current secret cannot rebuild. A lost credential-set
+ * entry means a credential revoke misses that link, which its use-time liveness check still refuses.
  *
  * A link's URL carries an `id`; Redis holds only `sha256(id)`. The id is derived from the link's
  * public `linkId` with `DOWNLOAD_LINK_SECRET`, which is what lets a repeat mint return the same URL
@@ -323,18 +323,33 @@ async function deleteLink(hash: string, link: StoredDownloadLink, store: 'cluste
   );
 }
 
-/** Revokes one link, only for the credential that minted it. */
-export async function revokeLink(credential: DownloadLinkCredential, linkId: string) {
+/**
+ * The link a public `linkId` names. With the secret, its hash is rebuilt from the linkId, so a
+ * revoke does not depend on the `linkid` index: that key is written once and read only here, the
+ * likeliest to be evicted, and losing it would leave the link serving. The index answers for a link
+ * whose id the current secret does not rebuild (minted without one, or before a rotation).
+ */
+async function findLinkById(linkId: string) {
+  const secret = linkSecret();
+  if (secret) {
+    const hash = sha256(deriveId(secret, linkId));
+    const found = await findLink(hash);
+    if (found && found.link.linkId === linkId) return { hash, ...found };
+  }
   let hash = await cluster('revoke.linkId', () => redis.get(linkIdKey(linkId)));
   if (!hash && sysFallbackOpen())
     hash = await withSysReadDeadline(sysRedis.get(sysLinkIdKey(linkId)));
-  if (!hash) return false;
+  if (!hash) return null;
   const found = await findLink(hash);
-  if (
-    !found ||
-    found.link.credentialKind !== credential.kind ||
-    found.link.credentialId !== credential.id
-  )
+  return found && found.link.linkId === linkId ? { hash, ...found } : null;
+}
+
+/** Revokes one link, only for the credential that minted it. */
+export async function revokeLink(credential: DownloadLinkCredential, linkId: string) {
+  const found = await findLinkById(linkId);
+  if (!found) return false;
+  const { hash } = found;
+  if (found.link.credentialKind !== credential.kind || found.link.credentialId !== credential.id)
     return false;
   await deleteLink(hash, found.link, found.store);
   return true;
