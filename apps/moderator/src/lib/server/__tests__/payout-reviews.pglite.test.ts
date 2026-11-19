@@ -91,14 +91,14 @@ describe('listPayoutReviews', () => {
 
   it('never carries payout-account identifiers or unlisted evidence to the page', async () => {
     const evidence = {
-      payoutCents: 12345,
+      payoutCents: 4321,
       bankable: 99000,
       priorPayoutsCents: [1000, 'x', 2000],
       account: { username: 'a', email: 'creator@example.com', tipaltiPayeeId: 'TIPALTI-777' },
       signals: { payoutJump: { value: 9, limit: 3, counterpartyId: 5, wallet: '0xWALLET' } },
       exchanges: [{ userId: 5, received: 1, sent: 1, email: 'payer@example.com' }],
       topPayers: [{ userId: 5, iban: 'GB00BANK' }],
-      manual: { ground: 'fraud', reason: 'chargebacks', bankAccount: '12345678' },
+      manual: { ground: 'fraud', reason: 'chargebacks', bankAccount: 'ACCT-BANK-SECRET' },
       payoutAccount: { paypal: 'pp@example.com' },
     };
     await db.query(
@@ -110,14 +110,14 @@ describe('listPayoutReviews', () => {
 
     expect(items[0].evidence).toEqual({
       signals: [{ name: 'payoutJump', value: 9, limit: 3, counterpartyId: 5 }],
-      payoutCents: 12345,
+      payoutCents: 4321,
       bankable: 99000,
       priorPayoutsCents: [1000, 2000],
       exchangeCount: 1,
       manual: { ground: 'fraud', reason: 'chargebacks' },
     });
     const served = JSON.stringify(items);
-    for (const secret of ['example.com', 'TIPALTI-777', '0xWALLET', 'GB00BANK', '12345678'])
+    for (const secret of ['example.com', 'TIPALTI-777', '0xWALLET', 'GB00BANK', 'ACCT-BANK-SECRET'])
       expect(served, secret).not.toContain(secret);
   });
 });
