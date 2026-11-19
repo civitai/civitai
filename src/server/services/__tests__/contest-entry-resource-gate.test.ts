@@ -113,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
   mockDbRead.$queryRaw.mockResolvedValue([]); // alreadyJudged check: nothing already judged
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   mockDbRead.collection.findMany.mockResolvedValue([]); // no featured collections
   mockChargeEntryFees.mockResolvedValue({ paidImageIds: [IMAGE_ID], unpaidImageIds: [] });
 });
@@ -172,7 +173,7 @@ describe('contest entry resource gate (Task 11)', () => {
   it('rejects an image whose featured LoRA cannot run on its checkpoint, before charging', async () => {
     wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
     mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
-    mockDbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('?').includes('"ImageResourceNew"')
         ? [
             { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
@@ -197,7 +198,7 @@ describe('contest entry resource gate (Task 11)', () => {
   it('lets a featured LoRA through on a compatible checkpoint and reaches the charge step', async () => {
     wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
     mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
-    mockDbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('?').includes('"ImageResourceNew"')
         ? [
             { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
