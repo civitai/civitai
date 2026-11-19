@@ -23,9 +23,13 @@ const ME = 20;
 const OTHER = 30;
 const PAGE = 2;
 
+/** Every statement the readers send, so a test can see a section was paged rather than read whole. */
+const queries: string[] = [];
+
 const dialect = (pg: PGlite): Dialect => {
   const connection: DatabaseConnection = {
     async executeQuery(compiled) {
+      queries.push(compiled.sql);
       const result = await pg.query(compiled.sql, compiled.parameters as unknown[]);
       return { rows: result.rows as never[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },
@@ -261,9 +265,14 @@ describe('the archive text sections', () => {
       for (const id of ids) await insert(id, ME);
       for (const id of others) await insert(id, OTHER);
 
+      const sent = queries.length;
       const rows = await read(section, ME);
 
       expect(rows.map((r) => r.id)).toEqual([2, 4, 7, 9, 11]);
+      // Five rows at two per page: three statements, each limited to a page.
+      const pages = queries.slice(sent).filter((q) => q.includes(`from "${table}"`));
+      expect(pages).toHaveLength(3);
+      for (const q of pages) expect(q).toMatch(/limit \$\d+$/);
       expect(rows.every((r) => r[owner] === ME)).toBe(true);
       // Unpublished, removed, blank or held rows come back as stored, not filtered or filled in.
       expect(rows.find((r) => r.id === 7)).toEqual(
@@ -371,20 +380,25 @@ describe('the archive text sections', () => {
       // chat 3 before its last message, which is still archived.
       await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId", status, "leftAt") VALUES
         (6, ${ME}, 'Joined', NULL), (6, ${ME}, 'Joined', NULL), (5, ${ME}, 'Joined', NULL),
-        (3, ${ME}, 'Left', '2026-10-02'), (5, ${OTHER}, 'Joined', NULL), (6, ${OTHER}, 'Joined', NULL),
+        (3, ${ME}, 'Left', '2026-10-02'), (2, ${ME}, 'Kicked', NULL), (1, ${ME}, 'Invited', NULL),
+        (4, ${ME}, 'Ignored', NULL), (5, ${OTHER}, 'Joined', NULL), (6, ${OTHER}, 'Joined', NULL),
         (3, ${OTHER}, 'Joined', NULL), (7, ${OTHER}, 'Joined', NULL), (7, 40, 'Joined', NULL),
         (8, ${OTHER}, 'Joined', NULL)`);
       // Chat 5 spans pages; chat 7 is someone else's conversation and must not appear. Chat 8
       // holds a message from the user but no membership row of theirs, so it must not appear either.
       await message(11, 3, OTHER, { createdAt: new Date(Date.UTC(2026, 9, 5)) });
+      await message(12, 2, OTHER);
+      await message(13, 1, OTHER);
+      await message(14, 4, OTHER);
+      // Inserted out of id order within chat 5.
       for (const [id, chat, from] of [
-        [1, 5, ME],
+        [8, 5, OTHER],
         [2, 7, OTHER],
         [3, 5, OTHER],
         [4, 6, OTHER],
-        [5, 5, ME],
+        [1, 5, ME],
         [6, 7, 40],
-        [8, 5, OTHER],
+        [5, 5, ME],
         [9, 8, ME],
       ])
         await message(id, chat, from);
@@ -395,7 +409,10 @@ describe('the archive text sections', () => {
       const rows = await read('chatMessages', ME);
 
       expect(rows.map((r) => [r.chatId, r.id, r.isReportedUser])).toEqual([
+        [1, 13, false],
+        [2, 12, false],
         [3, 11, false],
+        [4, 14, false],
         [5, 1, true],
         [5, 3, false],
         [5, 5, true],
