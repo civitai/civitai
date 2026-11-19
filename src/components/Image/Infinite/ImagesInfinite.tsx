@@ -24,7 +24,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
-import { SongListNameProvider } from '~/components/Music/FeedSongList';
+import { FeedSongCoversProvider, SongListNameProvider } from '~/components/Music/FeedSongList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
@@ -48,6 +48,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { backoffDelay } from '~/utils/backoff';
 
+// Stable, so a feed without the music flag reads no covers and re-renders nothing for them.
+const NO_IMAGES: ImageGetInfinite = [];
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
 const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
 const SEARCH_RETRY_BASE_DELAY_MS = 2000;
@@ -350,35 +352,37 @@ function ImagesFeed({
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <SongListNameProvider name={songListName}>
-            <ImagesProvider images={images} {...imageProviderProps}>
-              {ListItem ? (
-                <div className="flex flex-col">
-                  {images.map((image, index) => (
-                    <ListItem key={image.id} data={image} index={index} />
-                  ))}
-                </div>
-              ) : (
-                <MasonryColumnsVirtual
-                  data={images}
-                  imageDimensions={(data) => {
-                    const width = data?.width ? data.width : 450;
-                    const height = data?.height ? data.height : 450;
-                    return { width, height };
-                  }}
-                  adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
-                  maxItemHeight={600}
-                  render={MasonryItem ?? ImagesCardMemoized}
-                  itemId={(data) => data.id}
-                  withAds={showAds}
-                  spanLandscapeMaxHeight={getImagesSpanMaxHeight({
-                    optedIn: landscapeSpan,
-                    flagOn: features.masonryLandscapeSpan,
-                    customCard: !!MasonryItem,
-                  })}
-                  hasMore={hasNextPage && !isRetrying}
-                />
-              )}
-            </ImagesProvider>
+            <FeedSongCoversProvider images={features.music ? images : NO_IMAGES}>
+              <ImagesProvider images={images} {...imageProviderProps}>
+                {ListItem ? (
+                  <div className="flex flex-col">
+                    {images.map((image, index) => (
+                      <ListItem key={image.id} data={image} index={index} />
+                    ))}
+                  </div>
+                ) : (
+                  <MasonryColumnsVirtual
+                    data={images}
+                    imageDimensions={(data) => {
+                      const width = data?.width ? data.width : 450;
+                      const height = data?.height ? data.height : 450;
+                      return { width, height };
+                    }}
+                    adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
+                    maxItemHeight={600}
+                    render={MasonryItem ?? ImagesCardMemoized}
+                    itemId={(data) => data.id}
+                    withAds={showAds}
+                    spanLandscapeMaxHeight={getImagesSpanMaxHeight({
+                      optedIn: landscapeSpan,
+                      flagOn: features.masonryLandscapeSpan,
+                      customCard: !!MasonryItem,
+                    })}
+                    hasMore={hasNextPage && !isRetrying}
+                  />
+                )}
+              </ImagesProvider>
+            </FeedSongCoversProvider>
           </SongListNameProvider>
           {isRetrying ? (
             retryBanner

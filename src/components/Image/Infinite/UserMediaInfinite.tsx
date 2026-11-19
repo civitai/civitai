@@ -35,6 +35,8 @@ const availableReactions = Object.keys(constants.availableReactions) as ReviewRe
 // for the same reason.
 const PROFILE_EXCLUDED_FILTERS: MediaFilterKey[] = ['notPublished'];
 
+const MY_REACTIONS = 'My Reactions';
+
 export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType }) {
   const currentUser = useCurrentUser();
 
@@ -232,7 +234,13 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 emptyMessage={jumpToEmpty}
                 // Reactions span other creators; the header bar filters only the images tab.
                 searchable={!viewingReactions && !isVideo && !isAudio}
-                songListName={isAudio && !viewingReactions ? user.username ?? undefined : undefined}
+                songListName={
+                  isAudio
+                    ? viewingReactions
+                      ? MY_REACTIONS
+                      : user.username ?? undefined
+                    : undefined
+                }
               />
             )}
           </Stack>
@@ -262,7 +270,7 @@ function ContentToggle({
           label: type === MediaType.audio ? 'My Songs' : `My ${titleCase(type)}s`,
           value: 'images',
         },
-        { label: 'My Reactions', value: 'reactions' },
+        { label: MY_REACTIONS, value: 'reactions' },
       ]}
       className="w-full sm:w-auto"
     />

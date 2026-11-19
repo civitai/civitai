@@ -1,7 +1,11 @@
 import clsx from 'clsx';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { FeedSongMenuItems, FeedSongPlayButton } from '~/components/Music/FeedSongList';
+import {
+  FeedSongMenuItems,
+  FeedSongPlayButton,
+  useFeedSongCover,
+} from '~/components/Music/FeedSongList';
 import { UNTITLED_SONG } from '~/components/Music/SongCard';
 import {
   dimmed,
@@ -10,7 +14,6 @@ import {
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
-import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { readSongGenre } from '~/shared/constants/song-genres';
@@ -22,7 +25,7 @@ export function SongRow({ data, index }: { data: ImagesInfiniteModel; index: num
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
-  const cover = useMusicPlayerCovers([data.id]).get(data.id);
+  const cover = useFeedSongCover(data.id);
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === data.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === data.id && s.playing);
   return (

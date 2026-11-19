@@ -3,6 +3,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { musicAccentFromHash } from '~/components/MusicPlayer/music-accent';
 import type { PlayerSongCover } from '~/server/services/post.service';
 import { Flags } from '~/shared/utils/flags';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 // The most ids `image.getSongCovers` takes in one read.
@@ -21,12 +22,42 @@ export function useMusicPlayerCovers(songIds: number[]) {
     { ids },
     { staleTime: COVER_STALE_MS, enabled: ids.length > 0 }
   );
-  return useMemo(() => {
-    const shown = new Map<number, PlayerSongCover>();
-    for (const cover of data ?? [])
-      if (Flags.intersects(browsingLevel, cover.nsfwLevel)) shown.set(cover.songId, cover);
-    return shown;
-  }, [data, browsingLevel]);
+  return useMemo(() => shownCovers(data ?? [], browsingLevel), [data, browsingLevel]);
+}
+
+function shownCovers(covers: PlayerSongCover[], browsingLevel: number) {
+  const shown = new Map<number, PlayerSongCover>();
+  for (const cover of covers)
+    if (Flags.intersects(browsingLevel, cover.nsfwLevel)) shown.set(cover.songId, cover);
+  return shown;
+}
+
+/**
+ * `useMusicPlayerCovers` for a list of any length (a feed): one read per 100 songs, chunked in
+ * arrival order so a page appended to the list leaves the earlier chunks' reads alone.
+ */
+export function useSongListCovers(songIds: number[]) {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const chunks = useMemo(
+    () => chunkIds(songIds, MAX_COVER_IDS),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unstable array; its join is the key
+    [songIds.join(',')]
+  );
+  const queries = trpc.useQueries((t) =>
+    chunks.map((ids) =>
+      t.image.getSongCovers(
+        { ids },
+        // The growing last chunk keeps its covers on screen while its longer read loads.
+        { staleTime: COVER_STALE_MS, placeholderData: (previous) => previous }
+      )
+    )
+  );
+  const covers = queries.flatMap((query) => query.data ?? []);
+  return useMemo(
+    () => shownCovers(covers, browsingLevel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- queries unstable; their data is the key
+    [browsingLevel, ...queries.map((query) => query.data)]
+  );
 }
 
 /** The cover the player shows for `songId` and the accent taken from it. */

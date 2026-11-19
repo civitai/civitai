@@ -19,6 +19,11 @@ export const songCovers = {
 let answers = new WeakMap<PlayerSongCover[], Map<string, PlayerSongCover[]>>();
 
 function useSongCoversQuery(input: unknown, options?: { enabled?: boolean }) {
+  return readSongCovers(input, options);
+}
+
+// Hook-free, so the `useQueries` stub can call it once per read.
+function readSongCovers(input: unknown, options?: { enabled?: boolean }) {
   if (options?.enabled === false) return { data: undefined };
   const parsed = getSongCoversSchema.safeParse(input);
   if (!parsed.success) {
@@ -58,15 +63,24 @@ function useTimedCommentsQuery(input: { imageId: number }, options?: { enabled?:
 }
 
 /**
- * `trpc` with `image.getSongCovers` answered by `songCovers` and `commentv3.getTimed` by
- * `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
+ * `trpc` with `image.getSongCovers` (single and through `useQueries`) answered by `songCovers` and
+ * `commentv3.getTimed` by `timedComments`; for a `vi.mock('~/utils/trpc')` factory.
  */
 export function withSongCoversStub<T extends object>(trpc: T): T {
   answers = new WeakMap();
   const image = { getSongCovers: { useQuery: useSongCoversQuery } };
   const commentv3 = { getTimed: { useQuery: useTimedCommentsQuery } };
+  // `trpc.useQueries` for chunked cover reads: each `t.image.getSongCovers(input)` is one read.
+  const useQueries = (build: (t: unknown) => unknown[]) =>
+    build({ image: { getSongCovers: (input: unknown) => input } }).map(readSongCovers);
   return new Proxy(trpc, {
     get: (target, key) =>
-      key === 'image' ? image : key === 'commentv3' ? commentv3 : Reflect.get(target, key),
+      key === 'image'
+        ? image
+        : key === 'commentv3'
+        ? commentv3
+        : key === 'useQueries'
+        ? useQueries
+        : Reflect.get(target, key),
   });
 }

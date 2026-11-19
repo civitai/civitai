@@ -6,17 +6,45 @@ import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { SongImage, SongList } from '~/components/MusicPlayer/PostSong';
 import { playSongFromList, SongMenuItems } from '~/components/MusicPlayer/PostSong';
+import {
+  useMusicPlayerCovers,
+  useSongListCovers,
+} from '~/components/MusicPlayer/useMusicPlayerCover';
+import type { PlayerSongCover } from '~/server/services/post.service';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /** Up next's name for songs played from a mixed image feed (Audio picked in its filters). */
-export const DEFAULT_FEED_SONG_LIST_NAME = 'Images';
+const DEFAULT_FEED_SONG_LIST_NAME = 'Images';
 
 const SongListNameContext = createContext<string | undefined>(undefined);
 
 /** Names the list the songs of the feed below play from ("Next from <name>"). */
 export function SongListNameProvider({ name, children }: { name?: string; children: ReactNode }) {
   return <SongListNameContext.Provider value={name}>{children}</SongListNameContext.Provider>;
+}
+
+const SongCoversContext = createContext<Map<number, PlayerSongCover> | null>(null);
+
+/** Reads the covers of every song in `images` at once, for the feed's Song Cards and Rows. */
+export function FeedSongCoversProvider({
+  images,
+  children,
+}: {
+  images: { id: number; type: string }[];
+  children: ReactNode;
+}) {
+  const covers = useSongListCovers(
+    images.filter((image) => image.type === MediaType.audio).map((image) => image.id)
+  );
+  return <SongCoversContext.Provider value={covers}>{children}</SongCoversContext.Provider>;
+}
+
+/** A feed song's cover: from the feed's shared read, or its own read outside a feed. */
+export function useFeedSongCover(songId: number) {
+  const feedCovers = useContext(SongCoversContext);
+  const ownCovers = useMusicPlayerCovers(feedCovers ? [] : [songId]);
+  return (feedCovers ?? ownCovers).get(songId);
 }
 
 /**

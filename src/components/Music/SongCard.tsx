@@ -2,10 +2,13 @@ import { IconMessageCircle, IconThumbUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { FeedSongMenuItems, FeedSongPlayButton } from '~/components/Music/FeedSongList';
+import {
+  FeedSongMenuItems,
+  FeedSongPlayButton,
+  useFeedSongCover,
+} from '~/components/Music/FeedSongList';
 import { dimmed, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
-import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -29,7 +32,7 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
-  const cover = useMusicPlayerCovers([data.id]).get(data.id);
+  const cover = useFeedSongCover(data.id);
   return (
     <TwCard className="border" style={{ height }}>
       <div className="relative min-h-0 flex-1">

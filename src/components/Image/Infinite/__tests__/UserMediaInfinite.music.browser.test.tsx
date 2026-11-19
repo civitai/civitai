@@ -57,6 +57,14 @@ describe('the profile music tab', () => {
     await expect.element(page.getByText('Draft')).toBeVisible();
   });
 
+  test("the owner's reactions view plays its songs as a list named after that view", async () => {
+    state.viewer = { id: 7, username: 'Alice' };
+    useRouter().query = { username: 'alice', section: 'reactions' };
+    renderWithProviders(<UserMediaInfinite type={MediaType.audio} />);
+
+    await expect.poll(() => state.feed?.songListName).toBe('My Reactions');
+  });
+
   test('the images tab names no song list', async () => {
     renderWithProviders(<UserMediaInfinite type={MediaType.image} />);
 

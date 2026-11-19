@@ -39,6 +39,7 @@ vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({
     <div
       data-testid="feed"
       data-types={filters.types?.join(',')}
+      data-tags={filters.tags?.join(',') ?? ''}
       data-view={listItem ? 'list' : 'card'}
       data-list-name={songListName}
     />
@@ -92,6 +93,7 @@ describe('the /music page', () => {
     await expect.element(page.getByRole('heading', { name: 'All music' })).toBeVisible();
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-types', 'audio');
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-list-name', 'All music');
+    await expect.element(page.getByTestId('feed')).toHaveAttribute('data-tags', '');
   });
 });
 
@@ -110,6 +112,7 @@ describe('the genre chips', () => {
     await render();
     await expect.element(chip('Synthwave')).toHaveAttribute('data-active', 'true');
     await expect.element(page.getByTestId('feed')).toHaveAttribute('data-list-name', 'Synthwave');
+    await expect.element(page.getByTestId('feed')).toHaveAttribute('data-tags', '29');
   });
 
   test('a ?tags= link that is not a genre lights no chip and can still be cleared', async () => {

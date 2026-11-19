@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic';
 import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
@@ -37,7 +38,6 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
-import { SongCard } from '~/components/Music/SongCard';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -56,6 +56,9 @@ import {
   isImagesCardFooterOneRow,
 } from '~/components/Image/Infinite/images-card-footer';
 import classes from './ImagesCard.module.scss';
+
+// Only feeds with songs, behind the music flag, load the Song Card and the player store it uses.
+const SongCard = dynamic(() => import('~/components/Music/SongCard').then((m) => m.SongCard));
 
 function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
   const index = images.findIndex((x) => x.id === imageId);

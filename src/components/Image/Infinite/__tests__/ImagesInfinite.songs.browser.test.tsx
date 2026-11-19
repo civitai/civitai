@@ -21,17 +21,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { withSongCoversStub } = await import(
     '../../../MusicPlayer/__tests__/song-covers-trpc-stub'
   );
-  // The covers read is stubbed; the rest of `trpc.image` stays real for the feed's query keys.
-  const { getSongCovers } = (
-    withSongCoversStub(actual.trpc) as unknown as {
-      image: { getSongCovers: unknown };
-    }
-  ).image;
+  // The covers reads are stubbed; the rest of `trpc.image` stays real for the feed's query keys.
+  const stub = withSongCoversStub(actual.trpc) as unknown as {
+    image: { getSongCovers: unknown };
+    useQueries: unknown;
+  };
   const image = new Proxy(actual.trpc.image, {
-    get: (target, key) => (key === 'getSongCovers' ? getSongCovers : Reflect.get(target, key)),
+    get: (target, key) =>
+      key === 'getSongCovers' ? stub.image.getSongCovers : Reflect.get(target, key),
   });
   const trpc = new Proxy(actual.trpc, {
-    get: (target, key) => (key === 'image' ? image : Reflect.get(target, key)),
+    get: (target, key) =>
+      key === 'image' ? image : key === 'useQueries' ? stub.useQueries : Reflect.get(target, key),
   });
   return { ...actual, trpc };
 });
@@ -89,6 +90,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 }));
 
 import { ImagesInfiniteContent } from '~/components/Image/Infinite/ImagesInfinite';
+import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { SongRow } from '~/components/Music/SongRow';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import type { MusicList } from '~/store/music-player.store';
@@ -113,6 +115,7 @@ beforeEach(() => {
   playFromList.mockReset();
   useMusicPlayerStore.setState({ playFromList });
   feed.images = songs;
+  songCovers.reset();
 });
 
 const expectPlayedFrom = (name: string) => {
@@ -141,5 +144,14 @@ describe('songs in an image feed', () => {
     expect(page.getByTestId('masonry').query()).toBeNull();
     await page.getByRole('button', { name: 'Play Palm Static' }).click();
     expectPlayedFrom('All music');
+  });
+
+  test("one covers read serves every song in the list, the feed's other items left out", async () => {
+    feed.images = [songs[0], { id: 50, type: 'image', user: { id: 9 } }, songs[1], songs[2]];
+    await renderWithProviders(<ImagesInfiniteContent listItem={SongRow} songListName="All music" />);
+    await expect.element(page.getByText('Chrome Heart')).toBeInTheDocument();
+    expect(new Set(songCovers.requests.map((ids) => JSON.stringify(ids)))).toEqual(
+      new Set([JSON.stringify([1, 2, 3])])
+    );
   });
 });
