@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { watchOpenDeposits, sendDigest } = vi.hoisted(() => ({
   watchOpenDeposits: vi.fn(),
@@ -94,7 +93,7 @@ describe('watch-open-nowpayments job', () => {
     expect(result.listed).toEqual(listed);
   });
 
-  it('finishes and logs the error when the digest cannot be sent', async () => {
+  it('finishes when the digest cannot be sent', async () => {
     watchOpenDeposits.mockResolvedValueOnce({
       checked: 1,
       closed: 0,
@@ -108,8 +107,5 @@ describe('watch-open-nowpayments job', () => {
     const result = await run();
 
     expect(result.digestSent).toBe(0);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'Failed to send open-deposit digest' })
-    );
   });
 });

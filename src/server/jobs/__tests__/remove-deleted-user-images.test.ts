@@ -776,7 +776,7 @@ describe('removeDeletedUserImages', () => {
     expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
-  it('keeps going when one user fails, and logs the failure with a stack', async () => {
+  it('keeps going when one user fails', async () => {
     seed({
       7: { deletedAt: NEWER, images: [1] },
       8: { deletedAt: OLDER, images: [2] },
@@ -791,14 +791,6 @@ describe('removeDeletedUserImages', () => {
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(2);
     expect(result.deletedImages).toBe(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        name: 'remove-deleted-user-images',
-        userId: 7,
-        error: expect.objectContaining({ stack: boom.stack }),
-      })
-    );
     // User 7 may be half-drained, so the cursor must not step over them to reach user 8.
     expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });

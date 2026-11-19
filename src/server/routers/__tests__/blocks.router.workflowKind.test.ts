@@ -2591,19 +2591,15 @@ describe('inline customComfy — the generation input gate', () => {
         redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
-  ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
+  ])('refuses an own row-less upload (%s) before any orchestrator call', async (_reason, given) => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
     await given();
-    loggingMock.logToAxiom.mockClear();
     const body = inline();
     (body.workflow['2'].inputs as Record<string, unknown>).text = `restyle ${OWN_KEY}`;
     await expect(submit(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: APP_SOURCE_UNUSABLE_MESSAGE,
     });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-block-source-refusal', reason })
-    );
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 

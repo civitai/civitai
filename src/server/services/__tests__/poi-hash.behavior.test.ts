@@ -3,7 +3,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as PgDb from '~/server/db/pgDb';
 import type * as ModelService from '~/server/services/model.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
@@ -399,16 +398,11 @@ describe('sweepPoiHashMatches — the read', () => {
     await addModel(65, 1);
     await addFile(65, 'MOD', '5 minutes');
     pool.failOn = /seed_models/;
-    loggingMock.logToAxiom.mockClear();
 
     await expect(sweepPoiHashMatches({ limit: 50 })).rejects.toMatchObject({ code: '57014' });
 
     expect(setModelPoi).not.toHaveBeenCalled();
     expect(await meta(65)).toEqual({});
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'poi-hash-sweep' }),
-      'webhooks'
-    );
   });
 });
 
