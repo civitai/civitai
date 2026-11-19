@@ -1059,7 +1059,8 @@ export async function applyPendingResolutions(
 
 /**
  * Moves items whose stage window lapsed. An item with votes is handed up to the next stage someone can serve; at the end of the path
- * a rating is re-rated (`rerate`) when its stage has at least its quorum of counted votes (`votesNeededAt`), else closes as `expired`.
+ * a rating is re-rated (`rerate`) when its stage has at least its quorum of counted votes (`votesNeededAt`), else closes as `expired`,
+ * unless those votes pick Blocked, which goes to the Inquisitors as `blocked` either way.
  * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
@@ -1091,24 +1092,23 @@ export async function escalateExpired(
     if (due.length === 0) return counts;
 
     // Counted votes at each item's stage. A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
-    const counted = new Map(
-      (
-        await trx
-          .selectFrom('KnightsVote as v')
-          .innerJoin('KnightsQueueItem as i', (join) =>
-            join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
-          )
-          .select(['v.itemId', (eb) => eb.fn.countAll<string>().as('n')])
-          .where('v.weight', '>', 0)
-          .where(
-            'v.itemId',
-            'in',
-            due.map((item) => item.id)
-          )
-          .groupBy('v.itemId')
-          .execute()
-      ).map((row) => [row.itemId, Number(row.n)])
-    );
+    const counted = new Map<number, WeightedAnswer[]>();
+    const stageVotes = await trx
+      .selectFrom('KnightsVote as v')
+      .innerJoin('KnightsQueueItem as i', (join) =>
+        join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
+      )
+      .select(['v.itemId', 'v.answer', 'v.weight'])
+      .where('v.weight', '>', 0)
+      .where(
+        'v.itemId',
+        'in',
+        due.map((item) => item.id)
+      )
+      .execute();
+    for (const { itemId, ...vote } of stageVotes) {
+      counted.set(itemId, [...(counted.get(itemId) ?? []), vote]);
+    }
     const staffed = await staffedRanks(trx, now);
 
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
@@ -1140,10 +1140,16 @@ export async function escalateExpired(
     };
     const expire = (item: (typeof due)[number]) => {
       if (extend(item)) return false;
-      const votes = counted.get(item.id) ?? 0;
-      // A re-rate needs the stage's quorum: fewer counted votes than that decide nothing, as none would.
-      if (votes > 0) {
-        return reratesAtEnd(item) && leavesPlayers(item) && votes < votesNeededAt(item.minRank);
+      const votes = counted.get(item.id) ?? [];
+      // A re-rate needs the stage's quorum: fewer counted votes than that decide nothing, as none would, unless they point at
+      // Blocked, which `rerate` hands to the Inquisitors whatever the count.
+      if (votes.length > 0) {
+        return (
+          reratesAtEnd(item) &&
+          leavesPlayers(item) &&
+          votes.length < votesNeededAt(item.minRank) &&
+          !isBlockedLevel(Number(mostVotedLevel(votes)))
+        );
       }
       return staffed.has(item.minRank) || leavesPlayers(item);
     };

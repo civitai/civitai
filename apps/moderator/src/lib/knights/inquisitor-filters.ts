@@ -5,8 +5,9 @@ import {
 } from '@civitai/shared/new-order';
 
 /**
- * The reasons with a tab. Knights no longer sends `no-consensus` here (it re-rates the image); historical rows keep the value,
- * and one still waiting shows under All.
+ * The reasons with a tab. Knights re-rates a rating with no consensus instead of sending it here; it still sends `no-consensus`
+ * for any other choice question, but this queue lists rating items only, so those never show. A rating item still waiting as
+ * `no-consensus` from before the change shows under All, and closed rows keep the value.
  */
 const TABBED_ESCALATION_REASONS = KNIGHTS_ESCALATION_REASONS.filter(
   (reason): reason is Exclude<KnightsEscalationReason, 'no-consensus'> => reason !== 'no-consensus'

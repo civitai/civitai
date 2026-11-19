@@ -55,11 +55,12 @@ targeted AS (
     a."playerId" AS actor,
     img."nsfwLevel" AS from_level,
     CASE
-      -- votesNeededAt (stage-rules.ts): change with STAGE_RULES.
-      WHEN l.stage IS NULL
-        OR p.stage_votes < CASE l.stage WHEN 'Knight' THEN 4 WHEN 'Templar' THEN 3 WHEN 'Paladin' THEN 2 END
-        THEN 'expired'
+      WHEN l.stage IS NULL THEN 'expired'
+      -- Blocked goes to the Inquisitors whatever the count.
       WHEN p.pick = '32' THEN 'blocked'
+      -- votesNeededAt (stage-rules.ts): change with STAGE_RULES.
+      WHEN p.stage_votes < CASE l.stage WHEN 'Knight' THEN 4 WHEN 'Templar' THEN 3 WHEN 'Paladin' THEN 2 END
+        THEN 'expired'
       ELSE 'rerate'
     END AS outcome
   FROM waiting w
@@ -92,9 +93,10 @@ set_aside AS (
   SET verdict = 'inconclusive'
   FROM settled s
   WHERE v."itemId" = s.id AND s.outcome <> 'blocked' AND v.verdict = 'pending'
-  RETURNING 1
+  RETURNING v."itemId"
 )
-SELECT outcome, count(*)::int AS items, (SELECT count(*)::int FROM set_aside) AS votes_set_aside
-FROM settled
-GROUP BY outcome
-ORDER BY outcome;
+SELECT s.outcome, count(*)::int AS items, COALESCE(sum(a.n), 0)::int AS votes_set_aside
+FROM settled s
+LEFT JOIN (SELECT "itemId", count(*) AS n FROM set_aside GROUP BY "itemId") a ON a."itemId" = s.id
+GROUP BY s.outcome
+ORDER BY s.outcome;

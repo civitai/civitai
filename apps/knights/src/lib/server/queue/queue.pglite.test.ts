@@ -2154,6 +2154,69 @@ describe('no consensus at the end of the path', () => {
     expect(await inquisitorRows()).toBe(0);
   });
 
+  it('sends a lapsed stage below its quorum whose pick is Blocked to the Inquisitors as blocked', async () => {
+    for (let u = 1; u <= 2; u++) await active(u, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    // Two votes, tied: Blocked is the highest level, below the Templar quorum of three.
+    await vote(1, id, '4');
+    await vote(2, id, '32');
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 0,
+      toInquisitor: 1,
+      extended: 0,
+      expired: 0,
+      rerated: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+      reason: null,
+      resolvedValue: null,
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['pending', 'pending']);
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('hands a re-rate whose image moved before the write-back to the Inquisitors with its votes pending again', async () => {
+    for (let u = 1; u <= 3; u++) await active(u, 'Templar');
+    await image(10, 8);
+    const id = await item(10, { minRank: 'Templar', expires: PAST });
+    for (const [u, answer] of [
+      [1, '2'],
+      [2, '4'],
+      [3, '2'],
+    ] as const) {
+      await vote(u, id, answer);
+    }
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ rerated: 1 });
+    expect((await verdicts(id)).every((v) => v.verdict === 'inconclusive')).toBe(true);
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 16 WHERE id = 10`);
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 1,
+    });
+    // The write-back tab: Inquisitor with a write-back reason and no escalation reason.
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      reason: 'level-moved',
+      escalationReason: null,
+      resolvedValue: null,
+      appliedAt: null,
+    });
+    expect((await ledger(id)).map((v) => [v.verdict, v.settledAt])).toEqual([
+      ['pending', null],
+      ['pending', null],
+      ['pending', null],
+    ]);
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
   it('closes a lapsed stage below its quorum as expired, with no write-back', async () => {
     for (let u = 1; u <= 2; u++) await active(u, 'Templar');
     await image(10, 8);

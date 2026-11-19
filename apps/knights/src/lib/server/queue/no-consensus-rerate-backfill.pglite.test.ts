@@ -199,6 +199,17 @@ describe('backfill-no-consensus-rerate', () => {
       ],
       'expired',
     ],
+    [
+      'sends a Blocked pick below the quorum to the Inquisitors as blocked',
+      'Templar',
+      4,
+      [
+        ['Knight', '4', 1],
+        ['Templar', '4', 1],
+        ['Templar', '32', 1],
+      ],
+      'blocked',
+    ],
   ] as const)(
     '%s, leaving the item as Knights now would',
     async (_, stage, level, votes, outcome) => {
@@ -294,9 +305,9 @@ describe('backfill-no-consensus-rerate', () => {
     const untouched = [await settledState(ruling), await settledState(other)];
 
     expect(await apply()).toEqual([
-      { outcome: 'blocked', items: 1, votes_set_aside: 4 },
-      { outcome: 'expired', items: 1, votes_set_aside: 4 },
-      { outcome: 'rerate', items: 1, votes_set_aside: 4 },
+      { outcome: 'blocked', items: 1, votes_set_aside: 0 },
+      { outcome: 'expired', items: 1, votes_set_aside: 1 },
+      { outcome: 'rerate', items: 1, votes_set_aside: 3 },
     ]);
     expect([await settledState(ruling), await settledState(other)]).toEqual(untouched);
     expect(await apply()).toEqual([]);

@@ -2,8 +2,9 @@
 -- that reaches no consensus at the end of the path (`rerate` and `escalateExpired` in queue.service.ts):
 -- to_rerate: Resolved at the most-voted level of its last stage (counted votes, weight > 0; a tie goes to the highest level),
 --   votes set aside as inconclusive, unwritten, so the tick's write-back writes it as any settled rating.
--- to_blocked: the pick is Blocked, so it stays with the Inquisitors as `blocked`.
--- to_expired: its last stage has fewer counted votes than the stage's quorum: Closed `expired`, votes inconclusive.
+-- to_blocked: the pick is Blocked, at any vote count, so it stays with the Inquisitors as `blocked`.
+-- to_expired: its last stage has fewer counted votes than the stage's quorum (and the pick is not Blocked): Closed `expired`,
+--   votes inconclusive.
 -- The last stage is the highest stage with a counted vote (the item's own stage reads Inquisitor). `sample`: up to 20 rows.
 -- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
 WITH waiting AS (
@@ -50,11 +51,12 @@ targeted AS (
     a."playerId" AS actor,
     img."nsfwLevel" AS from_level,
     CASE
-      -- votesNeededAt (stage-rules.ts): change with STAGE_RULES.
-      WHEN l.stage IS NULL
-        OR p.stage_votes < CASE l.stage WHEN 'Knight' THEN 4 WHEN 'Templar' THEN 3 WHEN 'Paladin' THEN 2 END
-        THEN 'expired'
+      WHEN l.stage IS NULL THEN 'expired'
+      -- Blocked goes to the Inquisitors whatever the count.
       WHEN p.pick = '32' THEN 'blocked'
+      -- votesNeededAt (stage-rules.ts): change with STAGE_RULES.
+      WHEN p.stage_votes < CASE l.stage WHEN 'Knight' THEN 4 WHEN 'Templar' THEN 3 WHEN 'Paladin' THEN 2 END
+        THEN 'expired'
       ELSE 'rerate'
     END AS outcome
   FROM waiting w

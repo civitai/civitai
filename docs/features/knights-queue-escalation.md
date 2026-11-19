@@ -28,7 +28,7 @@ A rating item that leaves its stage without agreement (a split at the stage maxi
 
 - The level is the answer with the most counted votes (weight > 0) at the item's current stage, counted, not weighted; a tie goes to the highest level (`mostVotedLevel` in `resolution.ts`). One PG-13, four R and four X give X; mostly PG-13 with one XXX gives PG-13. The stage consensus itself keeps its weighted rule (`decideChoice`).
 - Rating down is allowed: the pushed-down check guards a consensus, not a re-rate. A Blocked pick goes to the Inquisitors as `escalationReason = 'blocked'`, as a Blocked consensus does.
-- A lapsed window re-rates only when the stage has at least its quorum of counted votes (`votesNeededAt`: Knight 4, Templar 3, Paladin 2); with fewer it closes as `expired` (rule 3's close).
+- A lapsed window re-rates only when the stage has at least its quorum of counted votes (`votesNeededAt`: Knight 4, Templar 3, Paladin 2); with fewer it closes as `expired` (rule 3's close), unless those votes pick Blocked: that goes to the Inquisitors as `blocked` at any count.
 - The item becomes `Resolved` with `reason = 'no-consensus-rerate'`, `resolvedFromLevel` the image's level, and the latest counted voter who gave the level as the write-back's actor. Every vote on it, at any stage, becomes `inconclusive`: no gold and no correct-answer XP, only the XP each vote earned when cast. Judgment history shows the player's own answer and no resolved level.
 - It is written back like any settled rating (below), so a moderator lock, a block or a moved level reroutes it the same way: a moderator's level grades the votes against it, a block or a moved level sends it to the Inquisitors with its votes pending again.
 
