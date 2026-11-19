@@ -245,7 +245,7 @@ const list = (dealId: number, userId: number, isModerator = false) =>
   files.listServiceDealFiles({ dealId, userId, isModerator, servableLevels: 31 });
 
 const download = (fileId: number, userId: number, isModerator = false) =>
-  files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
+  files.resolveServiceDealFileDownload({ servableLevels: 31, fileId, userId, isModerator });
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -906,6 +906,7 @@ describe('who can download what', () => {
     expect(await download(finalId, MOD, true)).toMatchObject({ key: row.s3Key });
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -921,6 +922,7 @@ describe('who can download what', () => {
     expect(await download(finalId, BUYER)).toBeNull();
     expect(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1753,6 +1755,7 @@ describe('recording who took a file', () => {
       const { finalId } = await completedDeal();
       await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [finalId]);
       const target = await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,
@@ -1796,6 +1799,7 @@ describe('recording who took a file', () => {
     const { finalId } = await completedDeal();
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: BUYER,
         isModerator: true,
@@ -1810,6 +1814,7 @@ describe('recording who took a file', () => {
     await take(await download(finalId, SELLER));
     await take(
       await files.resolveServiceDealFileDownload({
+        servableLevels: 31,
         fileId: finalId,
         userId: MOD,
         isModerator: true,

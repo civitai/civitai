@@ -1146,7 +1146,7 @@ export async function resolveServiceDealFileDownload({
   delivered = false,
   moderatorFetch = false,
   canReviewCsam = false,
-  servableLevels = allBrowsingLevelsFlag,
+  servableLevels,
 }: {
   fileId: number;
   userId: number;
@@ -1154,8 +1154,8 @@ export async function resolveServiceDealFileDownload({
   delivered?: boolean;
   /** The `csamReports` permission: a removed file is served only to a moderator who holds it. */
   canReviewCsam?: boolean;
-  /** What the requesting domain may be sent; a scanned video rated outside it is not served. */
-  servableLevels?: number;
+  /** What the requesting domain may be sent; a video rated outside it is not served to a party. */
+  servableLevels: number;
   /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
    *  it never counts as the buyer's download. */
   moderatorFetch?: boolean;
@@ -1232,10 +1232,12 @@ export async function resolveServiceDealFileDownload({
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
-  if (row.scannedEtag) {
-    // A scanned video goes only where its rating may be shown, and only as the version scanned.
-    if (!row.contentLevel || !Flags.intersects(row.contentLevel, servableLevels)) return null;
-    if (!(await stillScannedVersion(bucket, key, row))) return null;
+  if (isFinalVideoName(row.fileName)) {
+    // A video is served only as the version its scan copy was made from, and to a party only where
+    // its rating may be shown. One never stamped (refused, or not scanned yet) goes to no party.
+    const levelShown = !!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels);
+    if (!isModerator && (!row.scannedEtag || !levelShown)) return null;
+    if (row.scannedEtag && !(await stillScannedVersion(bucket, key, row))) return null;
   }
   return {
     bucket,
@@ -1301,6 +1303,7 @@ async function stillScannedVersion(
   key: string,
   row: { scannedEtag: string | null; scannedVersionId: string | null }
 ) {
+  // A version that is gone is a mismatch; any other failure is not an answer, so it throws.
   const head = await getS3Client()
     .send(
       new HeadObjectCommand({
@@ -1309,7 +1312,10 @@ async function stillScannedVersion(
         ...(row.scannedVersionId ? { VersionId: row.scannedVersionId } : {}),
       })
     )
-    .catch(() => null);
+    .catch((error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
+      if (error?.$metadata?.httpStatusCode === 404 || error?.name === 'NotFound') return null;
+      throw error;
+    });
   return (
     !!head &&
     head.ETag === row.scannedEtag &&

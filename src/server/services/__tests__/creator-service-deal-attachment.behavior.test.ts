@@ -408,7 +408,14 @@ const download = (
   userId: number,
   isModerator = false,
   canReviewCsam = isModerator
-) => files.resolveServiceDealFileDownload({ fileId, userId, isModerator, canReviewCsam });
+) =>
+  files.resolveServiceDealFileDownload({
+    servableLevels: 31,
+    fileId,
+    userId,
+    isModerator,
+    canReviewCsam,
+  });
 
 const finalsClear = async (dealId: number) =>
   (
@@ -434,6 +441,24 @@ const agedPurge = async () => {
 };
 
 describe('attaching', () => {
+  it.each(['a.mp4', 'a.webm'])(
+    'refuses a video attachment (%s) on the server',
+    async (fileName) => {
+      const dealId = await accepted();
+      await expect(
+        files.requestServiceDealAttachment({
+          ...ATTESTED,
+          dealId,
+          userId: BUYER,
+          fileName,
+          mimeType: 'video/mp4',
+          size: 10,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+    }
+  );
+
   it('records the attestation time and stores the upload at a server-held key', async () => {
     const dealId = await accepted();
     const fileId = await attach(

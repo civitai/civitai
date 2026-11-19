@@ -447,6 +447,7 @@ describe('holds', () => {
     for (const userId of [BUYER, SELLER])
       expect(
         await files.resolveServiceDealFileDownload({
+          servableLevels: 31,
           fileId: held.finalId,
           userId,
           isModerator: false,
@@ -470,6 +471,7 @@ describe('holds', () => {
       [attachmentId, true, true],
     ]);
     const download = await files.resolveServiceDealFileDownload({
+      servableLevels: 31,
       fileId: finalId,
       userId: OTHER,
       isModerator: true,

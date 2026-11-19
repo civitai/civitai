@@ -79,6 +79,7 @@ type ClaimedFinal = {
   s3Key: string;
   fileName: string;
   size: number;
+  kind: string;
   /** Who uploaded the file: the image scan copies are created as theirs. */
   uploaderId: number;
 };
@@ -103,7 +104,7 @@ function claimFinal() {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size",
+    RETURNING f."id", f."dealId", f."s3Key", f."fileName", f."size", f."kind"::text AS "kind",
       CASE WHEN f."kind"::text = 'Attachment' THEN d."buyerId" ELSE d."sellerId" END
         AS "uploaderId"`;
 }
@@ -283,9 +284,11 @@ async function isImageByContent(file: ClaimedFinal) {
   const kind = sniffEntry(Buffer.from(await response.Body.transformToByteArray()));
   if (kind === 'video')
     throw new ZipRejectedError(
-      `A video must be uploaded as the video file itself (${SERVICE_FINAL_VIDEO_EXTENSIONS.map(
-        (e) => `.${e}`
-      ).join(' or ')}).`
+      file.kind === 'Attachment'
+        ? "Videos can't be attached."
+        : `A video must be uploaded as the video file itself (${SERVICE_FINAL_VIDEO_EXTENSIONS.map(
+            (e) => `.${e}`
+          ).join(' or ')}).`
     );
   if (kind === 'archive')
     throw new ZipRejectedError('Archives must be delivered as a .zip, not renamed.');
@@ -354,8 +357,10 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     await deleteObject(store.bucket, scanKey!, store.s3).catch(() => null);
   };
   const probed = await probeVideo(scanKey);
-  // A length that cannot be read is a video the scan cannot be shown to cover.
-  if (!probed?.duration) {
+  // No answer from the probe is retried; an answer with no length is a video the scan cannot be
+  // shown to cover.
+  if (!probed) throw new Error('Video probe returned nothing');
+  if (!probed.duration) {
     await dropCopy();
     await failEntry(file.id, 0, VIDEO_UNREADABLE);
     throw new ZipRejectedError(VIDEO_UNREADABLE);
@@ -369,11 +374,18 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     UPDATE "ServiceDealFile"
     SET "scannedEtag" = ${object.ETag}::text, "scannedVersionId" = ${object.VersionId ?? null}::text
     WHERE "id" = ${file.id}::int`;
-  const { id: imageId } = await createScanImage(
-    scanKey,
-    { mimeType, width: probed.width, height: probed.height, data: original, type: 'video' },
-    file.uploaderId
-  );
+  // A crash after the Image was made leaves it to be found, so it is never ingested twice.
+  const [existing] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT "id" FROM "Image" WHERE "url" = ${scanKey}::text LIMIT 1`;
+  const imageId =
+    existing?.id ??
+    (
+      await createScanImage(
+        scanKey,
+        { mimeType, width: probed.width, height: probed.height, data: original, type: 'video' },
+        file.uploaderId
+      )
+    ).id;
   await dbWrite.$executeRaw`
     UPDATE "ServiceDealFileEntry" SET "imageId" = ${imageId}::int WHERE "id" = ${entry.id}::int`;
 }
@@ -397,7 +409,7 @@ export async function unpackFinals({
         await release(file.id);
         return 0;
       }
-    } else if (isFinalVideoName(file.fileName)) {
+    } else if (file.kind === 'Final' && isFinalVideoName(file.fileName)) {
       await unpackVideo(file, probeVideo);
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);

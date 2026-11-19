@@ -1487,7 +1487,12 @@ describe('the finals malware scan', () => {
     );
 
   const asBuyer = (fileId: number) =>
-    files.resolveServiceDealFileDownload({ fileId, userId: BUYER, isModerator: false });
+    files.resolveServiceDealFileDownload({
+      servableLevels: 31,
+      fileId,
+      userId: BUYER,
+      isModerator: false,
+    });
   const listedForBuyer = async (dealId: number, fileId: number) =>
     (
       await files.listServiceDealFiles({
@@ -1959,7 +1964,12 @@ describe('the finals malware scan', () => {
         });
         // The seller still can.
         expect(
-          await files.resolveServiceDealFileDownload({ fileId, userId: SELLER, isModerator: false })
+          await files.resolveServiceDealFileDownload({
+            servableLevels: 31,
+            fileId,
+            userId: SELLER,
+            isModerator: false,
+          })
         ).not.toBeNull();
       }
     );
@@ -2055,8 +2065,22 @@ describe('a video Final', () => {
     const { dealId, fileId } = await videoFinal(4);
     await judged(fileId, 4);
     await completed(dealId);
-    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
-    expect(await download(fileId, BUYER)).not.toBeNull();
+    // A versioned store: the scanned version, and a newer one written after the scan.
+    s3.send.mockImplementation(async ({ input }: { input: { VersionId?: string } }) =>
+      input.VersionId === 'ver1'
+        ? { ETag: '"v1"', VersionId: 'ver1' }
+        : { ETag: '"v2"', VersionId: 'ver2' }
+    );
+    const target = await download(fileId, BUYER);
+    expect(target).toMatchObject({ versionId: 'ver1' });
+    s3.getGetUrlByKey.mockResolvedValue({ url: 'https://signed' });
+    await files.getServiceDealFileDownloadUrl(target!, {
+      serviceDealFileAccess: async () => true,
+    } as never);
+    expect(s3.getGetUrlByKey).toHaveBeenCalledWith(
+      target!.key,
+      expect.objectContaining({ versionId: 'ver1' })
+    );
     // The object was replaced after the scan.
     s3.send.mockResolvedValue({ ETag: '"v2"', VersionId: 'ver1' });
     expect(await download(fileId, BUYER)).toBeNull();
@@ -2097,9 +2121,49 @@ describe('a video Final', () => {
   });
 
   it('refuses a video whose length cannot be read', async () => {
-    probe.video.mockResolvedValue(null);
+    probe.video.mockResolvedValue({ width: 640, height: 360 });
     const { fileId } = await videoFinal(4);
     expect((await fileRow(fileId)).failReason).toMatch(/could not be read/);
     expect(images.createImage).not.toHaveBeenCalled();
+  });
+
+  it('retries, rather than refuses, a video the probe gave no answer on', async () => {
+    probe.video.mockResolvedValue(null);
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'clip.mp4', CLIP);
+    serveClip();
+    expect(await unpack.unpackFinals({ probeVideo: probe.video })).toBe(0);
+    expect(await fileRow(fileId)).toMatchObject({ scanStatus: 'Pending', failReason: null });
+  });
+
+  it('takes a video of exactly 50 seconds, and a .webm as video/webm', async () => {
+    probe.video.mockResolvedValue({ width: 640, height: 360, duration: 50 });
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'clip.webm', CLIP);
+    serveClip();
+    await unpack.unpackFinals({ probeVideo: probe.video });
+    expect((await fileRow(fileId)).failReason).toBeNull();
+    expect(images.createImage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'video', mimeType: 'video/webm' })
+    );
+  });
+
+  it('reuses its scan copy and Image after a crash, never scanning twice', async () => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, 'clip.mp4', CLIP);
+    serveClip();
+    // The first run dies after the Image is made, before it is recorded on the entry.
+    await q(`UPDATE "ServiceDealFile" SET "processingAt" = NULL WHERE id = $1`, [fileId]);
+    images.createImage.mockImplementationOnce(async ({ url }: { url: string }) => {
+      await q(`INSERT INTO "Image" (url) VALUES ($1)`, [url]);
+      throw new Error('worker died');
+    });
+    expect(await unpack.unpackFinals({ probeVideo: probe.video })).toBe(0);
+    await ageClaim(fileId, 60 * 60_000);
+    await q(`UPDATE "ServiceDealFile" SET "processingAt" = NULL WHERE id = $1`, [fileId]);
+    expect(await unpack.unpackFinals({ probeVideo: probe.video })).toBe(1);
+    expect(s3.uploadImageBufferToStore).toHaveBeenCalledOnce();
+    expect(images.createImage).toHaveBeenCalledOnce();
+    expect((await entries(fileId))[0].imageId).not.toBeNull();
   });
 });

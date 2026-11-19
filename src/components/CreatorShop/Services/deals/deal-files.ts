@@ -22,7 +22,23 @@ import type {
   ServicePreviewKind,
 } from '~/shared/utils/prisma/enums';
 
-const VIDEO_LIKE_EXTENSIONS = ['mov', 'mkv', 'avi', 'm4v', 'wmv', 'mpg', 'mpeg', 'flv', '3gp'];
+const VIDEO_LIKE_EXTENSIONS = [
+  'mov',
+  'mkv',
+  'avi',
+  'm4v',
+  'wmv',
+  'mpg',
+  'mpeg',
+  'flv',
+  '3gp',
+  'ts',
+  'mts',
+  'm2ts',
+  'mxf',
+  'f4v',
+  'ogv',
+];
 const isVideoLike = (file: { type?: string }, extension: string) =>
   !!file.type?.startsWith('video/') ||
   VIDEO_LIKE_EXTENSIONS.includes(extension) ||
