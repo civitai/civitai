@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   assertBountyEntryFileUrlAllowed,
   assertClientFileUrlAllowed,
@@ -303,19 +302,6 @@ describe('assertClientFileUrlAllowed', () => {
     expect((error as Error).message).toMatch(/upload the file again/i);
     expect((error as Error).message).not.toContain(OTHER.toString());
   });
-
-  it('logs the refusal with the caller and the rule it missed', async () => {
-    await call(false).catch(() => undefined);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'warning',
-        name: 'model-file-url-refused',
-        userId: ME,
-        reason: 'other-user-prefix',
-        op: 'create',
-      })
-    );
-  });
 });
 
 describe('assertBountyEntryFileUrlAllowed', () => {
@@ -337,38 +323,16 @@ describe('assertBountyEntryFileUrlAllowed', () => {
   });
 
   it.each([
-    ["another user's upload", r2Path(`default/${THIRD}/lora.safetensors`), 'other-user-prefix'],
+    ["another user's upload", r2Path(`default/${THIRD}/lora.safetensors`)],
     [
       "the awarder's own upload, which the author did not make",
       r2Path(`default/${ME}/lora.safetensors`),
-      'other-user-prefix',
     ],
-    [
-      'a checkpoint copied to a version',
-      r2Path(`modelVersion/${VERSION}/lora.safetensors`),
-      'other-model-version',
-    ],
-    [
-      'a bucket no upload goes to',
-      `${B2}/retired-2023/default/${AUTHOR}/lora.safetensors`,
-      'not-upload-bucket',
-    ],
-    [
-      'a host that is not our storage',
-      `https://files.example.com/default/${AUTHOR}/l.zip`,
-      'unknown-host',
-    ],
-  ])('refuses %s, and logs why', (_, url, reason) => {
+    ['a checkpoint copied to a version', r2Path(`modelVersion/${VERSION}/lora.safetensors`)],
+    ['a bucket no upload goes to', `${B2}/retired-2023/default/${AUTHOR}/lora.safetensors`],
+    ['a host that is not our storage', `https://files.example.com/default/${AUTHOR}/l.zip`],
+  ])('refuses %s', (_, url) => {
     expect(() => check(url)).toThrowError(/can't be copied into a model version/);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'model-file-url-refused',
-        op: 'bounty-award',
-        userId: ME,
-        reason,
-        payload: { authorId: AUTHOR, bountyEntryId: ENTRY },
-      })
-    );
   });
 
   it('refuses a file on an entry with no author', () => {

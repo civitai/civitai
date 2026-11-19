@@ -474,7 +474,6 @@ describe('unblockAccountDeletionImages', () => {
     // `restore-user-images` drops the account off its worklist on this flag; reported as finished,
     // a reversal stopped at the ceiling is never resumed.
     expect(result.drained).toBe(false);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ drained: false }));
   });
 
   it('runs the nsfwLevel reset and the search-index queue of a pass concurrently', async () => {

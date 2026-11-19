@@ -57,7 +57,8 @@ export default defineModeratorEndpoint('textScan.harness', {
       });
     const intentPut = input.action === 'putPrompt' && input.key === INTENT_PROMPT_KEY;
     const intentHolder = !!ctx.actor.permissions?.includes(INTENT_PROMPT_PUBLISH_PERMISSION);
-    if (input.action === 'putPrompt' && intentPut && !intentHolder) {
+    // A restore is the fast rollback, so it may only bring back unrevoked text, whoever asks.
+    if (input.action === 'putPrompt' && intentPut && (!intentHolder || input.restore)) {
       const holders = (await getSystemPermissions())[INTENT_PROMPT_PUBLISH_PERMISSION] ?? [];
       const restorable = await isRestorableTextScanPrompt({
         key: input.key,
@@ -67,7 +68,9 @@ export default defineModeratorEndpoint('textScan.harness', {
       if (!restorable)
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `Permission "${INTENT_PROMPT_PUBLISH_PERMISSION}" required to publish new ${INTENT_PROMPT_KEY} text`,
+          message: input.restore
+            ? `That ${INTENT_PROMPT_KEY} version was revoked or not written by a holder: save it as new text instead`
+            : `Permission "${INTENT_PROMPT_PUBLISH_PERMISSION}" required to publish new ${INTENT_PROMPT_KEY} text`,
         });
     }
     if (input.action === 'putPrompt' && intentPut)

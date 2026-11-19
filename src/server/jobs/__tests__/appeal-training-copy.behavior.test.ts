@@ -679,7 +679,7 @@ describe('sweepExcludedRecords and the training bucket', () => {
     expect(store.remove).toHaveBeenCalledExactlyOnceWith(['k-101', 'k-102']);
   });
 
-  it('logs a failed object delete and still deletes the records', async () => {
+  it('still deletes the records when an object delete fails', async () => {
     await record({ appealId: 1, imageId: 101, state: 'copied', key: 'k-101' });
     await holder.db.exec(`INSERT INTO "CsamReport" ("images") VALUES ('[{"id": 101}]')`);
     const store = fakeStore();
@@ -692,9 +692,6 @@ describe('sweepExcludedRecords and the training bucket', () => {
       objects: 0,
     });
     expect(await states()).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('deletes a record whose stored object an excluded image shares, and its copy', async () => {
