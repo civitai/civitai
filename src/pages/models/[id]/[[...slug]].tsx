@@ -1286,7 +1286,9 @@ export default function ModelDetailsV2({
                               entityId={model.id}
                               // Sections hold only the caller's own models; a moderator here keeps
                               // the top-showcase add.
-                              offerSections={isCreator && model.status === ModelStatus.Published}
+                              offerSections={
+                                isCreator && model.status === ModelStatus.Published && !model.mode
+                              }
                             />
                           )}
                           {/* The model itself, so its showcase images are not the nearest thing to hat. */}
