@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
-import { challengeCoverWhere } from '~/server/common/image-visibility';
+import { challengeCoverWhere, imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserService from '~/server/services/user.service';
@@ -274,7 +274,7 @@ describe('getChallengeDetail — the cover read', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             id: 80,
-            AND: expect.arrayContaining([challengeCoverWhere()]),
+            AND: [imageNotRestrictedWhere({ viewerId: VIEWER }), challengeCoverWhere()],
           }),
         })
       );

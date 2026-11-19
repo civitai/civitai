@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
-import { challengeCoverWhere } from '~/server/common/image-visibility';
+import { challengeCoverWhere, imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
@@ -246,7 +246,9 @@ describe.each(cardPaths)('%s — the cover read', (path) => {
       await paths[path]({ isGreen: false, viewerId: VIEWER });
       expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ AND: expect.arrayContaining([challengeCoverWhere()]) }),
+          where: expect.objectContaining({
+            AND: [imageNotRestrictedWhere({ viewerId: VIEWER }), challengeCoverWhere()],
+          }),
         })
       );
     } finally {
