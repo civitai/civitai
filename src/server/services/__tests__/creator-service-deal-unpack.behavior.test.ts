@@ -1045,6 +1045,8 @@ describe('video by any other name', () => {
       ['extra/cover.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')],
       ['extra/cover.jxl', Buffer.from([0xff, 0x0a, 0, 0, 0, 0])],
       ['extra/clip.mp4', Buffer.alloc(64)],
+      ['extra/x', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['extra/x', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(40)])],
     ].map(([path, bytes]): [string, Buffer, RegExp] => [
       'weights.pt',
       torchZip([
