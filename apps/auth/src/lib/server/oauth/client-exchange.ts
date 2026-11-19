@@ -92,6 +92,8 @@ export interface ClientExchangeInput {
 /** Handle a token exchange whose subject is a hub-issued access token JWT. */
 export async function handleClientTokenExchange(input: ClientExchangeInput): Promise<Response> {
   const { request, body } = input;
+  // The log line of every outcome: `service` (the subject's client), `relay` (the caller), `resource`
+  // (the target) and `source` (the subject's resource), as far as each is known. Never a token.
   const ctx: Record<string, string | undefined> = {};
 
   const refuse = (error: ExchangeError, reason: string, extra?: HeadersInit) => {
@@ -142,7 +144,7 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     }
     const caller = await authenticatedConfidentialClient(request, body);
     if (!caller) return unauthenticated('client authentication failed');
-    ctx.caller = caller.id;
+    ctx.relay = caller.id;
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
       return refuse('rate_limited', 'client limit', { 'Retry-After': '60' });
     }
@@ -175,7 +177,8 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     ) {
       return refuse('invalid_grant', 'subject claim shape');
     }
-    ctx.app = clientId;
+    ctx.service = clientId;
+    ctx.source = aud;
     if (sub !== clientId || !isServiceClientId(clientId)) {
       return refuse('invalid_grant', 'subject is not a service token');
     }
@@ -215,7 +218,8 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid) return refuse('invalid_scope', 'unparseable scope');
-      if ((requested.scope & ~ceiling) !== 0n) return refuse('invalid_scope', 'scope outside grant');
+      if ((requested.scope & ~ceiling) !== 0n)
+        return refuse('invalid_scope', 'scope outside grant');
       scope = requested.scope;
     }
     if (scope === 0n) return refuse('invalid_scope', 'empty scope');

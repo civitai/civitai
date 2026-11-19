@@ -183,7 +183,8 @@ function attachServiceSubjects(resources: ExchangeResource[], rawLists: unknown[
   const userClients = new Set(resources.flatMap((r) => [...r.apps, ...r.relays]));
   for (const [i, resource] of resources.entries()) {
     const raw = rawLists[i] ?? [];
-    const fail = (why: string) => errors.push(`${resource.resource}: serviceSubjects ignored: ${why}`);
+    const fail = (why: string) =>
+      errors.push(`${resource.resource}: serviceSubjects ignored: ${why}`);
     if (!Array.isArray(raw)) {
       fail('serviceSubjects must be a list');
       continue;

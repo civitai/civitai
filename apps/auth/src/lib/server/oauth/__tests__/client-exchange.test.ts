@@ -139,6 +139,8 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { POST as tokenPOST } from '../../../../routes/api/auth/oauth/token/+server';
 import { parseExchangeResources } from '../exchange-resources';
+import { writeExchangeRecord } from '../token-exchange';
+import { getSigner } from '../user-exchange';
 import { ACCESS_TOKEN_TYPE, SERVICE_GRANT, TOKEN_EXCHANGE_GRANT } from '../constants';
 
 // The chain an index consumer reads through: its own token for the gateway, which the gateway exchanges
@@ -257,7 +259,10 @@ async function post(form: URLSearchParams, caller: string) {
 
 /** The index's own token for `resource` (client_credentials, service-token.ts). */
 async function serviceToken(resource = GATEWAY_RES, caller = INDEX): Promise<string> {
-  const res = await post(new URLSearchParams({ grant_type: 'client_credentials', resource }), caller);
+  const res = await post(
+    new URLSearchParams({ grant_type: 'client_credentials', resource }),
+    caller
+  );
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   return res.body.access_token as string;
 }
@@ -286,11 +291,7 @@ async function hop1(): Promise<string> {
 const refusedFor = () =>
   h.logs.filter((l) => l.event === 'client_token_exchange' && l.result === 'refused');
 
-function expectRefused(
-  res: { status: number; body: Row },
-  error: string,
-  reason: string
-) {
+function expectRefused(res: { status: number; body: Row }, error: string, reason: string) {
   expect(res.status).toBe(error === 'invalid_client' ? 401 : 400);
   expect(res.body).toEqual({ error, error_description: expect.any(String) });
   expect(res.body).not.toHaveProperty('access_token');
@@ -337,7 +338,11 @@ describe('🔴 client token exchange — an allowlisted service, on both hops', 
   });
 
   it('the index’s own token for the experimental registry is exchanged straight to the origin', async () => {
-    const res = await exchange(await serviceToken(EXP_RES, INDEX).catch(() => ''), APPS_RES, EXP_SERVER);
+    const res = await exchange(
+      await serviceToken(EXP_RES, INDEX).catch(() => ''),
+      APPS_RES,
+      EXP_SERVER
+    );
     // INDEX is not a service of EXP_RES: it cannot get that token, so this is the one-hop shape via
     // OTHER_SERVICE, which the origin does not list.
     expect(res.status).toBe(400);
@@ -406,6 +411,39 @@ describe('🔴 client token exchange — refused unless allowed', () => {
     );
   });
 
+  it('a token whose sub is its client_id but not a service client id is refused', async () => {
+    // Signed by the hub and recorded like a service token, for a client id of a user app's shape.
+    const iat = Math.floor(Date.now() / 1000);
+    const jti = `not-a-service-${iat}`;
+    const token = await getSigner()!.mintAccessTokenJwt({
+      iss: 'https://auth.test',
+      sub: APP,
+      aud: EXP_RES,
+      client_id: APP,
+      scope: 'AppsRead',
+      jti,
+      iat,
+      exp: iat + 600,
+    });
+    await writeExchangeRecord(
+      jti,
+      {
+        kind: 'service',
+        clientId: APP,
+        resource: EXP_RES,
+        scopeBits: TokenScope.AppsRead,
+        exp: iat + 600,
+      },
+      iat
+    );
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry([INDEX]);
+    expectRefused(
+      await exchange(token, APPS_RES, EXP_SERVER),
+      'invalid_grant',
+      'subject is not a service token'
+    );
+  });
+
   it('a caller that is not a relay of the target is refused', async () => {
     const forExp = await hop1();
     expectRefused(
@@ -445,6 +483,84 @@ describe('🔴 client token exchange — refused unless allowed', () => {
   });
 });
 
+/**
+ * A service token for EXP_RES as the hub would hold it, but with an expiry this test picks: signed with
+ * the hub's key and recorded, so only `exp` differs from one the service-token grant mints.
+ */
+async function serviceSubjectExpiring(inSeconds: number): Promise<{ token: string; exp: number }> {
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + inSeconds;
+  const jti = `sub-${inSeconds}-${iat}`;
+  const token = await getSigner()!.mintAccessTokenJwt({
+    iss: 'https://auth.test',
+    sub: INDEX,
+    aud: EXP_RES,
+    client_id: INDEX,
+    scope: 'AppsRead',
+    jti,
+    iat,
+    exp,
+  });
+  await writeExchangeRecord(
+    jti,
+    { kind: 'service', clientId: INDEX, resource: EXP_RES, scopeBits: TokenScope.AppsRead, exp },
+    iat
+  );
+  return { token, exp };
+}
+
+describe('🔴 client token exchange — expiry', () => {
+  it('never outlives the subject: a subject with 2 minutes left gives a token with 2 minutes', async () => {
+    const subject = await serviceSubjectExpiring(120);
+    const res = await exchange(subject.token, APPS_RES, EXP_SERVER);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const claims = decodeJwt(res.body.access_token as string);
+    expect(claims.exp).toBe(subject.exp);
+    expect(res.body.expires_in).toBeLessThanOrEqual(120);
+  });
+
+  it('never exceeds the 15-minute cap: a subject with an hour left gives a token with 15 minutes', async () => {
+    const subject = await serviceSubjectExpiring(3600);
+    const res = await exchange(subject.token, APPS_RES, EXP_SERVER);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const claims = decodeJwt(res.body.access_token as string);
+    expect(claims.exp! - claims.iat!).toBe(15 * 60);
+    expect(claims.exp!).toBeLessThan(subject.exp);
+    expect(res.body.expires_in).toBe(15 * 60);
+  });
+});
+
+describe('🔴 client token exchange — the log line', () => {
+  it('records the service, the relay and the resource (and the subject resource), never a token', async () => {
+    const forExp = await hop1();
+    h.logs = [];
+    const res = await exchange(forExp, APPS_RES, EXP_SERVER);
+    expect(res.status).toBe(200);
+    const issued = h.logs.filter((l) => l.event === 'client_token_exchange');
+    expect(issued).toHaveLength(1);
+    expect(issued[0]).toMatchObject({
+      result: 'issued',
+      service: INDEX,
+      relay: EXP_SERVER,
+      resource: APPS_RES,
+      source: EXP_RES,
+    });
+    const line = JSON.stringify(issued[0]);
+    expect(line).not.toContain(forExp);
+    expect(line).not.toContain(res.body.access_token as string);
+    // A refusal names them too.
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry(null);
+    h.logs = [];
+    await exchange(forExp, APPS_RES, EXP_SERVER);
+    expect(refusedFor().at(-1)).toMatchObject({
+      service: INDEX,
+      relay: EXP_SERVER,
+      resource: APPS_RES,
+      reason: 'service not a subject of resource',
+    });
+  });
+});
+
 describe('🔴 the user exchange is unchanged', () => {
   it('a user’s opaque token still takes the user path and mints the user format, allowlist or not', async () => {
     for (const subjects of [null, [INDEX]]) {
@@ -481,7 +597,13 @@ describe('serviceSubjects in OAUTH_EXCHANGE_RESOURCES', () => {
   const parse = (serviceSubjects: unknown) => {
     const parsed = parseExchangeResources(
       JSON.stringify([
-        { resource: APPS_RES, scopes: ['AppsRead'], apps: [APP], relays: [EXP_SERVER], serviceSubjects },
+        {
+          resource: APPS_RES,
+          scopes: ['AppsRead'],
+          apps: [APP],
+          relays: [EXP_SERVER],
+          serviceSubjects,
+        },
       ])
     );
     if ('error' in parsed) throw new Error(parsed.error);
@@ -490,6 +612,23 @@ describe('serviceSubjects in OAUTH_EXCHANGE_RESOURCES', () => {
 
   it('is empty when left out', () => {
     expect(parse(undefined).resources[0].serviceSubjects).toEqual([]);
+  });
+
+  it('is empty when left out even for a resource with services: a service is not a subject by being one', () => {
+    const parsed = parseExchangeResources(
+      JSON.stringify([
+        {
+          resource: APPS_RES,
+          scopes: ['AppsRead'],
+          apps: [APP],
+          relays: [EXP_SERVER],
+          services: [{ client: INDEX, scopes: ['AppsRead'], uid: -1201 }],
+        },
+      ])
+    );
+    if ('error' in parsed) throw new Error(parsed.error);
+    expect(parsed.resources[0].services.map((x) => x.client)).toEqual([INDEX]);
+    expect(parsed.resources[0].serviceSubjects).toEqual([]);
   });
 
   it('takes service client ids', () => {
