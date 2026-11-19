@@ -1345,14 +1345,15 @@ export const saveItemInCollections = async ({
         "${Prisma.raw(itemKey)}" INTEGER,
         "tagId" INTEGER
       )
-      -- A system (filterableOnly) tag is never written from here: such a row only re-sends an entry
-      -- its stored system tag, which the update below would keep anyway, so dropping it writes the
-      -- same; on a stale read it stops the tag landing on a new or since-cleared entry.
-      WHERE NOT EXISTS (
+      -- Only no tag or one of the collection's category tags is written from here. Any other tag (a
+      -- system tag, on the collection as filterableOnly or not on it at all) only reaches this as an
+      -- entry's stored tag sent back, which the update below keeps anyway, so dropping the row writes
+      -- the same; on a stale read it stops that tag landing on a new or since-cleared entry.
+      WHERE v."tagId" IS NULL OR EXISTS (
         SELECT 1 FROM "TagsOnCollection" tc
         WHERE tc."collectionId" = v."collectionId"
           AND tc."tagId" = v."tagId"
-          AND tc."filterableOnly"
+          AND NOT tc."filterableOnly"
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
@@ -1437,9 +1438,17 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  // The save has landed; a flag that cannot be written only leaves the next read on the replica.
   await Promise.all(
     touchedCollectionIds.map((id) =>
-      preventReplicationLag('collectionItem', collectionItemLagId(id, itemKey, input[itemKey]))
+      preventReplicationLag(
+        'collectionItem',
+        collectionItemLagId(id, itemKey, input[itemKey])
+      ).catch((error) =>
+        logSysRedisFailOpen('write-degraded', 'collection.saveItemInCollections', error, {
+          collectionId: id,
+        })
+      )
     )
   );
   if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);

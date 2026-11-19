@@ -390,6 +390,8 @@ describe('the existing entry, read right after a write', () => {
 });
 
 describe('the entry write itself, run on Postgres', () => {
+  // A collection where the same tag id is an ordinary category tag.
+  const OTHER_TAGGED_COLLECTION = 12;
   let pg: PGlite;
   beforeAll(async () => {
     pg = await PGlite.create();
@@ -403,7 +405,7 @@ describe('the entry write itself, run on Postgres', () => {
       CREATE UNIQUE INDEX ON "CollectionItem" ("collectionId", "imageId") WHERE "imageId" IS NOT NULL;
       INSERT INTO "TagsOnCollection" VALUES
         (${COLLECTION_ID}, ${TAG_A}, false), (${COLLECTION_ID}, ${TAG_B}, false),
-        (${COLLECTION_ID}, ${SYSTEM_TAG}, true);
+        (${COLLECTION_ID}, ${SYSTEM_TAG}, true), (${OTHER_TAGGED_COLLECTION}, ${SYSTEM_TAG}, false);
     `);
   });
   afterAll(() => pg.close());
@@ -445,5 +447,55 @@ describe('the entry write itself, run on Postgres', () => {
   it('writes a category tag (control)', async () => {
     mockDbRead.collectionItem.findMany.mockResolvedValue([]);
     expect(await runSave(TAG_B, null)).toEqual([{ tagId: TAG_B }]);
+  });
+
+  it('does not re-create a removed entry with a stored tag the collection does not list', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: 77, addedById: AUTHOR_ID, note: null },
+    ]);
+    expect(await runSave(TAG_B, null)).toEqual([]);
+  });
+
+  it("judges the tag by the entry's own collection", async () => {
+    await pg.exec('DELETE FROM "CollectionItem"');
+    // The service's statement for a save of SYSTEM_TAG into the collection that lists it as a
+    // category tag must write it.
+    mockDbRead.collection.findMany.mockResolvedValue([
+      {
+        ...collectionRow({ disableTagRequired: true }),
+        id: OTHER_TAGGED_COLLECTION,
+        tags: [{ tag: { id: SYSTEM_TAG, name: 'Judged' }, filterableOnly: false }],
+      },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: OTHER_TAGGED_COLLECTION,
+        read: 'Public',
+        write: 'Public',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    await saveItemInCollections({
+      input: {
+        type: 'Image',
+        userId: AUTHOR_ID,
+        imageId: IMAGE_ID,
+        collections: [{ collectionId: OTHER_TAGGED_COLLECTION, tagId: SYSTEM_TAG }],
+        removeFromCollectionIds: [],
+      } as never,
+    });
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = Prisma.sql(strings, ...values);
+    await pg.query(sql.text, sql.values as unknown[]);
+    const rows = (await pg.query<{ tagId: number }>('SELECT "tagId" FROM "CollectionItem"')).rows;
+    expect(rows).toEqual([{ tagId: SYSTEM_TAG }]);
   });
 });
