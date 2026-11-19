@@ -59,6 +59,7 @@ const verifyToken: VerifyToken = async (token) =>
   token === 'good-token'
     ? {
         subject: 'user:4711/client:9',
+        userId: 4711,
         clientId: '9',
         scope: 0n,
         actor: null,
@@ -308,6 +309,7 @@ describe('🔴 shadow mode never changes the live decision (gRPC)', () => {
 describe('the comparison', () => {
   const principal = (subject: string | null, audience: Audience): Principal => ({
     subject,
+    token: null,
     audience,
     expiresAt: null,
     recheck: null,
@@ -488,6 +490,7 @@ describe('the comparison', () => {
 describe('the in-flight cap', () => {
   const p = (): Principal => ({
     subject: null,
+    token: null,
     audience: ANONYMOUS_AUDIENCE,
     expiresAt: null,
     recheck: null,

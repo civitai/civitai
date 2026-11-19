@@ -144,6 +144,7 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
       if (!hasScope({ scope }, 'AppsRead')) return null;
       return {
         subject: `service:${clientId}`,
+        userId: null,
         clientId,
         scope,
         actor: actorOf(act),
@@ -157,6 +158,7 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
     if (!user) return null;
     return {
       subject: `user:${userId}/client:${clientId}`,
+      userId,
       clientId,
       scope: scopeGrantBits(payload.scope),
       actor: actorOf(act),

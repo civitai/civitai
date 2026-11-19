@@ -17,8 +17,9 @@ const ROUTER = 'server/routers/blocks.router.ts';
 const LISTING_PROCEDURE = 'getStorageImports';
 
 describe('the collection-read predicate and the import grants it reads', () => {
-  it('decideCollectionRead is imported by the document-store resolver only', () => {
+  it('decideCollectionRead is imported by the document-store resolver and the registry private feed only', () => {
     expect(importersOf('server/services/apps/data-read-grant', 'decideCollectionRead')).toEqual([
+      'server/registry-adapter/private-feed.live.ts',
       'server/services/apps/doc-store-access.ts',
     ]);
   });

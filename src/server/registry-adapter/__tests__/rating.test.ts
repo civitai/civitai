@@ -224,6 +224,7 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:7/client:a',
+      userId: 7,
       clientId: 'a',
       scope: 0n,
       actor: null,
@@ -237,6 +238,7 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:8/client:a',
+      userId: 8,
       clientId: 'a',
       scope: 0n,
       actor: null,
@@ -247,6 +249,7 @@ const verifyToken = async (token: string) => {
   if (token.startsWith('soon-token:')) {
     return {
       subject: 'user:5/client:a',
+      userId: 5,
       clientId: 'a',
       scope: 0n,
       actor: null,
@@ -258,6 +261,7 @@ const verifyToken = async (token: string) => {
   return t
     ? {
         subject: t.subject,
+        userId: Number(/^user:(\d+)\//.exec(t.subject)?.[1]),
         clientId: 'a',
         scope: 0n,
         actor: null,
@@ -910,6 +914,7 @@ describe('the re-check is jittered, so streams opened together do not re-check t
         let calls = 0;
         const principal: Principal = {
           subject: 'user:9/client:a',
+          token: { userId: 9, clientId: 'a', scope: 0n, actor: null },
           audience: ANONYMOUS_AUDIENCE,
           expiresAt: null,
           recheck: async (): Promise<Recheck> => {
