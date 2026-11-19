@@ -2,7 +2,7 @@
 
 > Deal files are deleted 30 days after a deal is declined, expires or is canceled, and 90 days after a completed deal's dispute window ends. Download anything you want to keep.
 
-That line is shown beside the files on a completed deal (`SERVICE_DEAL_FILE_RETENTION_NOTICE`).
+That line is shown beside the files, and the buyer's attachments, on any closed deal: declined, expired, canceled or completed (`SERVICE_DEAL_FILE_RETENTION_NOTICE`).
 
 - **Windows:** `SERVICE_DEAL_FILE_RETENTION_CLOSED_MS` and `SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS`, never counted from before `SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT` (2026-11-25), so files on deals that closed before the notice shipped get their full window from then.
 - **Which files:** all of a deal's files, meaning the seller's previews and finals and the buyer's attachments.

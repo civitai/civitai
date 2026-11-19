@@ -27,6 +27,7 @@ import {
   finalsCopy,
   sellerFileStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
   previewAccept,
   uploadSlotsLeft,
@@ -72,7 +73,7 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>Delivery</Text>
-        {deal.status === 'Completed' && files.length > 0 && (
+        {showsRetentionNotice(deal.status) && files.length > 0 && (
           <Text size="xs" c="dimmed">
             {SERVICE_DEAL_FILE_RETENTION_NOTICE}
           </Text>
