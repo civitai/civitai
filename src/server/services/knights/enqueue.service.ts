@@ -35,6 +35,7 @@ export type EnqueueRefusal =
   | 'held-for-review'
   | 'not-servable'
   | 'no-post'
+  | 'unpublished'
   | 'publishes-after-expiry';
 
 export type EnqueueOptions = {
@@ -44,14 +45,24 @@ export type EnqueueOptions = {
    */
   servableOnly?: boolean;
   /**
-   * Refuse images with no post. Intake passes it: an image rarely gains a post after its scan,
-   * while drafts and scheduled posts often publish later, so those still queue. A post scheduled
-   * to publish after the item would close unvoted (`knightsLatestStageEnd`) is refused too
-   * (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still queue;
-   * the Knights tick closes a scan sample still on a draft 24h later (`unpublished-draft`), and
-   * nothing re-queues it.
+   * Refuse images with no post. Owner ratings pass it: an image rarely gains a post after its
+   * scan, while drafts and scheduled posts often publish later, so those still queue. A post
+   * scheduled to publish after the item would close unvoted (`knightsLatestStageEnd`) is refused
+   * too (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still
+   * queue.
    */
   requirePost?: boolean;
+  /**
+   * Refuse images whose post is not live at `now`: a draft or a later date (`unpublished`). Scan
+   * sampling passes it; the publish sweep samples the post once it goes live.
+   */
+  requirePublished?: boolean;
+  /**
+   * Treat an image that ever had an item for the question, in any status, as a `duplicate`, not
+   * only one still open. Hidden-check copies do not count. Sampling passes it, so an image is
+   * sampled at most once however often it is scanned or published.
+   */
+  oncePerImage?: boolean;
 };
 
 export type EnqueueOutcome = { imageId: number } & (
@@ -75,7 +86,12 @@ export async function enqueueKnightsItems(
   db: Kysely<DB>,
   input: EnqueueInput,
   now: Date = new Date(),
-  { servableOnly = false, requirePost = false }: EnqueueOptions = {}
+  {
+    servableOnly = false,
+    requirePost = false,
+    requirePublished = false,
+    oncePerImage = false,
+  }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
     input.items.map((item) => ({ imageId: item.imageId, outcome: 'refused', reason }));
@@ -147,7 +163,12 @@ export async function enqueueKnightsItems(
     if (image === undefined) return refuse('image-not-found');
     if (image.held) return refuse('held-for-review');
     if (servableOnly && !image.servable) return refuse('not-servable');
-    if (requirePost && !image.hasPost) return refuse('no-post');
+    if ((requirePost || requirePublished) && !image.hasPost) return refuse('no-post');
+    if (
+      requirePublished &&
+      (image.publishesAt === null || image.publishesAt.getTime() > now.getTime())
+    )
+      return refuse('unpublished');
     if (
       requirePost &&
       expiresAt &&
@@ -194,7 +215,7 @@ export async function enqueueKnightsItems(
         SELECT 1 FROM "KnightsQueueItem" e
         WHERE e."questionKey" = ${input.questionKey}
           AND e."imageId" = v."imageId"
-          AND e."status" IN ('Open', 'Inquisitor', 'Ruling')
+          AND (${sql.lit(oncePerImage)} OR e."status" IN ('Open', 'Inquisitor', 'Ruling'))
           AND NOT e."isHiddenCheck"
       )
       ON CONFLICT DO NOTHING

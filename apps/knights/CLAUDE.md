@@ -124,7 +124,7 @@ Tables `KnightsReferenceImage`, `KnightsHarvestCursor` (migration `2026121012000
 
 ## Sources (queue producers)
 
-Queue producers (moderator enqueue endpoint, scan sampling, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`).
+Queue producers (moderator enqueue endpoint, sampling, which takes an image once its post is live (at scan, or by the main app's `knights-publish-sampling` job) and at most once per image, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`).
 
 ## Wired packages
 

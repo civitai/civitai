@@ -8,9 +8,17 @@ import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { enqueueKnightsItems } from '~/server/services/knights/enqueue.service';
+import {
+  enqueueKnightsItems,
+  type EnqueueOptions,
+} from '~/server/services/knights/enqueue.service';
+import {
+  KNIGHTS_SAMPLE_ENQUEUE_OPTIONS,
+  KNIGHTS_SOURCE_SCAN_SAMPLE,
+  knightsSampleDraw,
+} from '~/server/services/knights/sampling';
 
-export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
+export { KNIGHTS_SOURCE_SCAN_SAMPLE };
 export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
 
 export { parseKnightsSourcesConfig, type KnightsSourcesConfig };
@@ -131,6 +139,7 @@ async function enqueueFromSource(
   type: string,
   source: string,
   item: { imageId: number; priority: 1 | 2 | 3 },
+  options: EnqueueOptions,
   shouldEnqueue: (config: KnightsSourcesConfig) => boolean | Promise<boolean>
 ): Promise<void> {
   try {
@@ -144,7 +153,7 @@ async function enqueueFromSource(
         items: [item],
       },
       undefined,
-      { requirePost: true }
+      options
     );
   } catch (error) {
     logToAxiom(
@@ -154,17 +163,22 @@ async function enqueueFromSource(
   }
 }
 
+/**
+ * Samples a scanned image whose post is already live; one on a draft or scheduled post is refused (`unpublished`) and
+ * left to the publish sweep (`sampleNewlyLivePostsForKnights`), which samples it when the post goes live.
+ */
 export function queueScanSampleForKnights(
   { imageId, nsfw }: { imageId: number; nsfw: boolean },
-  random: () => number = Math.random
+  draw: (imageId: number) => number = knightsSampleDraw
 ): Promise<void> {
   return enqueueFromSource(
     'knights-v2-scan-sample-error',
     KNIGHTS_SOURCE_SCAN_SAMPLE,
     { imageId, priority: nsfw ? 2 : 1 },
+    KNIGHTS_SAMPLE_ENQUEUE_OPTIONS,
     // Only sampling is throttled: owner ratings below always enqueue.
     async (config) =>
-      random() < (nsfw ? config.nsfwRate : config.sfwRate) && !(await overIntakeCap(config))
+      draw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate) && !(await overIntakeCap(config))
   );
 }
 
@@ -173,6 +187,7 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
     'knights-v2-owner-rating-error',
     KNIGHTS_SOURCE_OWNER_RATING,
     { imageId, priority: 1 },
+    { requirePost: true },
     () => true
   );
 }

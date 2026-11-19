@@ -384,6 +384,90 @@ describe('enqueueKnightsItems', () => {
     expect(outcome.outcome).toBe('duplicate');
   });
 
+  it('refuses an image whose post is a draft or not live yet when the caller requires a published post, and queues live ones', async () => {
+    // NOW is 2026-12-11 10:00 UTC.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES
+        (10, '2026-12-11 09:59:00'), (20, NULL), (30, '2026-12-11 10:01:00'), (40, '2026-12-11 10:00:00');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 40 WHERE id = 4;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'scan-sample',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 99].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePost: true, requirePublished: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 3, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 4, outcome: 'enqueued' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1, 4]);
+  });
+
+  it.each(['Closed', 'Resolved', 'Open'])(
+    'never queues an image a second time once it had an item in any status (%s) when the caller asks for once per image',
+    async (status) => {
+      await enqueueKnightsItems(
+        db,
+        { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+        NOW
+      );
+      await pg.query(`UPDATE "KnightsQueueItem" SET "status" = $1`, [status]);
+
+      const outcomes = await enqueueKnightsItems(
+        db,
+        {
+          source: 'scan-sample',
+          questionKey: Q,
+          items: [
+            { imageId: 1, priority: 1 },
+            { imageId: 2, priority: 1 },
+          ],
+        },
+        NOW,
+        { oncePerImage: true }
+      );
+
+      expect(outcomes).toMatchObject([
+        { imageId: 1, outcome: 'duplicate' },
+        { imageId: 2, outcome: 'enqueued' },
+      ]);
+      expect((await items()).map((i) => [i.imageId, i.status])).toEqual([
+        [1, status],
+        [2, 'Open'],
+      ]);
+    }
+  );
+
+  it('does not count a hidden-check copy of an image as its rating item for once per image', async () => {
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","status","isHiddenCheck")
+       VALUES ($1, 1, 'harvest', 'Knight', 5, 'Closed', true)`,
+      [Q]
+    );
+
+    const [outcome] = await enqueueKnightsItems(
+      db,
+      { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW,
+      { oncePerImage: true }
+    );
+
+    expect(outcome.outcome).toBe('enqueued');
+  });
+
   it('refuses what the queue could not serve, per item, and still writes the rest', async () => {
     const outcomes = await enqueueKnightsItems(
       db,
