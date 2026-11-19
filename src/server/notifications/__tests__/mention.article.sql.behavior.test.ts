@@ -153,6 +153,12 @@ describe('article @mentions', () => {
     expect(await recipients()).toEqual([2]);
   });
 
+  it('an article stamped well before the lookback is not re-read', async () => {
+    const tenBefore = `'${LAST_SENT}'::timestamp - interval '10 minutes'`;
+    await article([2], { '"publishedAt"': tenBefore, '"updatedAt"': tenBefore });
+    expect(await recipients()).toEqual([]);
+  });
+
   it('a re-scan stamped just before the last run still re-reads the article', async () => {
     await article([2], {
       '"publishedAt"': `now() - interval '20 days'`,
