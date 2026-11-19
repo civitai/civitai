@@ -744,6 +744,10 @@ describe('approving an appeal on an image an account deletion blocked', () => {
   it.each([
     ['minor', 'minor'],
     ['poi', 'poi'],
+    ['modRule', 'modRule'],
+    ['tag', 'tag'],
+    ['remixSource', 'remixSource'],
+    ['newUser', 'newUser'],
     // The appeal is what the approval settles; a dismissed csam review is not put back.
     ['appeal', null],
     ['csam', null],
