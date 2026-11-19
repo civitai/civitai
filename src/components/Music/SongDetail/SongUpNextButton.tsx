@@ -4,12 +4,15 @@ import { IconPlaylist } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
+import { MusicUpNextSheet } from '~/components/MusicPlayer/MusicUpNextSheet';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 
 /**
- * The song detail view's Up next button (Pencil `bgZ7u`): opens the global player's Up next panel.
+ * The song detail view's Up next button (Pencil `bgZ7u`): opens the global player's Up next panel,
+ * or on a phone (where the player is the mini bar) its Up next sheet.
  * Shown only while the player has a song; the queue stays the player's either way.
  */
 export function SongUpNextButton({ buttonProps }: { buttonProps?: Partial<ButtonProps> }) {
@@ -49,5 +52,7 @@ function UpNext({
   onClose: () => void;
 }) {
   const { accent } = useMusicPlayerCover(current.id);
+  const phone = useIsMobile({ type: 'media' });
+  if (phone) return <MusicUpNextSheet current={current} accent={accent} opened onClose={onClose} />;
   return <MusicUpNextPanel current={current} accent={accent} ignore={ignore} onClose={onClose} />;
 }
