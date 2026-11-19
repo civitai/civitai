@@ -182,7 +182,8 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { purgeFeedbackCaptures } from '~/server/jobs/purge-feedback-captures';
-import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { imageStorageDeletes } from '~/server/jobs/image-storage-deletes';
+import { imageDeletes } from '~/server/jobs/image-deletes';
 import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
@@ -230,7 +231,8 @@ export const jobs: Job[] = [
   missedNotificationDigest,
   removeReplacedImages,
   purgeFeedbackCaptures,
-  retryImageStorageDeletes,
+  imageStorageDeletes,
+  imageDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,

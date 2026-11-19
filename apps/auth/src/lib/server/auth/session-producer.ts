@@ -17,7 +17,7 @@ import { SYSTEM_WORKLOAD_ROLE } from '../oauth/constants';
 // (session:data2:{userId}) that every consumer reads. Consumers — including the main app — now only READ
 // this cache (createSessionClient); the former main-app compute (src/server/auth/session-user.ts) is gone.
 
-// The picture aliased `held` is under an owner-hidden review hold or carries a block marker.
+// Expects the Image alias to be "held".
 const heldPictureWithheld = sql<boolean>`(
   held."needsReview" IN (${sql.join(OWNER_HIDDEN_REVIEWS)}) OR ${sql.raw(blockMarkerText('held'))}
 )`;

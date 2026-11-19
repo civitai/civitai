@@ -1,8 +1,9 @@
 # CommentV3 write flip: every read-flipped surface
 
-Status: **release 1 merged; release 2 built, not deployed** (release 1 2026-11-03, release 2
-2026-11-05; the dev rollback rehearsal passed 2026-11-05). Follows `comments-v3-article-flip.md`. Model
-comments are not in this flip: they move last, reads and writes together, once this one has shipped.
+Status: **both releases deployed** (release 1 merged 2026-11-05 in #7913, release 2 merged
+2026-11-06 in #8035, both deployed by 2026-11-10; the dev rollback rehearsal passed 2026-11-05).
+Follows `comments-v3-article-flip.md`. Model comments are not in this flip: they move last, reads
+and writes together, once this one has shipped.
 
 > **Superseded in part by `comments-v3-phase5.md`.** Phase 5 removes the surface switches
 > (`v3ReadSurfaces`/`v3WriteSurfaces`), the old-row sync, the reverse copy (so there is no rollback
@@ -123,7 +124,7 @@ comic chapter comments are not tracked, because `CommentType` has no value for t
 
 **Release 1**, the flip off: everything above. No migration.
 
-**Release 2**, the flip (built 2026-11-05, not deployed): `v3WriteSurfaces` copies
+**Release 2**, the flip (built 2026-11-05, deployed by 2026-11-10): `v3WriteSurfaces` copies
 `v3ReadSurfaces`, so every surface but model writes CommentV3; `comics.createChapterComment` is
 removed; `writeJudgeComment` writes CommentV3 only; and `upsertComment` is deleted with the rest of
 the v2 write path (below), so only the `commentv3` controller awards comment event points.

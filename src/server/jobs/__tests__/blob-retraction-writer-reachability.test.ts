@@ -180,7 +180,7 @@ const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 function retractionFor(id: number) {
   const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
   if (!call) return undefined;
-  return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
+  return Boolean((call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
 /** The images persisted after their delete. */
@@ -203,7 +203,7 @@ afterEach(() => {
   for (const call of mockDeleteImages.mock.calls) {
     const ids = call[0] as number[];
     const retracts = Boolean(
-      (call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
+      (call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs
     );
     for (const id of ids)
       expect(persisted().has(id), `persist differs from retraction for image ${id}`).toBe(retracts);
