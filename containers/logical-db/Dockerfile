@@ -1,3 +1,3 @@
-FROM postgres:15-bookworm@sha256:cf7f8fb958c63e62875e30645dc4819ff0243a923f3c709e752b99dedd40bfcd
+FROM postgres:15-bookworm@sha256:8180c3e1b9b603d2988f937dfbe51008bad5c4b07c77f35119695c027a7315ab
 COPY ./docker-init/*.sql /docker-entrypoint-initdb.d/
 RUN chmod a+r /docker-entrypoint-initdb.d/*
