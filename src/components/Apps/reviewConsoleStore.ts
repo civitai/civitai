@@ -102,14 +102,15 @@ export function sdkForwardsReviewErrors(sdk: ReviewConsoleSdk): boolean {
   return !have[3];
 }
 
-const SDK_PACKAGES: Record<string, string> = {
-  sdk: '@civitai/sdk',
-  'blocks-react': '@civitai/blocks-react',
-};
-
 /** "@civitai/sdk 0.28.0": the SDK as its package; an unknown name is shown as sent. */
 export function sdkPackageLabel(sdk: ReviewConsoleSdk): string {
-  const name = sdk.name ? SDK_PACKAGES[sdk.name] ?? sdk.name : 'an SDK that does not name itself';
+  // The package names live in REVIEW_CONSOLE_MIN_SDKS only, so a new SDK is named and cut off
+  // in one place. `hasOwn`, so an app-sent name cannot reach an inherited property.
+  const name = !sdk.name
+    ? 'an SDK that does not name itself'
+    : Object.hasOwn(REVIEW_CONSOLE_MIN_SDKS, sdk.name)
+    ? REVIEW_CONSOLE_MIN_SDKS[sdk.name]!.packageName
+    : sdk.name;
   return sdk.version ? `${name} ${sdk.version}` : name;
 }
 

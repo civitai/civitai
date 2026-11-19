@@ -84,6 +84,12 @@ describe('the SDK notice, pinned whole', () => {
     );
   });
 
+  test('an app-sent name that is an Object.prototype key is an unknown SDK, not a lookup hit', () => {
+    expect(reviewConsoleSdkNotice({ name: 'constructor', version: '1.0.0' })).toBe(
+      "This app's SDK (constructor 1.0.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0 or @civitai/blocks-react 0.85.0."
+    );
+  });
+
   test('🔴 @civitai/blocks-react at its cut-off gets no notice', () => {
     expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.85.0' })).toBeNull();
   });
