@@ -1,10 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import {
-  decideCollectionRead,
-  type DataReader,
-} from '~/server/services/apps/data-read-grant';
+import { decideCollectionRead, type DataReader } from '~/server/services/apps/data-read-grant';
 
 /**
  * The collection-read predicate, directly: each basis (own, grant) and each refusal, reached
