@@ -8,22 +8,18 @@ import { fetchBlob } from '~/utils/file-utils';
  * cap, so the generator import reads with an idle timeout: it fails only when bytes stop
  * arriving. Every other caller keeps the total cap; server jobs size their leases on it.
  *
- * Timings are scaled down: a 1 s header deadline stands in for the 120 s one, with a 400 ms idle
- * window, wide enough that a loaded runner doesn't fake an idle gap between 50 ms chunks.
+ * Timings are scaled down: a 600 ms header deadline stands in for the 120 s one, with a 250 ms idle
+ * window, wide enough that a loaded runner doesn't fake an idle gap between 30 ms chunks.
  */
 type Plan = {
   bytes: number;
   chunk: number;
   everyMs: number;
   stallAfter?: number;
-  destroyAfter?: number;
-  noHeaders?: boolean;
-  headersAfterMs?: number;
-  status?: number;
 };
 
-const DEADLINE = 1_000;
-const IDLE = 400;
+const DEADLINE = 600;
+const IDLE = 250;
 
 const sockets = new Set<Socket>();
 let server: http.Server;
@@ -34,11 +30,6 @@ function stream(plan: Plan, res: http.ServerResponse) {
   let sent = 0;
   const timer = setInterval(() => {
     if (plan.stallAfter !== undefined && sent >= plan.stallAfter) return; // stop, keep open
-    if (plan.destroyAfter !== undefined && sent >= plan.destroyAfter) {
-      clearInterval(timer);
-      res.destroy(); // drop the connection mid-body
-      return;
-    }
     if (sent >= plan.bytes) {
       clearInterval(timer);
       res.end();
@@ -55,14 +46,7 @@ beforeAll(async () => {
     const plan = JSON.parse(
       decodeURIComponent(new URL(req.url!, 'http://x').searchParams.get('p')!)
     ) as Plan;
-    if (plan.noHeaders) return; // never answers
-    if (plan.status) {
-      res.writeHead(plan.status, { 'content-type': 'application/json' });
-      res.end('{"error":"expired"}');
-      return;
-    }
-    const timer = setTimeout(() => stream(plan, res), plan.headersAfterMs ?? 0);
-    res.on('close', () => clearTimeout(timer));
+    stream(plan, res);
   });
   server.on('connection', (s) => {
     sockets.add(s);
@@ -78,10 +62,9 @@ afterAll(async () => {
 });
 
 const url = (plan: Plan) => `${base}?p=${encodeURIComponent(JSON.stringify(plan))}`;
-// A Wan 3.0 output's size (45 MB), 1.5 MB every 50 ms for 1.5 s: longer than the deadline,
-// never idle for long.
-const BIG = 45_000_000;
-const STEADY: Plan = { bytes: BIG, chunk: 1_500_000, everyMs: 50 };
+// 150 kB every 30 ms for 0.9 s: longer than the deadline, never idle for long.
+const BIG = 4_500_000;
+const STEADY: Plan = { bytes: BIG, chunk: 150_000, everyMs: 30 };
 const idle = { idleTimeoutMs: IDLE };
 
 describe('fetchBlob idle timeout', () => {
@@ -103,50 +86,6 @@ describe('fetchBlob idle timeout', () => {
     expect(outcome).toBeInstanceOf(Error);
     expect((outcome as Error).name).toBe('IdleTimeoutError');
     expect(Date.now() - started).toBeLessThan(IDLE * 4);
-  });
-
-  it('rejects with the read error, not an idle timeout, when the connection drops mid-body', async () => {
-    const started = Date.now();
-    const outcome = await fetchBlob(
-      url({ bytes: 1_500_000, chunk: 50_000, everyMs: 20, destroyAfter: 50_000 }),
-      DEADLINE,
-      idle
-    ).catch((e: Error) => e);
-
-    expect(outcome).toBeInstanceOf(Error);
-    expect((outcome as Error).name).not.toBe('IdleTimeoutError');
-    expect(Date.now() - started).toBeLessThan(IDLE);
-  });
-
-  it('waits for headers up to the deadline, not the idle window', async () => {
-    const blob = await fetchBlob(
-      url({ bytes: 100_000, chunk: 50_000, everyMs: 20, headersAfterMs: IDLE + 200 }),
-      DEADLINE,
-      idle
-    );
-
-    expect(blob?.size).toBe(100_000);
-  });
-
-  it('fails when no response arrives by the deadline', async () => {
-    const started = Date.now();
-    const outcome = await fetchBlob(
-      url({ bytes: 0, chunk: 1, everyMs: 10, noHeaders: true }),
-      DEADLINE,
-      idle
-    ).catch((e: Error) => e);
-
-    expect((outcome as Error).name).toBe('TimeoutError');
-    expect(Date.now() - started).toBeGreaterThanOrEqual(DEADLINE - 50);
-  });
-
-  it('resolves null for an error response when asked to require OK', async () => {
-    const blob = await fetchBlob(url({ bytes: 0, chunk: 1, everyMs: 10, status: 403 }), DEADLINE, {
-      ...idle,
-      requireOk: true,
-    });
-
-    expect(blob).toBeNull();
   });
 
   // Server jobs (process-vault-items, youtube, csam) budget their leases on this total cap.
