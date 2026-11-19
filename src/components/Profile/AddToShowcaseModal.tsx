@@ -1,11 +1,12 @@
 import { Badge, Group, Modal, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useAddToTopShowcase } from '~/components/Profile/AddToShowcaseMenuItem';
+import type { ShowcaseEntityType } from '~/components/Profile/AddToShowcaseMenuItem';
+import { addsToTopShowcase, useAddToTopShowcase } from '~/components/Profile/AddToShowcaseMenuItem';
 import { showcaseSectionLimits } from '~/server/schema/user-profile.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Props = { imageId: number; username: string };
+type Props = { entityType: ShowcaseEntityType; entityId: number; username: string };
 
 type Row = {
   key: string;
@@ -16,11 +17,11 @@ type Row = {
   onPick: () => Promise<boolean>;
 };
 
-export default function AddToShowcaseModal({ imageId, username }: Props) {
+export default function AddToShowcaseModal({ entityType, entityId, username }: Props) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const { data: user } = trpc.userProfile.get.useQuery({ username });
-  const topShowcase = useAddToTopShowcase('Image');
+  const topShowcase = useAddToTopShowcase(entityType);
   const addToSection = trpc.userProfile.addToShowcaseSection.useMutation({
     onSuccess: async ({ sections }) => {
       utils.userProfile.get.setData({ username }, (old) =>
@@ -34,29 +35,35 @@ export default function AddToShowcaseModal({ imageId, username }: Props) {
 
   const showcaseItems = user?.profile?.showcaseItems ?? [];
   const rows: Row[] = [
-    {
-      key: 'top',
-      title: 'Showcase (top of profile)',
-      state: showcaseItems.some((item) => item.entityType === 'Image' && item.entityId === imageId)
-        ? 'Added'
-        : undefined,
-      onPick: () => topShowcase.add(imageId),
-    },
+    ...(addsToTopShowcase(entityType)
+      ? [
+          {
+            key: 'top',
+            title: 'Showcase (top of profile)',
+            state: showcaseItems.some(
+              (item) => item.entityType === entityType && item.entityId === entityId
+            )
+              ? ('Added' as const)
+              : undefined,
+            onPick: () => topShowcase.add(entityId),
+          },
+        ]
+      : []),
     ...(user?.profile?.showcaseSections ?? [])
-      .filter((section) => section.type === 'Image')
+      .filter((section) => section.type === entityType)
       .map(
         (section): Row => ({
           key: section.id,
           title: section.title,
           count: `${section.items.length}/${showcaseSectionLimits.items}`,
-          state: section.items.includes(imageId)
+          state: section.items.includes(entityId)
             ? 'Added'
             : section.items.length >= showcaseSectionLimits.items
             ? 'Full'
             : undefined,
           onPick: () =>
             addToSection
-              .mutateAsync({ sectionId: section.id, entityType: 'Image', entityId: imageId })
+              .mutateAsync({ sectionId: section.id, entityType, entityId })
               .then(() => {
                 showSuccessNotification({ message: `Added to ${section.title}` });
                 return true;
