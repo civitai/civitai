@@ -50,6 +50,7 @@ const AMOUNTS = [0, 1, 2, 3, 7, 19, 20, 49, 50, 99, 100, 101, 333, 1_000, 123_45
 
 describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
   it('never pays out more than the placer spent, at any configured rate', () => {
+    const failures: string[] = [];
     for (const amount of AMOUNTS)
       for (const outcome of OUTCOMES)
         for (const declineFeeRate of RATES)
@@ -65,15 +66,17 @@ describe('splitPlacementPayment — the Buzz-conservation invariant', () => {
                 platformShare,
               });
               const paidOut = split.toOwner + split.toSeller + split.toPlatform + split.toPlacer;
-              const label = `${outcome} amount=${amount} decline=${declineFeeRate} seller=${sellerShare} platform=${platformShare}`;
-
-              expect(paidOut, `paid out ${paidOut} for ${amount} — ${label}`).toBe(amount);
-              for (const [part, value] of Object.entries(split))
-                expect(
-                  Number.isSafeInteger(value) && value >= 0,
-                  `${part}=${value} — ${label}`
-                ).toBe(true);
+              const bad = Object.entries(split).filter(
+                ([, value]) => !(Number.isSafeInteger(value) && value >= 0)
+              );
+              if (paidOut !== amount || bad.length)
+                failures.push(
+                  `${outcome} amount=${amount} decline=${declineFeeRate} seller=${sellerShare} platform=${platformShare}: paid out ${paidOut}, ${JSON.stringify(
+                    split
+                  )}`
+                );
             }
+    expect(failures).toEqual([]);
   });
 
   it('refuses out-of-range input rather than clamping it', () => {
