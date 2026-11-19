@@ -198,3 +198,21 @@ describe('a moderator on a narrower credential', () => {
     }
   );
 });
+
+describe('the post owner on a narrower credential', () => {
+  const scopedKey = {
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope: 1n,
+  };
+  it('reads as signed out: no unpublished post, no owner image view', async () => {
+    postIs({ published: false });
+    expect(await detailsFor(SELF)).not.toEqual(MISSING);
+    const scoped = await getPostContestCollectionDetailsHandler({
+      input: { id: POST_ID },
+      ctx: { user: SELF, ...scopedKey } as never,
+    });
+    expect(scoped).toEqual(MISSING);
+  });
+});

@@ -2572,11 +2572,11 @@ export const getPostContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-  ownerView = true,
+  ownerView = false,
 }: GetByIdInput & {
   userId?: number;
   isModerator?: boolean;
-  /** False on a narrower credential: the cover is judged as for a stranger. */
+  /** The owner's view: only on a session or a full-access key. */
   ownerView?: boolean;
 }) => {
   const post = await dbRead.post.findUnique({
@@ -2598,7 +2598,7 @@ export const getPostContestCollectionDetails = async ({
   });
   // A collection whose items the viewer may not read answers as none. The post's owner submitted
   // it, so they always see it.
-  const isPostOwner = !!userId && userId === post.userId;
+  const isPostOwner = ownerView && !!userId && userId === post.userId;
   if (!isPostOwner && !canReadCollectionItems(permissions))
     return {
       collection: null,
@@ -2630,7 +2630,7 @@ export const getPostContestCollectionDetails = async ({
     ? [
         ...(await getImageIdsVisibleToViewer({
           ids: images.map((i) => i.id),
-          userId,
+          userId: ownerView ? userId : undefined,
           isModerator,
         })),
       ]

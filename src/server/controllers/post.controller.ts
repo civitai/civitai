@@ -956,13 +956,15 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const visible = await assertPostVisibleToViewer({ ...input, user: ctx.user }).catch((e) => {
+    const views = credentialViews(ctx);
+    // Owner and moderator rights only on a session or a full-access key: otherwise read as signed out.
+    const viewer = views.asOwner ? ctx.user : undefined;
+    const visible = await assertPostVisibleToViewer({ ...input, user: viewer }).catch((e) => {
       if (e instanceof TRPCError && e.code === 'NOT_FOUND') return null;
       throw e;
     });
     if (!visible) return { collection: null, permissions: null, items: [] };
 
-    const views = credentialViews(ctx);
     return await getPostContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
