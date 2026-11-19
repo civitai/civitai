@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { constants } from '~/server/common/constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const session = vi.hoisted(() => ({ user: null as Record<string, unknown> | null }));
 
 // Module-scope allowlists and the router tree; none of them derive the credential fields.
 vi.mock('~/server/utils/origin-helpers', () => ({
@@ -13,7 +16,7 @@ vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => null),
+  getServerAuthSession: vi.fn(async () => (session.user ? { user: session.user } : null)),
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsLazy: vi.fn(() => ({})),
@@ -62,5 +65,54 @@ describe('createContext credential fields', () => {
     expect(ctx.apiKeyId).toBeUndefined();
     expect(ctx.apiKeyType).toBeUndefined();
     expect(ctx.subject).toBeUndefined();
+  });
+});
+
+const userKey = (tokenScope: bigint, id = 5) => ({
+  tokenScope,
+  apiKeyId: id,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id },
+});
+
+async function moderatorFlag(user: Record<string, unknown>, credential?: Record<string, unknown>) {
+  session.user = user;
+  try {
+    return (await createContext({ req: req(credential), res: res() })).user?.isModerator;
+  } finally {
+    session.user = null;
+  }
+}
+
+const moderator = { id: 42, isModerator: true };
+
+describe('createContext moderator rights by credential', () => {
+  it('keeps them on a browser session', async () => {
+    expect(await moderatorFlag(moderator)).toBe(true);
+  });
+
+  it('keeps them on a full-scope personal key', async () => {
+    expect(await moderatorFlag(moderator, userKey(TokenScope.Full))).toBe(true);
+  });
+
+  it('withholds them on a scoped personal key', async () => {
+    expect(await moderatorFlag(moderator, userKey(TokenScope.MediaRead))).toBe(false);
+  });
+
+  it('withholds them on an app token, even a full-scope one', async () => {
+    const oauth = { ...userKey(TokenScope.Full), subject: { type: 'oauth', id: 'client-abc' } };
+    expect(await moderatorFlag(moderator, oauth)).toBe(false);
+  });
+
+  it("keeps the system account's on its read-scoped keys", async () => {
+    const system = { id: constants.system.user.id, isModerator: true };
+    expect(await moderatorFlag(system, userKey(TokenScope.UserRead, 9))).toBe(true);
+  });
+
+  it('leaves the rest of the viewer as the session has it', async () => {
+    session.user = { ...moderator, username: 'mod' };
+    const ctx = await createContext({ req: req(userKey(TokenScope.MediaRead)), res: res() });
+    session.user = null;
+    expect(ctx.user).toMatchObject({ id: 42, username: 'mod', isModerator: false });
   });
 });
