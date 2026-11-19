@@ -76,6 +76,12 @@ const queuedAs = (action: SearchIndexUpdateQueueAction) =>
     )
   );
 const reindexed = () => queuedAs(SearchIndexUpdateQueueAction.Update);
+const queuedActions = () =>
+  queued.mock.calls.flatMap(([items]) =>
+    items
+      .filter((item) => (item as { id: number }).id === MODEL)
+      .map((item) => (item as { action?: string }).action)
+  );
 const removedFromSearch = () =>
   queuedAs(SearchIndexUpdateQueueAction.Delete) && !queuedAs(SearchIndexUpdateQueueAction.Update);
 
@@ -160,17 +166,16 @@ describe("a change of a model's mode", () => {
 
   // Prisma's `{ set }` form says the same as a bare value.
   it.each([
-    ['takes it down', 'TakenDown', true, true],
-    ['archives it', 'Archived', false, false],
-  ])('reads the set form when a locked write %s', async (_, to, rebuilt, removed) => {
+    ['takes it down', 'TakenDown', SearchIndexUpdateQueueAction.Delete, true],
+    ['archives it', 'Archived', SearchIndexUpdateQueueAction.Update, false],
+  ])('reads the set form when a locked write %s', async (_, to, action, rebuilt) => {
     await updateModelById({
       id: MODEL,
       data: { mode: { set: to as never } },
       meta: (stored) => stored ?? {},
     });
     await settled();
-    expect(removed ? removedFromSearch() : reindexed()).toBe(true);
-    if (!removed) expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
+    expect(queuedActions()).toEqual([action]);
     expect(collectionRebuilt()).toBe(rebuilt);
   });
 

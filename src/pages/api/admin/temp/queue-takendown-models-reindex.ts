@@ -16,15 +16,14 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
 /**
  * Queue every taken-down model for deletion from the models index (`target=models`, the default),
  * or the collections showing taken-down models' images for a collections-index rewrite
- * (`target=collections`). The nightly cleanup would also delete these, but later; this removes them
- * at the next sync.
+ * (`target=collections`).
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
  *
- * Purpose: a taken-down model's search document carries no images or cover ids, and a
- * collection's cover skips a taken-down model's images, but the indexers apply that only to
- * documents they rewrite, and an existing collection document is rewritten only when queued. A
- * change of mode queues both from now on; this rewrites those taken down before that.
+ * Purpose: a taken-down model is no longer indexed, and a collection's cover skips a taken-down
+ * model's images, but an existing collection document is rewritten only when queued. A change of
+ * mode queues both from now on; this backfills those taken down before that (models: delete,
+ * collections: rewrite).
  *
  * Usage:
  *   POST /api/admin/temp/queue-takendown-models-reindex?token=$WEBHOOK_TOKEN&dryRun=false

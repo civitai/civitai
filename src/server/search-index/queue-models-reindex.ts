@@ -24,7 +24,7 @@ async function readQueuedIds(indexName: string, action: QueueAction) {
 }
 
 /**
- * Queue models for a models-index rewrite, for the admin backfill endpoints.
+ * Queue models for a models-index rewrite (or deletion), for the admin backfill endpoints.
  *
  * `queueDepthBefore`/`queueDepthAfter` are READ BACK from the queue, not inferred from the call
  * returning: `addToQueue` fails open on a degraded sysRedis (it parks the ids in Postgres and
@@ -39,7 +39,6 @@ async function readQueuedIds(indexName: string, action: QueueAction) {
 export async function queueModelsReindex(
   modelIds: number[],
   options: z.infer<typeof queueModelsReindexSchema>,
-  /** Delete removes the documents instead of rewriting them. */
   action: QueueAction = SearchIndexUpdateQueueAction.Update
 ) {
   const { count, ...result } = await queueReindex(
