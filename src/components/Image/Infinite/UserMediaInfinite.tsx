@@ -16,6 +16,7 @@ import type { ImageSections } from '~/components/Image/image.utils';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { PROFILE_SONG_COLUMN_WIDTH } from '~/components/Music/song-card.constants';
 import { songTextDimmed } from '~/components/Music/song-styles';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -95,15 +96,12 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
   const isVideo = type === 'video';
   const isAudio = type === MediaType.audio;
   const jumpToEmpty = viewingReactions ? undefined : jumpToEmptyMessage(query.jumpTo, sort);
+  const columnWidth = isAudio ? PROFILE_SONG_COLUMN_WIDTH : constants.cardSizes.image;
 
   return (
     <Box mt="md">
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer p={0}>
+      <MasonryProvider columnWidth={columnWidth} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryContainer p={0} columnWidth={columnWidth}>
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
               <Group gap={8}>

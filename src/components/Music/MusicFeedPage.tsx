@@ -6,6 +6,8 @@ import { useImageFilters, useImageQueryParams } from '~/components/Image/image.u
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MUSIC_FEED_COLUMN_WIDTH } from '~/components/Music/song-card.constants';
 import { Meta } from '~/components/Meta/Meta';
 import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
 import { songTextBright } from '~/components/Music/song-styles';
@@ -47,45 +49,54 @@ export function MusicFeedPage() {
         description="Listen to songs made by the Civitai community"
         canonical="/music"
       />
-      <MasonryContainer>
-        {/* Pencil `JzhET` (1440) and `hiEzh` (390): sections 48px apart, 22px on a phone. */}
-        <div className="flex flex-col gap-[22px] sm:gap-12">
-          <Title
-            order={1}
-            className={clsx('text-4xl font-extrabold sm:text-5xl sm:font-bold', songTextBright)}
-          >
-            Music
-          </Title>
-          <TagChipRow
-            items={genres}
-            activeId={activeId}
-            onSelect={(item) => replace({ tags: item.id === activeId ? [] : [item.id as number] })}
-            onClear={() => replace({ tags: [] })}
-            loading={isLoading}
-            variant="outline"
-          />
-          <section className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Title order={2} className={clsx('text-3xl font-bold', songTextBright)}>
-                {listName}
-              </Title>
-              <div className="flex flex-wrap items-center gap-2">
-                <SongViewToggle value={view} onChange={setView} />
-                <SortFilter type="images" />
-                <MediaFiltersDropdown filterType="images" hideMediaTypes size="compact-sm" isFeed />
+      <MasonryProvider
+        columnWidth={MUSIC_FEED_COLUMN_WIDTH}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+      >
+        <MasonryContainer columnWidth={MUSIC_FEED_COLUMN_WIDTH}>
+          {/* Pencil `JzhET` (1440) and `hiEzh` (390): sections 48px apart, 22px on a phone. */}
+          <div className="flex flex-col gap-[22px] sm:gap-12">
+            <Title
+              order={1}
+              className={clsx('text-4xl font-extrabold sm:text-5xl sm:font-bold', songTextBright)}
+            >
+              Music
+            </Title>
+            <TagChipRow
+              items={genres}
+              activeId={activeId}
+              onSelect={(item) =>
+                replace({ tags: item.id === activeId ? [] : [item.id as number] })
+              }
+              onClear={() => replace({ tags: [] })}
+              loading={isLoading}
+              variant="outline"
+            />
+            <section className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Title order={2} className={clsx('text-3xl font-bold', songTextBright)}>
+                  {listName}
+                </Title>
+                {/* Pencil `ZYWeT`: one row, also on a phone. */}
+                <div className="flex flex-nowrap items-center gap-2">
+                  <SongViewToggle value={view} onChange={setView} />
+                  <SortFilter type="images" />
+                  <MediaFiltersDropdown filterType="images" hideMediaTypes isFeed />
+                </div>
               </div>
-            </div>
-            <IsClient>
-              <ImagesInfinite
-                filters={{ ...filters, types: [MediaType.audio] }}
-                listItem={view === 'list' ? SONG_ROWS : undefined}
-                songListName={listName}
-                showEof
-              />
-            </IsClient>
-          </section>
-        </div>
-      </MasonryContainer>
+              <IsClient>
+                <ImagesInfinite
+                  filters={{ ...filters, types: [MediaType.audio] }}
+                  listItem={view === 'list' ? SONG_ROWS : undefined}
+                  songListName={listName}
+                  showEof
+                />
+              </IsClient>
+            </section>
+          </div>
+        </MasonryContainer>
+      </MasonryProvider>
     </>
   );
 }

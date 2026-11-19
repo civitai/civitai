@@ -33,7 +33,7 @@ function OutlineTagChip({
       data-active={active || undefined}
       onClick={onClick}
       className={clsx(
-        'h-[26px] shrink-0 whitespace-nowrap rounded-full border px-3 text-[13px] font-medium leading-4',
+        'h-[26px] shrink-0 whitespace-nowrap rounded-full border border-solid px-3 text-[13px] font-medium leading-4',
         active
           ? 'border-transparent bg-blue-1 text-blue-7 dark:bg-blue-8/20 dark:text-blue-3'
           : 'border-gray-3 text-black hover:bg-gray-1 dark:border-dark-4 dark:text-dark-0 dark:hover:bg-dark-5'

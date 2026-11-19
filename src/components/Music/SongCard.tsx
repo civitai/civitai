@@ -17,6 +17,8 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import clsx from 'clsx';
 
 export const UNTITLED_SONG = 'Untitled song';
+// A dark round under the white ⋯, so it reads on a light cover too (the duration pill's backing).
+const SONG_COVER_MENU_TRIGGER = 'rounded-full bg-black/60 hover:bg-black/70';
 
 function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
   return (
@@ -35,7 +37,8 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const cover = useFeedSongCover(data.id);
   return (
     <div className="flex flex-col gap-2" style={{ height }}>
-      <div className="relative aspect-[213/200] w-full shrink-0 overflow-hidden rounded-[14px]">
+      {/* The cover takes what the text leaves, so the text shows whatever height the slot has. */}
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[14px]">
         <RoutedDialogLink
           name="imageDetail"
           state={{ imageId: data.id }}
@@ -58,17 +61,21 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           </span>
         </div>
         <div className="absolute right-2 top-2 z-[4]">
-          <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />
+          <ImageContextMenu
+            image={data}
+            leadingMenuItems={<FeedSongMenuItems song={data} />}
+            className={SONG_COVER_MENU_TRIGGER}
+          />
         </div>
       </div>
       <RoutedDialogLink
         name="imageDetail"
         state={{ imageId: data.id }}
-        className={clsx('truncate text-[17px] font-bold leading-5', songTextBright)}
+        className={clsx('shrink-0 truncate text-[17px] font-bold leading-5', songTextBright)}
       >
         {title}
       </RoutedDialogLink>
-      <span className="min-h-4 truncate text-[13px] leading-4">
+      <span className="min-h-4 shrink-0 truncate text-[13px] leading-4">
         {data.user.username && (
           <NextLink
             href={songCreatorHref(data.user.username)}
@@ -78,10 +85,20 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           </NextLink>
         )}
       </span>
-      <span className={clsx('min-h-[15px] truncate text-xs italic leading-[15px]', songTextDimmed)}>
+      <span
+        className={clsx(
+          'min-h-[15px] shrink-0 truncate text-xs italic leading-[15px]',
+          songTextDimmed
+        )}
+      >
         {genre ?? ''}
       </span>
-      <div className={clsx('flex items-center gap-2.5 text-xs leading-[15px]', songTextDimmed)}>
+      <div
+        className={clsx(
+          'flex shrink-0 items-center gap-2.5 text-xs leading-[15px]',
+          songTextDimmed
+        )}
+      >
         <SongStat
           icon={<IconThumbUp size={12} />}
           count={data.stats?.likeCountAllTime ?? 0}

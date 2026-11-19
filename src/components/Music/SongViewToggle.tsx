@@ -28,7 +28,7 @@ export function SongViewToggle({
     <div
       role="radiogroup"
       aria-label="View"
-      className="flex shrink-0 gap-0.5 rounded border border-gray-3 bg-gray-0 p-[2px] dark:border-dark-4 dark:bg-dark-6"
+      className="flex shrink-0 gap-0.5 rounded border border-solid border-gray-3 bg-gray-0 p-[2px] dark:border-dark-4 dark:bg-dark-6"
     >
       {OPTIONS.map(({ value: option, label, Icon }) => {
         const checked = value === option;

@@ -14,6 +14,8 @@ export type MasonryContextState = {
   maxSingleColumnWidth?: number;
   columnCount: number;
   combinedWidth: number;
+  /** The measured inner width (0 until measured). */
+  containerWidth: number;
 };
 
 const MasonryContext = createContext<MasonryContextState | null>(null);
@@ -77,6 +79,7 @@ export function MasonryProvider({
         maxSingleColumnWidth,
         columnCount,
         combinedWidth,
+        containerWidth: width,
       }}
     >
       <Box ref={containerRef} {...boxProps}>

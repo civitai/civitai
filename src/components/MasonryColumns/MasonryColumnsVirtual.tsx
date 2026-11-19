@@ -21,6 +21,8 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 
+const SINGLE_COLUMN_MAX_WIDTH = 450;
+
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
@@ -52,11 +54,16 @@ export function MasonryColumnsVirtual<TData>({
   spanLandscapeMaxHeight,
   hasMore,
 }: Props<TData>) {
-  const { columnCount, columnWidth } = useMasonryContext();
+  const { columnCount, columnWidth, containerWidth } = useMasonryContext();
+  // A lone column is drawn full width up to `max-w-[450px]`, so its items are sized at that width.
+  const itemWidth =
+    columnCount === 1 && containerWidth > 0
+      ? Math.floor(Math.min(containerWidth, SINGLE_COLUMN_MAX_WIDTH))
+      : columnWidth;
 
   const columns = useMasonryColumns(
     data,
-    columnWidth,
+    itemWidth,
     columnCount,
     imageDimensions,
     adjustHeight,
@@ -80,7 +87,7 @@ export function MasonryColumnsVirtual<TData>({
           items={items}
           render={render}
           itemId={itemId}
-          columnWidth={columnWidth}
+          columnWidth={itemWidth}
           scrollMargin={scrollMargin}
           className={clsx(
             // Only a spanning feed overlays one column on another.
