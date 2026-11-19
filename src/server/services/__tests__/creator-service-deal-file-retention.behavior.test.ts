@@ -469,6 +469,19 @@ describe('the purge after the sweep', () => {
     expect(await kept(attachmentId)).toBe(true);
   });
 
+  it('deletes a removed file refused at completion, before any scan', async () => {
+    const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Failed', "scanStatus" = 'Pending', "malwareScanStatus" = 'Pending'`
+    );
+    await q(`UPDATE "ServiceDealFile" SET "malwareScanStatus" = 'Failed' WHERE id = $1`, [
+      attachmentId,
+    ]);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+    expect(await kept(attachmentId)).toBe(true);
+  });
+
   it('deletes a removed preview its scan never reached', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     const [preview] = await q<{ id: number }>(
@@ -518,7 +531,7 @@ describe('the purge after the sweep', () => {
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
   });
 
-  it('fails closed: a hold that cannot be read deletes nothing', async () => {
+  it('aborts, deleting nothing, when a hold cannot be read', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
     await holder.db.exec(`ALTER TABLE "Appeal" RENAME TO "AppealGone"`);
@@ -546,11 +559,13 @@ describe('the purge after the sweep', () => {
   });
 
   it('re-reads the holds before each object: one landing after the first stops the rest', async () => {
-    const { finalId } = await closedDeal('Cancelled', 40);
+    const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await q(
       `UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive', "watermarkedKey" = 'wm-1' WHERE id = $1`,
       [finalId]
     );
+    // Only the final is a candidate, so the first object deleted is its archive.
+    await q(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Failed' WHERE id = $1`, [attachmentId]);
     await sweep();
     s3.purgeObjectVersions.mockImplementationOnce(async () => {
       await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);

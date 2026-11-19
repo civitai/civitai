@@ -664,7 +664,7 @@ const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
   OR (${f}."processingAt" IS NOT NULL AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus")
 )`;
 
-/** A hold keeps the file's deal; an unreadable hold counts as one. `f` names the file row. */
+/** A hold keeps the file's deal. A hold read that fails aborts the purge. `f` names the file row. */
 const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
   WHERE d."id" = ${f}."dealId" AND (${dealFilesHeld}) IS NOT FALSE
@@ -675,29 +675,38 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
  * a report, no hold on its deal, and its scan copies gone, has nothing left to keep. A removed file
  * whose scan failed, or is still to come, stays for the moderators. `f` names the file row.
  */
-const purgeable = (f: Prisma.Sql) => Prisma.sql`(
+const purgeableState = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
   -- Not before any download link signed while it was listed has expired.
   AND ${f}."removedAt" <= now() - (${SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS}::int * interval '1 second')
-  -- Never judged, and never will be: an upload never completed, or a preview (whose scan skips
-  -- removed files) not in a scan.
+  -- Never judged, and never will be: an upload never completed, one refused at completion before
+  -- any scan, or a preview (whose scan skips removed files) not in a scan.
   AND (${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus"
+    OR (${f}."status" = 'Failed'::"ServiceDealFileStatus"
+      AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
+      AND ${f}."malwareScanStatus" <> 'Failed'::"ServiceDealFileScanStatus")
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"
       AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"))
   AND NOT ${mustKeep(f)}
   -- Scan copies of its images go first (deleteEntryScanCopies).
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
     WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
-  AND NOT ${dealHeld(f)}
 )`;
 
+const purgeable = (f: Prisma.Sql) => Prisma.sql`(${purgeableState(f)} AND NOT ${dealHeld(f)})`;
+
 export async function purgeRemovedFiles({ limit = 50 } = {}) {
+  // The holds are read only for a random sample, so their cost per run stays bounded however many
+  // held files wait; random, so files whose deletes keep failing cannot hold up the rest.
   const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT f."id" FROM "ServiceDealFile" f
-    WHERE ${purgeable(Prisma.sql`f`)}
-    -- Random, so files whose deletes keep failing cannot hold up the rest.
-    ORDER BY random() LIMIT ${limit}::int`;
+    SELECT c."id" FROM (
+      SELECT f."id", f."dealId" FROM "ServiceDealFile" f
+      WHERE ${purgeableState(Prisma.sql`f`)}
+      ORDER BY random() LIMIT ${limit * 4}::int
+    ) c
+    WHERE NOT ${dealHeld(Prisma.sql`c`)}
+    LIMIT ${limit}::int`;
   let purged = 0;
   for (const { id } of candidates) {
     // Re-read under the row lock, so a hold that landed since the candidates were read wins.
