@@ -1,6 +1,7 @@
 import { isRefusedModerationAccount } from './moderation-account';
 import { sql } from 'kysely';
 import {
+  ownImageNamedByUserImage,
   servablePictureSql,
   userImageNamesPicture,
 } from '@civitai/db-queries/profile-picture-clear';
@@ -34,13 +35,18 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.name',
       'User.email',
       'User.emailVerified',
-      // The legacy `User.image` is left out when it names the profile picture, so that picture reaches
-      // the session only through `profilePicture`, which admits it once it is servable: a wider rule than
-      // the main app's `fallbackUserImageColumn`, since this image is also the OAuth userinfo picture.
+      // Drop User.image when it names the profile picture; the picture then reaches the session only via
+      // profilePicture, which also gates the OAuth userinfo picture, so it needs the full servable rule,
+      // wider than the main app's fallbackUserImageColumn. Drop it too when it names another of the
+      // user's own images that is not servable.
       sql<string | null>`CASE WHEN EXISTS (
         SELECT 1 FROM "Image" i
         WHERE i.id = "User"."profilePictureId"
           AND ${sql.raw(userImageNamesPicture('i', '"User"'))}
+      ) OR EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE ${sql.raw(ownImageNamedByUserImage('i', '"User"'))}
+          AND ${servablePictureSql()} IS NOT TRUE
       ) THEN NULL ELSE "User".image END`.as('image'),
       'User.createdAt',
       'User.isModerator',

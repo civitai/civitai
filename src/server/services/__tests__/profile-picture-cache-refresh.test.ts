@@ -26,6 +26,15 @@ vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
   restoreClearedUserImages: (db: unknown, ids: number[]) => restoreImages(db, ids),
   dropStaleHeldImageMarkers: (db: unknown, ids: number[]) => dropMarkers(db, ids),
+  // The lookup's SQL runs against Postgres in held-avatar-restore.behavior.test.ts; here it answers
+  // from the same user fake as the profile pictures.
+  getPictureUserIds: async (db: typeof dbMock.dbWrite, ids: number[]) =>
+    (
+      (await db.user.findMany({
+        where: { profilePictureId: { in: ids } },
+        select: { id: true },
+      })) as { id: number }[]
+    ).map((row) => row.id),
 }));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({

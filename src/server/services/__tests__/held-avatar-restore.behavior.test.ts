@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearHeldUserImages,
   dropStaleHeldImageMarkers,
+  getPictureUserIds,
   restoreClearedUserImages,
 } from '~/server/services/held-image-keys';
 
@@ -190,5 +191,57 @@ describe("a cleared User.image whose picture is not the user's own", () => {
     `);
     expect(await restoreClearedUserImages(db, [1])).toEqual([]);
     expect((await user(1)).image).toBeNull();
+  });
+});
+
+describe("a User.image naming another of the user's own images", () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+  // Upper-case and CDN-wrapped, as a stored url may be; the match lowercases it.
+  const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY.toUpperCase()}/width=96`;
+  const seed = async (oldImage: string, image: string) =>
+    pg.exec(`
+      INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-1', 1);
+      INSERT INTO "Image" (id, url, "userId") VALUES (2, '${OLD_KEY}', 1);
+      UPDATE "Image" SET ${oldImage} WHERE id = 2;
+      INSERT INTO "User" VALUES (1, 1, '${image}', NULL);
+    `);
+
+  it.each([
+    ['held', `"needsReview" = 'minor'`],
+    ['blocked', `"blockedFor" = 'tos'`],
+    ['at the Blocked level', `"nsfwLevel" = 32`],
+  ])('🔴 is cleared, with no marker, when that image is %s', async (_state, set) => {
+    await seed(set, staleKey);
+    expect(await clearHeldUserImages(db, [1])).toEqual([1]);
+    expect(await user(1)).toEqual({ image: null, meta: null });
+    // Nothing puts it back: it is not the profile picture.
+    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL, "blockedFor" = NULL, "nsfwLevel" = 1`);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
+  });
+
+  it('is left when that image is neither held nor blocked (control)', async () => {
+    await seed(`"nsfwLevel" = 1`, staleKey);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(staleKey);
+  });
+
+  it('leaves an external avatar url, even with a held upload in the history', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    await seed(`"needsReview" = 'minor'`, external);
+    expect(await clearHeldUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBe(external);
+  });
+
+  it('🔴 brings its owner into the refresh for a change to that image', async () => {
+    await seed(`"nsfwLevel" = 1`, staleKey);
+    expect(await getPictureUserIds(db, [2])).toEqual([1]);
+  });
+
+  it('brings in no one for an image their User.image does not name (control)', async () => {
+    await seed(`"nsfwLevel" = 1`, 'https://avatars.githubusercontent.com/u/1?v=4');
+    expect(await getPictureUserIds(db, [2])).toEqual([]);
+    // The profile picture's own user is still found.
+    expect(await getPictureUserIds(db, [1])).toEqual([1]);
   });
 });
