@@ -714,6 +714,9 @@ export const updateUserHandler = async ({
       )
     )
       throw throwBadRequestError('Invalid avatar URL');
+    // Our upload keys reach `User.image` only through `profilePicture`, whose Image row is scanned.
+    if (data.image && data.image !== user.image && keysIn(data.image).length)
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
