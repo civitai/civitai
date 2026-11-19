@@ -17,13 +17,23 @@ export default MixedAuthEndpoint(
   async function handler(req, res, user) {
     res.setHeader('Cache-Control', 'no-store');
 
-    const rateLimit = await checkPublicApiRateLimit({ req, family: 'verify', userId: user?.id });
-    if (!rateLimit.allowed) {
-      res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    // Per IP for everyone, and per user too when signed in. Closed on a redis error, unlike the
+    // read endpoints: each request here is an in-process parse.
+    const limits = await Promise.all([
+      checkPublicApiRateLimit({ req, family: 'verify', failOpen: false }),
+      user && checkPublicApiRateLimit({ req, family: 'verify', userId: user.id, failOpen: false }),
+    ]);
+    const blocked = limits.find((l) => l && !l.allowed);
+    if (blocked && !blocked.allowed) {
+      res.setHeader('Retry-After', String(blocked.retryAfterSeconds));
       return res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     }
 
+    // Required: without it a body the proxy truncated looks complete, and a cut-off signed file
+    // reads as tampered.
     const declared = Number(req.headers['content-length']);
+    if (!Number.isInteger(declared) || declared <= 0)
+      return res.status(411).json({ error: 'Send the file with a Content-Length header' });
     if (declared > MAX_VERIFY_BYTES) return res.status(413).json({ error: 'File too large' });
 
     let body: Buffer;
@@ -33,8 +43,8 @@ export default MixedAuthEndpoint(
       if (e instanceof PayloadTooLarge) return res.status(413).json({ error: 'File too large' });
       throw e;
     }
-    if (body.length === 0 || (Number.isInteger(declared) && body.length < declared))
-      return res.status(400).json({ error: 'Upload body was empty or incomplete' });
+    if (body.length < declared)
+      return res.status(400).json({ error: 'Upload body was incomplete' });
 
     const mimeType = sniffImageType(body);
     if (!mimeType)

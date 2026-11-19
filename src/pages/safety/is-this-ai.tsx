@@ -20,12 +20,13 @@ export default function IsThisAiPage() {
     setState({ status: 'checking' });
     try {
       const res = await fetch('/api/v1/verify', { method: 'POST', body: file });
-      const body = await res.json();
-      setState(
-        res.ok
-          ? { status: 'done', result: body }
-          : { status: 'error', message: body.error ?? 'Something went wrong. Try again.' }
-      );
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) return setState({ status: 'done', result: body });
+      const message =
+        res.status === 413
+          ? 'That file is over 10 MB.'
+          : body.error ?? 'Something went wrong. Try again.';
+      setState({ status: 'error', message });
     } catch {
       setState({ status: 'error', message: 'Something went wrong. Try again.' });
     }

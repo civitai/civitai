@@ -117,10 +117,12 @@ export async function checkPublicApiRateLimit({
   req,
   family,
   userId,
+  failOpen,
 }: {
   req: NextApiRequest;
   family: PublicApiRateLimitFamily;
   userId?: number;
+  failOpen?: boolean;
 }): Promise<PublicApiRateLimitResult> {
   const authed = typeof userId === 'number';
   const limits = FAMILY_MAX[family];
@@ -133,5 +135,5 @@ export async function checkPublicApiRateLimit({
   // deployment burns PRODUCTION users' rate-limit budget and can 429 real traffic. No-op in
   // production.
   const key = prefixCacheKey(`${KEY_PREFIX}:${family}:${bucket}`);
-  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS);
+  return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS, { failOpen });
 }

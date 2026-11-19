@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -41,6 +43,34 @@ describe('readContentCredentials', () => {
     const stripped = stripManifest(signed);
     expect(stripped.length).toBeLessThan(signed.length);
     expect(await readContentCredentials(stripped, 'image/jpeg')).toEqual({ credentials: 'none' });
+  });
+
+  it('never fetches a remote manifest URL named in an uploaded file', async () => {
+    let requests = 0;
+    const server = http.createServer((_, res) => {
+      requests++;
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const xmp = `http://ns.adobe.com/xap/1.0/\0<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:dcterms="http://purl.org/dc/terms/" dcterms:provenance="http://127.0.0.1:${port}/m.c2pa"/></rdf:RDF></x:xmpmeta>`;
+      const app1 = Buffer.alloc(4);
+      app1.writeUInt16BE(0xffe1, 0);
+      app1.writeUInt16BE(Buffer.byteLength(xmp) + 2, 2);
+      const stripped = stripManifest(signed);
+      const pointing = Buffer.concat([
+        stripped.subarray(0, 2),
+        app1,
+        Buffer.from(xmp),
+        stripped.subarray(2),
+      ]);
+
+      await readContentCredentials(pointing, 'image/jpeg');
+      expect(requests).toBe(0);
+    } finally {
+      server.close();
+    }
   });
 
   it('reports pixels changed after signing as invalid', async () => {

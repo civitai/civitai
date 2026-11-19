@@ -5,6 +5,12 @@ import type * as C2pa from '@contentauth/c2pa-wasm';
 
 let c2pa: Promise<typeof C2pa> | undefined;
 
+// The SDK defaults fetch a manifest URL named inside the file, and OCSP; an uploaded file must
+// never make this server call out.
+const READER_CONTEXT = JSON.stringify({
+  verify: { remote_manifest_fetch: false, ocsp_fetch: false },
+});
+
 function loadC2pa() {
   c2pa ??= (async () => {
     const mod = await import('@contentauth/c2pa-wasm');
@@ -67,6 +73,12 @@ export type ContentCredentialsResult =
       aiGenerated: boolean;
     };
 
+const VALIDATION_STATES: Record<string, 'valid' | 'invalid'> = {
+  Valid: 'valid',
+  Trusted: 'valid',
+  Invalid: 'invalid',
+};
+
 export async function readContentCredentials(
   bytes: Uint8Array,
   mimeType: string
@@ -74,15 +86,19 @@ export async function readContentCredentials(
   const { WasmReader } = await loadC2pa();
   let reader: C2pa.WasmReader;
   try {
-    reader = await WasmReader.fromBytes(mimeType, bytes);
+    reader = await WasmReader.fromBytes(mimeType, bytes, READER_CONTEXT);
   } catch (e) {
+    // A trap can leave the instance's memory corrupt; start the next call on a fresh one.
+    if (e instanceof WebAssembly.RuntimeError) c2pa = undefined;
     return { credentials: String(e).includes('JumbfNotFound') ? 'none' : 'unreadable' };
   }
   try {
     const { validation_state } = JSON.parse(reader.json()) as { validation_state?: string };
+    const credentials = VALIDATION_STATES[validation_state ?? ''];
+    if (!credentials) return { credentials: 'unreadable' };
     const manifest = reader.activeManifest();
     return {
-      credentials: validation_state === 'Invalid' ? 'invalid' : 'valid',
+      credentials,
       signer: {
         issuer: manifest?.signature_info?.issuer,
         commonName: manifest?.signature_info?.common_name,
