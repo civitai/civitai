@@ -1,38 +1,27 @@
-import { childBrowsingTagIds } from '@civitai/shared';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { sleep } from '~/server/utils/concurrency-helpers';
 
-const CHILD_TAG_IDS = [...childBrowsingTagIds];
-const childTagIds = new Set<number>(CHILD_TAG_IDS);
-
-type ImageChildTagChanges = {
-  /** Images whose tags were written; those whose written tags include a child tag are queued. */
-  tagWrites?: { imageId: number; tagId: number }[];
-  /**
-   * Images whose nsfwLevel may have changed; queued while they carry a child tag or the minor flag,
-   * since either rule reads the level.
-   */
+type ImageMinorChanges = {
+  /** Images whose nsfwLevel may have changed; queued while they carry the minor flag, since the minor rule reads the level. */
   levelImageIds?: number[];
   /** Images whose minor flag was written; always queued, since the minor rule reads no tags. */
   minorImageIds?: number[];
 };
 
 /**
- * Queue a search-index rewrite for the models whose posts hold these images (after re-reading their
- * cached tags and showcase images from the primary), for the articles and comics using them as a
- * cover or banner, and for the collections and bounties whose documents show them. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
- * an image's child browsing tags or nsfwLevel reaches its model documents only through here.
- * Never throws: it runs after the tag, level or minor-flag write has committed. A failed attempt is retried once;
- * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
- * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
+ * Queue a rewrite of every search document showing these images. The models sync re-picks a model
+ * only when `Model.updatedAt` moves, so a change to an image's minor flag or nsfwLevel reaches its
+ * documents only through here. Never throws: it runs after the write has committed. A failed attempt
+ * is retried once; a second failure is logged and the requeue is dropped. The queue call does not
+ * throw when Redis refuses the ids; past that, ids are lost only if the queue's own fallback fails.
  */
-export async function queueModelsForImageChildTagChanges({
+export async function queueDocumentsForImageMinorChanges({
   minorImageIds = [],
   ...changes
-}: ImageChildTagChanges) {
+}: ImageMinorChanges) {
   // A model's minor flag rewrites every image of its versions: bounded queries per batch.
   await withRetry(() =>
     queueChanged({ ...changes, minorImageIds: minorImageIds.slice(0, MINOR_BATCH) })
@@ -79,28 +68,16 @@ function logError(e: unknown) {
   });
 }
 
-async function queueChanged({
-  tagWrites = [],
-  levelImageIds = [],
-  minorImageIds = [],
-}: ImageChildTagChanges) {
-  const imageIds = new Set([
-    ...tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId),
-    ...minorImageIds,
-  ]);
+async function queueChanged({ levelImageIds = [], minorImageIds = [] }: ImageMinorChanges) {
+  const imageIds = new Set(minorImageIds);
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {
-    // Primary: the tag or flag that makes the image count may have been written moments ago.
-    const tagged = await dbWrite.$queryRaw<{ imageId: number }[]>`
-      SELECT "imageId"
-      FROM "TagsOnImageNew"
-      WHERE "imageId" = ANY(${levelOnly}::int[])
-        AND "tagId" = ANY(${CHILD_TAG_IDS}::int[])
-      UNION
+    // Primary: the flag that makes the image count may have been written moments ago.
+    const flagged = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Image" WHERE id = ANY(${levelOnly}::int[]) AND minor
     `;
-    for (const { imageId } of tagged) imageIds.add(imageId);
+    for (const { id } of flagged) imageIds.add(id);
   }
 
   if (!imageIds.size) return;
@@ -185,7 +162,7 @@ async function queueCollectionsAndBounties(imageIds: number[]) {
   ]);
 }
 
-const REASON = 'image-child-tag-change';
+const REASON = 'image-minor-change';
 
 const toUpdates = (ids: number[]) =>
   [...new Set(ids)].map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
