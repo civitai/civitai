@@ -104,6 +104,9 @@ describe('buildChapterCbz', () => {
     expect(Object.keys(zip.files).sort()).toEqual(['001.png', '002.png', 'ComicInfo.xml']);
     const root = parse(await zip.file('ComicInfo.xml')!.async('string'));
     const text = (tag: string) => root.getElementsByTagName(tag)[0]?.textContent;
+    expect(text('Title')).toBe('Chapter One');
+    expect(text('Series')).toBe('My Comic');
+    expect(text('Writer')).toBe('creator');
     expect(text('Number')).toBe('3');
     expect(text('Web')).toBe('https://civitai.com/comics/7/my-comic/3/chapter-one');
     expect(text('PageCount')).toBe('2');
