@@ -1379,6 +1379,33 @@ describe('the report-not-filed view matches a report to the held item', () => {
     expect(await listed()).toEqual([22, 23, 24]);
   });
 
+  describe('an identical re-file', () => {
+    // The report holds the item's text from before the decision; the re-file after it added no entry.
+    const refiled = (item: string, at: string) =>
+      db.query(
+        `INSERT INTO "CsamReport" ("userId", "details", "createdAt") VALUES (10, $1::jsonb, '2026-09-01')`,
+        [
+          JSON.stringify({
+            contextText: [{ source: 'postText', id: 210, capturedAt: before }],
+            identicalRefiles: [{ filedById: 11, at, item }],
+          }),
+        ]
+      );
+
+    it('after the decision covers the item', async () => {
+      await refiled('postText:210', after);
+      expect(await listed()).toEqual([22, 23, 24]);
+    });
+
+    it('before the decision, or for another item, or with no ISO time, does not', async () => {
+      await refiled('postText:210', before);
+      await refiled('comment:210', after);
+      await refiled('postText:211', after);
+      await refiled('postText:210', '2026-09-14');
+      expect(await listed()).toEqual([21, 22, 23, 24]);
+    });
+  });
+
   it('keeps an item whose captured entry has no capture time, or one not in ISO form', async () => {
     await report([{ source: 'comment', id: 220, capturedAt: '2026-09-14' }]);
     await report([{ source: 'postText', id: 210 }]);

@@ -1,7 +1,7 @@
 // No `$app/*` imports: the sidebar counts import this, and the node suites that load them cannot
 // resolve `$app/server`.
 import { createHash } from 'node:crypto';
-import { sql } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
 import { CSAM_REPORTABLE_CHOICES } from '$lib/csam-holds/report-choice';
 import {
@@ -113,20 +113,28 @@ const itemSourceCase = sql.raw(
     .map(([type, source]) => `WHEN '${type}' THEN '${source}'`)
     .join(' ')} END`
 );
-// Judged by the entry's own capture time, not the report's: a filing folds into the author's older
-// unsent report, and a fold keeps the earlier entry for an item, so an entry captured before this
-// decision holds text from before it (an item edited and held again keeps its id).
+// Judged by capture time, not the report's: a filing folds into the author's older unsent report, so
+// a capture or re-file from before this decision can sit in a report created after it, and an item
+// edited and held again keeps its id. A filing whose text equals the item's latest capture adds no
+// entry and is recorded in `identicalRefiles` instead, so a re-file after the decision covers too.
+const afterDecision = (
+  iso: RawBuilder<unknown>
+) => sql<boolean>`CASE WHEN ${iso} ~ '^[0-9]{4}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]([.][0-9]+)?Z$'
+  THEN (${iso})::timestamptz >= h."decidedAt" AT TIME ZONE 'UTC' ELSE false END`;
 const reportCoversHold = sql<boolean>`CASE
   WHEN ${itemSourceCase} IS NULL THEN false
-  ELSE jsonb_typeof(r.details -> 'contextText') = 'array'
+  ELSE (jsonb_typeof(r.details -> 'contextText') = 'array'
     AND r.details -> 'contextText' @> jsonb_build_array(
       jsonb_build_object('source', ${itemSourceCase}, 'id', h."entityId"))
     AND EXISTS (
       SELECT 1 FROM jsonb_array_elements(r.details -> 'contextText') c
       WHERE c ->> 'source' = ${itemSourceCase} AND c -> 'id' = to_jsonb(h."entityId")
-        AND CASE WHEN c ->> 'capturedAt' ~ '^[0-9]{4}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]([.][0-9]+)?Z$'
-          THEN (c ->> 'capturedAt')::timestamptz >= h."decidedAt" AT TIME ZONE 'UTC'
-          ELSE false END)
+        AND ${afterDecision(sql`c ->> 'capturedAt'`)}))
+  OR (jsonb_typeof(r.details -> 'identicalRefiles') = 'array'
+    AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(r.details -> 'identicalRefiles') f
+      WHERE f ->> 'item' = ${itemSourceCase} || ':' || h."entityId"
+        AND ${afterDecision(sql`f ->> 'at'`)}))
   END`;
 
 const csamHolds = ({
