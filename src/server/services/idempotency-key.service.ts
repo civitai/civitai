@@ -91,7 +91,7 @@ export async function claimIdempotencyKey(
 ): Promise<IdempotencyClaim> {
   const { db } = { ...defaults(), ...deps };
   const cfg = SCOPES[scope];
-  const sysKey = `${cfg.sysPrefix}:${key}`;
+  const sysKey = `${cfg.sysPrefix}:${key}` as const;
   const sysClaimValue = cfg.marker ? '1' : PENDING;
 
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.IDEMPOTENCY_KEYS_PG))) {
