@@ -806,6 +806,28 @@ describe('textScan.resolveCsamHold', () => {
   });
 });
 
+describe('textScan.setCsamHoldReportChoice', () => {
+  it('records the sent choice as the calling moderator, and passes a refusal on', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 12 }] as never);
+    const res = await call({ holdId: 12, reportChoice: 'imagery' }, setReportChoiceHandler);
+    expect(res).toEqual({ status: 200, body: { holdId: 12, reportChoice: 'imagery' } });
+    const values = dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1);
+    expect(values).toEqual(expect.arrayContaining(['imagery', 7, 12]));
+
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
+    expect(
+      (await call({ holdId: 12, reportChoice: 'imagery' }, setReportChoiceHandler)).status
+    ).toBe(409);
+  });
+
+  it('refuses an unknown choice before writing', async () => {
+    expect((await call({ holdId: 12, reportChoice: 'csam' }, setReportChoiceHandler)).status).toBe(
+      400
+    );
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
 // The SQL of both is pinned against Postgres in csam-hold-mark.pglite.test.ts; these pin the endpoint.
 describe.each([
   ['textScan.referCsamHold', referHandler, { holdId: 12, textHash: 'h-1', note: 'unsure' }],

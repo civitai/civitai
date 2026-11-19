@@ -62,13 +62,13 @@ describe('decideCsamHoldBatch', () => {
         args.holdId,
         args.textHash,
         args.decision,
-        'reportChoice' in args,
+        args.reportChoice,
         args.batched,
       ])
     ).toEqual([
-      [2, 'a', 'remove', false, true],
-      [3, 'b', 'remove', false, true],
-      [4, 'c', 'remove', false, true],
+      [2, 'a', 'remove', undefined, true],
+      [3, 'b', 'remove', undefined, true],
+      [4, 'c', 'remove', undefined, true],
     ]);
     expect(results).toEqual([
       { holdId: 2, ok: true, status: 'Confirmed', entityType: 'Model', entityId: 1, userId: 9 },

@@ -10,8 +10,10 @@ const {
   getHoldContexts,
   getCleanRescans,
   referCsamHold,
+  setCsamHoldReportChoice,
 } = vi.hoisted(() => ({
   referCsamHold: vi.fn(),
+  setCsamHoldReportChoice: vi.fn(),
   decideAuthorHolds: vi.fn(),
   getHoldCoverImages: vi.fn(),
   getCleanRescans: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   decideCsamHold,
   decideAuthorHolds,
   referCsamHold,
+  setCsamHoldReportChoice,
   getHoldCoverImages,
   getCleanRescans,
 }));
@@ -657,5 +660,52 @@ describe('csam text holds refer', () => {
   it('needs the csam permission', async () => {
     await refer({ holdId: '12', textHash: 'h-12' }, {});
     expect(referCsamHold).not.toHaveBeenCalled();
+  });
+});
+
+describe('csam text holds set report choice', () => {
+  const setChoice = (fields: Record<string, string>, grants: Record<string, boolean>) => {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(fields)) body.set(key, value);
+    const event = {
+      request: new Request('http://x/csam/text-holds', { method: 'POST', body }),
+      locals: { grants },
+    };
+    return actions!.setReportChoice(event as unknown as ActionEvent) as Promise<
+      Record<string, unknown>
+    >;
+  };
+
+  beforeEach(() => {
+    setCsamHoldReportChoice.mockReset();
+    setCsamHoldReportChoice.mockResolvedValue({ ok: true });
+  });
+
+  it('records the picked choice on the hold', async () => {
+    expect(await setChoice({ holdId: '12', reportChoice: 'enticement' }, csamOnly)).toMatchObject({
+      success: true,
+      key: 12,
+      reportChoice: 'enticement',
+    });
+    expect(setCsamHoldReportChoice).toHaveBeenCalledWith({
+      holdId: 12,
+      reportChoice: 'enticement',
+    });
+  });
+
+  it('refuses an unknown choice and a missing permission before calling the main app', async () => {
+    expect(await setChoice({ holdId: '12', reportChoice: 'csam' }, csamOnly)).toMatchObject({
+      status: 400,
+    });
+    await setChoice({ holdId: '12', reportChoice: 'none' }, {});
+    expect(setCsamHoldReportChoice).not.toHaveBeenCalled();
+  });
+
+  it('shows the main app refusal against the hold', async () => {
+    setCsamHoldReportChoice.mockResolvedValue({ ok: false, error: 'already has a report choice' });
+    expect(await setChoice({ holdId: '12', reportChoice: 'none' }, csamOnly)).toMatchObject({
+      status: 400,
+      data: { error: 'already has a report choice', key: 12 },
+    });
   });
 });

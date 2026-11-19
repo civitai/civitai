@@ -492,10 +492,13 @@ export async function setCsamHoldReportChoice({
       'reportChoiceSet', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
     WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
       AND jsonb_typeof("meta") = 'object' AND "meta" ->> 'reportChoice' IS NULL
+      AND NOT (${reportChoice}::text = 'none' AND "meta" ->> 'decision' = 'remove_ban_report')
     RETURNING "id"
   `;
   if (!changed.length)
-    throw throwConflictError('Hold not confirmed, already has a report choice, or missing.');
+    throw throwConflictError(
+      'Hold not confirmed, already has a report choice, needs a reportable category, or missing.'
+    );
   return { holdId, reportChoice };
 }
 

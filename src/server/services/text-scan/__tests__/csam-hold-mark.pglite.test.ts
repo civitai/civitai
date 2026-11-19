@@ -175,8 +175,18 @@ describe('setCsamHoldReportChoice', () => {
     for (const id of [chosen, pending, other])
       await expect(
         setCsamHoldReportChoice({ holdId: id, reportChoice: 'imagery', actor: { id: 7 } })
-      ).rejects.toThrow(/already has a report choice, or missing/);
+      ).rejects.toThrow(/already has a report choice/);
     expect(await meta(chosen)).toEqual({ ...batched, reportChoice: 'none' });
     for (const id of [pending, other]) expect(await meta(id)).not.toHaveProperty('reportChoice');
+  });
+
+  it('refuses "none" on a hold confirmed to file a report, and takes a category', async () => {
+    const id = await hold('Confirmed', { decision: 'remove_ban_report', reviewedDecision: true });
+    await expect(
+      setCsamHoldReportChoice({ holdId: id, reportChoice: 'none', actor: { id: 7 } })
+    ).rejects.toThrow(/needs a reportable category/);
+    expect(await meta(id)).not.toHaveProperty('reportChoice');
+    await setCsamHoldReportChoice({ holdId: id, reportChoice: 'trafficking', actor: { id: 7 } });
+    expect(await meta(id)).toMatchObject({ reportChoice: 'trafficking' });
   });
 });

@@ -334,6 +334,24 @@ describe('the lead-review and report-not-filed views', () => {
         decidedAt: '2026-09-13',
         meta: { decision: 'remove', reportChoice: 'none', reviewedDecision: false },
       },
+      // Confirmed before decisions recorded whether they were reviewed on their own.
+      {
+        id: 17,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove' },
+      },
+      // Dismissed alongside another hold.
+      {
+        id: 18,
+        createdAt: '2026-09-12',
+        status: 'Dismissed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'dismiss', reviewedDecision: false },
+      },
       {
         id: 12,
         createdAt: '2026-09-14',
