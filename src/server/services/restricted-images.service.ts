@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import { queueDocumentsForImageMinorChanges } from '~/server/services/image-models-reindex.service';
 import { chunkIds } from '~/utils/array-helpers';
 
 type Db = Pick<Prisma.TransactionClient, '$queryRaw'>;
@@ -56,7 +56,7 @@ async function reindexInBatches(imageIds: number[], mature: Set<number>, source:
     await remove()
       .catch(remove)
       .catch(() => failedBatches++);
-    await queueModelsForImageChildTagChanges({ minorImageIds: ids });
+    await queueDocumentsForImageMinorChanges({ minorImageIds: ids });
   }
   logToAxiom(
     {
