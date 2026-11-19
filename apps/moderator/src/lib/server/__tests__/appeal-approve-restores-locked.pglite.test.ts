@@ -53,14 +53,14 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn(async (
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => undefined) }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert: chInsert }) }));
 
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
 const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
-const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
+const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
@@ -249,11 +249,11 @@ describe('a restore that recomputes the level: models index', () => {
     ['an approved appeal', approve],
     ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
   ])('%s hands the re-rated image over', async (_, restore) => {
-    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    vi.mocked(queueDocumentsForImageMinorChanges).mockClear();
 
     await restore();
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
