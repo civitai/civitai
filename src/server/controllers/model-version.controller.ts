@@ -112,7 +112,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { getOwnerMetricPrivacyDefaultsForEditor } from '~/server/services/creator-membership.service';
 import { getMetaMetricVisibility } from '~/server/utils/model-metric-privacy';
 import { modelFileSelect } from '../selectors/modelFile.selector';
-import { getFilesByEntity } from '../services/file.service';
+import { getDownloadFilename, getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getLinkedFileData } from '~/server/services/linked-file-data.service';
 import { assertBountyEntryFileUrlAllowed } from '~/server/utils/model-file-url-bound';
@@ -368,8 +368,15 @@ const loadModelVersion = async ({
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
+      files: version.files?.map((file) => ({
+        ...file,
+        // The editor shows this when the stored name is a trainer blob id. Owner-only: built from the
+        // real model name, which a .com face hides.
+        downloadName: isOwnerOrMod
+          ? getDownloadFilename({ model, modelVersion: version, file, versionFiles: version.files })
+          : undefined,
+      })) as unknown as Array<
+        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata; downloadName?: string }
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
