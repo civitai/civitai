@@ -102,7 +102,8 @@ export async function unblockAccountDeletionImages(userId: number) {
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
           AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
         LIMIT ${RESTORE_BATCH_SIZE}
       )

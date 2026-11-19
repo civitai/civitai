@@ -204,8 +204,8 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
-import { withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import { imageRemovalMode } from '~/server/utils/image-removal-mode';
+import { hasGraceMarkerSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -1465,7 +1465,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     throw throwBadRequestError('The shared moderation account keeps its reserved username.');
 
   // A ban, a second restore or a new deletion since the read above: the guarded write matches no row.
-  const refuseIfBannedMeanwhile = (error: unknown): never => {
+  const refuseIfChangedMeanwhile = (error: unknown): never => {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
       throw throwBadRequestError(
         `User ${id} was banned, restored or deleted again meanwhile; reload it before restoring`
@@ -1558,6 +1558,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
   // list that moved since would make some accounts unrestorable.
+  //
   // The write re-checks the account as read above, the same deletion and still unbanned, and locks
   // it first: a ban or another restore landing since rolls back all of it, models and purge disarm
   // included.
@@ -1585,7 +1586,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       disarmAccountDeletionImagePurge(id),
       ...reclaim,
     ])
-    .catch(refuseIfBannedMeanwhile);
+    .catch(refuseIfChangedMeanwhile);
   const modelsRestored = (reclaimed as Prisma.BatchPayload | undefined)?.count ?? 0;
   await forgetGenerationToken(id);
 
@@ -3002,7 +3003,7 @@ export async function blockBannedUserImages(userId: number) {
       "updatedAt" = NOW()
     WHERE "userId" = ${userId}
       AND (ingestion <> 'Blocked'::"ImageIngestionStatus"
-        OR ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)
+        OR ${hasGraceMarkerSql})
   `;
   await refreshOwnModelShowcases(userId);
 }

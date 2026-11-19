@@ -547,7 +547,7 @@ type UpdateDecision =
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
   | 'raw-server-keys'
-  /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus two fixed server keys. */
+  /** Raw SET to exactly `withoutGraceMarkersSql()`: the stored value minus the fixed grace-breadcrumb keys. */
   | 'raw-grace-marker-strip'
   /**
    * Raw SET merging exactly one literal, non-provenance key whose value is a `::text` parameter: a
@@ -602,7 +602,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 2,
   },
   'src/server/services/account-deletion-image-markers.ts#clearAccountDeletionImageMarkers': {
-    decision: 'raw-server-keys',
+    decision: 'raw-grace-marker-strip',
     sites: 2,
   },
   'src/server/services/account-deletion-images.ts#unblockAccountDeletionImages': {
@@ -730,7 +730,7 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         .exec(body)?.[1]
         .replace(/\s+/g, ' ');
       if (
-        // A block also strips the grace-block breadcrumbs (two fixed server keys) off the result.
+        // A block also strips the grace-block breadcrumbs (fixed server keys) off the result.
         expr !== '${withoutGraceMarkersSql(metadataSet)}' ||
         metadataSet !==
           // A stored CSAM block keeps the stored value: the rule did not decide it.

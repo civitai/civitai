@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
-import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 
 /**
  * 🔴 REACHABILITY GUARD for blob retraction.
@@ -23,11 +27,9 @@ import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/imag
  * every function that records who blocked it, is the shipping one.
  *
  * ── WHAT EACH TEST PINS ──────────────────────────────────────────────────────────────────────
- *   F1  an uploader cannot move the decision. `Image.metadata` is `z.record(z.string(), z.any())`
- *       and `createImage` spreads it verbatim into the row, so the uploader controls its contents
- *       completely — including a key spelled exactly like an internal marker, and including the
- *       value JSON `null`, for which Postgres' `->` returns a non-NULL jsonb null. The images here
- *       are created through the real `createImage` with that forgery in place, in both shapes.
+ *   F1  an uploader cannot move the decision. `createImage` drops the server-owned grace
+ *       breadcrumb keys from the uploader's `Image.metadata`, in both a plausible shape and JSON
+ *       `null` (for which Postgres' `->` returns a non-NULL jsonb null), and retraction holds.
  *   F2  an automated block does not retract: the content-rating branch of the real
  *       `processImageScanWorkflow`.
  *   F3  a whole-library ban block does not retract: the real `toggleBan`'s remove-all-media branch.
@@ -266,6 +268,11 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** A presence test bound as one `Prisma.sql` value (`hasGraceMarkerSql`), read the same way. */
+function fragmentPresence(fragment: { sql: string; values: unknown[] }) {
+  return presenceTest(fragment.sql, fragment.values[0] as string);
+}
+
 /** `metadata - keyA - keyB`: a NULL stays NULL. */
 function stripKeys(metadata: Record<string, unknown> | null, keys: string[]) {
   if (!metadata) return metadata;
@@ -404,15 +411,15 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   // `blockBannedUserImages`, the ban's whole-library block: blocks what is not Blocked, and strips
   // the grace breadcrumbs off every row it matches, including one already Blocked.
   if (sql.includes('UPDATE "Image"') && sql.includes('AND (ingestion <>')) {
-    const [nsfwLevel, kept, reason, strip, userId, presenceKey] = values as [
+    const [nsfwLevel, kept, reason, strip, userId, presence] = values as [
       number,
       string,
       string,
       { values: string[] },
       number,
-      string
+      { sql: string; values: unknown[] }
     ];
-    const present = presenceTest(sql, presenceKey);
+    const present = fragmentPresence(presence);
     let count = 0;
     for (const row of store.images) {
       if (row.userId !== userId) continue;
@@ -442,7 +449,28 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
     return ids.length;
   }
 
-  // The account-deletion marker strip the moderation block sites now issue.
+  // The account-deletion marker strip the moderation block sites issue: the SET, the scope and the
+  // presence test each arrive as one bound value.
+  const markerStrip =
+    /^\s*UPDATE "Image"\s+SET "metadata" = \?\s+WHERE (?:id = ANY\(\?\)|"userId" = \?)\s+AND \?\s*$/;
+  if (markerStrip.test(sql)) {
+    const [strip, scope, presence] = values as [
+      { values: string[] },
+      number[] | number,
+      { sql: string; values: unknown[] }
+    ];
+    const present = fragmentPresence(presence);
+    let n = 0;
+    for (const row of store.images) {
+      const scoped = Array.isArray(scope) ? scope.includes(row.id) : row.userId === scope;
+      if (!scoped) continue;
+      if (!row.metadata || !present(row.metadata)) continue;
+      row.metadata = stripKeys(row.metadata, strip.values);
+      n++;
+    }
+    return n;
+  }
+
   if (sql.includes('UPDATE "Image"') && sql.includes('- ?::text')) {
     // Bindings, in order: the key names (one per `- ?::text` in the SET), then the scope (an id
     // array or a userId), then the first key again for the presence test.
@@ -649,32 +677,32 @@ describe('who can reach blob retraction, driven through the real block writers',
     expect(persistFor(11), 'the main-app TOS takedown stopped asking for persist').toBe(true);
   });
 
-  // 🔴 F1. The uploader owns `Image.metadata`, so anything the retraction decision reads out of it
-  // is a field the image's own owner writes. Both shapes are exercised: a plausible value, and
-  // JSON `null` — which is the cheaper forgery, because `("metadata" -> key) IS NOT NULL` is TRUE
-  // for it while the sibling reader's `->>` form returns SQL NULL and skips it.
+  // 🔴 F1. An uploader must not be able to plant a grace-block breadcrumb: the retraction decision
+  // and the account restore both read it. The upload path drops every breadcrumb key, in both a
+  // plausible shape and JSON `null` (which `("metadata" -> key) IS NOT NULL` counts as present).
   for (const [label, forged] of [
     ['a plausible value', 'Scanned'],
     ['JSON null', null],
   ] as const) {
-    it(`ignores a forged marker (${label}) carried through the real upload path`, async () => {
+    it(`drops a forged marker (${label}) on the real upload path, and retraction still holds`, async () => {
       await createImage({
         userId: TAKEDOWN_USER,
         url: 'key-2/original.jpeg',
         type: 'image',
-        metadata: { [PRIOR_INGESTION_KEY]: forged },
+        metadata: {
+          [PRIOR_INGESTION_KEY]: forged,
+          [PRIOR_BLOCKED_FOR_KEY]: forged,
+          [PRIOR_NEEDS_REVIEW_KEY]: forged,
+          keepMe: 1,
+        },
         // The scan enqueue is a live HTTP call and is not what is under test here; the write
         // this test reads happens before it either way.
         skipIngestion: true,
       } as never);
 
       const created = store.images.find((i) => i.id === 2);
-      // Positive control on the forgery itself. If `createImage` ever starts stripping the key,
-      // this test would go on passing while proving nothing about the job.
-      expect(
-        created?.metadata && PRIOR_INGESTION_KEY in created.metadata,
-        'the upload path no longer stores the forged key — this test can no longer see the attack'
-      ).toBe(true);
+      // Control: the upload kept the uploader's own key, so a missing breadcrumb was dropped.
+      expect(created?.metadata).toEqual({ keepMe: 1 });
 
       await handleBlockImages({ ids: [2], moderatorId: MOD_ID });
       ageQueuePastRetention();
@@ -687,10 +715,9 @@ describe('who can reach blob retraction, driven through the real block writers',
     });
   }
 
-  // The other direction of the same forgery, and the more dangerous one under a POSITIVE
-  // discriminator: a marker that turns retraction ON would let an uploader make an automated
-  // block read as a moderator takedown.
-  it('a forged marker cannot make an automated block retract', async () => {
+  // The other direction: a marker that turned retraction ON would let an uploader make an
+  // automated block read as a moderator takedown.
+  it('drops a forged marker that would make an automated block retract', async () => {
     await createImage({
       userId: SCANNED_USER,
       url: 'key-3/original.jpeg',
@@ -698,6 +725,10 @@ describe('who can reach blob retraction, driven through the real block writers',
       metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', moderatorReviewed: true, review: true },
       skipIngestion: true,
     } as never);
+    expect(store.images.find((i) => i.id === 3)?.metadata).toEqual({
+      moderatorReviewed: true,
+      review: true,
+    });
 
     await blockByScanner(3);
     ageQueuePastRetention();
