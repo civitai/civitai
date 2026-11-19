@@ -1161,6 +1161,7 @@ export async function listMyServiceDeals({
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
+      held: !!deal.heldAt,
       revisionsUsed: deal.revisionsUsed,
       revisionsIncluded: deal.revisionsIncluded,
       requestedAt: deal.requestedAt,

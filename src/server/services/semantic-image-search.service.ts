@@ -20,7 +20,10 @@ import {
   resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
-import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
+import type {
+  RefusedCandidates,
+  RefusedSearchPath,
+} from '~/server/services/semantic-search-audit.service';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
@@ -140,6 +143,8 @@ export async function searchSemanticImages({
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
+  const refusedPath: RefusedSearchPath =
+    verdictLevel === 'refuse' ? 'refused_query' : 'refused_own_images';
   if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -163,16 +168,19 @@ export async function searchSemanticImages({
       excludedTagIds: number[];
       fromPlatform?: boolean;
       withMeta?: boolean;
+      // Users left out of these results only.
+      alsoExcludedUserIds?: number[];
     }
   ) => {
+    const { alsoExcludedUserIds = [], ...feedFilters } = filters;
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
         browsingLevel: level,
-        ...filters,
-        excludedUserIds,
+        ...feedFilters,
+        excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
         include: ['cosmetics', 'tagIds'],
@@ -217,6 +225,8 @@ export async function searchSemanticImages({
         excludedTagIds,
         fromPlatform: input.fromPlatform,
         withMeta: input.withMeta,
+        // "More like this" without the viewer's own images; the source check above still sees them.
+        alsoExcludedUserIds: input.excludeOwn && user ? [user.id] : undefined,
       })
     );
   // The candidate cache holds nothing per user, and an upload is one user's.
@@ -247,11 +257,12 @@ export async function searchSemanticImages({
   if (queryRefused)
     return input.query && !input.imageId
       ? audit.refused(
+          refusedPath,
           emptyPage(),
           browsingLevel,
           refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
         )
-      : audit.done(emptyPage(), browsingLevel);
+      : audit.done(emptyPage(), browsingLevel, refusedPath);
   const query: SearchQuery = uploadAnchor
     ? { imageUrl: uploadAnchor.imageUrl }
     : input.imageId
@@ -296,6 +307,12 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
+  if (correctedRefusal)
+    return audit.refused(
+      'refused_correction',
+      emptyPage(),
+      level,
+      async () => first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery }, level);
 }

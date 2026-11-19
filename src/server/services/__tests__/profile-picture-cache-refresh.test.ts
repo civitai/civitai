@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
@@ -17,10 +18,14 @@ const refreshPicture = vi.fn(async (_ids: number | number[]) => undefined);
 const refreshBasic = vi.fn(async (_ids: number | number[]) => undefined);
 const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
 const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+const restoreImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+const dropMarkers = vi.fn(async (_db: unknown, _ids: number[]) => undefined);
 
 vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
+  restoreClearedUserImages: (db: unknown, ids: number[]) => restoreImages(db, ids),
+  dropStaleHeldImageMarkers: (db: unknown, ids: number[]) => dropMarkers(db, ids),
 }));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({
@@ -132,6 +137,20 @@ beforeEach(() => {
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
 
+describe('an avatar change', () => {
+  it("busts the event engine's copy of the user's picture too", async () => {
+    const { deleteUserProfilePictureCache } = await import('../user.service');
+
+    await deleteUserProfilePictureCache(AVATAR_OWNER);
+
+    expect(refreshPicture).toHaveBeenCalledWith(AVATAR_OWNER);
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+  });
+});
+
 describe('a bulk picture refresh', () => {
   it("clears a User.image naming a held picture, then refreshes those users' basic-user cache and search documents", async () => {
     const { refreshProfilePicturesForUsers } = await import('../user.service');
@@ -146,6 +165,13 @@ describe('a bulk picture refresh', () => {
     expect(refreshBasic).not.toHaveBeenCalled();
     expect(queueUserUpdate).not.toHaveBeenCalled();
 
+    // The event engine's copy of each picture is busted whether or not it is held.
+    expect(redisMock.redis.hSet).toHaveBeenCalledWith('user:profilePicture:v3:3', {
+      debounce: '1',
+      cachedAt: expect.any(String),
+    });
+    expect(redisMock.redis.expire).toHaveBeenCalledWith('user:profilePicture:v3:4', 10);
+
     clearImages.mockResolvedValueOnce([4]);
     await refreshProfilePicturesForUsers([3, 4]);
     expect(refreshBasic).toHaveBeenCalledWith([4]);
@@ -153,6 +179,19 @@ describe('a bulk picture refresh', () => {
       refreshBasic.mock.invocationCallOrder[0]
     );
     expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
+  });
+
+  it('refreshes a user whose cleared User.image a lifted hold put back', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    restoreImages.mockResolvedValueOnce([9]);
+
+    await refreshProfilePicturesForUsers([9]);
+
+    expect(restoreImages).toHaveBeenCalledWith(expect.anything(), [9]);
+    expect(dropMarkers).toHaveBeenCalledWith(expect.anything(), [9]);
+    expect(refreshBasic).toHaveBeenCalledWith([9]);
+    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 9, action: 'Update' }]);
   });
 
   it('refreshes every session, never more than the cap at once', async () => {

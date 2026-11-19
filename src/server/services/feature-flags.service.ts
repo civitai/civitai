@@ -497,8 +497,8 @@ const featureFlags = createFeatureFlags({
   // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
   moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
   // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
-  // and never wider than it. Mods until the Flipt flag exists; once it does, keep mods in its rule.
-  imageSearchUpload: { availability: ['mod'], fliptKey: 'image-search-upload' },
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
@@ -571,6 +571,9 @@ const featureFlags = createFeatureFlags({
   creatorServices: { availability: [], fliptKey: 'creator-services' },
   // The header bar filters the /services feed in place (`?query=`).
   servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.

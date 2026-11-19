@@ -592,7 +592,7 @@ func newResolveFixture(t *testing.T) *resolveFixture {
 			f.verdicts = append(f.verdicts, verdict)
 		}},
 		Sessions:    &hydrate.PackedReader{Redis: f.cache, Prefix: "ns:"},
-		CookieNames: []string{"__Secure-civ-token", "__Host-civ-token"},
+		CookieNames: FixedCookieNames("__Secure-civ-token", "__Host-civ-token"),
 	}
 	return f
 }

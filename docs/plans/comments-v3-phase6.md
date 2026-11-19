@@ -1,6 +1,10 @@
 # CommentV3 Phase 6: teardown
 
-Built 2026-11-10, not deployed.
+Built 2026-11-10; merged in #8574, deployed 2026-11-12. Tables dropped on prod 2026-11-17, by hand,
+statement by statement. `DROP TABLE "Thread"` deadlocked against live traffic on `Image` and `Post`,
+so its entity FKs were dropped one by one first. The `archive` schema was dropped last, the same
+day, once the held users' comments in it had been copied again (checklist, "Database teardown").
+Complete on prod; whether dev has had the teardown is not recorded.
 
 Phase 5 removed every user-facing code path on the old comment tables (`Comment`, `CommentReaction`,
 `CommentReport`, `CommentV2`, `CommentV2Reaction`, `CommentV2Report`, `Thread`, `ThreadMute`). Four
@@ -30,11 +34,12 @@ checklist is `docs/comments-consolidation-checklist.md` → "Phase 6".
 1. Merge and deploy the main app. Its client no longer knows the old tables, which still exist.
    Comment surfaces are unchanged; the personal-data export and the CSAM comment archive stop
    including old-table rows from this deploy on (see step 2).
-2. Then apply the migration by hand on each writable environment. The held users' comments in the
-   orphan purge's `archive` schema, their only copy, went to the CSAM bucket on 2026-11-11. Not before
-   the deploy: the previous build still reads the old tables for reaction erasure, the
-   personal-data export and the CSAM comment archive and context text, and selects
-   `CommentV3.removedByAuthor`.
+2. Then apply the migration by hand on each writable environment (prod ran it statement by
+   statement, the `archive` drop last; see the top). The held users' comments in the orphan
+   purge's `archive` schema, their only copy, went to the CSAM bucket on 2026-11-11 and again for
+   the whole held set on 2026-11-17. Not before the deploy: the previous build still reads the old
+   tables for reaction erasure, the personal-data export and the CSAM comment archive and context
+   text, and selects `CommentV3.removedByAuthor`.
 
    Apply it soon after the deploy: until then the new build's personal-data export and CSAM comment
    archive skip rows the old tables still hold. Use a quiet window and expect to retry: dropping the
@@ -42,7 +47,8 @@ checklist is `docs/comments-consolidation-checklist.md` → "Phase 6".
    the statement, bounded by the 3s `lock_timeout`. Ask an infra owner first whether anything outside
    this repo still replicates the old tables: the drop removes them from any publication silently,
    and a consumer that still follows them, rather than CommentV3, has had no new comments since the
-   flip.
-3. Check: no old table is left, and creating, editing and reacting to a comment still work.
+   flip. Asked before the prod teardown; the Kafka topics were handed over for deletion 2026-11-17.
+3. Check: no old table is left, and creating, editing and reacting to a comment still work (prod:
+   348 comments created and 18 edited an hour after, reactions not checked; checklist, "Database teardown").
 
 There is no rollback for the drop. The data that is kept is in CommentV3.

@@ -557,6 +557,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
 		Pending:        in.Pending,
+		Tools:          in.Tools,
 	}
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
@@ -594,6 +595,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		Tools:                 in.Tools,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText

@@ -25,26 +25,6 @@ const create = (over: Record<string, unknown> = {}) =>
   createImage({ url: KEY, userId: 7, type: 'image', ...over } as never);
 const createdData = () => dbMock.dbWrite.image.create.mock.calls[0][0].data;
 
-describe('createImage for a search upload', () => {
-  beforeEach(() => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null } as never);
-  });
-
-  it('sends it to the imageScanning lane, the one that reports faces', async () => {
-    await create({ blockProvenance: { key: 'searchUploadAppId', appId: 'search-upload' } });
-    expect(createImageIngestionRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ imageId: 4242, forceImageScanning: true })
-    );
-  });
-
-  it('leaves any other image on the lane Flipt picks', async () => {
-    await create({ blockProvenance: { key: 'blockUploadedAppId', appId: 'app-1' } });
-    expect(createImageIngestionRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ forceImageScanning: false })
-    );
-  });
-});
-
 describe('createImage for an owner', () => {
   it('who is banned stores the image blocked and still sends it to scan', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: new Date() } as never);

@@ -45,7 +45,14 @@ const REFUSAL_KINDS = [...VOTE_KINDS, 'unknown'] as const;
 const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
 export type RefusalKind = (typeof REFUSAL_KINDS)[number];
 export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
-const TICK_FAILURE_STEPS = ['writeback', 'payout', 'yesno', 'reset', 'buzz_grant'] as const;
+const TICK_FAILURE_STEPS = [
+  'writeback',
+  'moderator_ruled',
+  'payout',
+  'yesno',
+  'reset',
+  'buzz_grant',
+] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
 export type GoldSource = (typeof GOLD_SOURCES)[number];

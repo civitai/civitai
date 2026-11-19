@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isMoreLikeThisVisible, moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import {
+  isMoreLikeThisVisible,
+  moreLikeThisHref,
+  wantsNewTab,
+} from '~/components/Image/MoreLikeThisButton';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 const image = { id: 42, type: MediaType.image };
 
@@ -33,5 +37,29 @@ describe('more like this', () => {
     expect(
       isMoreLikeThisVisible({ moreLikeThis: false, imageSearch: true, feedSearch: true }, image)
     ).toBe(false);
+  });
+
+  it('is not offered on images it cannot search from, as Remix refuses image-to-image', () => {
+    const flags = { moreLikeThis: true, feedSearch: true, imageSearch: false };
+    const scanned = { ...image, ingestion: ImageIngestionStatus.Scanned };
+    expect(isMoreLikeThisVisible(flags, scanned)).toBe(true);
+    expect(isMoreLikeThisVisible(flags, { ...scanned, minor: true })).toBe(false);
+    expect(isMoreLikeThisVisible(flags, { ...scanned, poi: true })).toBe(false);
+    expect(isMoreLikeThisVisible(flags, { ...scanned, blockedFor: 'Moderated' })).toBe(false);
+    expect(
+      isMoreLikeThisVisible(flags, { ...image, ingestion: ImageIngestionStatus.Blocked })
+    ).toBe(false);
+    expect(
+      isMoreLikeThisVisible(flags, { ...image, ingestion: ImageIngestionStatus.Pending })
+    ).toBe(false);
+  });
+
+  it('opens a new tab for a modified or middle click, and navigates in place otherwise', () => {
+    const click = { ctrlKey: false, metaKey: false, shiftKey: false, button: 0 };
+    expect(wantsNewTab(click)).toBe(false);
+    expect(wantsNewTab({ ...click, ctrlKey: true })).toBe(true);
+    expect(wantsNewTab({ ...click, metaKey: true })).toBe(true);
+    expect(wantsNewTab({ ...click, shiftKey: true })).toBe(true);
+    expect(wantsNewTab({ ...click, button: 1 })).toBe(true);
   });
 });

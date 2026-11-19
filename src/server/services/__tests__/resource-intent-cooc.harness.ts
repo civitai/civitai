@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
+import { afterEach } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import type { CoocDrawRow, CoocRawQuery } from '~/server/services/resource-intent-cooc/build';
 import type { CoocSql } from '~/server/services/resource-intent-cooc/store';
@@ -14,6 +15,22 @@ export const MIGRATION_SQL = readFileSync(
   'utf8'
 );
 
+// A PGlite holds its WASM heap for as long as anything references it, closed or not, and a test's
+// `vi.fn` closures stay referenced for the rest of the file (vitest keeps every mock). So after each
+// test, close every instance made so far and drop its `mod`/`fs`. An instance made in a `beforeAll`
+// would be closed after the first test.
+const open = new Set<PGlite>();
+afterEach(async () => {
+  const dbs = [...open];
+  open.clear();
+  await Promise.all(
+    dbs.map(async (db) => {
+      if (!db.closed) await db.close();
+      Object.assign(db, { mod: undefined, fs: undefined });
+    })
+  );
+});
+
 /**
  * `timestamp(3)` (no zone) read as UTC and a UTC session, as the app's database runs; PGlite's
  * default would read it in the test host's local zone and shift every date.
@@ -22,6 +39,7 @@ export async function utcPglite(...migrations: string[]) {
   const db = new PGlite({
     parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
   });
+  open.add(db);
   await db.exec(`SET TIME ZONE 'UTC'`);
   for (const m of migrations) await db.exec(m);
   return db;

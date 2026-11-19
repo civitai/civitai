@@ -1,4 +1,4 @@
-import { parseCookieHeader, readDeviceId, readSessionToken } from './cookies';
+import { parseCookieHeader, readDeviceId, readSessionToken, siteCookieHeader } from './cookies';
 import { hubFetch, sessionCall, type SessionRef } from './hub';
 
 // DEVICE-ACCOUNT CLIENT — the hub's per-device account set (multi-account switching; cutover doc E). Callers
@@ -15,28 +15,47 @@ export interface DeviceAccount {
 }
 
 export interface DeviceAccountClient {
-  /** The browser's linked-account list. Forward the request's `Cookie` header. Empty if unauthorized/unreachable. */
-  list(cookie: string): Promise<DeviceAccount[]>;
+  /**
+   * The browser's linked-account list. Forward the request's `Cookie` and `Host` headers (`host` null in an app
+   * that serves one site). Empty if unauthorized/unreachable.
+   */
+  list(cookie: string, host: string | null | undefined): Promise<DeviceAccount[]>;
   /**
    * Device-level switch: the hub authorizes (active session + target in this device's set + fresh) and returns
    * a freshly minted civ-token for `userId`. Null when the hub declines (not linked / aged out / unreachable);
    * the caller sets the returned token as the session cookie.
    */
-  switch(cookie: string, userId: number): Promise<{ token: string } | null>;
+  switch(
+    cookie: string,
+    userId: number,
+    host: string | null | undefined
+  ): Promise<{ token: string } | null>;
   /** Remove `userId` from this browser's device set. Returns whether the hub accepted it. */
-  remove(cookie: string, userId: number): Promise<boolean>;
+  remove(cookie: string, userId: number, host: string | null | undefined): Promise<boolean>;
 }
 
-const sessionOf = (cookie: string): SessionRef => {
+// The session in a forwarded Cookie header, and the header itself as forwarded (a host-only site's own cookies).
+const sessionOf = (
+  rawCookie: string,
+  host: string | null | undefined
+): { session: SessionRef; cookie: string } => {
+  const cookie = siteCookieHeader(rawCookie, host);
   const jar = parseCookieHeader(cookie);
-  return { token: readSessionToken(jar)?.value, deviceId: readDeviceId(jar)?.value };
+  return {
+    session: {
+      token: readSessionToken(jar, { host })?.value,
+      deviceId: readDeviceId(jar, { host })?.value,
+    },
+    cookie,
+  };
 };
 
 export function createDeviceAccountClient(): DeviceAccountClient {
   return {
-    async list(cookie) {
+    async list(rawCookie, host) {
       try {
-        const { headers, body, internal } = sessionCall(sessionOf(cookie), { cookie });
+        const { session, cookie } = sessionOf(rawCookie, host);
+        const { headers, body, internal } = sessionCall(session, { cookie });
         // A GET has no body, so the internal shape lists by POST.
         const res = await hubFetch('/api/auth/accounts', {
           method: internal ? 'POST' : 'GET',
@@ -50,9 +69,10 @@ export function createDeviceAccountClient(): DeviceAccountClient {
         return [];
       }
     },
-    async switch(cookie, userId) {
+    async switch(rawCookie, userId, host) {
       try {
-        const { headers, body } = sessionCall(sessionOf(cookie), { cookie }, { userId });
+        const { session, cookie } = sessionOf(rawCookie, host);
+        const { headers, body } = sessionCall(session, { cookie }, { userId });
         const res = await hubFetch('/api/auth/switch', { method: 'POST', headers, body });
         if (!res.ok) return null;
         const { token } = (await res.json()) as { token?: string };
@@ -61,9 +81,10 @@ export function createDeviceAccountClient(): DeviceAccountClient {
         return null;
       }
     },
-    async remove(cookie, userId) {
+    async remove(rawCookie, userId, host) {
       try {
-        const { headers, body } = sessionCall(sessionOf(cookie), { cookie });
+        const { session, cookie } = sessionOf(rawCookie, host);
+        const { headers, body } = sessionCall(session, { cookie });
         const res = await hubFetch(`/api/auth/accounts?userId=${userId}`, {
           method: 'DELETE',
           headers,

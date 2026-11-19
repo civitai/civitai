@@ -202,7 +202,7 @@ beforeEach(() => {
   mockModelVersionEvent.mockResolvedValue(true);
   mockCounter.mockReset().mockResolvedValue(1);
   mockCounterSet.mockReset();
-  redisMock.sysRedis.multi.mockReset().mockImplementation(() => {
+  redisMock.redis.multi.mockReset().mockImplementation(() => {
     const chain = {
       set: (...args: unknown[]) => {
         mockCounterSet(...args);
@@ -344,6 +344,8 @@ describe('the hourly ceiling', () => {
       '0',
       { NX: true, EX: 7200 }
     );
+    // A rate window: on the cache cluster, not in system Redis.
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('allows the download that reaches the ceiling exactly', async () => {

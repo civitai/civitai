@@ -79,25 +79,37 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 // metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
 // configured (cfg.ClickHouseURL empty) or its URL is invalid, so feed-go starts and those misses fall
 // back (`metrics-miss`). The error is for the startup log; it never names the URL or credentials.
-func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
+// tracer spans its reads (nil when tracing is off).
+func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
 	if cfg.ClickHouseURL == "" {
 		return nil, nil
 	}
 	c, err := chread.New(chread.Config{URL: cfg.ClickHouseURL, Username: cfg.ClickHouseUsername, Password: cfg.ClickHousePassword,
-		MaxInFlight: cfg.ClickHouseMaxInFlight})
+		MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer})
 	if err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
-// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). The error is metricsReader's.
-func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute) error {
-	reader, err := metricsReader(cfg)
+// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bounds
+// (the lookup's, FEED_GO_CLICKHOUSE_TIMEOUT_MS; the populate-lock wait's, FEED_GO_METRICS_LOCK_WAIT_MS),
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). With tracing on (tp set) the reader's
+// reads are spanned (tracing.ClickHouseTracer) and so are c's waits (MissCompute.Tracer); tp nil
+// leaves both untraced. The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing.Provider) error {
+	var chTracer chread.Tracer
+	if tp != nil {
+		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
+		if c != nil {
+			c.Tracer = tp.Tracer
+		}
+	}
+	reader, err := metricsReader(cfg, chTracer)
 	if c != nil && reader != nil {
 		c.ClickHouse = reader
 		c.MetricsTimeout = cfg.ClickHouseTimeout
+		c.MetricsLockWait = cfg.MetricsLockWait
 	}
 	return err
 }
@@ -185,14 +197,15 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
-	if err := attachMetricsReader(cfg, sources.Compute); err != nil {
+	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,
-		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
+		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_METRICS_LOCK_WAIT_MS", cfg.MetricsLockWait.Milliseconds(),
+		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
 	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
 	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
 	var markers *auth.MarkerCache
@@ -224,7 +237,7 @@ func run(log *slog.Logger) error {
 		Verifier:            verifier,
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{

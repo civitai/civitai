@@ -65,7 +65,8 @@ import {
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import {
   buzzCapRedisKey,
   clearDailyCapRefusal,
@@ -376,6 +377,7 @@ import {
 // undiagnosable — it is not a cosmetic emit.
 import {
   recordBlockPostSubjectRefusal,
+  recordBlockUnlockChargedNotReleased,
   recordStepPriceCheck,
   type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -1953,15 +1955,13 @@ async function readMyConfirmWithinLimit(
 }
 
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
+  const key = `${REDIS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {
-    const count = await sysRedis.incrBy(key, 1);
-    if (count === 1) {
-      await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
-    } else {
-      const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
-    }
+    const count = await takeClusterWindowCount(
+      'checkDailyLimitReadRateLimit',
+      key,
+      DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds
+    );
     return count <= DAILY_LIMIT_READ_RATE_LIMIT.max;
   } catch {
     return false;
@@ -15557,6 +15557,7 @@ async function outputUnlockDeps(opts: {
       }),
     acquireLock: () => acquireOutputUnlockLock(workflowId),
     warnChargedNotReleased: (entry) => {
+      recordBlockUnlockChargedNotReleased(entry.readBackFailed);
       logToAxiom({
         type: 'warning',
         name: 'app-block-unlock-charged-not-released',

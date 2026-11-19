@@ -11,7 +11,7 @@ import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-
 import type { DatasetRating } from '$lib/dataset-rating';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
-export { MatureAckRequiredError } from '$lib/train-core';
+export { MatureRepriceError } from '$lib/train-core';
 
 // Live NDJSON tracing is in production orchestrator-side, so it defaults ON; TRAINING_TRACE_MODE
 // (`events` | `logs` | `none`) remains the kill switch if the submit ever starts rejecting it.

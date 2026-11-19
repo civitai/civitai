@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createOwnerImageSearch,
   createSemanticImageSearch,
   withSemanticImageSearch,
 } from '~/components/Search/semanticImageSearchClient';
@@ -157,5 +158,49 @@ describe('withSemanticImageSearch', () => {
     await client.search([imageRequest({ query: 'fox', similarTo: 42 })] as never);
 
     expect(search.mock.calls[0][0]).toMatchObject({ query: 'fox', imageId: undefined });
+  });
+});
+
+describe('createOwnerImageSearch', () => {
+  // As the real select: own images, no `user`.
+  const getMyImages = vi.fn(async () => ({
+    items: [{ id: 1, nsfwLevel: 1, url: 'a', type: 'image', metadata: { hash: 'h' } }],
+  }));
+  const caller = { id: 7, username: 'fox', image: 'fox.png' };
+  const run = (searchOwner: ReturnType<typeof createOwnerImageSearch>, query: string) =>
+    searchOwner(IMAGES_SEARCH_INDEX, { query, hitsPerPage: 10, page: 0 } as never) as Promise<{
+      hits: { user?: { id: number; username: string } }[];
+    }>;
+
+  it("gives the empty-query list the caller's user", async () => {
+    const searchOwner = createOwnerImageSearch({
+      getMyImages: getMyImages as never,
+      getUser: () => caller,
+    });
+    const { hits } = await run(searchOwner, '');
+    expect(hits[0].user).toMatchObject(caller);
+  });
+
+  it('leaves hits without a user when nobody is signed in', async () => {
+    const searchOwner = createOwnerImageSearch({
+      getMyImages: getMyImages as never,
+      getUser: () => undefined,
+    });
+    const { hits } = await run(searchOwner, '  ');
+    expect(hits[0].user).toBeUndefined();
+  });
+
+  it('still answers a typed query from the semantic search, user as it returns it', async () => {
+    const searchImages = vi.fn(async () => ({
+      hits: [{ id: 9, user: { id: 3, username: 'other' } }],
+    }));
+    const searchOwner = createOwnerImageSearch({
+      searchImages: searchImages as never,
+      getMyImages: getMyImages as never,
+      getUser: () => caller,
+    });
+    const { hits } = await run(searchOwner, 'woodblock');
+    expect(searchImages).toHaveBeenCalledTimes(1);
+    expect(hits[0].user?.username).toBe('other');
   });
 });

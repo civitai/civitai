@@ -148,7 +148,7 @@ export function ManageServicesPanel({
           emptyText={
             requestsStatus === 'open'
               ? 'No open requests. They show up here when a buyer requests one of your services.'
-              : 'No closed requests yet. Declined, expired, cancelled and completed requests show up here.'
+              : 'No closed requests yet. Declined, expired, canceled and completed requests show up here.'
           }
         />
       </Stack>

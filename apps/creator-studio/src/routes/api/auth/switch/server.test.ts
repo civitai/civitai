@@ -59,7 +59,8 @@ describe('POST /api/auth/switch', () => {
     const res = await post({ cookie: '__Secure-civ-token=old; __Secure-civ-device=dev' });
     expect(switchAccount).toHaveBeenCalledWith(
       '__Secure-civ-token=old; __Secure-civ-device=dev',
-      2
+      2,
+      null
     );
     expect(res.status).toBe(403);
     expect(res.headers.getSetCookie()).toEqual([]);

@@ -30,8 +30,6 @@ import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service'
 import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { toSearchUploadFaceScan } from '~/server/services/search-upload-gate';
-import { isSearchUploadRow, writeSearchUploadFaceScan } from '~/server/services/search-upload-rows';
 
 type RawRepeatStep = {
   $type?: string;
@@ -58,8 +56,6 @@ export type ImageScanningResult = {
   tags: Record<string, number>;
   csam: boolean | null;
   ageDetections: ImageScanningJointAgeDetection[];
-  /** The age model (and its person detector) ran; for a video, on every frame. */
-  ageClassificationRan: boolean;
   minorDetected: boolean;
   /** Set when the orchestrator refuses the image; null when it passes. */
   blockedReason: string | null;
@@ -97,7 +93,6 @@ function readScan(output: ScanningOutput, workflowId: string): ImageScanningResu
     tags,
     csam: output.csam ?? null,
     ageDetections: jointAgeClassification?.detections ?? [],
-    ageClassificationRan: jointAgeClassification?.ran === true,
     minorDetected: !!jointAgeClassification?.minorDetected,
     blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
@@ -123,7 +118,6 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       tags,
       csam: acc.csam || frame.csam ? true : acc.csam ?? frame.csam,
       ageDetections: [...acc.ageDetections, ...frame.ageDetections],
-      ageClassificationRan: acc.ageClassificationRan && frame.ageClassificationRan,
       minorDetected: acc.minorDetected || frame.minorDetected,
       blockedReason: acc.blockedReason ?? frame.blockedReason,
       aiRecognition: higher(acc.aiRecognition, frame.aiRecognition),
@@ -285,9 +279,6 @@ export async function processImageScanningWorkflow({
     if (pHash) await logPerceptualHashMatch({ imageId, pHash, log: IMAGE_SCANNING_LOG });
 
     image = await loadImageForScan(imageId);
-    // Before the verdict: the upload gate reads it as soon as the row is Scanned.
-    if (isSearchUploadRow(image.metadata))
-      await writeSearchUploadFaceScan(imageId, toSearchUploadFaceScan(scan));
     const { prompt, negativePrompt } = (image.meta ?? {}) as {
       prompt?: string;
       negativePrompt?: string;

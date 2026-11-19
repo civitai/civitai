@@ -82,7 +82,7 @@ Supported today:
 
 | Area | Supported | Falls back |
 |---|---|---|
-| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
+| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`, `tools` (images holding every listed tool: the `ImageTool` clause on every Postgres read, the positive ids as the feed query's `tools`); cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / tags / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; a `tools` entry that is not an int4 (`input-tools`: Node casts it into an `integer[]`, which is not reproduced); cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
@@ -269,11 +269,17 @@ environment, and they must never switch the reader on. Without a reader the miss
 - Every requested image is answered, as fetch's zero fill answers it: its summed counts, every other
   count 0, `statsUnknown: false`. A count this service cannot hold exactly (fractional, past 2^53)
   fails the lookup instead.
-- The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on as
-  Node's fetch waits (the hash re-read every 200 ms, up to 15 times), never queried again. One that
-  never lands falls back (`metrics-miss-failed`): fetch answers it zeros only after 15 × 200 ms of
-  sleeps, all of its caller's 3 s budget, so the caller always times out first and Node answers it
-  `statsUnknown`. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
+- The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on,
+  never queried again, for at most `FEED_GO_METRICS_LOCK_WAIT_MS` (default 500; unset, zero, negative
+  or junk is the default), the hash re-read every 100 ms with the last read at the bound. One that has
+  not landed by then falls back (`metrics-miss-failed`; the `metrics lock wait` span's outcome
+  `exhausted`). Node's fetch waits longer (every 200 ms, up to 15 times) and answers it zeros only
+  after 15 × 200 ms of sleeps, all of its caller's 3 s budget, so the caller always times out first
+  and Node answers it `statsUnknown`: feed-go gives up sooner rather than hold the page for up to its
+  whole lookup bound on another process's populate. The 100 ms cadence (half Node's) puts five reads
+  inside the default bound where 200 ms would put two, and one wait still reads fewer times than
+  Node's 15. The bound covers only that wait, which starts after this lookup's own populate of the
+  ids it was free to query; that read keeps the lookup bound below. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
   5 s while the populate runs and released after (left to expire after a server timeout, whose
   capped lookup also marks its ids `metrics:timeout`, 12 h); with it off it is only read (`EXISTS`).
 - Write-back on: each hash is written with `hReplaceStampedEx`, the Lua script Node evaluates (same
@@ -282,7 +288,9 @@ environment, and they must never switch the reader on. Without a reader the miss
   request, as Node's un-aborted read: when the request's bound ends first the request falls back and
   the populate still fills the cache.
 - Bounds: one page's lookup is bounded by `FEED_GO_CLICKHOUSE_TIMEOUT_MS` (default 2000, at most half
-  the request budget, and never more than 2500 whatever either is set to). Node's whole read is
+  the request budget, and never more than 2500 whatever either is set to); inside it, the wait on
+  another process's populate lock by `FEED_GO_METRICS_LOCK_WAIT_MS` (above), and the lookup bound
+  still ends that wait first when it is shorter. Node's whole read is
   bounded by `CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS` (3000) and answers `statsUnknown` past it; this
   lookup starts after feed-go's own cache read, so 2500 leaves room for what Node's budget spends
   before its populate, and a lookup Node would not have finished is never answered here. A pod sends at most
@@ -1208,7 +1216,19 @@ configuration drives both and a trace continues browser → feed-go → Node on 
   `feed_go.shadow.result`; a fallback adds a `fallback` event (reason, safe detail), an error an
   `error` event (class, type) and the error status. Children: one per pgx query (`pgx SELECT`:
   operation and a hash of the SQL text, never a bind value or the text), one per Redis command or
-  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), and
+  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), one
+  per ClickHouse read of the metric-hash misses (`clickhouse query`, `internal/chread` through
+  `tracing.ClickHouseTracer`: the operation keyword and the rows returned, never the SQL, not even a
+  hash of it since the read inlines its ids, nor the request URL, which carries the query; a refused
+  slot, a timeout or a ClickHouse exception is the error status, its class, and `error.type`), the
+  waits on work the request did not start (`internal/hydrate`, `MissCompute.Tracer`): `miss lookup
+  join`, on a request that joins another request's in-flight miss lookup (the lookup's own spans sit
+  under the request that runs it), from reaching the flight to its answer, with `feed_go.miss.cache`
+  and `feed_go.miss.shared=true` (an answer kept in the few-second in-process memo is a map read and
+  gets none), and `metrics lock wait`, the metrics lookup's whole wait on a populate lock another
+  process holds (a Redis read every 100 ms up to `FEED_GO_METRICS_LOCK_WAIT_MS`, five by default), with `feed_go.metrics.wait.ids` (a count),
+  `.polls` and `.outcome` (`filled`, `exhausted`, `ctx_done`, `read_error`; all but `filled` are the
+  error status), never an id, a key or SQL; and
   the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the
   outbound `traceparent` so the Node request is its child. With tracing off the proxy passes the
   inbound `traceparent` through unchanged, as before.

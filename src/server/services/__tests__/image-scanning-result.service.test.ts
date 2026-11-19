@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as SearchUploadRows from '~/server/services/search-upload-rows';
 import {
   classifyImageScanFailure,
   ImageScanFailureClass,
@@ -45,11 +44,6 @@ vi.mock('~/server/services/scan-label-flag.service', () => ({
 }));
 vi.mock('~/server/services/upload-prompt-scan.service', () => ({
   labelUploadPrompt: mockLabelPrompt,
-}));
-const mockWriteFaceScan = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('~/server/services/search-upload-rows', async (importOriginal) => ({
-  ...(await importOriginal<typeof SearchUploadRows>()),
-  writeSearchUploadFaceScan: mockWriteFaceScan,
 }));
 
 import {
@@ -465,7 +459,6 @@ describe('parseImageScanningSteps', () => {
       tags: { solo: 0.9 },
       csam: false,
       ageDetections: [detection('21-24', false)],
-      ageClassificationRan: true,
       minorDetected: false,
       blockedReason: null,
       aiRecognition: { label: 'AI', score: 0.9 },
@@ -678,72 +671,5 @@ describe('isImageScanningWorkflow', () => {
     ],
   ])('%s → %s', (_, steps, expected) => {
     expect(isImageScanningWorkflow(steps)).toBe(expected);
-  });
-});
-
-describe('the age detector across video frames', () => {
-  it('counts as run only when it ran on every frame', () => {
-    const frame = (ran: boolean) => ({
-      $type: 'imageScanning',
-      output: scanOutput({
-        jointAgeClassification: {
-          status: ran ? 'ran' : 'skipped',
-          ran,
-          detections: [],
-          minorDetected: false,
-        },
-      }),
-    });
-    const video = (...frames: boolean[]) =>
-      parseImageScanningSteps([{ $type: 'repeat', output: { steps: frames.map(frame) } }], 'wf');
-    expect(video(true, true).ageClassificationRan).toBe(true);
-    expect(video(true, false).ageClassificationRan).toBe(false);
-  });
-});
-
-describe('a search upload records its faces before its verdict', () => {
-  const faceStep = {
-    ...scanStep,
-    output: {
-      ...scanStep.output,
-      jointAgeClassification: {
-        ran: true,
-        detections: [{ animeProbability: 0.12 }, { animeProbability: 0.97 }],
-        minorDetected: false,
-      },
-    },
-  };
-  beforeEach(() => {
-    vi.clearAllMocks();
-    pipeline.resolveScanOutcome.mockResolvedValue({ ingestion: 'Scanned', blockedFor: null });
-    mockLabelPrompt.mockResolvedValue(undefined);
-  });
-
-  it('writes each face, then resolves the verdict', async () => {
-    pipeline.loadImageForScan.mockResolvedValue({ ...image, metadata: { searchUploadAppId: 'x' } });
-    await deliver('succeeded', [faceStep, hashStep]);
-    expect(mockWriteFaceScan).toHaveBeenCalledWith(7, {
-      ran: true,
-      faces: [{ animeProbability: 0.12 }, { animeProbability: 0.97 }],
-    });
-    expect(mockWriteFaceScan.mock.invocationCallOrder[0]).toBeLessThan(
-      pipeline.resolveScanOutcome.mock.invocationCallOrder[0]
-    );
-  });
-
-  it('writes nothing for any other image', async () => {
-    pipeline.loadImageForScan.mockResolvedValue({
-      ...image,
-      metadata: { blockUploadedAppId: 'x' },
-    });
-    await deliver('succeeded', [faceStep, hashStep]);
-    expect(mockWriteFaceScan).not.toHaveBeenCalled();
-    expect(pipeline.resolveScanOutcome).toHaveBeenCalled();
-  });
-
-  it('records a detector that did not run', async () => {
-    pipeline.loadImageForScan.mockResolvedValue({ ...image, metadata: { searchUploadAppId: 'x' } });
-    await deliver('succeeded', [scanStep, hashStep]);
-    expect(mockWriteFaceScan).toHaveBeenCalledWith(7, { ran: false, faces: [] });
   });
 });

@@ -1,3 +1,6 @@
+import { ilikeContains } from '~/server/utils/ilike';
+import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
   isHeldForReview,
@@ -75,7 +78,6 @@ import {
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
-import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForPostCascade,
@@ -92,17 +94,13 @@ import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   createImage,
   createImageResources,
-  deleteImageFromS3,
-  purgesAllVersions,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
-  invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
-  isPlainOwnerDelete,
-  imagesWithOpenReports,
+  deleteImages,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -422,8 +420,14 @@ export const getPostsInfinite = async ({
       WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
     )`);
 
-  // Applies to owner requests too, unlike the tag filter.
-  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+  // Applies to owner requests too, unlike the tag filter. One creator's posts (a profile search)
+  // match the words anywhere in the title, cheap over that one user's rows; across everyone, a prefix.
+  if (query)
+    AND.push(
+      targetUser
+        ? Prisma.sql`p.title ILIKE ${ilikeContains(query)}`
+        : Prisma.sql`p.title ILIKE ${query + '%'}`
+    );
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();
@@ -1399,116 +1403,51 @@ export async function afterPostsUnpublish(posts: { postId: number; userId: numbe
 export const deletePost = async ({
   id,
   isModerator,
-  deletedById,
+  actor,
   viewerIsModerator = isModerator,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+}: GetByIdInput & { isModerator?: boolean; actor: DeleteActor; viewerIsModerator?: boolean }) => {
   // The delete trigger on "PostText" refuses it too; this refuses it with a message.
   if ((await heldPostTextPostIds({ postIds: [id] })).length)
     throw heldTextError(viewerIsModerator, 'Text in this post');
-  // Before the transaction: `CollectionItem.postId` cascades and the post's images go
-  // with it, so nothing can resolve this afterwards.
+  // Before the delete: `CollectionItem.postId` cascades and the post's images go with it, so
+  // nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
   // Chapter 1 of a story started from an image, whose points go with it.
   const sparked = await dbWrite.storylineChapter.findFirst({
     where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
     select: { storylineId: true },
   });
+  // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+  const images = await dbWrite.$queryRaw<
+    { id: number; url: string; userId: number; deletable: boolean }[]
+  >`
+    SELECT i.id, i.url, i."userId", ${Prisma.raw(
+      isModerator ? 'TRUE' : 'i."userId" = p."userId"'
+    )} AS deletable
+    FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i."postId" = ${id}
+  `;
+  // Before the delete, which nulls their `postId` and leaves them public.
+  const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id]);
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported, unreleasedReviewIds } =
-    await dbWrite.$transaction(
-      async (tx) => {
-        // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-        const images = await tx.$queryRaw<
-          { id: number; url: string; userId: number; deletable: boolean }[]
-        >`
-        SELECT i.id, i.url, i."userId", ${Prisma.raw(
-          isModerator ? 'TRUE' : 'i."userId" = p."userId"'
-        )} AS deletable
-        FROM "Image" i
-        JOIN "Post" p ON p.id = i."postId"
-        WHERE i."postId" = ${id}
-      `;
+  // Images first, then the post: a failure in between leaves a post with fewer images, which can
+  // be deleted again.
+  const deletedImages = await deleteImages(
+    images.filter((image) => image.deletable).map((image) => image.id),
+    { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
+  );
+  const [post] = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
 
-        const deletableImages = images.filter((image) => image.deletable);
-        // Before the delete: `ImageReport` cascades with the image.
-        const reported =
-          deletedById === undefined
-            ? new Set<number>()
-            : await imagesWithOpenReports(
-                deletableImages.map((image) => image.id),
-                tx
-              );
+  // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+  // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+  // never revisits them — their docs must be dropped here.
+  const deletedIds = new Set(deletedImages.map((image) => image.id));
+  const orphanedImageIds = images.filter((image) => !deletedIds.has(image.id)).map((x) => x.id);
+  const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-        type DeletedImage = {
-          id: number;
-          url: string;
-          userId: number;
-          ingestion: string;
-          needsReview: string | null;
-          nsfwLevel: number;
-          blockedFor: string | null;
-        };
-        let deletedImages: DeletedImage[] = [];
-        if (deletableImages.length) {
-          const imageIds = deletableImages.map((i) => i.id);
-          deletedImages = await tx.$queryRaw<DeletedImage[]>`
-          DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(imageIds)})
-          RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
-        `;
-        }
-
-        // Before the delete, which nulls their `postId` and leaves them public.
-        const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([id], tx);
-
-        const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        DELETE FROM "Post"
-        WHERE id = ${id}
-        RETURNING id, "nsfwLevel"
-      `;
-
-        // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-        // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-        // never revisits them — their docs must be dropped here.
-        const deletedIds = new Set(deletedImages.map(({ id }) => id));
-        const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
-
-        const imageOwnerIds = uniq(images.map((image) => image.userId));
-
-        return {
-          post,
-          deletedImages,
-          orphanedImageIds,
-          imageOwnerIds,
-          reported,
-          unreleasedReviewIds,
-        };
-      },
-      // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
-      // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
-      // said to revert once the slowness was root-caused, and it now has been.
-      //
-      // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
-      // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
-      // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
-      // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
-      // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
-      // the failure was deterministic by post size rather than random.
-      //
-      // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
-      // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
-      // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
-      // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
-      //
-      // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
-      // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
-      // takes three times as long to surface.
-      { timeout: 10000 }
-    );
-
-  // Immediately after the commit, ahead of the de-index/S3/cache steps below. Those can
-  // reject, and by this point the rows are gone — the pre-delete snapshot is the only
-  // remaining record of which documents went stale.
+  // Ahead of the de-index and cache steps below, which can reject: by now the rows are gone, and
+  // the snapshot read before the delete is the only record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
   if (sparked) void onStorySparkLost(sparked.storylineId);
   announceReviewsInBackground({
@@ -1516,35 +1455,13 @@ export const deletePost = async ({
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
   });
 
-  const deletedImageIds = deletedImages.map((img) => img.id);
-
-  // Orphans leave the index but keep their rows — they must not reach the S3 delete below.
-  const deindexIds = [...deletedImageIds, ...orphanedImageIds];
-  if (deindexIds.length)
+  // Orphans keep their rows, with `postId` nulled; they leave the index too.
+  if (orphanedImageIds.length)
     await queueImageSearchIndexUpdate({
-      ids: deindexIds,
+      ids: orphanedImageIds,
       action: SearchIndexUpdateQueueAction.Delete,
     });
-
-  if (deletedImages.length) {
-    await invalidateManyImageExistence(deletedImageIds);
-
-    await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
-      Promise.all(
-        batch.map((image) =>
-          deleteImageFromS3({
-            id: image.id,
-            url: image.url,
-            allVersions: purgesAllVersions(image, !!viewerIsModerator),
-            keepShopArtwork: isPlainOwnerDelete(
-              { ...image, openReport: reported.has(image.id) },
-              deletedById
-            ),
-          })
-        )
-      )
-    );
-  }
+  const deletedImageIds = [...deletedIds];
 
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);

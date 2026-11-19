@@ -321,7 +321,7 @@
           existing &&
           JSON.stringify(existing) ===
             JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
+        return [key, existing && !untouched ? { ...defaultRunParams(run, t, loraType), ...existing } : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
@@ -342,7 +342,6 @@
     prompts: SamplePrompt[],
     name: string,
     currencies: string[],
-    matureAck: boolean,
     reviewedMature: number
   ) {
     if (!selection) return;
@@ -359,7 +358,7 @@
       labelMode,
       edit
     );
-    const keyed = stampMature(runs, matureAck, reviewedMature).map((run, i) => ({
+    const keyed = stampMature(runs, reviewedMature).map((run, i) => ({
       ...run,
       submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
     }));

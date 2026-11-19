@@ -13,6 +13,7 @@ import type * as NotificationsClient from '~/server/notifications/client';
 import type * as DetailFetchers from '~/server/notifications/detail-fetchers';
 import type * as SilenceAges from '~/server/notifications/silence-check-ages';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as FliptClient from '~/server/flipt/client';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -20,6 +21,7 @@ const h = vi.hoisted(() => ({
   pg: null as unknown as PGlite,
   kv: new Map<string, unknown>(),
   unseen: vi.fn(),
+  isFlipt: vi.fn(),
 }));
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
@@ -49,6 +51,10 @@ vi.mock('~/server/notifications/silence-check-ages', async (importOriginal) => (
     { type: 'new-mention', firstSeen: '2026-01-01T00:00:00.000Z' },
   ],
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: h.isFlipt,
+}));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof EndpointHelpers>()),
   PublicEndpoint: (handler: unknown) => handler,
@@ -74,18 +80,21 @@ const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * DAY);
 const db = pgliteKysely(() => h.pg);
 
-// [id, email, verified, deleted]
-const USERS: Array<[number, string | null, boolean, boolean]> = [
-  [1, 'one@example.com', true, false], // unseen notifications: emailed
-  [2, 'two@example.com', true, false], // nothing unseen
-  [3, 'three@example.com', true, false], // opted out of the digest
-  [4, 'four@example.com', false, false], // address never verified
-  [5, 'five@example.com', true, false], // turned every notification off
-  [6, 'six@example.com', true, false], // sent a digest two days ago
-  [7, 'seven@example.com', true, true], // deleted
-  [8, null, false, false], // no address
-  [9, 'nine@example.com', true, false], // sent one six and a half days ago
+// [id, email, verified, deleted, moderator]
+const USERS: Array<[number, string | null, boolean, boolean, boolean]> = [
+  [1, 'one@example.com', true, false, false], // unseen notifications: emailed
+  [2, 'two@example.com', true, false, false], // nothing unseen
+  [3, 'three@example.com', true, false, false], // opted out of the digest
+  [4, 'four@example.com', false, false, false], // address never verified
+  [5, 'five@example.com', true, false, false], // turned every notification off
+  [6, 'six@example.com', true, false, false], // sent a digest two days ago
+  [7, 'seven@example.com', true, true, false], // deleted
+  [8, null, false, false, false], // no address
+  [9, 'nine@example.com', true, false, true], // sent one six and a half days ago; a moderator
 ];
+// Users 1 and 2 entered the rollout a pass ago (their start floor, eight days back) and have not
+// been sent one since; the "start floor" cases below delete these rows to start from a fresh enable.
+const STARTED_AT = '2026-11-08 12:00:00';
 
 const item = (id: number, message: string) => ({
   id,
@@ -115,7 +124,7 @@ beforeAll(async () => {
   h.pg = new PGlite();
   await h.pg.exec(`
     CREATE TABLE "User" ("id" integer PRIMARY KEY, "email" text, "emailVerified" timestamp(3),
-      "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+      "deletedAt" timestamp(3), "bannedAt" timestamp(3), "isModerator" boolean DEFAULT false);
     CREATE TABLE "UserNotificationSettings" ("id" serial PRIMARY KEY, "userId" integer NOT NULL,
       "type" text NOT NULL, "disabledAt" timestamp(3) NOT NULL DEFAULT now());
   `);
@@ -136,10 +145,10 @@ async function seed({ withDigestTable = true } = {}) {
     DELETE FROM "User";
   `);
   if (withDigestTable) await h.pg.exec(migration('20271117150000_user_notification_digest'));
-  for (const [id, email, verified, deleted] of USERS)
+  for (const [id, email, verified, deleted, moderator] of USERS)
     await h.pg.query(
-      `INSERT INTO "User" (id, email, "emailVerified", "deletedAt") VALUES ($1, $2, $3, $4)`,
-      [id, email, verified ? '2026-01-01' : null, deleted ? '2026-06-01' : null]
+      `INSERT INTO "User" (id, email, "emailVerified", "deletedAt", "isModerator") VALUES ($1, $2, $3, $4, $5)`,
+      [id, email, verified ? '2026-01-01' : null, deleted ? '2026-06-01' : null, moderator]
     );
   await h.pg.query(`INSERT INTO "UserEmailNotificationOptOut" ("userId", type) VALUES (3, $1)`, [
     MISSED_DIGEST_EMAIL_TYPE,
@@ -151,8 +160,12 @@ async function seed({ withDigestTable = true } = {}) {
   `);
   if (withDigestTable)
     await h.pg.query(
-      `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (6, $1), (9, $2)`,
-      [daysAgo(2).toISOString().replace('Z', ''), daysAgo(6.5).toISOString().replace('Z', '')]
+      `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (6, $1), (9, $2), (1, $3), (2, $3)`,
+      [
+        daysAgo(2).toISOString().replace('Z', ''),
+        daysAgo(6.5).toISOString().replace('Z', ''),
+        STARTED_AT,
+      ]
     );
 }
 
@@ -169,6 +182,15 @@ const run = (deps: Parameters<typeof runMissedNotificationDigest>[0] = {}) =>
     ...deps,
   });
 
+/** The user's `UserNotificationDigest.lastSentAt` as UTC wall time, or null without a row. */
+async function lastSentAt(userId: number): Promise<string | null> {
+  const { rows } = await h.pg.query<{ at: string }>(
+    `SELECT to_char("lastSentAt", 'YYYY-MM-DD HH24:MI:SS') AS at FROM "UserNotificationDigest" WHERE "userId" = $1`,
+    [userId]
+  );
+  return rows[0]?.at ?? null;
+}
+
 const mailedTo = () =>
   vi
     .mocked(sendEmail)
@@ -181,8 +203,19 @@ beforeEach(async () => {
   vi.mocked(sendEmail).mockReset();
   h.unseen.mockReset();
   h.unseen.mockImplementation(async (input: UnseenNotificationsInput) => unseenFor(input));
+  h.isFlipt.mockReset();
+  h.isFlipt.mockResolvedValue(false);
   await seed();
 });
+
+// `inRollout` runs after the page is read and before any send, so it stands in for a write
+// made by someone else in between.
+const between =
+  (sqlText: string, params: unknown[] = []) =>
+  async (id: number) => {
+    if (id === 1) await h.pg.query(sqlText, params);
+    return true;
+  };
 
 describe('who gets the weekly digest', () => {
   it('emails only users with unseen notifications, and counts every skip by its reason', async () => {
@@ -199,6 +232,7 @@ describe('who gets the weekly digest', () => {
         'opted-out': 1,
         'not-in-rollout': 0,
         'all-notifications-off': 1,
+        'first-pass': 0,
         'recently-sent': 1,
         'none-unseen': 1,
         unrenderable: 0,
@@ -291,18 +325,8 @@ describe('who gets the weekly digest', () => {
     });
     expect(mailedTo()).toEqual(['nine@example.com']);
     expect(result.skipped['opted-out']).toBe(2);
-    const rows = await h.pg.query(`SELECT 1 FROM "UserNotificationDigest" WHERE "userId" = 1`);
-    expect(rows.rows).toHaveLength(0);
+    expect(await lastSentAt(1)).toBe(STARTED_AT);
   });
-
-  // `inRollout` runs after the page is read and before any send, so it stands in for a write
-  // made by someone else in between.
-  const between =
-    (sqlText: string, params: unknown[] = []) =>
-    async (id: number) => {
-      if (id === 1) await h.pg.query(sqlText, params);
-      return true;
-    };
 
   it('an address changed after the page was read: the digest goes to the new address', async () => {
     await run({ inRollout: between(`UPDATE "User" SET email = 'new@example.com' WHERE id = 1`) });
@@ -320,7 +344,7 @@ describe('who gets the weekly digest', () => {
   it('a digest another run recorded after the page was read stops this run sending a second', async () => {
     const result = await run({
       inRollout: between(
-        `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (1, $1)`,
+        `UPDATE "UserNotificationDigest" SET "lastSentAt" = $1 WHERE "userId" = 1`,
         [NOW.toISOString().replace('Z', '')]
       ),
     });
@@ -347,11 +371,120 @@ describe('who gets the weekly digest', () => {
     vi.mocked(sendEmail).mockRejectedValueOnce(new Error('boom'));
     const result = await run();
     expect(result.failed).toBe(1);
-    const rows = await h.pg.query<{ userId: number }>(
-      `SELECT "userId" FROM "UserNotificationDigest" ORDER BY "userId"`
+    // User 1 failed (first in id order): its row is back at its start floor, so the next pass
+    // tries it again; 9 was sent.
+    expect(await lastSentAt(1)).toBe(STARTED_AT);
+    expect(await lastSentAt(9)).toBe('2026-11-16 12:00:00');
+  });
+});
+
+const askedUsers = () =>
+  h.unseen.mock.calls.flatMap(([input]) => (input as UnseenNotificationsInput).users);
+
+describe('the start floor: no digest lists a notification from before the user was enabled', () => {
+  // Users 1 and 2 have never been in the rollout: no UserNotificationDigest row, as on a fresh
+  // enable. User 1 has a backlog of 14 unseen notifications.
+  beforeEach(async () => {
+    await h.pg.exec(`DELETE FROM "UserNotificationDigest" WHERE "userId" IN (1, 2)`);
+  });
+
+  it('the first run after enable sends nothing for the backlog: it records the floor instead', async () => {
+    const result = await run();
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['first-pass']).toBe(2);
+    // Never asked about: the backlog is not even read.
+    expect(askedUsers().map((u) => u.userId)).toEqual([9]);
+    expect(await lastSentAt(1)).toBe('2026-11-16 12:00:00');
+    expect(await lastSentAt(2)).toBe('2026-11-16 12:00:00');
+  });
+
+  it("the next digest's window starts at the floor, even when the week-back window starts earlier", async () => {
+    await run();
+    // A pass started early (its cursor deleted) six and a half days later: the week-back window
+    // would start 2026-11-16T00:00Z, before the floor.
+    h.kv.delete(DIGEST_CURSOR_KEY);
+    h.unseen.mockClear();
+    clock = new Date('2026-11-23T00:00:00.000Z');
+    await run();
+    const asked = askedUsers();
+    expect(asked.find((u) => u.userId === 1)!.since).toEqual(new Date('2026-11-16T12:00:00.000Z'));
+    expect(mailedTo()).toContain('one@example.com');
+  });
+
+  it('each user gets their own floor when the rollout reaches them: a later stage does not inherit the backlog', async () => {
+    await h.pg.exec(`DELETE FROM "UserNotificationDigest"`);
+    // Stage 1: user 1 only.
+    await run({ inRollout: async (id) => id === 1 });
+    expect(mailedTo()).toEqual([]);
+    expect(await lastSentAt(1)).toBe('2026-11-16 12:00:00');
+    expect(await lastSentAt(9)).toBeNull();
+
+    // Stage 2, the next pass a week later: user 9 joins with a backlog of its own.
+    clock = new Date('2026-11-23T12:00:00.000Z');
+    h.unseen.mockClear();
+    await run({ inRollout: async (id) => id === 1 || id === 9 });
+    expect(mailedTo()).toEqual(['one@example.com']);
+    expect(askedUsers()).toEqual([{ userId: 1, since: new Date('2026-11-16T12:00:00.000Z') }]);
+    expect(await lastSentAt(9)).toBe('2026-11-23 12:00:00');
+
+    // Stage 2's next pass: user 9's first digest starts at its own floor, not at user 1's.
+    vi.mocked(sendEmail).mockReset();
+    h.unseen.mockClear();
+    clock = new Date('2026-11-30T12:00:00.000Z');
+    await run({ inRollout: async (id) => id === 1 || id === 9 });
+    expect(mailedTo()).toEqual(['nine@example.com', 'one@example.com']);
+    expect(askedUsers().find((u) => u.userId === 9)!.since).toEqual(
+      new Date('2026-11-23T12:00:00.000Z')
     );
-    // User 1 failed (first in id order); 9 was sent; 6 kept its earlier row.
-    expect(rows.rows.map((r) => r.userId)).toEqual([6, 9]);
+  });
+
+  it('a user outside the rollout gets no floor, so their floor is when they join, not when the job first saw them', async () => {
+    await run({ inRollout: async () => false });
+    expect(await lastSentAt(1)).toBeNull();
+  });
+
+  it('a floor row another run wrote first is kept, and that user is not sent to this pass', async () => {
+    const result = await run({
+      inRollout: between(
+        `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (1, '2026-11-16 11:00:00')`
+      ),
+    });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(await lastSentAt(1)).toBe('2026-11-16 11:00:00');
+    expect(result.skipped['first-pass']).toBe(1);
+  });
+});
+
+describe('with the flag off for everyone', () => {
+  it('a whole pass emails nobody, writes no rows, reads no notifications and finishes', async () => {
+    await h.pg.exec(`DELETE FROM "UserNotificationDigest"`);
+    const result = await run({ inRollout: async () => false });
+    expect(result).toMatchObject({ emailed: 0, failed: 0, cycleDone: true, stopped: null });
+    expect(result.skipped['not-in-rollout']).toBe(5);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(h.unseen).not.toHaveBeenCalled();
+    const { rows } = await h.pg.query(`SELECT 1 FROM "UserNotificationDigest"`);
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('the Flipt evaluation', () => {
+  it("passes the user's id and moderator bit as context, so a userId or moderators segment can match", async () => {
+    // A segment on the context: moderators only, as the moderators segment matches.
+    h.isFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.isModerator === 'true'
+    );
+    await run({ inRollout: undefined });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(h.isFlipt).toHaveBeenCalledWith('missed-notification-digest', '9', {
+      userId: '9',
+      isModerator: 'true',
+    });
+    expect(h.isFlipt).toHaveBeenCalledWith('missed-notification-digest', '1', {
+      userId: '1',
+      isModerator: 'false',
+    });
   });
 });
 

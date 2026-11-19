@@ -11,9 +11,11 @@
 -- `src/server/services/notification-digest.service.ts`, which treats a missing table (42P01) as
 -- "cannot record a send" and sends nothing for that run. With the flag off nothing reads it.
 --
--- WHAT IT HOLDS. One row per user who has been sent a digest: `lastSentAt` is when the latest one
--- was sent. The job skips a user sent one in the last six days, and starts the next digest's
--- window at `lastSentAt`, so no notification is listed in two digests.
+-- WHAT IT HOLDS. One row per user who has been sent a digest OR has been started: `lastSentAt` is
+-- when the latest one was sent, or, for a user not yet sent one, their start floor (the first pass
+-- they were eligible, which sends nothing). The job skips a user sent one in the last six days, and
+-- starts the next digest's window at `lastSentAt`, so no notification is listed in two digests and
+-- none from before the user was enabled.
 --
 -- Additive and idempotent (`IF NOT EXISTS`). A new, empty table: no backfill, no rewrite of an
 -- existing table. Creating the foreign key takes a SHARE ROW EXCLUSIVE lock on "User" for the
@@ -41,9 +43,10 @@ CREATE TABLE IF NOT EXISTS "UserNotificationDigest" (
 --   WHERE table_name = 'UserNotificationDigest'
 --   ORDER BY ordinal_position;
 --
--- VERIFY THE BEHAVIOUR, after a digest run with the flag on: the run's `notification-digest` log
--- line reports `emailed` > 0, and
+-- VERIFY THE BEHAVIOUR, after a digest run with the flag on. The FIRST run that reaches a newly
+-- enabled user sends them nothing: its `notification-digest` log line reports `emailed` 0 and
+-- `skipped.first-pass` > 0. Each run,
 --
 --   SELECT count(*), max("lastSentAt") FROM "UserNotificationDigest";
 --
--- has grown by that many rows (or moved their `lastSentAt`).
+-- grows by `skipped.first-pass` rows; `emailed` users move their existing row's `lastSentAt` instead.

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
+const closeModeratorRuledItems = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
 const expireSmites = vi.hoisted(() => vi.fn());
 const settleHiddenChecks = vi.hoisted(() => vi.fn());
@@ -34,7 +35,11 @@ vi.mock('$lib/server/smites/runtime', () => ({ resetDeps }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({}) }));
 vi.mock('$lib/server/hidden/settle', () => ({ settleHiddenChecks }));
 vi.mock('$lib/server/smites/smites.service', () => ({ expireSmites, resetPendingPlayers }));
-vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendingResolutions }));
+vi.mock('$lib/server/queue/queue.service', () => ({
+  escalateExpired,
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+}));
 const tickItemFailures = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/metrics', () => ({ metrics: { tickItemFailures } }));
 
@@ -48,6 +53,8 @@ const run = () =>
 beforeEach(() => {
   escalateExpired.mockReset();
   applyPendingResolutions.mockReset();
+  closeModeratorRuledItems.mockReset();
+  closeModeratorRuledItems.mockResolvedValue({ closed: 0, failed: 0 });
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
   settleHiddenChecks.mockReset();
@@ -86,6 +93,7 @@ describe('POST /api/jobs/tick', () => {
       toInquisitor: 1,
       extended: 3,
       applied: 1,
+      moderatorRuled: 0,
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
@@ -95,6 +103,21 @@ describe('POST /api/jobs/tick', () => {
       purchasesRetried: 0,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
+  });
+
+  it('closes items a moderator ruled before paying out, reports them, and counts one that failed', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    closeModeratorRuledItems.mockResolvedValue({ closed: 3, failed: 1 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ moderatorRuled: 3 });
+    expect(tickItemFailures).toHaveBeenCalledWith('moderator_ruled', 1);
+    expect(closeModeratorRuledItems.mock.invocationCallOrder[0]).toBeLessThan(
+      settleFinalItems.mock.invocationCallOrder[0]
+    );
   });
 
   it('reports how many unvoted items the escalation closed as expired', async () => {

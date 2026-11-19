@@ -1,6 +1,6 @@
 // Package tracing is feed-go's OpenTelemetry tracing: the exporter, the head sampler, the W3C trace
-// context propagator, the pgx and go-redis child spans, and the trace-id exemplars on the latency
-// histograms (DESIGN.md §10.3).
+// context propagator, the pgx, go-redis and ClickHouse (chread) child spans, and the trace-id
+// exemplars on the latency histograms (DESIGN.md §10.3).
 //
 // It mirrors the Node app's setup (src/instrumentation.node.ts) so one configuration drives both and a
 // trace continues across browser → feed-go → Node: OTLP over HTTP/protobuf to

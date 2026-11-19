@@ -55,13 +55,13 @@ const cookieOpts = {
 export function setDeviceCookie(
   cookies: Cookies,
   deviceId: string,
-  slot: CookieSlot = sessionCookieMode()
+  slot: CookieSlot = sessionCookieMode(null)
 ): void {
   const name = deviceCookieNameForSlot(slot);
   const shared = deviceCookieNameForSlot('shared');
   const staleShared =
     slot === 'host' &&
-    sessionCookieMode() === 'host' &&
+    sessionCookieMode(null) === 'host' &&
     shared !== name &&
     cookies.get(shared) !== undefined &&
     cookies.get(shared) !== deviceId;
@@ -98,7 +98,7 @@ export function rotateDeviceId(cookies: Cookies): string {
 
 /** Read the device id without creating one (switch / list paths — no device cookie ⇒ no linked accounts). */
 export function getDeviceId(cookies: Pick<Cookies, 'get'>): string | undefined {
-  return readDeviceId(cookieJar(cookies))?.value;
+  return readDeviceId(cookieJar(cookies), { host: null })?.value;
 }
 
 /** Re-set the (existing) device cookie to roll its 30-day TTL — pairs with touchAccount on a direct browser

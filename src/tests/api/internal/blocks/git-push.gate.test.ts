@@ -278,9 +278,20 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   it('autodeploy flag ON: a parked unreviewed push posts only the new-submission alert, never the failure alarm', async () => {
     state.autodeployEnabled = true;
-    // The per-submitter alert throttle reads a counter: first alert of the hour. The automatic
-    // build's budget counter is left unreadable, so no preview is queued from this test.
+    // The per-submitter alert throttle reads a counter on the cache cluster: first alert of the
+    // hour. The automatic build's budget counter (system Redis) is left unreadable, so no preview
+    // is queued from this test; the push window (cache cluster) is unreadable too and fails open.
     redisMock.sysRedis.multi.mockImplementation(() => {
+      const chain = {
+        set: vi.fn(() => chain),
+        incr: vi.fn(() => chain),
+        exec: vi.fn(async () => {
+          throw new Error('not in this test');
+        }),
+      };
+      return chain;
+    });
+    redisMock.redis.multi.mockImplementation(() => {
       let key = '';
       const chain = {
         set: vi.fn((k: string) => {

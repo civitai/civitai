@@ -208,7 +208,16 @@ so the digest never repeats one. Users with nothing unseen get nothing.
   week after the previous one did. Sends are paced at the shared bulk-email interval and capped per
   run. `UserNotificationDigest` records each send before the email goes out; with that table
   missing the job sends nothing.
-- **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user. Off, it emails no one.
+- **Start floor:** a user's first eligible pass sends nothing. It writes their
+  `UserNotificationDigest` row with `lastSentAt` = that moment, as if a digest had gone out, so
+  their first digest comes a pass later and lists only notifications created after they entered
+  the rollout, never the backlog. Per user: a user added to the rollout later gets their own later
+  floor. A user turned off and back on keeps their old row, so their next digest can reach back up
+  to the seven-day window. So the table holds a row per user started, not only per user sent one:
+  a run adds `skipped.first-pass` rows, and `emailed` users move their existing row's `lastSentAt`.
+- **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user (entity = user id,
+  context = `userId` and `isModerator`, so the `is-zach`, `moderators` and `userId` segments match;
+  tier is not passed). Off, it emails no one.
   A pass that finished while the flag was off holds the next one back for up to a week; delete the
   `KeyValue` row `missed-notification-digest:cursor` to start a pass at the next hourly run.
 - **No double send:** each send claims the user's `UserNotificationDigest` row first, and the claim

@@ -3,6 +3,7 @@ import type { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
 import { archiveQueueState } from '@civitai/db-queries/evidence-archive-queue';
+import { EVIDENCE_VERIFIED_KEY } from '@civitai/shared/held-url';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
@@ -16,7 +17,7 @@ import { GENERATOR_EVIDENCE_VERSION } from '~/server/services/generator-evidence
 type S3 = Pick<S3Client, 'send'>;
 
 /** The `CsamReport.details` key that marks a report's evidence copy verified. */
-export const EVIDENCE_VERIFIED_AT = 'evidenceVerifiedAt';
+export const EVIDENCE_VERIFIED_AT = EVIDENCE_VERIFIED_KEY;
 
 type Candidate = { id: number; type: string };
 

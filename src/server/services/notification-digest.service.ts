@@ -54,6 +54,8 @@ export const digestSkipReasons = [
   'opted-out',
   'not-in-rollout',
   'all-notifications-off',
+  // First time the user is eligible: their start floor is recorded and nothing is sent.
+  'first-pass',
   'recently-sent',
   'none-unseen',
   'unrenderable',
@@ -79,6 +81,7 @@ type Candidate = {
   email: string | null;
   hasEmail: boolean;
   optedOut: boolean;
+  isModerator: boolean;
   lastSentAt: Date | null;
 };
 
@@ -93,7 +96,7 @@ export type DigestDeps = {
   write?: Kysely<DB>;
   checkIfCanceled?: () => void;
   /** Whether this user is in the digest's rollout: the Flipt flag, evaluated per user. */
-  inRollout?: (userId: number) => Promise<boolean>;
+  inRollout?: (userId: number, isModerator: boolean) => Promise<boolean>;
   /** The notification-email kill switch (KeyValue `notification-email-enabled`). */
   emailEnabled?: () => Promise<boolean>;
 };
@@ -110,6 +113,7 @@ async function readCandidates(db: Kysely<DB>, afterId: number, limit: number) {
         SELECT 1 FROM "UserEmailNotificationOptOut" o
         WHERE o."userId" = u.id AND o."type" = ${MISSED_DIGEST_EMAIL_TYPE}
       ) AS "optedOut",
+      coalesce(u."isModerator", false) AS "isModerator",
       d."lastSentAt"
     FROM "User" u
     LEFT JOIN "UserNotificationDigest" d ON d."userId" = u.id
@@ -154,6 +158,38 @@ async function claimSend(db: Kysely<DB>, userId: number, at: Date) {
 }
 
 /**
+ * The start floor. A user eligible for the first time (no `UserNotificationDigest` row) is sent
+ * nothing: a row is written with `lastSentAt` = this page's read time, as if a digest had gone out
+ * then. Their first real digest comes a pass later and its window starts at that row, so it lists
+ * only notifications created after the user entered the rollout, never the backlog from before.
+ * Per user, so a user added to the rollout later gets their own later floor. Only users still in
+ * `User` get a row (a hard delete since the page read would fail the foreign key); a row another
+ * run wrote first is kept. Returns the users this call started.
+ */
+async function recordStartFloor(db: Kysely<DB>, userIds: number[], at: Date) {
+  if (userIds.length === 0) return new Set<number>();
+  const { rows } = await sql<{ userId: number }>`
+    INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt")
+    SELECT u.id, ${utc(at)} FROM "User" u WHERE u.id = any(${userIds}::int[])
+    ON CONFLICT ("userId") DO NOTHING
+    RETURNING "userId"`.execute(db);
+  return new Set(rows.map((r) => r.userId));
+}
+
+/**
+ * The Flipt evaluation for one user. Segment constraints read the context, not the entity id, so
+ * the context carries what a segment for this flag can match on: `userId` and `isModerator`. Tier
+ * and membership are not read here, so a tier segment would match nobody.
+ */
+function digestFliptEvaluation(userId: number, isModerator: boolean) {
+  return {
+    flag: FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST,
+    entityId: String(userId),
+    context: { userId: String(userId), isModerator: String(isModerator) },
+  };
+}
+
+/**
  * Puts back what the row held before a send that failed, so the next pass tries the user again.
  * Only this run's own claim is undone: a row another run has written since is left alone.
  */
@@ -185,6 +221,8 @@ async function renderItems(user: UnseenNotifications): Promise<MissedNotificatio
 /**
  * One run of the weekly missed-notification digest, resuming where the last run stopped.
  *
+ * A user's first eligible pass sends nothing and records their start floor (`recordStartFloor`),
+ * so no digest lists a notification from before the user entered the rollout.
  * Types that send their own email (`defaultEmail`) are left out, so the digest never repeats one.
  * Eligibility is re-read on the primary just before each send, and the send goes to the address
  * read there. Each send is claimed in `UserNotificationDigest` BEFORE the email goes out, and the
@@ -201,8 +239,10 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
     read = kyselyRead,
     write = kyselyWrite,
     checkIfCanceled = () => undefined,
-    inRollout = (userId: number) =>
-      isFlipt(FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST, String(userId)),
+    inRollout = (userId: number, isModerator: boolean) => {
+      const { flag, entityId, context } = digestFliptEvaluation(userId, isModerator);
+      return isFlipt(flag, entityId, context);
+    },
     emailEnabled = isNotificationEmailEnabled,
   } = deps;
   const result: DigestRunResult = {
@@ -263,7 +303,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
       for (const user of page) {
         if (!user.hasEmail || !user.email) result.skipped['no-verified-email']++;
         else if (user.optedOut) result.skipped['opted-out']++;
-        else if (!(await inRollout(user.id))) result.skipped['not-in-rollout']++;
+        else if (!(await inRollout(user.id, user.isModerator))) result.skipped['not-in-rollout']++;
         else reachable.push(user);
       }
       const silenced = await silencedUsersAmong(
@@ -273,11 +313,21 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
       );
       const runAt = now();
       const eligible: Candidate[] = [];
+      const starting: number[] = [];
       for (const user of reachable) {
         if (silenced.has(user.id)) result.skipped['all-notifications-off']++;
-        else if (user.lastSentAt && runAt.getTime() - user.lastSentAt.getTime() < DIGEST_MIN_GAP_MS)
+        else if (!user.lastSentAt) starting.push(user.id);
+        else if (runAt.getTime() - user.lastSentAt.getTime() < DIGEST_MIN_GAP_MS)
           result.skipped['recently-sent']++;
         else eligible.push(user);
+      }
+      // Started users are never asked about or sent to this pass, whether or not this call wrote
+      // their row: a row it did not write was written by another run since the page was read
+      // (or, rarely, the user was hard-deleted).
+      if (starting.length) {
+        const started = await recordStartFloor(write, starting, runAt);
+        result.skipped['first-pass'] += started.size;
+        result.skipped['recently-sent'] += starting.length - started.size;
       }
 
       const windowStart = runAt.getTime() - DIGEST_WINDOW_MS;

@@ -265,6 +265,26 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(items.map((x) => x.id)).toEqual([5, 7]);
   });
 
+  it('leaves the viewer\'s own images out of "more like this" when asked, but still finds the source', async () => {
+    const asked: { ids: number[]; excludedUserIds?: number[] }[] = [];
+    h.fakeGetAllImages = async (args) => {
+      asked.push(args as { ids: number[]; excludedUserIds?: number[] });
+      return visibleOnly(new Set([5, 6, 7]))(args as { ids: number[] });
+    };
+    const { source } = rankedSource([5, 6, 7]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: 6, excludeOwn: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    const anchorCheck = asked.find((call) => call.ids.length === 1 && call.ids[0] === 6);
+    const results = asked.find((call) => call.ids.includes(5));
+    expect(anchorCheck).toBeDefined();
+    expect(anchorCheck?.excludedUserIds ?? []).not.toContain(VIEWER.id);
+    expect(results?.excludedUserIds).toContain(VIEWER.id);
+  });
+
   // The image query has no per-viewer hidden-image filter, so this one is the search's own job.
   it('drops images the viewer hid, and those hidden through a tag they still hide', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([108, 109, 110, 111]));
@@ -947,6 +967,49 @@ describe('the query audit and the browsing level', () => {
     expect(hydrated).toEqual([]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_correction', resultIds: [] }),
+      expect.any(Function)
+    );
+  });
+
+  it('refuses, and records as the own-images path, a verdict that would narrow the own-images search', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery(),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wordVerdict: 'minor',
+        searchPath: 'refused_own_images',
+        resultIds: [],
+      }),
+      expect.any(Function)
+    );
+  });
+
+  it('records the own-images path for a refused own-images search from an image', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: textQuery({ imageId: 101 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(h.recordAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ searchPath: 'refused_own_images', resultIds: [] })
     );
   });
 

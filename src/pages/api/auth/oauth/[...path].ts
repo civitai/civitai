@@ -1,4 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import {
+  allCookieNames,
+  cookiePairName,
+  DEVICE_COOKIE_BASE,
+  hostOnlySite,
+  SESSION_COOKIE_BASE,
+} from '@civitai/auth';
 
 // The OAuth/OIDC provider moved to the hub (auth.civitai.com). The old civitai.com/api/auth/oauth/*
 // URLs route through here so pre-cutover third-party clients keep working WITHOUT any change on their end.
@@ -39,6 +46,13 @@ const STRIP_REQUEST_HEADERS = new Set([
   'keep-alive',
   'upgrade',
 ]);
+// A host-only site's session cookies never cross the relay, in either direction: every slot's names, where
+// siteCookieHeader keeps the host-only ones.
+const SESSION_COOKIE_NAMES = new Set([
+  ...allCookieNames(SESSION_COOKIE_BASE),
+  ...allCookieNames(DEVICE_COOKIE_BASE),
+]);
+
 const STRIP_RESPONSE_HEADERS = new Set([
   'connection',
   'transfer-encoding',
@@ -78,9 +92,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Forward all headers EXCEPT hop-by-hop ones — crucially Authorization/Cookie survive (same-origin
     // hop, so nothing strips them), which is the whole point of proxying over redirecting. cf-connecting-ip
     // / x-forwarded-for ride along so the hub's rate limiter still sees the real client IP.
+    const hostOnly = hostOnlySite(req.headers.host);
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value == null || STRIP_REQUEST_HEADERS.has(key.toLowerCase())) continue;
+      if (hostOnly && key.toLowerCase() === 'cookie') {
+        const kept = String(value)
+          .split(';')
+          .filter((pair) => !SESSION_COOKIE_NAMES.has(cookiePairName(pair)))
+          .join(';')
+          .trim();
+        if (kept) headers.set(key, kept);
+        continue;
+      }
       headers.set(key, Array.isArray(value) ? value.join(', ') : value);
     }
 
@@ -95,7 +119,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     res.status(hubRes.status);
     // Set-Cookie can be multi-valued — relay it as an array, not a comma-joined string.
-    const setCookies = hubRes.headers.getSetCookie?.() ?? [];
+    const setCookies = (hubRes.headers.getSetCookie?.() ?? []).filter(
+      (cookie) => !hostOnly || !SESSION_COOKIE_NAMES.has(cookiePairName(cookie))
+    );
     if (setCookies.length) res.setHeader('set-cookie', setCookies);
     hubRes.headers.forEach((value, key) => {
       if (key.toLowerCase() === 'set-cookie' || STRIP_RESPONSE_HEADERS.has(key.toLowerCase()))

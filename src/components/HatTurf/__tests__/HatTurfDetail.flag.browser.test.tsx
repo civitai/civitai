@@ -56,6 +56,8 @@ import { page } from 'vitest/browser';
 
 const FLAG = 7;
 const TURF = 9;
+// In a contest, so hidden from Hat Turf, and not a flag.
+const CONTEST = 11;
 const summary = (closed = false): FlagSummary => ({
   flagDayId: 1,
   closed,
@@ -87,7 +89,9 @@ const turf = (joined: boolean): TurfSummaries => ({
       hattedTeam: null,
     },
   },
-  open: { [FLAG]: true, [TURF]: true },
+  // As getTurfSummaries answers: today's flags are hidden from Hat Turf (contestEntry) and not open.
+  open: { [FLAG]: false, [TURF]: true, [CONTEST]: false },
+  hidden: { [FLAG]: true, [CONTEST]: true },
   stickers: {},
   joined,
   watch: () => () => undefined,
@@ -99,7 +103,7 @@ function render({ closed = false, joined = true, large = false } = {}) {
     <FlagRaceContext.Provider value={{ event: 'birthday2026', summary: summary(closed) }}>
       <TurfSummaryContext.Provider value={turf(joined)}>
         <HatTurfCardProvider>
-          {[FLAG, TURF].map((id) => (
+          {[FLAG, TURF, CONTEST].map((id) => (
             <div key={id} data-testid={`pic-${id}`} className="flex items-center gap-1">
               <HatTurfDetailBadge imageId={id} />
               <HatTurfDetailControls imageId={id} large={large} />
@@ -128,6 +132,14 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('image detail on a flag', () => {
+  test('a hidden picture that is not a flag gets no hat button and no badge', async () => {
+    render();
+    await vi.waitFor(() => expect(flagFace()).not.toBeNull());
+    expect(inPic(CONTEST, 'hat-turf-detail-controls')).toBeNull();
+    expect(inPic(CONTEST, 'hat-turf-detail-badge')).toBeNull();
+    expect(inPic(CONTEST, 'flag-badge')).toBeNull();
+  });
+
   test('shows the flag badge and flag hat button; the other picture keeps Hat Turf', async () => {
     render();
     await vi.waitFor(() => expect(inPic(FLAG, 'flag-badge')).not.toBeNull());

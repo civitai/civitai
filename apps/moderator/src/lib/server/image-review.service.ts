@@ -157,11 +157,6 @@ export async function getImageReviewQueue({
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', needsReview)
     .where('i.ingestion', 'in', reviewQueueIngestion(needsReview))
-    // Search-by-upload rows (main app `SEARCH_UPLOAD_APP_ID_META_KEY`) are private and swept, so only
-    // the minor and CSAM queues list them.
-    .$if(needsReview !== 'minor' && needsReview !== 'csam', (qb) =>
-      qb.where(sql<boolean>`NOT (COALESCE(i.metadata, '{}'::jsonb) ? 'searchUploadAppId')`)
-    )
     .$if(!!tagIds?.length, (qb) =>
       qb.where(
         sql<boolean>`EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" IN (${sql.join(
@@ -421,9 +416,6 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
-    .where(
-      sql<boolean>`("needsReview" IN ('minor', 'csam') OR NOT (COALESCE(metadata, '{}'::jsonb) ? 'searchUploadAppId'))`
-    )
     .where((eb) =>
       eb.or([
         eb('ingestion', '=', 'Scanned'),

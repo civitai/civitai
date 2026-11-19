@@ -27,8 +27,9 @@ type Resolver struct {
 	Revocation *Revocation
 	// Sessions reads `session:data2:<userId>` on the cache cluster (session-client.ts).
 	Sessions *hydrate.PackedReader
-	// CookieNames are the session cookie names to look for (e.g. `__Secure-civ-token`, `__Host-civ-token`).
-	CookieNames []string
+	// CookieNames gives the session cookie names to look for on a request to a host (e.g.
+	// `__Secure-civ-token`, `__Host-civ-token`): a site's cookie mode picks them.
+	CookieNames func(host string) []string
 	// SessionReadTimeout bounds the session-cache read (400ms in session-client.ts).
 	SessionReadTimeout time.Duration
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID (0 = unset): the shared moderation account,
@@ -59,7 +60,11 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	cookie := req.Header.Get("Cookie")
 	var token string
 	found := 0
-	for _, name := range r.CookieNames {
+	var names []string
+	if r.CookieNames != nil {
+		names = r.CookieNames(req.Host)
+	}
+	for _, name := range names {
 		if t := TokenFromCookieHeader(cookie, name); t != "" {
 			found++
 			token = t
@@ -128,4 +133,9 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 		u.Banned = true
 	}
 	return u, nil
+}
+
+// FixedCookieNames is a CookieNames that gives the same names for every host.
+func FixedCookieNames(names ...string) func(string) []string {
+	return func(string) []string { return names }
 }

@@ -126,11 +126,8 @@ name: Lint
 # a negative one includes that path again. A change touching ANY file outside
 # the excluded trees still runs everything.
 #
-# Kept (re-included) because a unit test reads it, so editing it alone can turn
-# the suite red: docs/dev/convention-guards.md (no-lint-rules-script-drift
-# checks its "Convention guards run as tests" section against package.json).
-# Found by grepping every test file for paths under docs/ that it opens; that
-# was the only one. Markdown OUTSIDE these trees is deliberately not excluded:
+# No unit test opens a file under docs/ or claudedocs/ today, so nothing is
+# re-included. Markdown OUTSIDE these trees is deliberately not excluded:
 # tests read CLAUDE.md files, .claude/rules/*.md, app READMEs and the ToS
 # markdown under src/. If you add a test that reads a file under docs/ or
 # claudedocs/, add that path below the negations.
@@ -191,14 +188,12 @@ on:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   push:
     branches: [main]
     paths:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
   # does every suite step in a job that hosts several (`component` hosts geometry). On pull_request and push `inputs.only` is empty, so
@@ -920,6 +915,15 @@ jobs:
             vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
             vite-unit-${{ runner.os }}-${{ runner.arch }}-
 
+      # MEMORY SAMPLER, diagnostic. Shard 4 was killed mid-run by the runner ("The runner has
+      # received a shutdown signal") several times on 2026-11-18, in the first minutes, when its
+      # heaviest PGlite files ran at once. Writes `free -m` every 5 s for the whole job, uploaded
+      # below as `unit-memory-<shard>-a<attempt>` even when the runner is starved, so the next
+      # kill shows its peak instead of a guess. Remove once the cap below is proven or replaced.
+      - name: Start memory sampler
+        run: |
+          nohup bash -c 'while true; do echo "=== $(date -u +%H:%M:%S)"; free -m; sleep 5; done' > "$RUNNER_TEMP/unit-memory.log" 2>&1 &
+
       # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
       # `vitest run --project unit* ...args`, and its queueDecision() returns
       # early on CI, so the dev-server queue never sees this.
@@ -948,8 +952,27 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      #
+      # No worker cap: Vitest runs its default fork count. Shard 4 once exhausted the hosted
+      # runner's 16 GB because the resource-intent PGlite tests never freed an instance; their
+      # harness now frees each one after its test (#9535).
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+        # The [mem] line also goes into this step's log, which streams live: a runner killed for
+        # memory never reaches the upload step below (observed 2026-11-18), but its log keeps
+        # every line up to the kill.
+        run: |
+          nohup bash -c 'while true; do echo "[mem] $(date -u +%H:%M:%S) $(free -m | awk '"'"'/^Mem:/{print "used=" $3 " avail=" $7} /^Swap:/{print "swap=" $3}'"'"' | tr "\n" " ")"; sleep 5; done' &
+          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      - name: Upload memory samples
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-memory-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unit-memory.log
+          if-no-files-found: ignore
+          retention-days: 8
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -1308,12 +1331,55 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
+      # ── SYSTEM-PACKAGE CACHE: THE .debs `install-deps` DOWNLOADS ─────────
+      #
+      # The browser cache above leaves the system libraries to apt, and apt is
+      # the slow part when the runner's Ubuntu mirror is: from 2026-11-18 ~00:00Z
+      # this step went from 10-35 s per shard to 140-630 s on most runs
+      # (`Fetched 32.1 MB in 7min 53s (67.8 kB/s)`, mostly fonts and mesa), and
+      # with three shards one of them nearly always drew a slow download, so it
+      # sat on the Lint critical path. So the .deb files are cached too, and
+      # copied into apt's own archive dir before the install: apt reuses a .deb
+      # it finds there with the file name and size the index lists (it does not
+      # re-hash it), and downloads only what is missing or newer. The package
+      # set and versions stay exactly what `install-deps` asks apt for; only
+      # where the bytes come from changes. Trust boundary: the same as the
+      # browser cache above, a `main`-scoped Actions cache entry.
+      #
+      # Keyed by ISO week (with a prefix restore-key) so the entry is
+      # re-saved once a week as Ubuntu's -updates move on, instead of freezing
+      # on the first save and downloading every newer package forever. Saved
+      # on a push to `main` only, like the browser cache, for the same reason.
+      # `ImageOS` is the runner's machine env (ubuntu24), which the `env` expression context
+      # does not see, so it is read here.
+      - name: Resolve system-package cache key
+        id: apt-key
+        run: echo "prefix=playwright-apt-${ImageOS:?}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}-" >> "$GITHUB_OUTPUT" && echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
+          restore-keys: |
+            ${{ steps.apt-key.outputs.prefix }}
+
       - name: Install Chromium for Playwright
         id: chromium
         env:
           CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
           set -euo pipefail
+          # Keep what apt downloads, so the step below can collect it for the cache.
+          echo 'Binary::apt-get::APT::Keep-Downloaded-Packages "true"; APT::Keep-Downloaded-Packages "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99-keep-playwright-debs >/dev/null
+          cached=0
+          if compgen -G "$HOME/playwright-apt-debs/*.deb" >/dev/null; then
+            sudo cp "$HOME"/playwright-apt-debs/*.deb /var/cache/apt/archives/
+            cached=$(find "$HOME/playwright-apt-debs" -name '*.deb' | wc -l)
+          fi
+          echo "system-package cache: $cached .deb file(s) restored"
           if [ "$CACHE_HIT" = true ]; then
             echo "browser cache hit: installing system dependencies only"
             pnpm exec playwright install-deps chromium
@@ -1321,6 +1387,30 @@ jobs:
           else
             pnpm exec playwright install --with-deps chromium
           fi
+          # Every .deb apt now holds: the restored ones plus whatever it fetched. The cache
+          # save below stores this directory; the count is the positive control that apt
+          # kept its downloads (0 here would mean the cache can never fill).
+          # `autoclean` first drops .debs the index no longer lists (versions -updates has
+          # superseded), so the weekly re-save does not carry every old version forward.
+          # Best-effort: Chromium is installed by now, and a failure collecting the cache
+          # must not fail this step (`steps.chromium.outcome` gates the suites).
+          if ! {
+            sudo apt-get autoclean -qq &&
+              mkdir -p "$HOME/playwright-apt-debs" &&
+              find "$HOME/playwright-apt-debs" -name '*.deb' -delete &&
+              find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "$HOME/playwright-apt-debs" {} +
+          }; then
+            echo "::warning title=Playwright system-package cache::collecting the .debs failed; the next run downloads them again"
+          fi
+          echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
+
+      - name: Save Playwright system packages
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/playwright-apt-debs
+          key: ${{ steps.apt-key.outputs.prefix }}${{ steps.apt-key.outputs.week }}
 
       # Right after the install, so a red suite later still leaves the entry saved.
       # `continue-on-error`: best-effort infrastructure, like the Vite cache save.

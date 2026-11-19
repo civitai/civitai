@@ -9,7 +9,7 @@ import { NotificationCategory } from '@civitai/notifications';
 import { isSafeToRetry } from '@civitai/buzz';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
@@ -20,6 +20,7 @@ import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 
 /**
  * Run a post-write side effect so it cannot fail the moderation action that already happened.
@@ -228,6 +229,10 @@ export async function addImagesToBlocklist(
 
   const csamRows = candidates.filter((v) => v.reason === 'CSAM');
   await write(csamRows);
+  // The Postgres copy review routing reads; it throws like the write above. Twin: the main app's
+  // bulkAddBlockedImages.
+  const mirror = mirrorBlockedHashesSql(csamRows.map((v) => v.hash));
+  if (mirror) await sql.raw(mirror).execute(dbWrite);
   const inBatch = new Set(csamRows.map((v) => v.hash));
   const others = candidates.filter((v) => v.reason !== 'CSAM' && !inBatch.has(v.hash));
   if (!others.length) return;

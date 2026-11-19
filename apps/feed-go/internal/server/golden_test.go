@@ -45,9 +45,9 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 23
+	goldenMinAsPosts  = 26
 	goldenMinV1       = 36
-	goldenMinInfinite = 21
+	goldenMinInfinite = 23
 	goldenMinModels   = 31
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
@@ -187,6 +187,8 @@ type goldenImage struct {
 	} `json:"_resources"`
 	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
 	Tags []int `json:"_tags"`
+	// Tools are the image's ImageTool tool ids (only in a fixture whose query filters by `tools`).
+	Tools []int `json:"_tools"`
 	// Meta is the image's `meta` jsonb as Postgres prints it (v1-images/ fixtures only: the
 	// image-meta cache's lookup); null when NULL.
 	Meta *string `json:"_meta"`
@@ -556,6 +558,7 @@ var (
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
+	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
 	goldenReOffset    = regexp.MustCompile(`OFFSET (\d+)\s+LIMIT`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
@@ -618,7 +621,8 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, the minor exclusion, published-before-now, order, cursor, offset, limit).
+// excluded creators, types, tools, the minor exclusion, published-before-now, order, cursor, offset,
+// limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
 	for _, v := range fx.DB.ModelVersions {
@@ -635,6 +639,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
 	tags, hasTags := goldenArg(args, goldenReTags, sql)
+	tools, hasTools := goldenArg(args, goldenReTools, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
@@ -680,6 +685,16 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		}
 		if hasExcl && goldenHas(goldenInts(exclUsers), img.UserID) {
 			continue
+		}
+		if hasTools {
+			// array_agg(toolId) @> <tools>: the image holds every listed tool (none held: no group).
+			holdsAll := len(img.Tools) > 0
+			for _, t := range goldenInts(tools) {
+				holdsAll = holdsAll && goldenHas(img.Tools, t)
+			}
+			if !holdsAll {
+				continue
+			}
 		}
 		if hasTypes {
 			list, _ := types.([]string)
@@ -1104,7 +1119,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
 		Sessions:    packed,
-		CookieNames: []string{goldenCookieName},
+		CookieNames: auth.FixedCookieNames(goldenCookieName),
 	}
 	events := map[string]bool{}
 	for _, e := range fx.Config.DecorationEvents {
