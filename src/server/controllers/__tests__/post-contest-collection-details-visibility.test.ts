@@ -153,7 +153,7 @@ describe('post.getContestCollectionDetails visibility', () => {
     for (const user of [{ id: COLLECTION_OWNER }, MOD, SELF]) {
       expect(itemImageIds(await detailsFor(user)).length).toBeGreaterThan(0);
       expect(m.getCollectionById).toHaveBeenLastCalledWith(
-        expect.objectContaining({ viewer: { id: user.id, isModerator: user.isModerator } })
+        expect.objectContaining({ viewer: { id: user.id, isModerator: !!user.isModerator } })
       );
     }
   });
@@ -170,4 +170,31 @@ describe('post.getContestCollectionDetails visibility', () => {
     postIs({});
     expect((await detailsFor(MOD)).permissions).toMatchObject({ manage: true });
   });
+});
+
+describe('a moderator on a narrower credential', () => {
+  const scopedKey = {
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope: 1n,
+  };
+  it.each([
+    ['a session', {}, true],
+    ['a scoped key', scopedKey, false],
+  ] as const)(
+    'reads the contest collection with moderator and owner views only on %s',
+    async (_l, cred, full) => {
+      postIs({});
+      m.permissions.mockResolvedValue({ read: true });
+      await getPostContestCollectionDetailsHandler({
+        input: { id: POST_ID },
+        ctx: { user: MOD, ...cred } as never,
+      });
+      expect(m.permissions).toHaveBeenCalledWith(expect.objectContaining({ isModerator: full }));
+      expect(m.getCollectionById).toHaveBeenCalledWith(
+        expect.objectContaining({ viewer: full ? { id: 78, isModerator: true } : {} })
+      );
+    }
+  );
 });

@@ -235,8 +235,6 @@ describe.each(['a scoped personal key', 'an OAuth token'] as const)(
   }
 );
 
-// Control: without it, the scoped-token answers above would also pass if moderators were dropped
-// everywhere.
 const PLACEMENT: [route: string, fn: string][] = [
   ['getMyHats', 'getMyEventHats'],
   ['getPlaceableContent', 'getPlaceableEventContent'],
@@ -262,6 +260,8 @@ describe.each([
   });
 });
 
+// Control: without it, the scoped-token answers above would also pass if moderators were dropped
+// everywhere.
 describe('a moderator on a session', () => {
   it.each(GATED)('passes event.%s’s gate for the unlaunched event', async (route, fn) => {
     await run(route, ctxFor(credentials.session));

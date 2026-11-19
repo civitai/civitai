@@ -962,10 +962,12 @@ export const getPostContestCollectionDetailsHandler = async ({
     });
     if (!visible) return { collection: null, permissions: null, items: [] };
 
+    const views = credentialViews(ctx);
     return await getPostContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      isModerator: views.asModerator,
+      ownerView: views.asOwner,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

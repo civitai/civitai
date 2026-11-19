@@ -2572,7 +2572,13 @@ export const getPostContestCollectionDetails = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  ownerView = true,
+}: GetByIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** False on a narrower credential: the cover is judged as for a stranger. */
+  ownerView?: boolean;
+}) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2602,7 +2608,7 @@ export const getPostContestCollectionDetails = async ({
 
   const collection = await getCollectionById({
     input: { id: post.collectionId },
-    viewer: userId ? { id: userId, isModerator } : undefined,
+    viewer: !userId ? undefined : ownerView ? { id: userId, isModerator } : {},
   });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest)

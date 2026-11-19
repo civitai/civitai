@@ -126,7 +126,6 @@ export const getAllCollectionsInfiniteHandler = async ({
         createdAt: true,
         metadata: true,
       },
-      // Private and moderated listings are a moderator's only on a session or a full-access key.
       user: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     });
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
