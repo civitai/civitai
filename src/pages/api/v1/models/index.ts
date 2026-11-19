@@ -183,7 +183,7 @@ async function handler(
         // region holds the level to SFW.
         browsingLevel,
         nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
-        user: searchViewer(req, user),
+        user: searchViewer(req, user, !!data.hidden),
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),
       }
@@ -207,10 +207,15 @@ async function handler(
   }
 }
 
-/** Moderator rights come only from a session or a full-scope personal key, whatever the route's scope mode. */
-function searchViewer(req: NextApiRequest, user: Session['user'] | undefined) {
+/**
+ * The viewer the search runs as. Moderator rights and the owner's view come only from a session or a
+ * full-scope personal key, whatever the route's scope mode; a narrower credential searches as signed
+ * out, except for the `hidden` list, which is the caller's own.
+ */
+function searchViewer(req: NextApiRequest, user: Session['user'] | undefined, hidden: boolean) {
   const credential = getRequestCredential(req);
-  if (!user || isSessionOrFullUserKey(credential) || !withholdsModerator(user, credential))
-    return user;
-  return { ...user, isModerator: false };
+  if (!user || isSessionOrFullUserKey(credential)) return user;
+  // The internal system account keeps its rights by id on its own keys.
+  if (user.isModerator && !withholdsModerator(user, credential)) return user;
+  return hidden ? { ...user, isModerator: false } : undefined;
 }

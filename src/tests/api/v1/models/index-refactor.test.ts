@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { constants } from '~/server/common/constants';
 
 import {
   publicBrowsingLevelsFlag,
@@ -222,10 +223,10 @@ describe('/api/v1/models moderator view follows the credential', () => {
     mockIsRegionRestricted.mockReturnValue(false);
   });
 
-  async function searchedAs(context: object | undefined) {
+  async function searchedAs(context: object | undefined, query: Record<string, string> = {}) {
     const req = {
       method: 'GET',
-      query: {},
+      query,
       headers: { host: 'civitai.com' },
       url: '/api/v1/models',
       testUser: moderator,
@@ -250,7 +251,43 @@ describe('/api/v1/models moderator view follows the credential', () => {
       'an app token',
       { tokenScope: FULL, apiKeyId: 9, apiKeyType: 'Access', subject: { type: 'oauth', id: 'c' } },
     ],
-  ])('searches as an ordinary user on %s', async (_label, context) => {
-    expect(await searchedAs(context)).toEqual({ ...moderator, isModerator: false });
+  ])('searches as signed out on %s', async (_label, context) => {
+    expect(await searchedAs(context)).toBeUndefined();
+  });
+
+  it('searches as signed out for a non-moderator on a scoped key too', async () => {
+    const req = {
+      method: 'GET',
+      query: {},
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: { id: 6, isModerator: false },
+      context: personalKey(MODELS_READ),
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(mockRunModelSearch.mock.calls[0][1].user).toBeUndefined();
+  });
+
+  it('keeps the system account as it is on its own key', async () => {
+    const system = { id: constants.system.user.id, isModerator: true };
+    const req = {
+      method: 'GET',
+      query: {},
+      headers: { host: 'civitai.com' },
+      url: '/api/v1/models',
+      testUser: system,
+      context: personalKey(MODELS_READ),
+    } as unknown as NextApiRequest;
+    const res = fakeRes();
+    await handler(req, res);
+    expect(mockRunModelSearch.mock.calls[0][1].user).toEqual(system);
+  });
+
+  it("keeps the caller's id, without the moderator view, for their own hidden list", async () => {
+    expect(await searchedAs(personalKey(MODELS_READ), { hidden: 'true' })).toEqual({
+      ...moderator,
+      isModerator: false,
+    });
   });
 });

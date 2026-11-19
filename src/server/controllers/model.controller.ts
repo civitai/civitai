@@ -1,5 +1,8 @@
 import type { SessionUser } from '~/types/session';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -694,7 +697,8 @@ export async function modelFeedQueryOptions(ctx: Context) {
   // applies either way (see model-getall-images).
   const slim = ctx.features.getAllModelImagesSlim;
   return {
-    user: ctx.user,
+    // Moderator rights hold only on a session or a full-access key.
+    user: ctx.user && { ...ctx.user, isModerator: credentialViews(ctx).asModerator },
     heldViewer: isSessionOrFullUserKey(ctx),
     domain: getRequestBoardDomainColor(ctx.req),
     imagesPerModel: slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL,

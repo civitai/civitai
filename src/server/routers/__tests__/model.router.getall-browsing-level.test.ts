@@ -112,3 +112,43 @@ describe('model.getAll called with a browsingLevel', () => {
     expect(await levelQueried(viewer, true, { limit: 5, browsingLevel: 4 })).toBe(4);
   });
 });
+
+describe('model.getAll moderator view', () => {
+  const moderator = { id: 5, showNsfw: true, browsingLevel: VIEWER_LEVEL, isModerator: true };
+  const personalKey = (tokenScope: bigint) => ({
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope,
+  });
+  it.each([
+    ['a session', {}, true],
+    ['a full-access personal key', personalKey(TokenScope.Full), true],
+    ['a ModelsRead key', personalKey(TokenScope.ModelsRead), false],
+    [
+      'an app token',
+      {
+        apiKeyId: 9,
+        apiKeyType: 'Access',
+        subject: { type: 'oauth', id: 'c' },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      false,
+    ],
+  ] as const)('reads as a moderator only on %s', async (_label, credential, asModerator) => {
+    const caller = modelRouter.createCaller({
+      user: moderator,
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      apiKeyId: null,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { browserTTL: 0, edgeTTL: 0, staleWhileRevalidate: 0, canCache: true, skip: false },
+      features: { canViewNsfw: true },
+      track: { action: vi.fn(() => Promise.resolve(true)) },
+      ...credential,
+    } as never);
+    await caller.getAll({ limit: 5 });
+    expect(getModelsWithImagesAndModelVersions.mock.calls[0][0].user.isModerator).toBe(asModerator);
+  });
+});
