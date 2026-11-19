@@ -54,7 +54,7 @@ export async function decideCsamHold({
   /** The hold's `textHash` as the moderator saw it; the main app refuses the decision if the text changed since. */
   textHash: string;
   decision: CsamHoldDecision;
-  /** Required by the main app with every decision but `dismiss`. */
+  /** Sent with every decision but `dismiss`, which refuses one. */
   reportChoice?: CsamReportChoice;
   note?: string;
 }): Promise<CsamHoldDecisionResult> {
