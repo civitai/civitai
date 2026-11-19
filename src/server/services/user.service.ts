@@ -1248,6 +1248,10 @@ export const deleteUser = async ({
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
+  // Erasure of their deal uploads follows their other content, and the retention off-switch.
+  const removeDealUploads =
+    imageRemovalMode(removeImages) === 'immediate' &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION));
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }
@@ -1270,7 +1274,7 @@ export const deleteUser = async ({
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
       // Marks their own uploads on closed deals removed; purgeRemovedFiles deletes the unheld ones.
-      dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id)),
+      ...(removeDealUploads ? [dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id))] : []),
       ...(removeModels
         ? []
         : [

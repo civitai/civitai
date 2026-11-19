@@ -11,6 +11,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { markExpiredDealFiles } from '~/server/services/creator-service-deal-file-retention';
 import {
   deleteScanCopies,
+  dropRemovedPreviewCopies,
   publishPreviews,
   purgeRemovedFiles,
   settlePreviewScans,
@@ -70,6 +71,8 @@ export const creatorServiceUnpackJob = createJob(
       ? await markExpiredDealFiles()
       : 0;
     jobContext.checkIfCanceled();
+    const previewCopiesDropped = await dropRemovedPreviewCopies();
+    jobContext.checkIfCanceled();
     const removedPurged = await purgeRemovedFiles();
     return {
       unpacked,
@@ -79,6 +82,7 @@ export const creatorServiceUnpackJob = createJob(
       ...finals,
       copiesDeleted,
       retentionExpired,
+      previewCopiesDropped,
       removedPurged,
     };
   },

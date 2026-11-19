@@ -285,6 +285,14 @@ beforeEach(async () => {
   `);
 });
 
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
+
 describe('requesting an upload', () => {
   it('lets the seller of a deal being worked mint a key it chose itself', async () => {
     const dealId = await accepted();
@@ -728,6 +736,7 @@ describe('deleting', () => {
     const { s3Key } = await fileRow(fileId);
     images.deleteImageById.mockResolvedValue(undefined);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    await agedPurge();
     expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
     expect(await fileRow(fileId)).toBeUndefined();
@@ -758,7 +767,9 @@ describe('deleting', () => {
       code: 'NOT_FOUND',
     });
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toEqual([]);
+    expect(await q(`SELECT "removedAt" IS NOT NULL AS removed FROM "ServiceDealFile"`)).toEqual([
+      { removed: true },
+    ]);
   });
 });
 

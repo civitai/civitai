@@ -24,7 +24,7 @@ const dealClosedAndSettled = Prisma.sql`(
 )`;
 
 /**
- * When the retention clock starts, restarted by later moderation of the deal or its offering, and never before `effectiveAt`.
+ * When the retention clock starts, restarted by a later dispute ruling or takedown, and never before `effectiveAt`.
  * The close term is required separately: GREATEST skips nulls, and the floor alone must not expire
  * a deal with no close time.
  */
@@ -32,22 +32,24 @@ const clockStart = (effectiveAt: Date) => Prisma.sql`GREATEST(
   ${effectiveAt}::timestamp,
   CASE WHEN d."status" = 'Completed' THEN d."releaseAt" ELSE d."closedAt" END,
   d."disputeResolvedAt",
-  CASE WHEN o."removedReason" IS NOT NULL THEN o."removedAt" END,
-  (SELECT max(GREATEST(r."createdAt", r."statusSetAt"))
-   FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
-   WHERE sr."serviceOfferingId" = o."id")
+  CASE WHEN o."removedReason" IS NOT NULL THEN o."removedAt" END
 )`;
+
+const retentionWindow = Prisma.sql`CASE WHEN d."status" = 'Completed'
+  THEN ${ms(SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS)}
+  ELSE ${ms(SERVICE_DEAL_FILE_RETENTION_CLOSED_MS)} END`;
 
 const retentionExpired = (effectiveAt: Date) => Prisma.sql`(
   CASE WHEN d."status" = 'Completed' THEN d."releaseAt" ELSE d."closedAt" END IS NOT NULL
-  AND ${clockStart(effectiveAt)} + CASE WHEN d."status" = 'Completed'
-    THEN ${ms(SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS)}
-    ELSE ${ms(SERVICE_DEAL_FILE_RETENTION_CLOSED_MS)} END <= now()
+  AND ${clockStart(effectiveAt)} + ${retentionWindow} <= now()
 )`;
 
 const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
 
-/** Anything that keeps a deal's removed files from being deleted, on either party or the offering. */
+/**
+ * Anything that keeps a deal's removed files from being deleted, on either party or the offering. A
+ * report on the offering keeps them for a full window after it was filed or last handled.
+ */
 export const dealFilesHeld = Prisma.sql`(
   ${ownerHeldSql(Prisma.sql`d."buyerId"`)}
   OR ${ownerHeldSql(Prisma.sql`d."sellerId"`)}
@@ -55,7 +57,8 @@ export const dealFilesHeld = Prisma.sql`(
     WHERE c."userId" IN ${parties}
       OR c."details" ->> 'secondaryUserId' IN (d."buyerId"::text, d."sellerId"::text))
   OR EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
-    WHERE sr."serviceOfferingId" = o."id" AND r."status"::text IN ('Pending', 'Processing'))
+    WHERE sr."serviceOfferingId" = o."id" AND (r."status"::text IN ('Pending', 'Processing')
+      OR GREATEST(r."createdAt", r."statusSetAt") + ${retentionWindow} > now()))
   OR EXISTS (SELECT 1 FROM "User" bu
     WHERE bu."id" IN ${parties} AND (
       bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([

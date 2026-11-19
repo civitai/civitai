@@ -424,6 +424,14 @@ const readyToDeliver = async (dealId: number) =>
     }[]
   )[0].ok;
 
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
+
 describe('attaching', () => {
   it('records the attestation time and stores the upload at a server-held key', async () => {
     const dealId = await accepted();
@@ -766,7 +774,7 @@ describe('who may attach, and when', () => {
     if (ATTACHABLE.includes(status)) {
       await expect(requestAs(dealId, BUYER)).resolves.toMatchObject({ fileId: expect.any(Number) });
       await files.deleteServiceDealAttachment({ fileId: existing, userId: BUYER });
-      expect(await fileRow(existing)).toBeUndefined();
+      expect((await fileRow(existing)).removedAt).not.toBeNull();
     } else {
       await expect(requestAs(dealId, BUYER)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       await expect(
@@ -1182,6 +1190,7 @@ describe('removing a file that must be kept', () => {
 
     await files.deleteServiceDealAttachment({ fileId: zipId, userId: BUYER });
     await files.deleteServiceDealAttachment({ fileId: textId, userId: BUYER });
+    await agedPurge();
 
     expect(await fileRow(zipId)).toBeUndefined();
     expect(await fileRow(textId)).toBeUndefined();
@@ -1279,12 +1288,12 @@ describe('a removed file that is kept', () => {
     const dealId = await accepted();
     const fileId = await removedInFlight(dealId);
     const { s3Key } = await fileRow(fileId);
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
 
     await verdictLands(fileId, 'Passed');
     await settle();
     s3.deleteObject.mockClear();
-    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await agedPurge()).toBe(1);
     expect(await fileRow(fileId)).toBeUndefined();
     expect(deletedKeys()).toContain(s3Key);
   });
@@ -1299,7 +1308,7 @@ describe('a removed file that is kept', () => {
     await settle();
     expect((await fileRow(failedId)).scanStatus).toBe('Failed');
     expect((await fileRow(unjudgedId)).scanStatus).toBe('Pending');
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(failedId)).toHaveLength(1);
     expect(await keptRows(unjudgedId)).toHaveLength(1);
 
@@ -1308,7 +1317,7 @@ describe('a removed file that is kept', () => {
     await verdictLands(reportedId, 'Passed');
     await settle();
     expect((await fileRow(reportedId)).scanStatus).toBe('Passed');
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(reportedId)).toHaveLength(1);
   });
 
@@ -1330,11 +1339,11 @@ describe('a removed file that is kept', () => {
     const [{ imageId }] = await entries(fileId);
     expect(imageId).not.toBeNull();
 
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(fileId)).toHaveLength(1);
 
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
-    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await agedPurge()).toBe(1);
     expect(await fileRow(fileId)).toBeUndefined();
     expect(await q(`SELECT id FROM "Image" WHERE id = $1`, [imageId])).toEqual([]);
   });

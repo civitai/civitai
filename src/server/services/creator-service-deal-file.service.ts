@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import {
+  CopyObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  type S3Client,
+} from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type {
@@ -510,37 +515,27 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
-    // A file that must be kept, or is on a held deal, stays, with its entries and objects, out of
-    // the parties' sight. The caller is answered the same either way.
-    const [kept] = await tx.$queryRaw<{ id: number; s3Key: string }[]>`
+    await tx.$executeRaw`
+      UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
+      WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
+    // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below depends on
+    // the file alone, so the caller can't tell a file that is kept from one that is not.
+    const [file] = await tx.$queryRaw<
+      { id: number; s3Key: string; watermarkedKey: string | null }[]
+    >`
       UPDATE "ServiceDealFile" f SET "removedAt" = now()
-      WHERE f."id" = ${fileId}::int AND (${mustKeep(Prisma.sql`f`)} OR ${dealHeld(Prisma.sql`f`)})
-      RETURNING f."id", f."s3Key"`;
-    if (kept) {
-      await tx.$executeRaw`
-        UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
-        WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
-      return { kept, copies };
-    }
-    await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" e WHERE e."fileId" = ${fileId}::int`;
-    const [file] = await tx.$queryRaw<FileObjects[]>`
-      DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
-      WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
-      RETURNING f."id", f."s3Key", f."deliveryKey", f."watermarkedKey", f."imageId"`;
-    if (!file) throw throwNotFoundError('File not found');
+      WHERE f."id" = ${fileId}::int
+      RETURNING f."id", f."s3Key", f."watermarkedKey"`;
     return { file, copies };
   });
 
   await deleteImages(removed.copies.map(({ imageId }) => imageId));
-  if (removed.kept) {
-    // An upload never completed still sits at the uploader's key, which they can write to: the
-    // server keeps its own copy instead.
-    if (isUploaderKey(removed.kept.s3Key))
-      await keepServerCopy(await getBucket(), removed.kept.id, removed.kept.s3Key);
-    return { id: removed.kept.id };
-  }
-  await deleteFileObjects(removed.file);
-  return { id: removed.file.id };
+  const { file } = removed;
+  // An upload never completed still sits at the uploader's key, which they can write to: the
+  // server keeps its own copy instead.
+  if (isUploaderKey(file.s3Key)) await keepServerCopy(await getBucket(), file.id, file.s3Key);
+  if (file.watermarkedKey) await dropPreviewCopy(file.id, file.watermarkedKey);
+  return { id: file.id };
 }
 
 type FileObjects = {
@@ -556,6 +551,60 @@ async function deleteImages(imageIds: number[]) {
   if (!imageIds.length) return;
   const { deleteImageById } = await import('~/server/services/image.service');
   for (const id of imageIds) await deleteImageById({ id, updatePost: false }).catch(() => null);
+}
+
+/** Deletes every stored version of one object; false (and logged) when any may remain. */
+async function deleteEveryVersion(
+  { client, bucket, key }: { client: S3Client; bucket: string; key: string },
+  fileId: number
+) {
+  const remaining = await purgeObjectVersions({ client, bucket, key })
+    .then((result) => result.remaining)
+    .catch(async (error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
+      // A store without versioning answers 501: there the plain delete is the whole delete.
+      const unversioned =
+        error?.$metadata?.httpStatusCode === 501 || error?.name === 'NotImplemented';
+      const plain = await deleteObject(bucket, key, client).then(
+        () => true,
+        () => false
+      );
+      return unversioned && plain ? 0 : null;
+    });
+  if (remaining === 0) return true;
+  logToAxiom({
+    name: 'creator-service-deal-file',
+    type: 'warning',
+    message: 'object versions may remain after delete',
+    fileId,
+    payload: { remaining },
+  });
+  return false;
+}
+
+/**
+ * A removed preview's public copy goes when it is removed, kept or not: it is derived, and the
+ * upload itself is what a hold keeps. Clears the key once the copy is gone.
+ */
+async function dropPreviewCopy(fileId: number, key: string) {
+  const gone = await getImageUploadBackend()
+    .then(({ s3, bucket }) => deleteEveryVersion({ client: s3, bucket, key }, fileId))
+    .catch(() => false);
+  if (gone)
+    await dbWrite.$executeRaw`
+      UPDATE "ServiceDealFile" SET "watermarkedKey" = NULL
+      WHERE "id" = ${fileId}::int AND "watermarkedKey" = ${key}`;
+  return gone;
+}
+
+/** Drops the public copies of removed previews the removal itself could not. Returns how many. */
+export async function dropRemovedPreviewCopies({ limit = 50 } = {}) {
+  const rows = await dbWrite.$queryRaw<{ id: number; watermarkedKey: string }[]>`
+    SELECT "id", "watermarkedKey" FROM "ServiceDealFile"
+    WHERE "removedAt" IS NOT NULL AND "watermarkedKey" IS NOT NULL
+    ORDER BY "id" LIMIT ${limit}::int`;
+  let dropped = 0;
+  for (const row of rows) if (await dropPreviewCopy(row.id, row.watermarkedKey)) dropped++;
+  return dropped;
 }
 
 /**
@@ -583,30 +632,9 @@ async function deleteFileObjects(
       : []),
   ];
   let deleted = true;
-  for (const { client, bucket, key } of targets) {
+  for (const target of targets) {
     if (!(await stillDeletable())) return { etag, deleted: false };
-    const remaining = await purgeObjectVersions({ client, bucket, key })
-      .then((result) => result.remaining)
-      .catch(async (error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
-        // A store without versioning answers 501: there the plain delete is the whole delete.
-        const unversioned =
-          error?.$metadata?.httpStatusCode === 501 || error?.name === 'NotImplemented';
-        const plain = await deleteObject(bucket, key, client).then(
-          () => true,
-          () => false
-        );
-        return unversioned && plain ? 0 : null;
-      });
-    if (remaining !== 0) {
-      deleted = false;
-      logToAxiom({
-        name: 'creator-service-deal-file',
-        type: 'warning',
-        message: 'object versions may remain after delete',
-        fileId: file.id,
-        payload: { remaining },
-      });
-    }
+    if (!(await deleteEveryVersion(target, file.id))) deleted = false;
   }
   // A preview deleted mid-scan: its hidden copy goes with it.
   if (file.imageId) await deleteImages([file.imageId]);
@@ -639,13 +667,17 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean, with an uploader not on a report, no hold on its deal,
- * and its scan copies gone, has nothing left to keep. A removed file that failed stays for the
- * moderators. `f` names the file row.
+ * A removed file whose scans finished clean (or an upload never completed), with an uploader not on
+ * a report, no hold on its deal, and its scan copies gone, has nothing left to keep. A removed file
+ * that failed, or was never judged, stays for the moderators. `f` names the file row.
  */
 const purgeable = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
-  AND ${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+  -- Not before any download link signed while it was listed has expired.
+  AND ${f}."removedAt" <= now() - (${SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS}::int * interval '1 second')
+  -- An upload never completed was never judged, and was deleted outright before removal was deferred.
+  AND (${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+    OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus")
   AND NOT ${mustKeep(f)}
   -- Scan copies of its images go first (deleteEntryScanCopies).
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e

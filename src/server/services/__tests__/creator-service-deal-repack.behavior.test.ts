@@ -412,6 +412,14 @@ async function unpackedZip(items: FixtureEntry[], options?: FixtureOptions) {
 
 const TEXT = (s: string) => Buffer.from(s.repeat(10));
 
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
+
 describe('building the archive a buyer downloads', () => {
   it('copies exactly the checked files into a new archive, and leaves the original alone', async () => {
     const items = [
@@ -751,6 +759,11 @@ describe('when the build goes wrong', () => {
     await repack.repackFinals();
     const key = (await fileRow(fileId)).deliveryKey!;
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    // Its scan passes after the removal; the purge then takes the archive with it.
+    await holder.db.query(`UPDATE "ServiceDealFile" SET "scanStatus" = 'Passed' WHERE id = $1`, [
+      fileId,
+    ]);
+    await agedPurge();
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', key);
   });
 });

@@ -16,6 +16,7 @@ vi.mock('~/server/services/creator-service-deal-file-retention', () => ({
 vi.mock('~/server/services/creator-service-deal-file.service', () => ({
   deleteScanCopies: vi.fn(),
   publishPreviews: vi.fn(),
+  dropRemovedPreviewCopies: vi.fn(),
   purgeRemovedFiles: m.purgeRemovedFiles,
   settlePreviewScans: vi.fn(),
   startPreviewScans: vi.fn(),
