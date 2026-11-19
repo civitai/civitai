@@ -12,7 +12,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
-import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   getServableProfilePictures,
@@ -94,7 +93,6 @@ type ComicForSearchIndex = {
   userId: number;
   coverImageUrl: string | null;
   coverImageNsfwLevel: number | null;
-  coverImageTagIds: number[] | null;
   user: {
     id: number;
     username: string | null;
@@ -189,16 +187,10 @@ const transformData = async ({
   profilePictures: ProfileImage[];
 }) => {
   const records = comics
-    .map(({ user, nsfwLevel, coverImageTagIds, ...comic }) => {
+    .map(({ user, nsfwLevel, ...comic }) => {
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
-      const coverDropped = isTaggedMatureImage({
-        nsfwLevel: comic.coverImageNsfwLevel ?? 0,
-        tags: coverImageTagIds ?? [],
-      });
-
       return {
         ...comic,
-        ...(coverDropped && { coverImageUrl: null, coverImageNsfwLevel: null }),
         nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
         user: {
           ...user,
@@ -245,11 +237,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       SELECT
         cp.id AS "projectId",
         i.url AS "coverImageUrl",
-        i."nsfwLevel" AS "coverImageNsfwLevel",
-        ARRAY(
-          SELECT t."tagId" FROM "TagsOnImageDetails" t
-          WHERE t."imageId" = i.id AND NOT t.disabled
-        ) AS "coverImageTagIds"
+        i."nsfwLevel" AS "coverImageNsfwLevel"
       FROM "ComicProject" cp
       JOIN "Image" i ON i.id = cp."coverImageId"
       WHERE cp.id IN (SELECT id FROM target)
@@ -273,7 +261,6 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       t.*,
       (SELECT "coverImageUrl" FROM cover_images ci WHERE ci."projectId" = t.id),
       (SELECT "coverImageNsfwLevel" FROM cover_images ci WHERE ci."projectId" = t.id),
-      (SELECT "coverImageTagIds" FROM cover_images ci WHERE ci."projectId" = t.id),
       (SELECT "user" FROM users u WHERE u.id = t."userId"),
       (SELECT stats FROM stats s WHERE s."projectId" = t.id)
     FROM target t

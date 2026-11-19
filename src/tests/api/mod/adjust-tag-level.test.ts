@@ -13,9 +13,9 @@ const {
   tagByNameBust,
   bustGetTagsCache,
   refreshProfilePicturesForImages,
-  queueModelsForImageChildTagChanges,
+  queueDocumentsForImageMinorChanges,
 } = vi.hoisted(() => ({
-  queueModelsForImageChildTagChanges: vi.fn(async (_changes: unknown) => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async (_changes: unknown) => undefined),
   pgQuery: vi.fn(),
   pgCancellableQuery: vi.fn(),
   refreshProfilePicturesForImages: vi.fn(async (_ids: number[]) => undefined),
@@ -44,7 +44,7 @@ vi.mock('~/server/services/tag.service', () => ({ bustGetTagsCache }));
 // Same reason: the handler only needs the profile-picture refresh.
 vi.mock('~/server/services/user.service', () => ({ refreshProfilePicturesForImages }));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
-  queueModelsForImageChildTagChanges,
+  queueDocumentsForImageMinorChanges,
 }));
 
 import handler from '~/pages/api/mod/adjust-tag-level';
@@ -106,7 +106,7 @@ describe('adjust-tag-level — profile pictures', () => {
     refreshProfilePicturesForImages.mockImplementation(async () => {
       order.push('refresh');
     });
-    queueModelsForImageChildTagChanges.mockImplementation(async () => {
+    queueDocumentsForImageMinorChanges.mockImplementation(async () => {
       order.push('models');
     });
     const { req, res } = createMocks({ tags: 'nude', nsfwLevel: '4' });
@@ -128,7 +128,7 @@ describe('adjust-tag-level — profile pictures', () => {
   it('hands the re-rated batch over to the models index', async () => {
     await runOneBatch([501, 502]);
 
-    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [501, 502] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [501, 502] });
   });
 
   it('still completes the batch when the refresh fails', async () => {

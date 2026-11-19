@@ -37,19 +37,14 @@ describe("an article's search document cover, by tag and level", () => {
     return records.map((r) => r.coverImage?.id ?? null);
   };
 
-  it('indexes the article without a cover above PG13 carrying a child tag, nor its banner', async () => {
+  it('keeps a cover above PG13 carrying a child tag', async () => {
     expect(await coverOf(image(10, NsfwLevel.R, [OTHER_TAG, CHILD_TAG]), image(11, 1))).toEqual([
-      null,
+      10,
     ]);
   });
 
-  it('carries no banner above PG13 carrying a child tag', async () => {
-    expect(await coverOf(null, image(11, NsfwLevel.X, [CHILD_TAG]))).toEqual([]);
-  });
-
-  it('keeps a PG13 cover with a child tag, and an R cover without one', async () => {
-    expect(await coverOf(image(10, NsfwLevel.PG13, [CHILD_TAG]))).toEqual([10]);
-    expect(await coverOf(image(10, NsfwLevel.R, [OTHER_TAG]))).toEqual([10]);
+  it('falls back to a banner above PG13 carrying a child tag', async () => {
+    expect(await coverOf(null, image(11, NsfwLevel.X, [CHILD_TAG]))).toEqual([11]);
   });
 });
 
@@ -76,14 +71,12 @@ describe("a comic's search document cover, by tag and level", () => {
     return record;
   };
 
-  it('drops a cover above PG13 carrying a child tag, and keeps the comic', async () => {
+  it('keeps a cover above PG13 carrying a child tag', async () => {
     const record = await recordFor(NsfwLevel.R, [CHILD_TAG]);
-    expect(record).toMatchObject({ id: 3, coverImageUrl: null, coverImageNsfwLevel: null });
-    expect(record).not.toHaveProperty('coverImageTagIds');
-  });
-
-  it('keeps a PG13 cover with a child tag, and an R cover without one', async () => {
-    expect((await recordFor(NsfwLevel.PG13, [CHILD_TAG]))?.coverImageUrl).toBe('key-30');
-    expect((await recordFor(NsfwLevel.R, [OTHER_TAG]))?.coverImageUrl).toBe('key-30');
+    expect(record).toMatchObject({
+      id: 3,
+      coverImageUrl: 'key-30',
+      coverImageNsfwLevel: NsfwLevel.R,
+    });
   });
 });
