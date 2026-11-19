@@ -178,6 +178,13 @@ export const PERMISSIONS = [
     id: 'creatorServices.reviewDispute',
     label: 'Write Creator Services dispute reviews (no refund or release)',
   },
+  // Releases or keeps a held Creator Program payout. Gates the button only: the main app's
+  // `/api/admin/creator-program-payout-review` checks the moderator session and the row version, not
+  // this grant. Reading the holds is the page grant.
+  {
+    id: 'creatorProgram.payoutReview.decide',
+    label: 'Decide Creator Program payout-review holds (clear, escalate, withhold)',
+  },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
   // Money: gives a user back the Buzz an App Blocks generation charged them (the generation legs and
