@@ -120,6 +120,10 @@ describe('getModelsRaw and taken-down models', () => {
       user: { id: 7 },
     }).catch(() => undefined); // only the feed query matters here
     expect(capturedQueries.length).toBeGreaterThan(0);
+    // Positive control: the captured query is the model feed (it carries the Archived filter).
+    const { text, values } = capturedQueries[0];
+    const archived = text.replace(/\s+/g, ' ').match(/"mode" != \$(\d+)::"ModelModifier"/);
+    expect(archived && values[Number(archived[1]) - 1]).toBe('Archived');
     expect(withheldClause(capturedQueries[0])).toBeUndefined();
   });
 });
