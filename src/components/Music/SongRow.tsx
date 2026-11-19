@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { memo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
@@ -16,11 +17,16 @@ import { readSongGenre } from '~/shared/constants/song-genres';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
-/** Pencil `VQ3N0`: 8px padding around a 48px cover. */
+// Pencil `VQ3N0`.
 export const SONG_ROW_HEIGHT = 64;
 
-/** A song in the list view of a feed (Pencil `VQ3N0`); `index` is its 0-based place in the list. */
-export function SongRow({ data, index }: { data: ImagesInfiniteModel; index: number }) {
+export const SongRow = memo(function SongRow({
+  data,
+  index,
+}: {
+  data: ImagesInfiniteModel;
+  index: number;
+}) {
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
   const genre = readSongGenre(data.metadata);
@@ -71,4 +77,4 @@ export function SongRow({ data, index }: { data: ImagesInfiniteModel; index: num
       <ImageContextMenu image={data} leadingMenuItems={<FeedSongMenuItems song={data} />} />
     </div>
   );
-}
+});

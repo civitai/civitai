@@ -150,6 +150,24 @@ describe('a song the player already has', () => {
     expect(player.playback?.startAtSec).toBe(42);
   });
 
+  test('left paused by a different list, it plays from this list, where it was', async () => {
+    feed.images = songs;
+    realPlayFromList({
+      name: 'Rising this week',
+      tracks: [songs[1], song(9, 'Elsewhere')].map(songTrack),
+      index: 0,
+    });
+    useMusicPlayerStore.getState().pause();
+    useMusicPlayheadStore.setState({ currentTime: 17 });
+    await renderCollection();
+    await page.getByRole('button', { name: 'Play Palm Static' }).click();
+    const player = useMusicPlayerStore.getState();
+    expect(player.playing).toBe(true);
+    expect(player.listName).toBe('T8a e2e mix');
+    expect(player.list.map((t) => t.title)).toEqual(['Chrome Heart']);
+    expect(player.playback?.startAtSec).toBe(17);
+  });
+
   test('pressed again in the same list, it pauses and resumes without restarting the list', async () => {
     feed.images = songs;
     await renderCollection();

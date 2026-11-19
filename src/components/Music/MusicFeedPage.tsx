@@ -23,7 +23,6 @@ const SONG_ROWS = { render: SongRow, height: SONG_ROW_HEIGHT };
 // Stands for a `?tags=` the chips cannot show (several tags), so neither All nor a genre lights up.
 const UNLISTED_TAGS = 'unlisted';
 
-/** `/music`: the title row, genre chips and the audio feed. */
 export function MusicFeedPage() {
   const features = useFeatureFlags();
   const { hidden: _hidden, ...filters } = useImageFilters('images');

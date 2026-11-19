@@ -50,11 +50,11 @@ export function playSongWithCreatorList(song: SongImage, moreFrom: SongList, sta
   });
 }
 
-/** Play now, with the songs after it in `list` as Up next. */
-export function playSongFromList(song: SongImage, list: SongList) {
+/** Play now, from `startAtSec` when given, with the songs after it in `list` as Up next. */
+export function playSongFromList(song: SongImage, list: SongList, startAtSec?: number) {
   const index = list.songs.findIndex((s) => s.id === song.id);
   if (index < 0) return store().playTrack(songTrack(song));
-  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index });
+  store().playFromList({ name: list.name, tracks: list.songs.map(songTrack), index, startAtSec });
 }
 
 /**

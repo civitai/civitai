@@ -17,8 +17,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import clsx from 'clsx';
 
 export const UNTITLED_SONG = 'Untitled song';
-// A dark round under the white ⋯, so it reads on a light cover too (the duration pill's backing).
-const SONG_COVER_MENU_TRIGGER = 'rounded-full bg-black/60 hover:bg-black/70';
 
 function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
   return (
@@ -29,7 +27,6 @@ function SongStat({ icon, count, label }: { icon: React.ReactNode; count: number
   );
 }
 
-/** A song in an image feed (Pencil `AECSM`): cover, play, length, title, creator, genre, stats. */
 export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
@@ -37,7 +34,6 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
   const cover = useFeedSongCover(data.id);
   return (
     <div className="flex flex-col gap-2" style={{ height }}>
-      {/* The cover takes what the text leaves, so the text shows whatever height the slot has. */}
       <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[14px]">
         <RoutedDialogLink
           name="imageDetail"
@@ -64,7 +60,8 @@ export function SongCard({ data, height }: { data: ImagesInfiniteModel; height: 
           <ImageContextMenu
             image={data}
             leadingMenuItems={<FeedSongMenuItems song={data} />}
-            className={SONG_COVER_MENU_TRIGGER}
+            // A dark round under the white ⋯, so it reads on a light cover too.
+            className="rounded-full bg-black/60 hover:bg-black/70"
           />
         </div>
       </div>

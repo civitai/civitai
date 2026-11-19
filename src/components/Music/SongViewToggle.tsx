@@ -6,7 +6,6 @@ import { songTextBright, songTextDimmed } from '~/components/Music/song-styles';
 
 export type SongFeedView = 'card' | 'list';
 
-/** The music feed's view, kept per browser. */
 export function useSongFeedView() {
   return useLocalStorage<SongFeedView>({ key: 'music-feed-view', defaultValue: 'card' });
 }
@@ -16,7 +15,7 @@ const OPTIONS = [
   { value: 'list', label: 'List view', Icon: IconList },
 ] as const;
 
-/** Grid / list switch of the music feed toolbar (Pencil `YzE3g`). */
+// Pencil `YzE3g`.
 export function SongViewToggle({
   value,
   onChange,

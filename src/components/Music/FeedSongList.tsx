@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext } from 'react';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { SongImage, SongList } from '~/components/MusicPlayer/PostSong';
-import { playSongFromList, SongMenuItems, songTrack } from '~/components/MusicPlayer/PostSong';
+import { playSongFromList, SongMenuItems } from '~/components/MusicPlayer/PostSong';
 import {
   useMusicPlayerCovers,
   useSongListCovers,
@@ -26,7 +26,6 @@ export function SongListNameProvider({ name, children }: { name?: string; childr
 
 const SongCoversContext = createContext<Map<number, PlayerSongCover> | null>(null);
 
-/** Reads the covers of every song in `images` at once, for the feed's Song Cards and Rows. */
 export function FeedSongCoversProvider({
   images,
   children,
@@ -40,7 +39,6 @@ export function FeedSongCoversProvider({
   return <SongCoversContext.Provider value={covers}>{children}</SongCoversContext.Provider>;
 }
 
-/** A feed song's cover: from the feed's shared read, or its own read outside a feed. */
 export function useFeedSongCover(songId: number) {
   const feedCovers = useContext(SongCoversContext);
   const ownCovers = useMusicPlayerCovers(feedCovers ? [] : [songId]);
@@ -72,14 +70,8 @@ function pressFeedSongPlay(song: SongImage, list: SongList) {
   const player = useMusicPlayerStore.getState();
   const isCurrent = player.current?.id === song.id;
   if (isCurrent && (player.playing || player.listName === list.name)) return player.togglePlay();
-  const index = list.songs.findIndex((s) => s.id === song.id);
-  if (!isCurrent || index < 0) return playSongFromList(song, list);
-  player.playFromList({
-    name: list.name,
-    tracks: list.songs.map(songTrack),
-    index,
-    startAtSec: useMusicPlayheadStore.getState().currentTime,
-  });
+  const resumeAt = isCurrent ? useMusicPlayheadStore.getState().currentTime : undefined;
+  playSongFromList(song, list, resumeAt);
 }
 
 /**

@@ -262,8 +262,7 @@ export const imageRouter = router({
   getSongCovers: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getSongCoversSchema)
-    // A page or feed reads once per 100 song tiles (a feed's last chunk again as pages load), and
-    // once per song the player shows; clients keep each answer for 5 minutes.
+    // Chunks of 100 ids: one read per chunk plus one per player song.
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) => getSongCoversForPlayer({ ...input, ctx })),
   // Per viewer (the music flag), so no `edgeCacheIt`.

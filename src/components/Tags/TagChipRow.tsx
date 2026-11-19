@@ -14,36 +14,6 @@ import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 // shifts the feed exactly as badly as one that appears late.
 const CHIP_ROW_MIN_HEIGHT = 'min-h-[26px]';
 
-/**
- * Pencil `m52ee` (the music surfaces): sentence case, 26px pills, outlined until picked. Its
- * height matches the default chip's, so the row reservation below holds for both.
- */
-function OutlineTagChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-active={active || undefined}
-      onClick={onClick}
-      className={clsx(
-        'h-[26px] shrink-0 whitespace-nowrap rounded-full border border-solid px-3 text-[13px] font-medium leading-4',
-        active
-          ? 'border-transparent bg-blue-1 text-blue-7 dark:bg-blue-8/20 dark:text-blue-3'
-          : 'border-gray-3 text-black hover:bg-gray-1 dark:border-dark-4 dark:text-dark-0 dark:hover:bg-dark-5'
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
 function TagChip({
   label,
   active,
@@ -56,8 +26,24 @@ function TagChip({
   variant: TagChipVariant;
 }) {
   const colorScheme = useComputedColorScheme('dark');
+  // Pencil `m52ee` (the music surfaces). Its height matches the default chip's, so the row
+  // reservation holds for both.
   if (variant === 'outline')
-    return <OutlineTagChip label={label} active={active} onClick={onClick} />;
+    return (
+      <button
+        type="button"
+        data-active={active || undefined}
+        onClick={onClick}
+        className={clsx(
+          'h-[26px] shrink-0 whitespace-nowrap rounded-full border border-solid px-3 text-[13px] font-medium leading-4',
+          active
+            ? 'border-transparent bg-blue-1 text-blue-7 dark:bg-blue-8/20 dark:text-blue-3'
+            : 'border-gray-3 text-black hover:bg-gray-1 dark:border-dark-4 dark:text-dark-0 dark:hover:bg-dark-5'
+        )}
+      >
+        {label}
+      </button>
+    );
 
   // In dark mode every chip is `filled`, so colour is the only thing separating active
   // from inactive there.

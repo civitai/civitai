@@ -3,10 +3,7 @@ import { useRef } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
 
-/**
- * A single column of fixed-height rows, virtualized against the page's scroll area the way
- * `MasonryColumnsVirtual` is.
- */
+/** Fixed-height rows virtualized against the page's scroll area, like `MasonryColumnsVirtual`. */
 export function VirtualList<TData>({
   data,
   itemHeight,
