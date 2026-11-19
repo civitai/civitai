@@ -1,4 +1,5 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
+import pLimit from 'p-limit';
 import { PassThrough, Readable, Transform } from 'stream';
 import * as yauzl from 'yauzl';
 import {
@@ -162,11 +163,78 @@ export function entryRefusal(
 
 export type EntryKind = 'image' | 'other';
 
-/** Three packets in a row of a transport stream (188 bytes), or of one with a 4-byte timecode (192). */
+/** How far into a file a player hunts for a transport stream's sync byte. */
+const TS_SEARCH_BYTES = 1024;
+
+/**
+ * Four packets in a row of a transport stream (188 bytes; 192 with a timecode, 204 with error
+ * correction), starting anywhere in the first KiB: a player hunts for the sync, so junk before it
+ * does not hide the stream.
+ */
 function isMpegTs(head: Buffer) {
-  const synced = (start: number, packet: number) =>
-    [0, 1, 2].every((i) => head[start + i * packet] === 0x47);
-  return synced(0, 188) || synced(4, 192);
+  return [188, 192, 204].some((packet) => {
+    for (let start = 0; start < TS_SEARCH_BYTES && start + 3 * packet < head.length; start++)
+      if ([0, 1, 2, 3].every((i) => head[start + i * packet] === 0x47)) return true;
+    return false;
+  });
+}
+
+/** Leading ID3v2 tags read past; a file with more is refused, since what follows is unread. */
+export const MAX_ID3_TAGS = 8;
+
+/**
+ * The length of the ID3v2 tag `head` opens with (header, body and footer), or 0 if it opens with
+ * none. A player skips the tag and plays whatever follows it, whatever that is.
+ */
+export function id3TagLength(head: Buffer) {
+  if (head.length < 10 || head.subarray(0, 3).toString('latin1') !== 'ID3') return 0;
+  if (head[3] === 0xff || head[4] === 0xff) return 0;
+  const size = head.subarray(6, 10);
+  if (size.some((byte) => byte >= 0x80)) return 0;
+  const body = (size[0] << 21) | (size[1] << 14) | (size[2] << 7) | size[3];
+  return 10 + body + (head[5] & 0x10 ? 10 : 0);
+}
+
+/** Collects a stream's first `SNIFF_BYTES` past its leading ID3v2 tags, as a player would read it. */
+class SniffedHead {
+  private parts: Buffer[] = [];
+  private length = 0;
+  private skip = 0;
+  /** At the start of what follows the tags so far, where another tag could begin. */
+  private atTagStart = true;
+  tags = 0;
+
+  /** Whether enough has been read to judge. */
+  push(chunk: Buffer) {
+    while (chunk.length) {
+      if (this.skip) {
+        const skipped = Math.min(this.skip, chunk.length);
+        this.skip -= skipped;
+        chunk = chunk.subarray(skipped);
+        continue;
+      }
+      this.parts.push(chunk);
+      this.length += chunk.length;
+      chunk = Buffer.alloc(0);
+      if (!this.atTagStart || this.length < 10) continue;
+      const bytes = this.bytes();
+      const tag = this.tags < MAX_ID3_TAGS ? id3TagLength(bytes) : 0;
+      if (!tag) {
+        this.atTagStart = false;
+        continue;
+      }
+      this.tags++;
+      this.parts = [];
+      this.length = 0;
+      this.skip = tag;
+      chunk = bytes;
+    }
+    return this.length >= SNIFF_BYTES;
+  }
+
+  bytes() {
+    return Buffer.concat(this.parts);
+  }
 }
 
 const OGG_AUDIO = ['\x01vorbis', 'OpusHead', '\x7fFLAC', 'Speex   '];
@@ -204,6 +272,8 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
   const at = (offset: number, text: string) =>
     head.subarray(offset, offset + text.length).toString('latin1') === text;
   const bytes = (...values: number[]) => values.every((value, i) => head[i] === value);
+  // Ahead of the image signatures: a player finds the stream behind any header.
+  if (isMpegTs(head) || id3TagLength(head)) return 'video';
   if (
     bytes(0xff, 0xd8, 0xff) ||
     bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) ||
@@ -214,7 +284,6 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
   if (at(0, 'RIFF') && at(8, 'AVI ')) return 'video';
   if (
     at(4, 'ftyp') ||
-    isMpegTs(head) ||
     (at(0, 'OggS') && !isOggAudio(head)) ||
     bytes(0x1a, 0x45, 0xdf, 0xa3) ||
     bytes(0x46, 0x4c, 0x56, 1) ||
@@ -228,7 +297,7 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
     bytes(0x50, 0x4b, 7, 8) ||
     at(0, 'Rar!') ||
     bytes(0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c) ||
-    bytes(0x1f, 0x8b) ||
+    bytes(0x1f, 0x8b, 0x08) ||
     (at(0, 'BZh') && head[3] >= 0x31 && head[3] <= 0x39) ||
     bytes(0xfd, 0x37, 0x7a, 0x58, 0x5a, 0) ||
     bytes(0x28, 0xb5, 0x2f, 0xfd)
@@ -245,8 +314,8 @@ export function sniffEntry(head: Buffer): EntryKind | 'video' | 'archive' | 'uns
   return 'other';
 }
 
-/** Enough for an MPEG-TS stream's third sync byte and an Ogg file's first pages. */
-export const SNIFF_BYTES = 512;
+/** Enough for a transport stream found anywhere in its first KiB, and an Ogg file's first pages. */
+export const SNIFF_BYTES = 64 * 1024;
 
 export type ZipEntry = {
   /** Position among the archive's entries; stable between reads of the same archive. */
@@ -286,22 +355,92 @@ const openArchive = (source: ZipSource) =>
     );
   });
 
+/** Every entry in an archive's directory, refusing one of more than `max`. */
+function directoryOf(zipfile: yauzl.ZipFile, max: number) {
+  const entries: yauzl.Entry[] = [];
+  return new Promise<yauzl.Entry[]>((resolve, reject) => {
+    zipfile.on('error', (error) => reject(yauzlRefusal(error)));
+    zipfile.on('end', () => resolve(entries));
+    zipfile.on('entry', (entry: yauzl.Entry) => {
+      if (entries.push(entry) > max)
+        return reject(new ZipRejectedError('The archive has too many files.'));
+      zipfile.readEntry();
+    });
+    zipfile.readEntry();
+  });
+}
+
 /** The paths in an archive's directory, nothing read but the directory. */
 export async function listZipPaths(source: ZipSource, max: number) {
   const zipfile = await openArchive(source);
   try {
-    const paths: string[] = [];
-    await new Promise<void>((resolve, reject) => {
-      zipfile.on('error', (error) => reject(yauzlRefusal(error)));
-      zipfile.on('end', () => resolve());
-      zipfile.on('entry', (entry: yauzl.Entry) => {
-        if (paths.push(entry.fileName) > max)
-          return reject(new ZipRejectedError('The archive has too many files.'));
-        zipfile.readEntry();
-      });
-      zipfile.readEntry();
-    });
-    return paths;
+    return (await directoryOf(zipfile, max)).map((entry) => entry.fileName);
+  } finally {
+    zipfile.close();
+  }
+}
+
+const ENTRY_HEAD_READS = 8;
+
+/**
+ * Each file entry's path and first bytes (past any ID3v2 tags), for an archive that is delivered
+ * as it is rather than unpacked. Refuses one whose local header names a file other than its
+ * directory does: an extractor that streams the archive goes by the local name.
+ */
+export async function readEntryHeads(source: ZipSource, max: number) {
+  const zipfile = await openArchive(source);
+  try {
+    const files = (await directoryOf(zipfile, max)).filter(
+      (entry) => !entry.fileName.endsWith('/')
+    );
+    let failed = false;
+    const limit = pLimit(ENTRY_HEAD_READS);
+    return await Promise.all(
+      files.map((entry) =>
+        limit(async () => {
+          // The first refusal settles it; the reads still queued would only find the archive closed.
+          if (failed) return null as never;
+          if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8)
+            throw new ZipRejectedError('This is not a valid .zip file.');
+          const local = await zipfile.readLocalFileHeaderPromise(entry).catch(() => {
+            throw new ZipRejectedError('This is not a valid .zip file.');
+          });
+          if (!local.fileName.equals(entry.fileNameRaw))
+            throw new ZipRejectedError(
+              'A file in the archive is named differently in its headers.'
+            );
+          // The callback form: yauzl 3.4's promise form of this call opens the entry by its header again.
+          const stream = await new Promise<Readable>((resolve, reject) =>
+            zipfile.openReadStreamLowLevel(
+              local.fileDataStart,
+              entry.compressedSize,
+              0,
+              entry.compressedSize,
+              entry.compressionMethod === 8,
+              null,
+              (error, readable) =>
+                error
+                  ? reject(new ZipRejectedError('This is not a valid .zip file.'))
+                  : resolve(readable)
+            )
+          );
+          const head = new SniffedHead();
+          try {
+            for await (const chunk of stream as AsyncIterable<Buffer>) if (head.push(chunk)) break;
+          } catch (error) {
+            if (((error as { code?: string })?.code ?? '').startsWith('Z_'))
+              throw new ZipRejectedError('The archive is damaged.');
+            throw error;
+          } finally {
+            stream.destroy();
+          }
+          return { path: entry.fileName, head: head.bytes() };
+        }).catch((error) => {
+          failed = true;
+          throw error;
+        })
+      )
+    );
   } finally {
     zipfile.close();
   }
@@ -382,21 +521,23 @@ export async function readEntry(
   const compressed = Math.max(1, entry.raw.compressedSize);
   const declaredImage = isIn(SERVICE_ZIP_IMAGE_EXTENSIONS, extensionOf(entry.path));
   const chunks: Buffer[] = [];
+  /** The entry's bytes as stored, kept for an image until its kind is known. */
   const head: Buffer[] = [];
-  let headLength = 0;
+  const sniffed = new SniffedHead();
   let kind: EntryKind | null = null;
   let bytes = 0;
 
   /** The entry's kind from its first bytes, refusing what must not be in a final. */
   const decide = (): EntryKind => {
-    const sniffed = sniffEntry(Buffer.concat(head));
-    if (sniffed === 'video') throw new ZipRejectedError(VIDEO_REFUSAL);
-    if (sniffed === 'archive') throw new ZipRejectedError(NESTED_REFUSAL);
-    if (sniffed === 'unscannable') throw new ZipRejectedError(IMAGE_FORMAT_REFUSAL);
-    // A file named like an image that is not one is refused rather than judged by its name.
-    if (declaredImage && sniffed !== 'image')
+    const found = sniffEntry(sniffed.bytes());
+    if (found === 'video') throw new ZipRejectedError(VIDEO_REFUSAL);
+    if (found === 'archive') throw new ZipRejectedError(NESTED_REFUSAL);
+    if (found === 'unscannable') throw new ZipRejectedError(IMAGE_FORMAT_REFUSAL);
+    // A file named like an image that is not one is refused rather than judged by its name. An
+    // image behind a tag is not one either: what is scanned must be the bytes as delivered.
+    if ((declaredImage && found !== 'image') || (found === 'image' && sniffed.tags))
       throw new ZipRejectedError('A file in the archive is not the image its name says.');
-    return sniffed;
+    return found;
   };
 
   try {
@@ -415,9 +556,9 @@ export async function readEntry(
         if (keep(kind)) chunks.push(chunk);
         continue;
       }
-      head.push(chunk);
-      headLength += chunk.byteLength;
-      if (headLength < SNIFF_BYTES) continue;
+      // Past a tag, the entry can no longer be a kept image, so its bytes need not be held.
+      if (!sniffed.tags) head.push(chunk);
+      if (!sniffed.push(chunk)) continue;
       kind = decide();
       // The chunk that settled the kind may itself be the whole entry.
       if (kind === 'image' && bytes > SERVICE_ZIP_MAX_IMAGE_BYTES)

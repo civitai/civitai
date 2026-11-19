@@ -20,7 +20,10 @@ import {
   openZip,
   readEntry,
   s3ZipSource,
+  id3TagLength,
   listZipPaths,
+  MAX_ID3_TAGS,
+  readEntryHeads,
   sniffEntry,
   SNIFF_BYTES,
   ZipRejectedError,
@@ -271,33 +274,58 @@ const MODEL_FORMATS: Record<string, (head: Buffer) => boolean> = {
   pt: (head) => isZipStart(head) || isPickle(head),
   pth: (head) => isZipStart(head) || isPickle(head),
   ckpt: (head) => isZipStart(head) || isPickle(head),
+  bin: (head) => isZipStart(head) || isPickle(head),
 };
 
+/** What each audio format begins with, past any ID3v2 tags (already read past by `readHead`). */
 const AUDIO_FORMATS: Record<string, (head: Buffer) => boolean> = {
-  mp3: (head) =>
-    head.subarray(0, 3).toString('latin1') === 'ID3' ||
-    (head[0] === 0xff && (head[1] & 0xe0) === 0xe0),
+  mp3: (head) => head[0] === 0xff && (head[1] & 0xe0) === 0xe0,
+  // RF64 and BW64 are the 64-bit-size forms broadcast tools write for long recordings.
   wav: (head) =>
-    head.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    ['RIFF', 'RF64', 'BW64'].includes(head.subarray(0, 4).toString('latin1')) &&
     head.subarray(8, 12).toString('latin1') === 'WAVE',
   flac: (head) => head.subarray(0, 4).toString('latin1') === 'fLaC',
   ogg: (head) => head.subarray(0, 4).toString('latin1') === 'OggS',
 };
 
-/** Entries torch.save writes, all under one root folder. */
+/** Entries torch.save and torch.jit.save write, all under one root folder. */
 const TORCH_ENTRY =
-  /^[^/]+\/(data\.pkl|version|byteorder|\.format_version|\.storage_alignment|serialization_id|constants\.pkl|data\/\d+|code\/.+|\.data\/.+)$/;
+  /^[^/]+\/(data\.pkl|constants\.pkl|attributes\.pkl|version|byteorder|\.format_version|\.storage_alignment|serialization_id|\.data\/(serialization_id|version)|(data|constants)\/\d+|code\/__torch__(\/.+)?\.(py|pkl|py\.debug_pkl)|extra\/.+)$/;
 const TORCH_MAX_ENTRIES = 50_000;
 
 async function isTorchArchive(file: ClaimedFinal) {
   const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
   const paths = await listZipPaths(source, TORCH_MAX_ENTRIES);
   const roots = new Set(paths.map((path) => path.split('/')[0]));
-  return (
-    roots.size === 1 &&
-    paths.some((path) => /^[^/]+\/data\.pkl$/.test(path)) &&
-    paths.every((path) => path.endsWith('/') || TORCH_ENTRY.test(path))
-  );
+  if (
+    roots.size !== 1 ||
+    !paths.some((path) => /^[^/]+\/data\.pkl$/.test(path)) ||
+    !paths.every((path) => path.endsWith('/') || TORCH_ENTRY.test(path))
+  )
+    return false;
+  // Unzipped, every entry is a file of its own: none may be something a player or extractor opens.
+  const heads = await readEntryHeads(source, TORCH_MAX_ENTRIES);
+  return heads.every(({ head }) => !['video', 'archive'].includes(sniffEntry(head)));
+}
+
+/** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
+async function readHead(file: ClaimedFinal) {
+  let offset = 0;
+  for (let tags = 0; ; tags++) {
+    if (offset >= file.size) return Buffer.alloc(0);
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: await getBucket(),
+        Key: file.s3Key,
+        Range: `bytes=${offset}-${offset + SNIFF_BYTES - 1}`,
+      })
+    );
+    if (!response.Body) throw new Error('Empty object body');
+    const head = Buffer.from(await response.Body.transformToByteArray());
+    const tag = tags < MAX_ID3_TAGS ? id3TagLength(head) : 0;
+    if (!tag) return head;
+    offset += tag;
+  }
 }
 
 /** Counted by claimed type, so false refusals show up after release. */
@@ -318,15 +346,7 @@ const isModelName = (name: string) =>
  * is an image.
  */
 async function isImageByContent(file: ClaimedFinal) {
-  const response = await getS3Client().send(
-    new GetObjectCommand({
-      Bucket: await getBucket(),
-      Key: file.s3Key,
-      Range: `bytes=0-${SNIFF_BYTES - 1}`,
-    })
-  );
-  if (!response.Body) throw new Error('Empty object body');
-  const head = Buffer.from(await response.Body.transformToByteArray());
+  const head = await readHead(file);
   const kind = sniffEntry(head);
   if (kind === 'video') throw new ZipRejectedError('Video cannot be delivered yet.');
   const extension = fileExtension(file.fileName);

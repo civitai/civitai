@@ -278,6 +278,47 @@ async function final(dealId: number, fileName: string, content: Buffer) {
   return fileId;
 }
 
+/** Four packets of `size` bytes, each opening with the sync byte. */
+const tsStream = (size: number) =>
+  Buffer.concat(
+    [0, 1, 2, 3].map(() => Buffer.concat([Buffer.from([0x47]), Buffer.alloc(size - 1)]))
+  );
+/** An ID3v2.4 tag with a `body`-byte body (its size syncsafe, 7 bits a byte). */
+const id3Tag = (body: number) =>
+  Buffer.concat([
+    Buffer.from('ID3', 'latin1'),
+    Buffer.from([
+      4,
+      0,
+      0,
+      (body >> 21) & 0x7f,
+      (body >> 14) & 0x7f,
+      (body >> 7) & 0x7f,
+      body & 0x7f,
+    ]),
+    Buffer.alloc(body),
+  ]);
+const MP3_FRAME = () => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(600)]);
+const PICKLE = () => Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00, 0x2e]);
+/**
+ * A checkpoint in torch's zip layout under `root`, plus `entries` under the root and `others` at
+ * the paths given. `localNames` gives an entry a different name in its local header.
+ */
+const torchZip = (
+  entries: [string, Buffer][],
+  root = 'weights',
+  others: [string, Buffer][] = [],
+  localNames: Record<string, string> = {}
+) =>
+  buildZip(
+    [
+      [`${root}/data.pkl`, PICKLE()] as [string, Buffer],
+      [`${root}/version`, Buffer.from('3\n')] as [string, Buffer],
+      ...entries.map(([path, data]) => [`${root}/${path}`, data] as [string, Buffer]),
+      ...others,
+    ].map(([name, data]) => ({ name, data, method: 'store' as const, localName: localNames[name] }))
+  );
+
 const zipFinal = (dealId: number, items: FixtureEntry[]) =>
   final(dealId, 'result.zip', buildZip(items));
 
@@ -589,6 +630,16 @@ describe('what stops an archive', () => {
     ['a video', () => [{ name: 'clip.mp4', data: MP4_BYTES() }], /Video/],
     ['a video called something else', () => [{ name: 'a.dat', data: MP4_BYTES() }], /Video/],
     [
+      'a transport stream behind an ID3 tag',
+      () => [{ name: 'song.mp3', data: Buffer.concat([id3Tag(4000), tsStream(188)]) }],
+      /Video/,
+    ],
+    [
+      'an image behind an ID3 tag',
+      () => [{ name: 'a.dat', data: Buffer.concat([id3Tag(20), IMAGE_A]) }],
+      /not the image/,
+    ],
+    [
       `${SERVICE_ZIP_MAX_ENTRIES + 1} entries`,
       () => bigEntries(SERVICE_ZIP_MAX_ENTRIES + 1),
       /too many/,
@@ -673,8 +724,8 @@ describe('judging a file by what it is', () => {
   const serveHeads = () =>
     s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
       const whole = bucket.objects.get(command.input.Key)!;
-      const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? '');
-      return body(range ? whole.subarray(0, Number(range[1]) + 1) : whole);
+      const range = /^bytes=(\d+)-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(Number(range[1]), Number(range[2]) + 1) : whole);
     });
 
   it.each([
@@ -729,8 +780,8 @@ describe('video by any other name', () => {
   const serveHeads = () =>
     s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
       const whole = bucket.objects.get(command.input.Key)!;
-      const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? '');
-      return body(range ? whole.subarray(0, Number(range[1]) + 1) : whole);
+      const range = /^bytes=(\d+)-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(Number(range[1]), Number(range[2]) + 1) : whole);
     });
   /** One Ogg page opening (beginning-of-stream) a stream whose first packet is `packet`. */
   const oggPage = (packet: Buffer, beginning = true) =>
@@ -758,6 +809,17 @@ describe('video by any other name', () => {
     ['an Ogg with sound then Theora', Buffer.concat([vorbis, theora, comments])],
     ['an MPEG-TS stream', tsPackets()],
     ['an M2TS stream', tsPackets(4)],
+    [
+      'an MPEG-TS stream after 37 bytes of junk',
+      Buffer.concat([Buffer.alloc(37, 0x11), tsPackets()]),
+    ],
+    ['an MPEG-TS stream of 204-byte packets', tsStream(204)],
+    ['an MPEG-TS stream behind an ID3 tag', Buffer.concat([id3Tag(300), tsPackets()])],
+    [
+      'an MPEG-TS stream behind ID3 tags longer than one read',
+      Buffer.concat([id3Tag(100_000), id3Tag(10), tsPackets()]),
+    ],
+    ['nine ID3 tags', Buffer.concat([...Array(9).fill(id3Tag(10)), MP3_FRAME()])],
   ];
   const refused = async (name: string, content: Buffer) => {
     const dealId = await accepted();
@@ -786,6 +848,10 @@ describe('video by any other name', () => {
   it.each([
     ['clip.ogg', Buffer.concat([theora, comments])],
     ['song.mp3', tsPackets()],
+    ['song.mp3', Buffer.concat([id3Tag(300), tsPackets()])],
+    ['notes.txt', Buffer.concat([id3Tag(300), tsPackets()])],
+    // The second stream opens 4 KiB in, past what one small read would see.
+    ['song.ogg', Buffer.concat([vorbis, ...Array(100).fill(comments), theora])],
   ])('refuses %s, which is video', async (name, content) => {
     expect((await refused(name, content)).failReason).toMatch(/Video/);
   });
@@ -827,6 +893,33 @@ describe('video by any other name', () => {
     ],
     ['song.ogg', ogg(vorbis, comments, theora), /Video/],
     ['song.ogg', ogg(vorbis, Buffer.from([0]), theora), /Video/],
+    ['song.mp3', Buffer.concat([id3Tag(300), Buffer.alloc(600)]), /\.mp3 audio/],
+    ['weights.pt', torchZip([['clip.mp4', MP4_BYTES()]]), /\.pt model/],
+    ['weights.pt', torchZip([], 'a', [['b/data.pkl', PICKLE()]]), /\.pt model/],
+    ['weights.pt', torchZip([['.data/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
+    ['weights.pt', torchZip([['code/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
+    ['weights.pt', torchZip([['data/0', MP4_BYTES()]]), /\.pt model/],
+    [
+      'weights.pth',
+      // Past the first KiB, so only reading the entry finds it.
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['extra/notes', tsStream(188)],
+      ]),
+      /\.pth model/,
+    ],
+    [
+      'weights.ckpt',
+      torchZip([['data/1', Buffer.concat([id3Tag(20), MP4_BYTES()])]]),
+      /\.ckpt model/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(64)]], 'weights', [], {
+        'weights/data/0': 'weights/clip.mp4',
+      }),
+      /named differently/,
+    ],
   ])('refuses %s that is not that format', async (name, content, reason) => {
     expect((await refused(name, content)).failReason).toMatch(reason);
   });
@@ -884,16 +977,34 @@ describe('video by any other name', () => {
         Buffer.alloc(600),
       ]),
     ],
+    ['song.mp3', MP3_FRAME()],
+    ['song.mp3', Buffer.concat([id3Tag(300), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([id3Tag(100_000), MP3_FRAME()])],
+    ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
+    ['song.wav', Buffer.concat([Buffer.from('RF64\0\0\0\0WAVEds64', 'latin1'), Buffer.alloc(600)])],
+    ['song.flac', Buffer.concat([Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
+    ['song.flac', Buffer.concat([id3Tag(300), Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
+    ['weights.ckpt', Buffer.concat([PICKLE(), Buffer.alloc(600)])],
+    ['weights.pth', Buffer.concat([PICKLE(), Buffer.alloc(600)])],
+    ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3)]])],
     [
-      'song.mp3',
-      Buffer.concat([
-        Buffer.from('ID3', 'latin1'),
-        Buffer.from([4, 0, 0, 0, 0, 0, 0]),
-        Buffer.alloc(600),
+      'weights.ckpt',
+      torchZip([
+        ['data/0', Buffer.alloc(64, 3)],
+        ['.data/serialization_id', Buffer.from('1')],
       ]),
     ],
-    ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
-    ['song.flac', Buffer.concat([Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
+    [
+      'weights.pt',
+      torchZip([
+        ['constants.pkl', PICKLE()],
+        ['attributes.pkl', PICKLE()],
+        ['code/__torch__/model.py', Buffer.from('class Model(Module):\n  pass\n')],
+        ['code/__torch__/model.py.debug_pkl', PICKLE()],
+        ['.data/version', Buffer.from('3\n')],
+        ['extra/notes.txt', Buffer.from('trained on 4 GPUs')],
+      ]),
+    ],
     ['song.ogg', Buffer.concat([vorbis, comments])],
   ])('takes %s as it is', async (name, content) => {
     expect(await refused(name, content)).toMatchObject({ scanStatus: 'Pending', failReason: null });
