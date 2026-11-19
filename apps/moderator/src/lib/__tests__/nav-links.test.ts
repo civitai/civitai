@@ -338,6 +338,7 @@ describe('/admin grantable pages', () => {
       '/models/flags/auto',
       '/models/flags/needs-review',
       '/models/rule-matches',
+      '/models/merge-analysis',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);

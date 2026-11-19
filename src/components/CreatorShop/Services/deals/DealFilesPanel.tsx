@@ -13,6 +13,9 @@ import {
 } from '@mantine/core';
 import { IconDownload, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { useRouter } from 'next/router';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
 import { useDealFileUploads } from '~/components/CreatorShop/Services/deals/useDealFileUploads';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -24,11 +27,15 @@ import {
   finalsCopy,
   sellerFileStatus,
   serviceDealDownloadHref,
+  showsRetentionNotice,
   sortPicked,
   previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
-import { isVideoPreviewMime } from '~/shared/constants/creator-services.constants';
+import {
+  isVideoPreviewMime,
+  SERVICE_DEAL_FILE_RETENTION_NOTICE,
+} from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -66,6 +73,11 @@ export function DealFilesPanel({ deal }: { deal: ServiceDealView }) {
     <Paper withBorder radius="md" p="md">
       <Stack gap="md">
         <Text fw={600}>Delivery</Text>
+        {showsRetentionNotice(deal.status) && files.length > 0 && (
+          <Text size="xs" c="dimmed">
+            {SERVICE_DEAL_FILE_RETENTION_NOTICE}
+          </Text>
+        )}
         {canUpload && <SellerUploader deal={deal} files={files} />}
         {deal.viewerRole === 'buyer' ? (
           <BuyerFiles deal={deal} files={files} />
@@ -300,7 +312,7 @@ function PartyFiles({
                     {file.failReason}
                   </Text>
                 )}
-                {file.previewUrl && <PreviewMedia file={file} maw={256} />}
+                <PreviewMedia file={file} maw={256} />
               </Stack>
             );
           })}
@@ -310,7 +322,23 @@ function PartyFiles({
   );
 }
 
+/** Where this domain may not show a preview, says so and links to the same page on civitai.red. */
+function PreviewOffDomain() {
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
+  return (
+    <Text size="xs" c="dimmed">
+      This preview isn&apos;t available on civitai.com.{' '}
+      <Anchor href={syncAccount(`//${redDomain}${router.asPath}`)} inherit>
+        See it on civitai.red
+      </Anchor>
+    </Text>
+  );
+}
+
 function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
+  if (file.previewOffDomain) return <PreviewOffDomain />;
   if (!file.previewUrl) return null;
   // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
   if (isVideoPreviewMime(file.mimeType))
@@ -342,7 +370,9 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
   return (
     <Stack gap="md">
       {filesByRound(files).map(({ round, files: roundFiles }) => {
-        const previews = roundFiles.filter((file) => file.kind === 'Preview' && file.previewUrl);
+        const previews = roundFiles.filter(
+          (file) => file.kind === 'Preview' && (file.previewUrl || file.previewOffDomain)
+        );
         const finals = roundFiles.filter((file) => file.kind === 'Final');
         const state = buyerRoundFinalsState(deal, round, finals);
         return (

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/Icon.svelte';
+  import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import RestartCareerDialog from '$lib/RestartCareerDialog.svelte';
   import { count, formatDate } from '$lib/format';
@@ -315,6 +316,7 @@
       <RatingGuide guide={facts.ratingGuide.slice(0, half)} />
       <RatingGuide guide={facts.ratingGuide.slice(half)} />
     </div>
+    <div class="question-rules"><QuestionRules /></div>
   </section>
 
   {#if data.swornIn}
@@ -526,6 +528,9 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2.5rem;
+  }
+  .question-rules {
+    margin-top: 2.5rem;
   }
 
   .rule {

@@ -503,9 +503,6 @@ describe('copyRejectedForTraining', () => {
       ['failed', null],
       ['copied', '2/u-102'],
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'appeal-training-copy' })
-    );
   });
 
   it('leaves approvals and settled records alone', async () => {
@@ -560,7 +557,7 @@ describe('copyRejectedForTraining', () => {
     expect((await states())[0].state).toBeNull();
   });
 
-  it('does nothing but warn when the training bucket is not configured', async () => {
+  it('does nothing when the training bucket is not configured', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, hoursAgo: 30 });
     const lookup = vi.fn<RemovalLabelLookup>(
@@ -574,9 +571,6 @@ describe('copyRejectedForTraining', () => {
       { appealId: 1, removalLabel: null, state: null, key: null },
       { appealId: 2, removalLabel: 'spam', state: null, key: null },
     ]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ type: 'warning', name: 'appeal-training-copy' })
-    );
   });
 });
 

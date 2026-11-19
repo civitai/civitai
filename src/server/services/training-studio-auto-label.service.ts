@@ -12,7 +12,8 @@ import type {
   StudioAutoLabelPollInput,
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
-import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { usageLimits, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -57,7 +58,7 @@ type SubmitRecord = { userId: number; day: string; count: number };
 const QUOTA_TTL_SECONDS = 2 * 24 * 60 * 60;
 const utcDay = () => new Date().toISOString().slice(0, 10);
 const dailyKey = (userId: number, day: string) =>
-  `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
+  `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
 const submitKey = (workflowId: string) =>
   `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_SUBMITTED}:${workflowId}` as const;
 
@@ -140,10 +141,16 @@ export async function submitStudioAutoLabel({
 async function reserveDailyItems(userId: number, count: number) {
   const day = utcDay();
   const key = dailyKey(userId, day);
-  const total = await sysRedis.incrBy(key, count);
-  if (total === count) await sysRedis.expire(key, QUOTA_TTL_SECONDS);
+  // SET NX EX + INCRBY in one MULTI, so the count always carries its TTL. A failure or a reply
+  // that is not a number refuses the submit.
+  const total = await takeClusterWindowCount('reserveDailyItems', key, QUOTA_TTL_SECONDS, {
+    by: count,
+  });
+  if (!Number.isFinite(total)) throw new Error('auto-label daily quota unreadable');
   const release = async () => {
-    await sysRedis.decrBy(key, count).catch(() => undefined);
+    await takeClusterWindowCount('reserveDailyItems.release', key, QUOTA_TTL_SECONDS, {
+      by: -count,
+    }).catch(() => undefined);
   };
   if (total > STUDIO_AUTO_LABEL_DAILY_ITEMS) {
     await release();
@@ -181,7 +188,13 @@ async function releaseFailedItems(workflowId: string, userId: number, failedStep
         added,
         Math.max(0, STUDIO_AUTO_LABEL_DAILY_ITEMS - (released - added))
       );
-      if (allowed > 0) await sysRedis.decrBy(dailyKey(userId, record.day), allowed);
+      if (allowed > 0)
+        await takeClusterWindowCount(
+          'releaseFailedItems',
+          dailyKey(userId, record.day),
+          QUOTA_TTL_SECONDS,
+          { by: -allowed }
+        );
     }
   } catch (e) {
     console.warn('[training-studio] auto-label quota release failed', workflowId, e);

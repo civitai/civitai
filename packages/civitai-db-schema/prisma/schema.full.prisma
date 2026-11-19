@@ -7832,6 +7832,8 @@ enum JobQueueType {
   ImageScan
   ReplacedImageDelete
   ImageStorageDelete
+  /// An image whose parent's delete orphaned it; `image-deletes` retries one its caller left.
+  ImageDelete
   CdnAccessSync
   ImageCdnPersistRetry
   /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
@@ -11717,6 +11719,19 @@ model ServiceDealEvent {
   createdAt  DateTime             @default(now())
 
   @@index([dealId, createdAt, id])
+}
+
+/// What remains of a deal file once it is deleted: no name or content. `etag` is the storage
+/// fingerprint of the upload, when it could be read at deletion.
+model ServiceDealFilePurge {
+  id       Int      @id @default(autoincrement())
+  fileId   Int      @unique
+  dealId   Int
+  size     Int
+  etag     String?
+  purgedAt DateTime @default(now())
+
+  @@index([dealId])
 }
 
 model ServiceDealFile {

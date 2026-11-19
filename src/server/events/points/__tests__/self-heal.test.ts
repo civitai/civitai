@@ -129,6 +129,9 @@ const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed', team: 'Blue' };
 
 type Fake = ReturnType<typeof fakeRedis>;
 
+// vi.waitFor polls every 50 ms by default; the awaited work here is a few microtasks.
+const waitFor = (fn: () => void) => vi.waitFor(fn, { interval: 1 });
+
 // One pod's heal over the shared fake. `sync` is the reconcile: by default it writes HAT onto
 // Image:100, as the real one would from the placements.
 function pod(fake: Fake, overrides: Partial<SelfHealDeps> = {}) {
@@ -223,7 +226,7 @@ describe('the self-heal', () => {
       },
     });
     const first = slow.heal(EVENT.name, 'empty-map');
-    await vi.waitFor(() => expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(true));
+    await waitFor(() => expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(true));
     fake.strings.delete(selfHealCooldownKey(EVENT.name, 'empty-map'));
     const other = pod(fake);
     expect(await other.heal(EVENT.name, 'empty-map')).toBe('locked');
@@ -265,11 +268,11 @@ describe('the self-heal', () => {
     expect(await heal(EVENT.name, 'switch-on')).toBe('locked');
     expect(calls.retries.map((r) => r.ms)).toEqual([SWITCH_ON_RETRY_MS]);
     calls.retries.shift()!.fn();
-    await vi.waitFor(() => expect(calls.retries).toHaveLength(1));
+    await waitFor(() => expect(calls.retries).toHaveLength(1));
     expect(calls.sync).toBe(0);
     fake.strings.delete(jobLockKey(SETTLE_JOB));
     calls.retries.shift()!.fn();
-    await vi.waitFor(() => expect(calls.sync).toBe(1));
+    await waitFor(() => expect(calls.sync).toBe(1));
     expect(calls.retries).toEqual([]);
     expect(calls.logs.at(-1)).toEqual(
       expect.objectContaining({ reason: 'switch-on', outcome: 'ran' })
@@ -283,7 +286,7 @@ describe('the self-heal', () => {
     await heal(EVENT.name, 'switch-on');
     for (let i = 0; i < SWITCH_ON_RETRIES; i++) {
       calls.retries.shift()!.fn();
-      await vi.waitFor(() => expect(calls.logs).toHaveLength(i + 2));
+      await waitFor(() => expect(calls.logs).toHaveLength(i + 2));
     }
     expect(calls.retries).toEqual([]);
     // Past the lock's cap: the last retry finds a lapsed lock, not the same hold.
@@ -306,7 +309,7 @@ describe('the self-heal', () => {
       },
     });
     const repair = heal(EVENT.name, 'empty-map');
-    await vi.waitFor(() => expect(calls.sync).toBe(1));
+    await waitFor(() => expect(calls.sync).toBe(1));
     expect(await heal(EVENT.name, 'switch-on')).toBe('busy');
     expect(fake.strings.get(selfHealCooldownKey(EVENT.name, 'switch-on'))).toBe('switch-on');
     expect(calls.retries.map((r) => r.ms)).toEqual([SWITCH_ON_RETRY_MS]);
@@ -316,7 +319,7 @@ describe('the self-heal', () => {
     release();
     await repair;
     calls.retries.shift()!.fn();
-    await vi.waitFor(() => expect(calls.sync).toBe(2));
+    await waitFor(() => expect(calls.sync).toBe(2));
     expect(calls.logs.at(-1)).toEqual(
       expect.objectContaining({ reason: 'switch-on', outcome: 'ran' })
     );
@@ -332,7 +335,7 @@ describe('the self-heal', () => {
       },
     });
     void heal(EVENT.name, 'empty-map');
-    await vi.waitFor(() => expect(calls.sync).toBe(1));
+    await waitFor(() => expect(calls.sync).toBe(1));
     expect(await heal(EVENT.name, 'switch-on')).toBe('busy');
     // Every retry ever scheduled: each one that runs meets the busy pod and schedules at most one more.
     let scheduled = calls.retries.length;
@@ -460,7 +463,7 @@ describe('the engine asks for a heal', () => {
   it('when it loads an empty hat map', async () => {
     const { engine, selfHeal } = engineOver(fakeRedis());
     await engine.refresh();
-    await vi.waitFor(() => expect(selfHeal).toHaveBeenCalledWith(EVENT.name, 'empty-map'));
+    await waitFor(() => expect(selfHeal).toHaveBeenCalledWith(EVENT.name, 'empty-map'));
     expect(selfHeal).toHaveBeenCalledTimes(1);
   });
 
@@ -469,7 +472,7 @@ describe('the engine asks for a heal', () => {
     fake.setHash(eventPointKeys(EVENT.name).hats, 'Image:100', encodeHat(HAT));
     const { engine, selfHeal } = engineOver(fake);
     await engine.refresh();
-    await vi.waitFor(() => expect(selfHeal).toHaveBeenCalledWith(EVENT.name, 'missing-count-base'));
+    await waitFor(() => expect(selfHeal).toHaveBeenCalledWith(EVENT.name, 'missing-count-base'));
     expect(selfHeal).toHaveBeenCalledTimes(1);
   });
 
@@ -481,7 +484,7 @@ describe('the engine asks for a heal', () => {
     const { engine, selfHeal } = engineOver(fake);
     await engine.refresh();
     // The check ran (the control for the silence below), and asked for nothing.
-    await vi.waitFor(() => expect(hGet).toHaveBeenCalledWith(countBase, COUNT_BASE_MARK));
+    await waitFor(() => expect(hGet).toHaveBeenCalledWith(countBase, COUNT_BASE_MARK));
     // Let the check's read resolve and anything it would ask for land.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(selfHeal).not.toHaveBeenCalled();
@@ -509,7 +512,7 @@ describe('the engine asks for a heal', () => {
     };
     const { engine, selfHeal, logError } = engineOver(fake);
     await expect(engine.refresh()).resolves.toBeUndefined();
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.checkHealth', expect.any(Error))
     );
     expect(selfHeal).not.toHaveBeenCalled();
@@ -532,7 +535,7 @@ describe('the engine asks for a heal', () => {
       selfHeal: (event, reason) => void healer.heal(event, reason),
     });
     await engine.refresh();
-    await vi.waitFor(() => expect(healer.calls.referee).toEqual(['live']));
+    await waitFor(() => expect(healer.calls.referee).toEqual(['live']));
     expect(healer.calls.logs).toEqual([
       expect.objectContaining({ reason: 'missing-count-base', outcome: 'ran' }),
     ]);
@@ -562,7 +565,7 @@ describe('the engine asks for a heal', () => {
     await engine.awardEventPoints([reaction]);
     // Nothing earned on the empty map: the control for the earning below.
     expect(ledger).toEqual([]);
-    await vi.waitFor(() => expect(healer.calls.sync).toBe(1));
+    await waitFor(() => expect(healer.calls.sync).toBe(1));
     // The next reload (no new traffic needed beyond the next award) finds the hat the heal wrote.
     await engine.refresh();
     await engine.awardEventPoints([reaction]);

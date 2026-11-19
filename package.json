@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.522",
+  "version": "5.1.526",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -13,7 +13,7 @@
     "build:workers": "node scripts/build-workers.mjs",
     "clean": "node -e \"fs.rmSync('.next',{recursive:true,force:true})\"",
     "predev": "pnpm build:workers",
-    "dev": "next dev",
+    "dev": "node scripts/dev-feed-go/launcher.mjs",
     "dev:auth": "pnpm --filter @civitai/auth-app dev",
     "dev:moderator": "pnpm --filter @civitai/moderator-app dev",
     "dev:creator-studio": "pnpm --filter @civitai/creator-studio-app dev",

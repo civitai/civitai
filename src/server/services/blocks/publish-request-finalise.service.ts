@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import { revokeAppBlockOauthTokens } from './app-block-token-revoke.service';
+import {
+  lockAppBlockClientRows,
+  revokeAppBlockOauthTokens,
+} from './app-block-token-revoke.service';
 
 /** The fields the app runs under, as they were before this approve wrote the new version's. */
 export type PriorRuntime = {
@@ -105,6 +108,7 @@ export async function finaliseOnsiteApprove(
         appBlockId: input.appBlockId,
       },
     });
+  if (late.length) await lockAppBlockClientRows(tx, input.appBlockId);
   await tx.appBlock.update({
     where: { id: input.appBlockId },
     // A held version is never marked current, and its unreviewed manifest, scopes and tier are

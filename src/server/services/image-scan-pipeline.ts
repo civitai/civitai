@@ -239,7 +239,6 @@ export async function logPerceptualHashMatch({
       type: 'info',
       message: 'Image pHash matched a blocked image',
       imageId,
-      pHash: pHash.toString(),
       source: log.source,
     },
     'webhooks'

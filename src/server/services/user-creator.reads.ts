@@ -79,11 +79,6 @@ export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | nu
 
 type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
 
-/**
- * The `profileImageSelect` payload from a row's `ProfilePicture` columns, or null for a picture
- * under an owner-hidden review hold; also used by the user profile read (`getUserWithProfileRow`), which selects the
- * same columns.
- */
 /** The picture fields `fallbackUserImage` compares a row's `User.image` against. */
 export const heldPictureOf = (
   row: Pick<CreatorRow, 'profilePictureUrl' | 'profilePictureNeedsReview'>
@@ -92,6 +87,11 @@ export const heldPictureOf = (
   needsReview: row.profilePictureNeedsReview,
 });
 
+/**
+ * The `profileImageSelect` payload from a row's `ProfilePicture` columns, or null for a picture
+ * under an owner-hidden review hold; also used by the user profile read (`getUserWithProfileRow`), which selects the
+ * same columns.
+ */
 export function profilePictureOf(
   row: Pick<CreatorRow, Extract<keyof CreatorRow, `profilePicture${string}`>>
 ) {

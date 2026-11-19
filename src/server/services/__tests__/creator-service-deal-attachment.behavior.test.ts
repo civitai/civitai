@@ -74,6 +74,12 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
+vi.mock('~/utils/s3-purge-versions', () => ({
+  purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
+    await s3.deleteObject(bucket, key);
+    return { versionsDeleted: 1, remaining: 0 };
+  },
+}));
 
 /** The bucket's contents, by key; the zip reader is pointed at it. */
 const bucket = vi.hoisted(() => ({
@@ -91,10 +97,10 @@ vi.mock('~/server/utils/service-deal-zip', async (importOriginal) => {
   };
 });
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -164,6 +170,7 @@ const MIGRATIONS = [
   '20261224150000_service_deal_file_removed_at',
   '20261224150100_service_deal_file_attachment',
   '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -279,17 +286,29 @@ const settle = async () => {
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {
@@ -325,8 +344,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
@@ -382,7 +401,7 @@ async function delivered(dealId: number) {
 
 /** A moderator here holds the csamReports permission unless `canReviewCsam` says otherwise. */
 const list = (dealId: number, userId: number, isModerator = false, canReviewCsam = isModerator) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator, canReviewCsam });
+  files.listServiceDealFiles({ dealId, userId, isModerator, canReviewCsam, servableLevels: 31 });
 const download = (
   fileId: number,
   userId: number,
@@ -404,6 +423,14 @@ const readyToDeliver = async (dealId: number) =>
       ok: boolean;
     }[]
   )[0].ok;
+
+/** The purge, once the download-link lifetime it waits out has passed. */
+const agedPurge = async () => {
+  await holder.db.query(
+    `UPDATE "ServiceDealFile" SET "removedAt" = "removedAt" - interval '10 minutes' WHERE "removedAt" IS NOT NULL`
+  );
+  return files.purgeRemovedFiles();
+};
 
 describe('attaching', () => {
   it('records the attestation time and stores the upload at a server-held key', async () => {
@@ -747,7 +774,7 @@ describe('who may attach, and when', () => {
     if (ATTACHABLE.includes(status)) {
       await expect(requestAs(dealId, BUYER)).resolves.toMatchObject({ fileId: expect.any(Number) });
       await files.deleteServiceDealAttachment({ fileId: existing, userId: BUYER });
-      expect(await fileRow(existing)).toBeUndefined();
+      expect((await fileRow(existing)).removedAt).not.toBeNull();
     } else {
       await expect(requestAs(dealId, BUYER)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       await expect(
@@ -1150,9 +1177,8 @@ describe('removing a file that must be kept', () => {
     expect(deletedKeys()).toEqual([uploaderKey]);
   });
 
-  it('still deletes a file whose images all passed, and one with no images', async () => {
+  it('deletes a file whose images all passed, and one with no images', async () => {
     const dealId = await accepted();
-    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
     const zipId = await attach(dealId, 'dataset.zip', buildZip([{ name: 'a.png', data: IMAGE_A }]));
     const textId = await attach(dealId, 'notes.txt', TEXT);
     await unpack.unpackFinals();
@@ -1164,6 +1190,7 @@ describe('removing a file that must be kept', () => {
 
     await files.deleteServiceDealAttachment({ fileId: zipId, userId: BUYER });
     await files.deleteServiceDealAttachment({ fileId: textId, userId: BUYER });
+    await agedPurge();
 
     expect(await fileRow(zipId)).toBeUndefined();
     expect(await fileRow(textId)).toBeUndefined();
@@ -1261,12 +1288,12 @@ describe('a removed file that is kept', () => {
     const dealId = await accepted();
     const fileId = await removedInFlight(dealId);
     const { s3Key } = await fileRow(fileId);
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
 
     await verdictLands(fileId, 'Passed');
     await settle();
     s3.deleteObject.mockClear();
-    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await agedPurge()).toBe(1);
     expect(await fileRow(fileId)).toBeUndefined();
     expect(deletedKeys()).toContain(s3Key);
   });
@@ -1281,7 +1308,7 @@ describe('a removed file that is kept', () => {
     await settle();
     expect((await fileRow(failedId)).scanStatus).toBe('Failed');
     expect((await fileRow(unjudgedId)).scanStatus).toBe('Pending');
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(failedId)).toHaveLength(1);
     expect(await keptRows(unjudgedId)).toHaveLength(1);
 
@@ -1290,7 +1317,7 @@ describe('a removed file that is kept', () => {
     await verdictLands(reportedId, 'Passed');
     await settle();
     expect((await fileRow(reportedId)).scanStatus).toBe('Passed');
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(reportedId)).toHaveLength(1);
   });
 
@@ -1312,11 +1339,11 @@ describe('a removed file that is kept', () => {
     const [{ imageId }] = await entries(fileId);
     expect(imageId).not.toBeNull();
 
-    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await agedPurge()).toBe(0);
     expect(await keptRows(fileId)).toHaveLength(1);
 
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
-    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await agedPurge()).toBe(1);
     expect(await fileRow(fileId)).toBeUndefined();
     expect(await q(`SELECT id FROM "Image" WHERE id = $1`, [imageId])).toEqual([]);
   });

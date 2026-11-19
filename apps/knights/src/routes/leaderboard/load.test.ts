@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const get = vi.hoisted(() => vi.fn());
 const getPlayerStatus = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+const queryBoard = vi.hoisted(() => vi.fn());
+// Distinct objects, so a read that takes the primary instead of the replica (or the reverse) fails `toBe`.
+const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
+const REPLICA = vi.hoisted(() => ({ client: 'replica' }));
+vi.mock('$lib/server/db', () => ({ db: PRIMARY, dbRead: REPLICA }));
 vi.mock('$lib/server/image-url', () => ({
   imageUrl: (key: string, width?: number) => `cdn/${key}@${width}`,
 }));
 vi.mock('$lib/server/leaderboard-runtime', () => ({ boardCache: { get } }));
 vi.mock('$lib/server/leaderboard', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/leaderboard')>()),
-  queryBoard: vi.fn(),
+  queryBoard,
 }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 
@@ -31,6 +35,7 @@ const row = (userId: number, image: string | null, rankType = 'Knight') => ({
 
 beforeEach(() => {
   get.mockReset();
+  queryBoard.mockReset();
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Knight' });
   get.mockResolvedValue({ rows: [], badges: {}, builtAt: Date.now() });
@@ -40,6 +45,19 @@ describe('leaderboard load', () => {
   it('sends a user who has not joined to the home page', async () => {
     getPlayerStatus.mockResolvedValue(null);
     await expect(run()).rejects.toMatchObject({ status: 303, location: '/home' });
+  });
+
+  it('builds the board on the replica and checks membership on the primary', async () => {
+    const board = { rows: [], badges: {}, builtAt: Date.now() };
+    get.mockImplementation((_now: Date, build: () => Promise<unknown>) => build());
+    queryBoard.mockResolvedValue(board);
+
+    const data = await run();
+
+    expect(data.builtAt).toBe(board.builtAt);
+    expect(queryBoard).toHaveBeenCalledTimes(1);
+    expect(queryBoard.mock.calls[0][0]).toBe(REPLICA);
+    expect(getPlayerStatus.mock.calls[0][0]).toBe(PRIMARY);
   });
 
   it('turns image keys into avatar urls, gives a rank its badge image, and finds the viewer', async () => {

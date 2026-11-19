@@ -1086,6 +1086,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	return goldenSetupMode(t, fx, false)
 }
 
+// goldenWrites is the write-back set of a golden mode: every cache with writeBack, none without.
+func goldenWrites(writeBack bool) hydrate.WriteSet {
+	if writeBack {
+		return hydrate.AllWrites()
+	}
+	return nil
+}
+
 // goldenSetupMode builds the server as main does: misses computed (hydrate.MissCompute), written
 // back only with writeBack.
 func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
@@ -1108,7 +1116,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db, Compute: &hydrate.MissCompute{
-		WriteBack:     writeBack,
+		WriteBack:     goldenWrites(writeBack),
 		FrameNegative: fx.Config.FrameCacheNegative,
 		Now:           nowFn,
 	}}
@@ -1763,7 +1771,7 @@ func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: writeBack}
+		WriteBack: goldenWrites(writeBack)}
 	if writeBack {
 		compute.Primary = db
 	}

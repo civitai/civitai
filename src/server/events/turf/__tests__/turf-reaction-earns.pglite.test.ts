@@ -7,7 +7,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { eventPointKeys } from '~/server/events/points/keys';
 import { turfKeys } from '~/server/events/turf/turf-map';
 
@@ -151,14 +155,15 @@ beforeEach(() => {
   // The placement's sync writes the turf map through its Lua script; the answer reads it back.
   lua = createLuaRedis(0);
   let ticket = 0;
-  redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
-  redisMock.sysRedis.incr.mockImplementation((async () => ++ticket) as never);
-  redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
-  redisMock.sysRedis.hGet.mockImplementation((async (key: string, field: string) => {
-    if (key === eventPointKeys('e').hats) return hats[field] ?? null;
-    if (key === turfKeys('e').map) return lua.hash(key)?.[field] ?? null;
-    throw new Error(`unexpected hGet ${key}`);
-  }) as never);
+  redisMock.redis.eval.mockImplementation(lua.eval as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++ticket) as never);
+  redisMock.redis.hGetAll.mockResolvedValue({} as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hGet.mockImplementation((async (key: string, field: string) => {
+      if (key === eventPointKeys('e').hats) return hats[field] ?? null;
+      if (key === turfKeys('e').map) return lua.hash(key)?.[field] ?? null;
+      throw new Error(`unexpected hGet ${key}`);
+    }) as never);
 });
 
 /** A fresh image with these earlier stickers on it, oldest first. */
@@ -260,13 +265,14 @@ describe('reactionEarns answers whether a reaction there would pay your team', (
 
   // Until a sync writes the map, a reaction scores on the old one: the answer must read the map.
   it('no: the stickers say your team leads, but the map does not (its sync failed)', async () => {
-    redisMock.sysRedis.eval.mockRejectedValue(new Error('sysRedis down') as never);
+    redisMock.redis.eval.mockRejectedValue(new Error('cache cluster down') as never);
     expect(await placeAndAsk(await image([[TEAMMATE, 'Blue']]))).toBe(false);
   });
 
   // The placement never waits on the answer: it is the nudge's own ask, made later.
   it('placing returns without reading the answer, even with every read hung', async () => {
-    redisMock.sysRedis.hGet.mockImplementation((() => new Promise(() => undefined)) as never);
+    for (const client of [redisMock.redis, redisMock.sysRedis])
+      client.hGet.mockImplementation((() => new Promise(() => undefined)) as never);
     const waited = new Promise((resolve) => setTimeout(() => resolve('placement waited'), 1_000));
     expect(await Promise.race([place(await image([[TEAMMATE, 'Blue']])), waited])).toBeUndefined();
   });

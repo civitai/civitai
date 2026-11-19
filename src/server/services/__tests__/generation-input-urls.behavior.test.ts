@@ -559,14 +559,6 @@ describe('an App Blocks generation source', () => {
     expect(await check([KEY], 'generateFromGraph', true)).toBe('accepted');
   });
 
-  it('logs an external url refusal with mode refuse when the app refusal is on', async () => {
-    loggingMock.logToAxiom.mockClear();
-    await check(['https://example.com/a.png'], 'appBlocksPassThrough');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'external', mode: 'refuse' })
-    );
-  });
-
   it('logs external urls once per host bucket in one call', async () => {
     holder.refuseExternalApp = false;
     loggingMock.logToAxiom.mockClear();

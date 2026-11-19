@@ -66,6 +66,7 @@ import type {
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { removeTags } from '~/utils/string-helpers';
 import {
   createResourceReviewNotification,
   pendingPostIdFor,
@@ -283,8 +284,30 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
 
 // Read through the writer: on the replica a review created seconds ago resolves no model, the
 // guard finds no owner to refuse against, and the write it guards then succeeds anyway.
-const storedReviewModelId = async (id: number) =>
-  (await dbWrite.resourceReview.findUnique({ where: { id }, select: { modelId: true } }))?.modelId;
+const storedReview = async (id: number) =>
+  dbWrite.resourceReview.findUnique({ where: { id }, select: { modelId: true, details: true } });
+
+const hasText = (details?: string | null) => !!removeTags(details ?? '');
+
+/**
+ * A Like writes a bare review and notifies nobody; the owner hears about it once an edit gives it
+ * text. A review that already notified on create repeats its key, which the notifications app drops.
+ */
+async function notifyOnFirstText(
+  storedDetails: string | null | undefined,
+  review: {
+    id: number;
+    modelId: number;
+    modelVersionId: number;
+    recommended: boolean;
+    userId: number;
+    postId: number | null;
+    details: string | null;
+  }
+) {
+  if (hasText(storedDetails) || !hasText(review.details) || review.postId) return;
+  await createResourceReviewNotification(review).catch(() => undefined);
+}
 
 /**
  * A review is content on someone else's model, so the model's owner is the block target. Resolved
@@ -319,7 +342,8 @@ export const upsertResourceReview = async ({
   // Edits too, not just creates — a review written before a block would otherwise stay editable
   // into anything afterwards. An edit writes `modelId` through from the request while being scoped
   // by review id, so the review's stored model is checked alongside the one the request names.
-  const storedModelId = data.id ? await storedReviewModelId(data.id) : undefined;
+  const stored = data.id ? await storedReview(data.id) : undefined;
+  const storedModelId = stored?.modelId;
   await throwIfBlockedByModelOwners({
     userId,
     isModerator,
@@ -359,8 +383,17 @@ export const upsertResourceReview = async ({
     const ret = await dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
-      select: { id: true, modelId: true, modelVersionId: true, userId: true },
+      select: {
+        id: true,
+        modelId: true,
+        modelVersionId: true,
+        userId: true,
+        recommended: true,
+        postId: true,
+        details: true,
+      },
     });
+    await notifyOnFirstText(stored?.details, ret);
     // An edit can move the review to another model, so the model it left is re-checked too.
     void onModelReviewsChanged([
       ret,
@@ -371,7 +404,13 @@ export const upsertResourceReview = async ({
       modelVersionId: ret.modelVersionId,
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
-    return ret;
+    // Narrow on purpose: the post editor narrows this result with `'recommended' in saved`.
+    return {
+      id: ret.id,
+      modelId: ret.modelId,
+      modelVersionId: ret.modelVersionId,
+      userId: ret.userId,
+    };
   }
 };
 
@@ -477,11 +516,8 @@ export const updateResourceReview = async ({
   await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
 
   // The request carries no modelId, so the review's stored model is the only target.
-  await throwIfBlockedByModelOwners({
-    userId,
-    isModerator,
-    modelIds: [await storedReviewModelId(id)],
-  });
+  const stored = await storedReview(id);
+  await throwIfBlockedByModelOwners({ userId, isModerator, modelIds: [stored?.modelId] });
   const ret = await dbWrite.resourceReview.update({
     where: { id },
     data,
@@ -493,8 +529,11 @@ export const updateResourceReview = async ({
       recommended: true,
       nsfw: true,
       userId: true,
+      postId: true,
+      details: true,
     },
   });
+  await notifyOnFirstText(stored?.details, ret);
   void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,

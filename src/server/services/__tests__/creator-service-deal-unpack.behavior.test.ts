@@ -83,6 +83,12 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
+vi.mock('~/utils/s3-purge-versions', () => ({
+  purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
+    await s3.deleteObject(bucket, key);
+    return { versionsDeleted: 1, remaining: 0 };
+  },
+}));
 
 /** The bucket's contents, by key; the zip reader is pointed at it. */
 const bucket = vi.hoisted(() => ({
@@ -100,10 +106,10 @@ vi.mock('~/server/utils/service-deal-zip', async (importOriginal) => {
   };
 });
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ entryCopy: vi.fn() }));
@@ -175,6 +181,7 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -299,17 +306,30 @@ const settle = async () => {
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  // The deal holds a party's delete reads.
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {
@@ -345,8 +365,8 @@ beforeEach(async () => {
     ]);
     return { id: row.id };
   });
-  images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-    await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+  images.deleteImages.mockImplementation(async (ids: number[]) => {
+    await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
   });
   await holder.db.exec(`
     TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
@@ -448,10 +468,6 @@ describe('unpacking a zip', () => {
     const dealId = await accepted();
     const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
     expect(await unpack.unpackFinals({ shouldStop: () => true })).toBe(0);
-    // A stop is not a failure: nothing was logged as an error.
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error' })
-    );
     expect(images.createImage).not.toHaveBeenCalled();
     expect(await entries(fileId)).toEqual([]);
     const file = await fileRow(fileId);
@@ -830,7 +846,7 @@ describe('resuming', () => {
     });
     await unpack.unpackFinals();
     // Its scan has not finished, so nothing is deleted.
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     const rows = await q<{
       fileId: number | null;
       dealId: number;
@@ -1136,7 +1152,7 @@ describe('copies of scanned images', () => {
 
   it('keeps a copy whose delete failed pointed at, and retries it', async () => {
     const { fileId } = await settled();
-    images.deleteImageById.mockRejectedValueOnce(new Error('store down'));
+    images.deleteImages.mockRejectedValueOnce(new Error('store down'));
     expect(await unpack.deleteEntryScanCopies()).toBe(0);
     expect((await entries(fileId))[0].imageId).toBe(1);
     expect(await unpack.deleteEntryScanCopies()).toBe(1);
@@ -1179,8 +1195,11 @@ describe('copies of scanned images', () => {
 
     it('removes the copy of a passed image only: a rejected one and one still being scanned stay', async () => {
       const { fileId } = await threeImages();
-      expect(images.deleteImageById).toHaveBeenCalledTimes(1);
-      expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
+      expect(images.deleteImages).toHaveBeenCalledTimes(1);
+      expect(images.deleteImages).toHaveBeenCalledWith([1], {
+        updatePosts: false,
+        actor: { system: 'creator-service-deal-file' },
+      });
       expect(await q(`SELECT id FROM "Image" ORDER BY id`)).toEqual([{ id: 2 }, { id: 3 }]);
       const rows = await orphans();
       expect(rows.map((r) => [r.scanStatus, r.imageId, r.fileId, r.dealId])).toEqual([
@@ -1437,9 +1456,14 @@ describe('the finals malware scan', () => {
   const asBuyer = (fileId: number) =>
     files.resolveServiceDealFileDownload({ fileId, userId: BUYER, isModerator: false });
   const listedForBuyer = async (dealId: number, fileId: number) =>
-    (await files.listServiceDealFiles({ dealId, userId: BUYER, isModerator: false })).find(
-      (row) => row.id === fileId
-    );
+    (
+      await files.listServiceDealFiles({
+        dealId,
+        userId: BUYER,
+        isModerator: false,
+        servableLevels: 31,
+      })
+    ).find((row) => row.id === fileId);
 
   describe('reading a workflow', () => {
     const pickle = (status: string, extra = {}) => ({

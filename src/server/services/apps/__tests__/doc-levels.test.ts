@@ -9,7 +9,7 @@ import type * as FliptClient from '~/server/flipt/client';
 const flags = vi.hoisted(() => ({ on: new Set<string>(), calls: [] as unknown[][] }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string, entityId?: string, context?: unknown) => {
+  readFliptBoolean: async (flag: string, entityId?: string, context?: unknown) => {
     flags.calls.push([flag, entityId, context]);
     return flags.on.has(`${flag}@${entityId}`);
   },
