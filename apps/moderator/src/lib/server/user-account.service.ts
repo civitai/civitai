@@ -770,30 +770,33 @@ export async function getGrantedBoxes(userId: number, limit = 50): Promise<Cappe
   return capped(rows, limit);
 }
 
-// Badges this user does NOT already hold (Retool's AvailableCosmeticList), for the grant picker.
-export type AvailableCosmetic = { id: number; name: string };
+// Every badge, with whether this user holds it, for the grant picker.
+export type GrantBadge = { id: number; name: string; data: unknown; owned: boolean };
 
-// Every badge, not a page of them: there are ~723 and the picker is a search-in-place dropdown, so a
-// limit silently makes the rest ungrantable. Capping at 200 ordered by id ASC hid every recent event
-// badge — the exact case a moderator is asked about — behind a panel that then read "already holds
-// every badge".
-export async function getAvailableBadges(userId: number): Promise<AvailableCosmetic[]> {
+// Every badge, not a page of them: the picker is a search-in-place grid, and a limit silently makes
+// the rest ungrantable (the newest badges, the ones moderators are asked about, go first).
+export async function getGrantBadges(userId: number): Promise<GrantBadge[]> {
   return (
     dbRead
       .selectFrom('Cosmetic as c')
-      .select(['c.id', 'c.name'])
-      .where('c.type', '=', 'Badge')
-      .where((eb) =>
-        eb.not(
-          eb.exists(
+      .select((eb) => [
+        'c.id',
+        'c.name',
+        'c.data',
+        eb
+          .exists(
             eb
               .selectFrom('UserCosmetic as uc')
               .select('uc.cosmeticId')
               .whereRef('uc.cosmeticId', '=', 'c.id')
               .where('uc.userId', '=', userId)
+            // Any claim key, as the shop counts ownership: a bought copy is keyed by its transaction,
+            // and `grantCosmetic` would add a second one beside it.
           )
-        )
-      )
+          .$castTo<boolean>()
+          .as('owned'),
+      ])
+      .where('c.type', '=', 'Badge')
       // Newest first — a moderator asked to grant a badge is almost always asked about a recent one.
       .orderBy('c.id', 'desc')
       .execute()

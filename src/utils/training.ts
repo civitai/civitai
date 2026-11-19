@@ -25,6 +25,7 @@ import { isDefined } from '~/utils/type-guards';
 export const studioModelFlagFeatures = {
   'training-studio-kohya': 'trainingStudioKohya',
   'training-studio-tag-find-replace': 'trainingStudioTagFindReplace',
+  'training-studio-elements-ui': 'trainingStudioElementsUi',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',

@@ -38,7 +38,8 @@ export type SemanticSearchPath =
   | 'narrowed'
   | 'refused_query'
   | 'refused_correction'
-  | 'refused_own_images';
+  | 'refused_own_images'
+  | 'refused_upload_level';
 export type RefusedSearchPath = Extract<SemanticSearchPath, `refused_${string}`>;
 
 // The only verdicts whose refused searches are run anyway, for the ids they would have served.

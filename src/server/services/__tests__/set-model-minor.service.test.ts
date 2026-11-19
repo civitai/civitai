@@ -104,7 +104,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 // Its own suite covers the image documents; here only that the fan-out runs is under test.
 vi.mock('~/server/services/image-models-reindex.service', () => ({
-  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
