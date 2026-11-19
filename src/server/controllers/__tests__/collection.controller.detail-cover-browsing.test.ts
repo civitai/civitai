@@ -93,7 +93,7 @@ describe('collection.getById cover and browsing-settings rules', () => {
     expect((await cover(mature)).image).toBeNull();
     expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith({
       where: { id: 100 },
-      select: { poi: true, minor: true },
+      select: { poi: true, minor: true, nsfwLevel: true },
     });
   });
 

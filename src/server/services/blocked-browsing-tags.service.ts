@@ -9,6 +9,7 @@ import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-bro
 import { isViewerUsername } from '~/utils/is-viewer';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
+import { isWithheldMatureCover } from '~/server/search-index/utils/tagged-mature-image';
 import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 type AddonTarget = {
@@ -209,9 +210,16 @@ export async function isCoverShownByBrowsingRules(
   if (!image) return true;
   const [showsImage, flags] = await Promise.all([
     getRequestImageFilter(ctx),
-    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+    dbRead.image.findUnique({
+      where: { id: image.id },
+      select: { poi: true, minor: true, nsfwLevel: true },
+    }),
   ]);
   // No row means its flags are unread: hidden, as unread tags are.
   if (!flags) return false;
-  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
+  const tags = image.tags.map(({ tag }) => tag);
+  if (isWithheldMatureCover({ nsfwLevel: flags.nsfwLevel, tags: tags.map(({ id }) => id) })) {
+    return false;
+  }
+  return showsImage({ ...image, ...flags, tags });
 }

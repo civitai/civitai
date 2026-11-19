@@ -16,7 +16,10 @@ import {
   enforceBlockedBrowsingTagsForModels,
   getRequestImageFilter,
   getShowcaseImageFilter,
+  isCoverShownByBrowsingRules,
 } from '~/server/services/blocked-browsing-tags.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type { SessionUser } from '~/types/session';
 
 vi.mock('~/server/services/system-cache', async () => {
   const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
@@ -414,5 +417,36 @@ describe('getRequestImageFilter', () => {
     const showsImage = await getRequestImageFilter(ctx);
     expect(showsImage({ userId: 5, tags: [{ id: 5351 }] })).toBe(false);
     expect(showsImage({ userId: 5, tags: [{ id: 1 }] })).toBe(true);
+  });
+});
+
+describe('isCoverShownByBrowsingRules — child-tagged mature covers', () => {
+  const CHILD_TAG = 5351;
+  const OTHER_TAG = 900;
+  const moderator = {
+    user: { id: 1, isModerator: true } as SessionUser,
+    features: {} as never,
+    req: undefined,
+  };
+  const cover = (tagIds: number[]) => ({
+    id: 10,
+    userId: 1,
+    tags: tagIds.map((id) => ({ tag: { id } })),
+  });
+  const withLevel = (nsfwLevel: number) =>
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      poi: false,
+      minor: false,
+      nsfwLevel,
+    } as never);
+
+  it('withholds an R cover with a child tag even from a moderator who owns it', async () => {
+    withLevel(NsfwLevel.R);
+    expect(await isCoverShownByBrowsingRules(cover([CHILD_TAG]), moderator)).toBe(false);
+  });
+
+  it('shows the same R cover without the child tag', async () => {
+    withLevel(NsfwLevel.R);
+    expect(await isCoverShownByBrowsingRules(cover([OTHER_TAG]), moderator)).toBe(true);
   });
 });
