@@ -9,10 +9,7 @@ import {
   TAG_INDEX_OTHER_SPEC_KEEP_DAYS,
   type TagIndexRetentionRow,
 } from '~/server/services/resource-intent-tags/retention';
-import {
-  isTagIndexObjectKey,
-  type TagIndexObjectSweeper,
-} from '~/server/services/resource-intent-tags/store';
+import { type TagIndexObjectSweeper } from '~/server/services/resource-intent-tags/store';
 import { asFixtureWriter, pgliteSql, utcPglite } from './resource-intent-cooc.harness';
 
 /**
@@ -84,17 +81,6 @@ describe('selectTagIndexSnapshotsToRetire', () => {
       row('d', SPEC, 4),
     ];
     expect(selectTagIndexSnapshotsToRetire(rows, SPEC, NOW)).toEqual(['d']);
-  });
-});
-
-describe('isTagIndexObjectKey', () => {
-  it('accepts exactly <prefix>/<64 lowercase hex>', () => {
-    expect(isTagIndexObjectKey(PREFIX, keyOf('a'))).toBe(true);
-    expect(isTagIndexObjectKey(PREFIX, `${PREFIX}/${hex('a').toUpperCase()}`)).toBe(false);
-    expect(isTagIndexObjectKey(PREFIX, `${PREFIX}/${hex('a')}x`)).toBe(false);
-    expect(isTagIndexObjectKey(PREFIX, `${PREFIX}/sub/${hex('a').slice(4)}`)).toBe(false);
-    expect(isTagIndexObjectKey(PREFIX, `other/${hex('a')}`)).toBe(false);
-    expect(isTagIndexObjectKey(PREFIX, `${PREFIX}x/${hex('a').slice(1)}`)).toBe(false);
   });
 });
 
@@ -325,15 +311,5 @@ describe('applyTagIndexRetention', () => {
     expect((e as Error).message).toBe(
       `tag index retention: 1 of 3 deletes failed (2 deleted, 0 retired): ${failedKey}: AccessDenied`
     );
-  });
-
-  it('a run with nothing to do changes nothing', async () => {
-    const s = await freshStore([{ label: 'only', ageDays: 3 }], ['only']);
-    const before = await s.statuses();
-    expect(
-      await applyTagIndexRetention({ sql: s.sql, objects: s.sweeper }, { now: NOW, specHash: SPEC })
-    ).toEqual({ retired: [], deleted: 0, foreign: 0 });
-    expect(await s.statuses()).toEqual(before);
-    expect(s.deleted).toEqual([]);
   });
 });

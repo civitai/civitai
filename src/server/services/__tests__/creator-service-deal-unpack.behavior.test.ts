@@ -83,6 +83,12 @@ vi.mock('~/utils/s3-utils', () => ({
   getGetUrlByKey: s3.getGetUrlByKey,
   uploadImageBufferToStore: s3.uploadImageBufferToStore,
 }));
+vi.mock('~/utils/s3-purge-versions', () => ({
+  purgeObjectVersions: async ({ bucket, key }: { bucket: string; key: string }) => {
+    await s3.deleteObject(bucket, key);
+    return { versionsDeleted: 1, remaining: 0 };
+  },
+}));
 
 /** The bucket's contents, by key; the zip reader is pointed at it. */
 const bucket = vi.hoisted(() => ({
@@ -175,6 +181,7 @@ const MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261224150000_service_deal_file_removed_at',
   '20270106120000_service_offering_content_scan',
+  '20271118230000_service_deal_file_purge',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -299,17 +306,30 @@ const settle = async () => {
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
-    CREATE TABLE "Report" (id serial PRIMARY KEY);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+    CREATE TABLE "Report" (id serial PRIMARY KEY, status "ReportStatus" NOT NULL DEFAULT 'Pending',
+      "createdAt" timestamp NOT NULL DEFAULT now(), "statusSetAt" timestamp);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp, "archivedAt" timestamp);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp);
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  // The deal holds a party's delete reads.
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {
