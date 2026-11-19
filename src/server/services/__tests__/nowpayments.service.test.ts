@@ -1746,7 +1746,7 @@ describe('watchOpenDeposits', () => {
     });
 
     // buzz_failed would hand it to retryFailedDeposits, which credits without failing closed.
-    it('leaves a late finish whose grant fails on its row for the next late sweep, and logs the error', async () => {
+    it('leaves a late finish whose grant fails on its row for the next late sweep', async () => {
       mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('buzz service 503'));
 
       const result = await watch([openRow(838, 'failed', 23)], { 838: 'finished' });

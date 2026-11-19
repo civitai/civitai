@@ -203,7 +203,7 @@ describe('the recompute counts a text verdict only for the text it judged', () =
   });
 
   describe('a verdict with no comparable hash', () => {
-    it('counts, and is logged, when written before verdicts carried one', async () => {
+    it('counts when written before verdicts carried one', async () => {
       row = xguardVerdict(OLD, {
         contentHash: null,
         updatedAt: new Date(ARTICLE_TEXT_VERDICT_HASHED_SINCE.getTime() - DAY),

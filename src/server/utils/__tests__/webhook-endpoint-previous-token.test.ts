@@ -129,7 +129,7 @@ describe('WebhookEndpoint with WEBHOOK_TOKEN_PREVIOUS', () => {
     expect(inner).not.toHaveBeenCalled();
   });
 
-  it('logs a previous-value match with its slot and route, at most once a minute per route, never the value', async () => {
+  it('never logs the previous value when it matches', async () => {
     const path = '/api/webhooks/previous-log';
     await call(path, { query: PREVIOUS });
     await call(path, { query: PREVIOUS });

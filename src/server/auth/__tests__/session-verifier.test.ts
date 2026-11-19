@@ -57,7 +57,7 @@ beforeEach(async () => {
 afterEach(() => envMock.reset());
 
 describe('isRevoked — bounded revocation read (leg 3)', () => {
-  it('returns false and records outcome "hit" when the token is not revoked', async () => {
+  it('returns false when the token is not revoked', async () => {
     expect(await isRevoked(claims())).toBe(false);
   });
 
@@ -111,7 +111,7 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
     );
   });
 
-  it('FAILS OPEN (false) on a generic read error and records outcome "error"', async () => {
+  it('FAILS OPEN (false) on a generic read error', async () => {
     h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
     expect(await isRevoked(claims())).toBe(false);
   });

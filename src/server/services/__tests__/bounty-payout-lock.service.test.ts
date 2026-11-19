@@ -776,7 +776,7 @@ describe('awardBountyEntry', () => {
     expect(moved('award')).toBe(0);
   });
 
-  it('keeps a recorded award whose payout failed unsettled and logs it, without failing the award', async () => {
+  it('keeps a recorded award whose payout failed unsettled, without failing the award', async () => {
     buzz.createBuzzTransactionMany.mockRejectedValueOnce(new Error('buzz down'));
     await expect(awardBountyEntry({ id: 10, userId: 5 })).resolves.toBeDefined();
     expect(bounty?.payoutRecordedAt).toBeInstanceOf(Date);
@@ -1080,7 +1080,7 @@ describe('refundBountyBenefactorFunds', () => {
     ).toEqual({ refunded: [6], failed: [], unconfirmed: [] });
   });
 
-  it('logs a failed refund with the bounty and carries on', async () => {
+  it('reports a failed refund as failed and carries on', async () => {
     buzz.refundMultiAccountTransaction
       .mockRejectedValueOnce(new Error('buzz down'))
       .mockResolvedValueOnce({ refundedTransactions: [{ amount: 100 }], totalRefunded: 1 });

@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe('cancelCrucibleHandler', () => {
-  it('logs refunds that failed, since the moderator may not read the result', async () => {
+  it('returns the failed refunds to the moderator', async () => {
     const failedRefunds = [{ entryId: 1, userId: 10, error: 'buzz down' }];
     cancelCrucible.mockResolvedValue(result(failedRefunds));
 

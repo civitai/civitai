@@ -201,7 +201,7 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
 });
 
 describe('prepare-bounties — one bounty failing', () => {
-  it('logs the bounty, carries on with the next, and still records the run', async () => {
+  it('carries on with the next bounty, and still records the run', async () => {
     sweep([7, 8]);
     const realTransaction = mockDbWrite.$transaction.getMockImplementation();
     mockDbWrite.$transaction.mockImplementationOnce(async () => {
