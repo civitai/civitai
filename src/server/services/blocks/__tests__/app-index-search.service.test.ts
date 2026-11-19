@@ -9,15 +9,18 @@ import { NsfwLevel } from '~/server/common/enums';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import type { AppIndexSearchReason } from '~/server/prom/app-index-search.metrics';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
+import type { StoreGridViewer } from '~/server/services/blocks/app-index-search.service';
 
 const h = {
   listAvailableListings: vi.fn(),
   listStoreListingsBySlugs: vi.fn(),
 };
 
-const { listStoreGrid: listStoreGridWith, APP_INDEX_SEARCH_TIMEOUT_MS } = await import(
-  '~/server/services/blocks/app-index-search.service'
-);
+const {
+  listStoreGrid: listStoreGridWith,
+  storeGridRequest,
+  APP_INDEX_SEARCH_TIMEOUT_MS,
+} = await import('~/server/services/blocks/app-index-search.service');
 
 // The database reads are passed in (the service's `reads` parameter), never module-mocked.
 const listStoreGrid = (...args: Parameters<typeof listStoreGridWith>) =>
@@ -380,7 +383,6 @@ describe('listStoreGrid', () => {
   it.each<[string, Partial<ListAvailableListingsOpts>, AppIndexSearchReason]>([
     ['a tester floor', { floor: 'testers' }, 'unsupported_viewer'],
     ['a moderator floor', { floor: 'moderators' }, 'unsupported_viewer'],
-    ['sub-listing cards in the grid', { includeSubListings: true }, 'sub_listings'],
   ])('%s: the database page, and not routable', async (_, extra, reason) => {
     const res = await listStoreGrid(INPUT, { ...SFW_OPTS, ...extra }, { indexSearch: true });
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
@@ -482,5 +484,231 @@ describe('listStoreGrid', () => {
     expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
     expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
     expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
+  });
+});
+
+// The `/apps` store grid always asks for sub-listing cards; the index holds none.
+describe('listStoreGrid with sub-listing cards on the page', () => {
+  const subCard = (id: string, name: string, tagline: string | null): StoreGridItem =>
+    ({ id, cardType: 'sub-listing', name, tagline } as unknown as StoreGridItem);
+  // Pairwise distinct, in the database page's order: one matches by tagline (in upper case), one
+  // by name, one not at all.
+  const SL_TAGLINE = subCard('asl_tagline', 'Canvas Kit', 'PIXEL brushes');
+  const SL_NAME = subCard('asl_name', 'Pixelate Me', null);
+  const SL_MISS = subCard('asl_miss', 'Sketch Pad', 'drawing aid');
+  const SL_DB_PAGE = {
+    items: [
+      card(ALPHA),
+      SL_TAGLINE,
+      card(BETA),
+      SL_MISS,
+      SL_NAME,
+      card({ ...DELTA, slug: 'gamma', name: 'Gamma', tagline: null }),
+    ],
+    nextCursor: 'db-cursor-sl',
+  };
+  const SL_OPTS = { ...SFW_OPTS, includeSubListings: true };
+
+  beforeEach(() => {
+    h.listAvailableListings.mockReset().mockResolvedValue(SL_DB_PAGE);
+  });
+
+  it('an index answer: its apps in its order, then the matching database sub-listings', async () => {
+    // Unsampled: the sub-listing cards need the database page whatever the comparison sample.
+    setEnv({ APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    const res = await listStoreGrid(INPUT, SL_OPTS, { indexSearch: true });
+    expect(res).toEqual({
+      items: [card(DELTA), card(BETA), card(ALPHA), SL_TAGLINE, SL_NAME],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+    // One database read, with the request's own input and gates.
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+    expect(h.listAvailableListings).toHaveBeenCalledWith(INPUT, SL_OPTS);
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+    await settle();
+    // Like with like: index=3 apps against the database's 2 matching apps; the sub-listing
+    // cards are on neither side of the comparison.
+    expect(logLines).toHaveLength(1);
+    expect(logLines[0]).toContain(' index=3 db=2 overlap=2 dropped=1 source=index reason=ok ');
+  });
+
+  it.each<[string, IndexReply, AppIndexSearchReason]>([
+    ['a 500', () => new Response('{"error":"internal"}', { status: 500 }), 'error'],
+    [
+      'a timeout',
+      () => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')),
+      'timeout',
+    ],
+  ])(
+    'index answers %s: the full database page, apps and sub-listings',
+    async (_, reply, reason) => {
+      stubIndex(reply);
+      const res = await listStoreGrid(INPUT, SL_OPTS, { indexSearch: true });
+      expect(res).toEqual({ ...SL_DB_PAGE, indexSearchRoutable: true });
+      expect(res.search).toBeUndefined();
+      expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+      expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
+    }
+  );
+
+  it('a failed database read is not served as an index answer without sub-listings', async () => {
+    h.listAvailableListings
+      .mockReset()
+      .mockRejectedValueOnce(new Error('db blip'))
+      .mockResolvedValueOnce(SL_DB_PAGE);
+    const res = await listStoreGrid(INPUT, SL_OPTS, { indexSearch: true });
+    // The database path, read afresh.
+    expect(res).toEqual({ ...SL_DB_PAGE, indexSearchRoutable: true });
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(2);
+    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
+  });
+
+  it('a database read that keeps failing is the request’s error, as with the flag off', async () => {
+    h.listAvailableListings.mockReset().mockRejectedValue(new Error('db down'));
+    await expect(listStoreGrid(INPUT, SL_OPTS, { indexSearch: true })).rejects.toThrow('db down');
+  });
+});
+
+/**
+ * The seam: the request the `/apps` store grid sends (`AppListingsMarketplaceBody`), turned into
+ * `listStoreGrid`'s arguments by `storeGridRequest` (what `appListings.listAvailable` calls) under
+ * the flags production runs with. The grid always asks for sub-listing cards, and with
+ * `app-store-sub-listings` on that once made every viewer unroutable for the index
+ * (`indexSearchRoutable: false` on every page, so the client never sent a query), while each
+ * layer's own tests passed.
+ */
+describe('the store grid request, end to end', () => {
+  /** Exactly what the store grid sends for a viewer who has not touched a filter. */
+  const STORE_INPUT: ListAppListingsInput = {
+    kind: 'all',
+    category: undefined,
+    sort: 'popular',
+    limit: 48,
+    includeSubListings: true,
+  };
+  const FLAGS_ON = { appStoreSubListings: true, appIndexSearch: true };
+  /** A signed-in SFW viewer below the moderator floor, as the router reads them. */
+  const SFW_VIEWER: StoreGridViewer = {
+    features: FLAGS_ON,
+    redCapable: false,
+    scope: 'full',
+    floor: 'public',
+    viewer: { userId: 4242, isModerator: false },
+    viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13,
+  };
+
+  // Pairwise distinct names, slugs and ids.
+  const LUMEN = card({ ...DELTA, slug: 'lumen-paint', name: 'Lumen Paint', tagline: null });
+  const ORBIT = card({
+    ...DELTA,
+    slug: 'orbit-forge',
+    name: 'Orbit Forge',
+    tagline: 'lumen tools',
+  });
+  const QUILL = card({ ...DELTA, slug: 'quill-tavern', name: 'Quill Tavern', tagline: null });
+  const SUB_LUMEN = {
+    id: 'asl_lumen_brush',
+    cardType: 'sub-listing',
+    name: 'Lumen Brush Pack',
+    tagline: null,
+  } as unknown as StoreGridItem;
+  const SUB_MARBLE = {
+    id: 'asl_marble_run',
+    cardType: 'sub-listing',
+    name: 'Marble Run',
+    tagline: null,
+  } as unknown as StoreGridItem;
+
+  /** Sub-listing cards only when the request asked for them, as the real read does. */
+  function dbPage(opts: ListAvailableListingsOpts) {
+    const items: StoreGridItem[] = [QUILL, LUMEN];
+    if (opts.includeSubListings === true) items.push(SUB_MARBLE, SUB_LUMEN);
+    items.push(ORBIT);
+    return { items, nextCursor: 'cursor-page-2' };
+  }
+  const grid = (input: ListAppListingsInput, viewer: StoreGridViewer = SFW_VIEWER) =>
+    listStoreGrid(input, ...storeGridRequest(input, viewer));
+
+  beforeEach(() => {
+    setEnv({ APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    h.listAvailableListings
+      .mockReset()
+      .mockImplementation(async (_: unknown, opts: ListAvailableListingsOpts) => dbPage(opts));
+    h.listStoreListingsBySlugs
+      .mockReset()
+      .mockImplementation(async (slugs: string[]) =>
+        slugs.flatMap((s) => [LUMEN, ORBIT, QUILL].filter((c) => c.slug === s))
+      );
+    indexAnswers([
+      indexed({ ...DELTA, slug: 'orbit-forge' }),
+      indexed({ ...DELTA, slug: 'lumen-paint' }),
+    ]);
+  });
+
+  it('an SFW viewer is routable', async () => {
+    const res = await grid(STORE_INPUT);
+    expect(res.indexSearchRoutable).toBe(true);
+    // The page the grid shows before a search carries the sub-listing cards.
+    expect(res.items).toEqual([QUILL, LUMEN, SUB_MARBLE, SUB_LUMEN, ORBIT]);
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('a search: the index apps in its order, then the matching database sub-listings', async () => {
+    const res = await grid({ ...STORE_INPUT, query: 'lumen' });
+    expect(fetchCalls).toEqual(['http://app-index.invalid/base/search?q=lumen&limit=48']);
+    expect(res).toEqual({
+      items: [ORBIT, LUMEN, SUB_LUMEN],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+  });
+
+  it('sub-listings flag off: an index answer carries no sub-listing card', async () => {
+    const res = await grid(
+      { ...STORE_INPUT, query: 'lumen' },
+      { ...SFW_VIEWER, features: { appIndexSearch: true } }
+    );
+    expect(res).toEqual({
+      items: [ORBIT, LUMEN],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+  });
+
+  it('an index failure serves the full database page, apps and sub-listings', async () => {
+    stubIndex(() => new Response('{"error":"internal"}', { status: 500 }));
+    const res = await grid({ ...STORE_INPUT, query: 'lumen' });
+    expect(fetchCalls).toHaveLength(1);
+    expect(res).toEqual({
+      items: [QUILL, LUMEN, SUB_MARBLE, SUB_LUMEN, ORBIT],
+      nextCursor: 'cursor-page-2',
+      indexSearchRoutable: true,
+    });
+    expect(res.search).toBeUndefined();
+    expect(await requestsMoved()).toEqual(['db_fallback/error:1']);
+  });
+
+  it.each<[string, Partial<StoreGridViewer>, AppIndexSearchReason]>([
+    [
+      'a viewer who may see R listings',
+      { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R },
+      'mature_viewer',
+    ],
+    [
+      'a moderator',
+      { floor: 'moderators', viewer: { userId: 1, isModerator: true } },
+      'unsupported_viewer',
+    ],
+  ])('%s is not routable', async (_, over, reason) => {
+    const res = await grid({ ...STORE_INPUT, query: 'lumen' }, { ...SFW_VIEWER, ...over });
+    expect(res.indexSearchRoutable).toBe(false);
+    expect(res.search).toBeUndefined();
+    expect(fetchCalls).toEqual([]);
+    expect(await requestsMoved()).toEqual([`db_fallback/${reason}:1`]);
   });
 });

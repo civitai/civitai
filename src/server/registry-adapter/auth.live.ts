@@ -25,6 +25,11 @@ export const verifyOpaqueCivitaiToken: VerifyToken = async (token) => {
   }
   return {
     subject: `user:${session.user.id}/client:${session.subject.id}`,
+    clientId: session.subject.id,
+    // The key's stored scope: bits the site issued, so there is no unknown name to read.
+    scope: session.tokenScope,
+    // An opaque token is presented by its own client; no one acts on its behalf.
+    actor: null,
     user: session.user,
     expiresAt: session.expiresAt,
   };

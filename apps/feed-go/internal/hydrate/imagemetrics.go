@@ -469,13 +469,14 @@ func (s *Sources) writeMetricHashes(ctx context.Context, ids []int, counts map[i
 	var first error
 	for i, cmd := range cmds {
 		result := WriteWritten
-		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+		err := cmd.Err()
+		if err != nil && !errors.Is(err, redis.Nil) {
 			result = WriteError
 			if first == nil {
 				first = fmt.Errorf("metrics write: %w", err)
 			}
 		}
-		s.Compute.recordWrite(ctx, MissMetrics, metricHashKey(ids[i]), ids[i], result)
+		s.Compute.recordWrite(ctx, MissMetrics, metricHashKey(ids[i]), ids[i], result, err)
 	}
 	return first
 }

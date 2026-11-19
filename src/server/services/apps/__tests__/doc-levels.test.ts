@@ -33,11 +33,13 @@ beforeEach(() => {
 
 describe('audienceDocLevel — the registry feed’s level per audience', () => {
   it.each([
-    [{ r: false, x: false }, 3],
-    [{ r: true, x: false }, 7],
-    [{ r: false, x: true }, 11],
-    // XXX (16) is never included: an audience cannot say whether its user admits it.
-    [{ r: true, x: true }, 15],
+    [{ r: false, x: false, xxx: false }, 3],
+    [{ r: true, x: false, xxx: false }, 7],
+    [{ r: false, x: true, xxx: false }, 11],
+    [{ r: true, x: true, xxx: false }, 15],
+    // XXX (16) only with `xxx`.
+    [{ r: true, x: true, xxx: true }, 31],
+    [{ r: false, x: false, xxx: true }, 19],
   ])('%j → %i', (allowed, level) => {
     expect(audienceDocLevel(allowed)).toBe(level);
   });
