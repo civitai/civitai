@@ -20,7 +20,7 @@ const clientEnv = vi.hoisted(() => ({
 vi.mock('~/env/client', () => ({ env: clientEnv }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import {
   pollStudioAutoLabel,
   STUDIO_AUTO_LABEL_DAILY_ITEMS,
@@ -29,7 +29,7 @@ import {
 
 const counters = new Map<string, number>();
 const quotaKey = () =>
-  `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:7:${new Date().toISOString().slice(0, 10)}`;
+  `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:7:${new Date().toISOString().slice(0, 10)}`;
 
 const items = [
   { mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.png', key: 'a.png' },
@@ -40,14 +40,33 @@ describe('Training Studio auto-label', () => {
     orch.submitWorkflow.mockReset().mockResolvedValue({ data: { id: 'wf-1' } });
     orch.getWorkflow.mockReset();
     counters.clear();
-    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) => {
+    // The daily quota is on the cache cluster: SET NX EX + INCRBY in one single-key MULTI.
+    redisMock.redis.multi.mockImplementation(() => {
+      const queued: (() => unknown)[] = [];
+      const chain = {
+        set: (k: string, _v: string, opts?: { NX?: boolean }) => {
+          queued.push(() => {
+            if (opts?.NX && counters.has(k)) return null;
+            counters.set(k, 0);
+            return 'OK';
+          });
+          return chain;
+        },
+        incrBy: (k: string, n: number) => {
+          queued.push(() => {
+            counters.set(k, (counters.get(k) ?? 0) + n);
+            return counters.get(k)!;
+          });
+          return chain;
+        },
+        exec: async () => queued.map((run) => run()),
+      };
+      return chain;
+    });
+    redisMock.redis.incrBy.mockImplementation((async (k: string, n: number) => {
       counters.set(k, (counters.get(k) ?? 0) + n);
       return counters.get(k)!;
-    });
-    redisMock.sysRedis.decrBy.mockImplementation(async (k: string, n: number) => {
-      counters.set(k, (counters.get(k) ?? 0) - n);
-      return counters.get(k)!;
-    });
+    }) as never);
   });
 
   it('accepts the media URL a Studio upload returns (both surfaces share $lib/upload)', async () => {
@@ -361,7 +380,16 @@ describe('Training Studio auto-label', () => {
       // The shared mock keeps call history across tests: count only this poll's expiries.
       redisMock.redis.expire.mockClear();
       record('wf-q', { userId: 7, day: today(), count: 1 });
-      redisMock.sysRedis.decrBy.mockRejectedValueOnce(new Error('sys down'));
+      redisMock.redis.multi.mockImplementationOnce(() => {
+        const chain = {
+          set: () => chain,
+          incrBy: () => chain,
+          exec: async () => {
+            throw new Error('cluster down');
+          },
+        };
+        return chain;
+      });
       orch.getWorkflow.mockResolvedValue(failed(1));
       await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
       const expired = redisMock.redis.expire.mock.calls.map((c) => c[0]);
