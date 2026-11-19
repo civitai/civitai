@@ -1775,8 +1775,9 @@ export const comicsRouter = router({
           }
           projects.length = limit;
         } else {
-          const nextItem = projects.pop()!;
-          nextCursor = nextItem.id;
+          // The last comic shown: the next page's `cursor` + `skip: 1` starts right after it.
+          projects.length = limit;
+          nextCursor = projects[limit - 1].id;
         }
       }
 
