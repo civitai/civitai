@@ -8,6 +8,7 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 import { trpcViewer } from '~/server/auth/api-auth-session';
 
 type CacheSettings = {
@@ -87,14 +88,15 @@ export const createContext = async ({
   // Modeled as optional (undefined when absent) so DeepNonNullable<Context> in
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
-  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(req);
+  const credential = getRequestCredential(req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    ...trpcViewer(session?.user),
+    ...trpcViewer(withModeratorRightsFor(session?.user, credential)),
     acceptableOrigin,
     // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
     // account must still reach them.
