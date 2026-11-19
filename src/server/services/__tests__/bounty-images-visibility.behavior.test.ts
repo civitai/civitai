@@ -42,6 +42,8 @@ type ImageRow = {
   blockedFor: string | null;
   minor: boolean;
   modelRestricted: boolean;
+  meta: Record<string, unknown> | null;
+  hideMeta: boolean;
 };
 const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   id,
@@ -52,6 +54,8 @@ const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   blockedFor: null,
   minor: false,
   modelRestricted: false,
+  meta: { prompt: 'p' },
+  hideMeta: false,
   ...over,
 });
 
@@ -65,6 +69,7 @@ const HELD = 5;
 const UNSCANNED = 6;
 const OTHERS_HELD = 7;
 const RESTRICTED_R = 8; // rated R, made with a base model that restricts mature images
+const HIDDEN_META = 9; // its uploader hid its generation data
 const TWO_IMAGES = 20;
 const FIRST_OF_TWO = 21;
 const SECOND_OF_TWO = 22;
@@ -77,6 +82,7 @@ const images: ImageRow[] = [
   image(UNSCANNED, { ingestion: 'Pending' }),
   image(OTHERS_HELD, { userId: OTHER_UPLOADER, needsReview: 'minor' }),
   image(RESTRICTED_R, { nsfwLevel: 4, modelRestricted: true }),
+  image(HIDDEN_META, { hideMeta: true }),
   image(FIRST_OF_TWO),
   image(SECOND_OF_TWO),
 ];
@@ -222,3 +228,38 @@ describe('getImagesForBounties over several bounties', () => {
     expect(ids).toEqual({ [CLEAN]: [CLEAN], [TWO_IMAGES]: [FIRST_OF_TWO, SECOND_OF_TWO] });
   });
 });
+
+const metaReaders = {
+  getBountyImages: async (bountyId: number, viewer: Viewer) =>
+    (await getBountyImages({ id: bountyId, ...viewer }))[0]?.meta,
+  getImagesForBounties: async (bountyId: number, viewer: Viewer) =>
+    (await getImagesForBounties({ bountyIds: [bountyId], ...viewer }))[bountyId]?.[0]?.meta,
+};
+
+describe.each(Object.keys(metaReaders) as (keyof typeof metaReaders)[])(
+  '%s generation data',
+  (reader) => {
+    const metaOf = metaReaders[reader];
+
+    it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+      'sends shown generation data to the %s (control)',
+      async (who) => {
+        expect(await metaOf(CLEAN, viewers[who])).toEqual({ prompt: 'p' });
+      }
+    );
+
+    it.each(['anonymous', 'stranger'] as const)(
+      'withholds hidden generation data from the %s',
+      async (who) => {
+        expect(await metaOf(HIDDEN_META, viewers[who])).toBeNull();
+      }
+    );
+
+    it.each(['owner', 'moderator'] as const)(
+      'sends hidden generation data to the %s',
+      async (who) => {
+        expect(await metaOf(HIDDEN_META, viewers[who])).toEqual({ prompt: 'p' });
+      }
+    );
+  }
+);

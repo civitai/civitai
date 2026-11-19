@@ -14,12 +14,12 @@ import { bountiesFilterableAttributes } from '~/server/search-index/filterable-a
 import { bountiesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -331,7 +331,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
               'mimeType', i."mimeType",
               'scannedAt', i."scannedAt",
               'type', i."type",
-              'meta', i."meta",
+              'meta', CASE WHEN i."hideMeta" THEN NULL ELSE i."meta" END,
               'generationProcess', i."generationProcess",
               'needsReview', i."needsReview",
               'minor', i."minor",
@@ -340,9 +340,8 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        WHERE i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND ${imageNotRestrictedSql()}
+        -- No viewer: the images a signed-out visitor is served on the bounty page.
+        WHERE ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT
@@ -394,11 +393,16 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .filter(isDefined)
       .map((i) => i.id);
 
-    const imageTags = await dbRead.$queryRaw<{
-      imageId: number;
-      tagId: number;
-      tag: { name: string };
-    }>`
+    // A batch whose bounties have no servable image has no ids to look up.
+    const imageTags = !imageIds.length
+      ? []
+      : await dbRead.$queryRaw<
+          {
+            imageId: number;
+            tagId: number;
+            tag: { name: string };
+          }[]
+        >`
       SELECT
       toi."imageId",
       toi."tagId",
