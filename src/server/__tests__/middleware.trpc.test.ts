@@ -222,7 +222,7 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
 
     const synthetic = new Error('CLUSTERDOWN The cluster is down');
     // The claim script errors, so the call takes the read-then-write path, whose write fails.
-    mockEval.mockRejectedValue(new Error('NOSCRIPT'));
+    mockEval.mockRejectedValue(new Error('ERR user_script:3: attempt to compare nil with number'));
     mockHSetWithTTL.mockRejectedValueOnce(synthetic);
 
     const next = vi.fn(async () => ({ ok: true, data: 'still-works' }));
@@ -285,5 +285,21 @@ describe('rateLimit recordAttempt — round-4 fail-open wrapper', () => {
     // A refusal may write only the active-limit marker, never the attempt bucket.
     const writtenKeys = mockHSetWithTTL.mock.calls.map((call) => String(call[1]));
     expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
+  });
+});
+
+describe('rateLimit — a refusal decided by the claim script', () => {
+  it("carries the rule's own message, as a refusal by the read does", async () => {
+    rateLimit({ limit: 2, period: 60, errorMessage: 'Slow down on this one.' });
+    const handler = capturedHandler.handler!;
+    const now = Date.now();
+    // The read saw room; the script, deciding atomically, found the bucket full.
+    mockEval.mockResolvedValue([0, now - 2000, now - 1000]);
+
+    const refused = await handler({ ...baseArg, next: vi.fn() }).catch((e: unknown) => e);
+
+    expect(refused).toBeInstanceOf(TRPCError);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+    expect((refused as TRPCError).message).toBe('Slow down on this one.');
   });
 });

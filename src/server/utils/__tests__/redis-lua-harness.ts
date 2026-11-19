@@ -441,7 +441,7 @@ const cmsgpack = {
   unpack: (packed: string) => {
     const value = unpack(Buffer.from(packed, 'base64'));
     if (!Array.isArray(value)) throw new Error('cmsgpack.unpack: only arrays are supported');
-    return value.map((v) => String(typeof v === 'bigint' ? v : v)).join(',');
+    return value.map((v) => String(v)).join(',');
   },
 };
 

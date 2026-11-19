@@ -331,6 +331,62 @@ describe('claimRateLimitAttempt when the claim script does not answer', () => {
   });
 });
 
+describe('claimRateLimitAttempt when the claim script fails on a fail-closed scope', () => {
+  const claimOn = (keyName: string) =>
+    claimRateLimitAttempt({
+      rules: [{ limit: 5, period: 60 }],
+      keyName,
+      user: undefined,
+      req: freshReq(),
+    });
+  const scriptOps = () =>
+    redisMock.redis.eval.mock.calls.map((c) => (c[1] as { arguments: string[] }).arguments[0]);
+
+  beforeEach(() => {
+    hGet.mockResolvedValue([]);
+    onTestFinished(() => {
+      redisMock.redis.eval.mockReset();
+    });
+  });
+
+  it('a script that never answers refuses with SERVICE_UNAVAILABLE and releases nothing', async () => {
+    redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
+    const outcome = await within(
+      claimOn('buzz:script-hung').catch((e: unknown) => e),
+      4000
+    );
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(scriptOps()).toEqual(['claim']);
+  });
+
+  it('a store that refuses the call itself refuses with SERVICE_UNAVAILABLE', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error("READONLY You can't write against a read only replica.")
+    );
+    const outcome = await claimOn('buzz:script-readonly').catch((e: unknown) => e);
+    expect((outcome as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(hSetWithTTL).not.toHaveBeenCalled();
+  });
+
+  it('a script error falls back to the read-then-write path and admits', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error('ERR user_script:12: attempt to index a nil value')
+    );
+    const record = await claimOn('buzz:script-error');
+    await record();
+    expect(hSetWithTTL).toHaveBeenCalledTimes(1);
+  });
+
+  it('control: the same refused call on a fallback scope takes the read-then-write path', async () => {
+    redisMock.redis.eval.mockRejectedValue(
+      new Error("READONLY You can't write against a read only replica.")
+    );
+    const record = await claimOn('model:script-readonly');
+    await record();
+    expect(hSetWithTTL).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('readRateLimitAttempts (the usage report) with the store unavailable', () => {
   const bucket = () => rateLimitBucket('peek:test', undefined, freshReq());
 

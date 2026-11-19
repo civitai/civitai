@@ -375,7 +375,18 @@ type StoreClaim =
   | { kind: 'admitted'; attempts?: number[] }
   | { kind: 'refused'; attempts: number[] }
   | { kind: 'timeout' }
+  | { kind: 'unavailable' }
   | { kind: 'error' };
+
+/** A Lua compile or runtime error, as Redis reports it, as against a refusal of the call itself. */
+const isScriptError = (error: unknown) =>
+  error instanceof Error && /user_script|Error (?:running|compiling) script/.test(error.message);
+
+const storeUnavailable = () =>
+  new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message: 'This is temporarily unavailable. Please try again in a moment.',
+  });
 
 /** Rejects after `ms` (no deadline when `ms <= 0`); the call itself runs on. */
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -387,6 +398,12 @@ function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([p, deadline]).finally(() => clearTimeout(timer));
 }
 class ClaimDeadlineError extends Error {}
+/** The script answered with something other than a claim reply. */
+class ClaimScriptError extends Error {
+  constructor(cause: unknown) {
+    super('rate-limit claim: bad reply', { cause });
+  }
+}
 
 /**
  * The atomic claim (RATE_LIMIT_CLAIM_SCRIPT), under the same deadline as the read but not the
@@ -415,16 +432,26 @@ async function claimInStore(
       }),
       failClosed ? failClosedReadDeadlineMs() : env.REDIS_CACHE_READ_DEADLINE_MS
     );
-    const { admitted, attempts } = parseClaimReply(reply);
+    let parsed: ReturnType<typeof parseClaimReply>;
+    try {
+      parsed = parseClaimReply(reply);
+    } catch (error) {
+      throw new ClaimScriptError(error);
+    }
+    const { admitted, attempts } = parsed;
     return admitted
       ? { kind: 'admitted', attempts }
       : { kind: 'refused', attempts: attempts ?? [] };
   } catch (error) {
     if (error instanceof ClaimDeadlineError) return { kind: 'timeout' };
-    logSysRedisFailOpen('rate-limit-claim-script-error', 'rate-limit-bucket.claimInStore', error, {
-      cacheKey: bucket.cacheKey,
-    });
-    return { kind: 'error' };
+    const scriptError = error instanceof ClaimScriptError || isScriptError(error);
+    logSysRedisFailOpen(
+      scriptError ? 'rate-limit-claim-script-error' : 'rate-limit-write-degraded',
+      'rate-limit-bucket.claimInStore',
+      error,
+      { cacheKey: bucket.cacheKey }
+    );
+    return scriptError ? { kind: 'error' } : { kind: 'unavailable' };
   }
 }
 
@@ -529,18 +556,17 @@ export async function claimRateLimitAttempt({
         stored.filter((x) => x > now - longestPeriod * 1000),
         now
       );
-      return claimRecorded(req, validLimits, stored, () => refundInStore(bucket, now));
+      return claimRecorded(req, validLimits, stored, async () => {
+        // The mirror above holds this attempt too; left there, the next claim merges it back.
+        removeLocalAttempt(bucket, now);
+        await refundInStore(bucket, now);
+      });
     }
     if (outcome.kind === 'timeout') {
       rateLimitClaimPathCounter.inc({ path: 'degraded' });
-      // The script may have committed: release it if it did, then decide as an unread store does.
-      if (failClosed) {
-        void refundInStore(bucket, now);
-        throw new TRPCError({
-          code: 'SERVICE_UNAVAILABLE',
-          message: 'This is temporarily unavailable. Please try again in a moment.',
-        });
-      }
+      // The script may or may not have committed. A fail-closed scope refuses and leaves any slot
+      // held: a refund could not tell this call's entry from another call's in the same ms.
+      if (failClosed) throw storeUnavailable();
       // The local attempt carries the script's own `now`, so a committed claim merges in once.
       recordLocalAttempt(bucket, now, longestPeriod);
       return claimRecorded(req, validLimits, [...attempts, now], async () => {
@@ -548,8 +574,14 @@ export async function claimRateLimitAttempt({
         await refundInStore(bucket, now);
       });
     }
-    // The script errored: this call decides on the read-then-write path below.
-    rateLimitClaimPathCounter.inc({ path: 'fallback' });
+    if (outcome.kind === 'unavailable') {
+      // The store refused the call itself (failover, OOM, cluster down), not the script.
+      rateLimitClaimPathCounter.inc({ path: 'degraded' });
+      if (failClosed) throw storeUnavailable();
+    } else {
+      // The script errored: this call decides on the read-then-write path below.
+      rateLimitClaimPathCounter.inc({ path: 'fallback' });
+    }
   } else rateLimitClaimPathCounter.inc({ path: 'degraded' });
 
   const record = async () => {
