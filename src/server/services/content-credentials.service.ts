@@ -24,8 +24,13 @@ const c2pa = import(workerData.moduleUrl).then((m) => {
   return m;
 });
 parentPort.on('message', async ({ id, bytes, mimeType, context }) => {
+  let WasmReader;
   try {
-    const { WasmReader } = await c2pa;
+    ({ WasmReader } = await c2pa);
+  } catch (e) {
+    return parentPort.postMessage({ id, unavailable: String(e) });
+  }
+  try {
     const reader = await WasmReader.fromBytes(mimeType, bytes, context);
     try {
       parentPort.postMessage({ id, json: reader.json(), manifest: JSON.stringify(reader.activeManifest() ?? null) });
@@ -40,24 +45,45 @@ parentPort.on('message', async ({ id, bytes, mimeType, context }) => {
 
 type WorkerReply = { id: number; error?: string; json?: string; manifest?: string };
 
-export class VerifyBusyError extends Error {}
+// The reader failed, not the file: the caller should retry, not report a verdict.
+export class VerifyUnavailableError extends Error {}
+export class VerifyBusyError extends VerifyUnavailableError {}
 
 // Resolved from the app root at runtime so the bundler leaves the package paths alone.
 function resolveFromApp(specifier: string) {
   return createRequire(path.join(process.cwd(), 'package.json')).resolve(specifier);
 }
 
+type Job = {
+  bytes: Uint8Array;
+  mimeType: string;
+  resolve: (reply: WorkerReply) => void;
+  reject: (e: Error) => void;
+};
+
 let wasm: Promise<WebAssembly.Module> | undefined;
 let worker: Worker | undefined;
 let nextId = 0;
-const pending = new Map<number, (reply: WorkerReply) => void>();
+const queue: Job[] = [];
+// One read at a time, so a timeout is charged to the read that caused it and stopping the worker
+// fails only that read.
+let inFlight: { id: number; job: Job; timer?: ReturnType<typeof setTimeout> } | undefined;
 
-function stopWorker(w: Worker, error: string) {
+function settle(id: number, outcome: WorkerReply | Error) {
+  if (inFlight?.id !== id) return;
+  const { job, timer } = inFlight;
+  clearTimeout(timer);
+  inFlight = undefined;
+  if (outcome instanceof Error) job.reject(outcome);
+  else job.resolve(outcome);
+  pump();
+}
+
+function stopWorker(w: Worker, reason: string) {
   if (worker !== w) return;
   worker = undefined;
-  for (const [id, done] of pending) done({ id, error });
-  pending.clear();
   void w.terminate();
+  if (inFlight) settle(inFlight.id, new VerifyUnavailableError(reason));
 }
 
 async function getWorker() {
@@ -76,10 +102,12 @@ async function getWorker() {
         wasm: compiled,
       },
     });
-    w.on('message', (reply: WorkerReply) => {
-      pending.get(reply.id)?.(reply);
-      pending.delete(reply.id);
-    });
+    w.on('message', (reply: WorkerReply & { unavailable?: string }) =>
+      settle(
+        reply.id,
+        reply.unavailable !== undefined ? new VerifyUnavailableError(reply.unavailable) : reply
+      )
+    );
     w.on('error', (e) => stopWorker(w, String(e)));
     w.on('exit', () => stopWorker(w, 'worker exited'));
     w.unref();
@@ -88,17 +116,28 @@ async function getWorker() {
   return worker;
 }
 
-async function readInWorker(bytes: Uint8Array, mimeType: string): Promise<WorkerReply> {
-  if (pending.size >= MAX_QUEUED_READS) throw new VerifyBusyError();
-  const w = await getWorker();
+function pump() {
+  if (inFlight) return;
+  const job = queue.shift();
+  if (!job) return;
   const id = nextId++;
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => stopWorker(w, 'timed out'), READ_TIMEOUT_MS);
-    pending.set(id, (reply) => {
-      clearTimeout(timer);
-      resolve(reply);
-    });
-    w.postMessage({ id, bytes, mimeType, context: READER_CONTEXT });
+  const current: NonNullable<typeof inFlight> = { id, job };
+  inFlight = current;
+  getWorker().then(
+    (w) => {
+      if (inFlight !== current) return;
+      current.timer = setTimeout(() => stopWorker(w, 'timed out'), READ_TIMEOUT_MS);
+      w.postMessage({ id, bytes: job.bytes, mimeType: job.mimeType, context: READER_CONTEXT });
+    },
+    (e) => settle(id, new VerifyUnavailableError(String(e)))
+  );
+}
+
+function readInWorker(bytes: Uint8Array, mimeType: string) {
+  if (queue.length + (inFlight ? 1 : 0) >= MAX_QUEUED_READS) throw new VerifyBusyError();
+  return new Promise<WorkerReply>((resolve, reject) => {
+    queue.push({ bytes, mimeType, resolve, reject });
+    pump();
   });
 }
 

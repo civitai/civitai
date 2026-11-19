@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   declaresAiSource,
   readContentCredentials,
+  VerifyBusyError,
 } from '~/server/services/content-credentials.service';
 
 // CA.jpg is c2pa-rs's test fixture (sdk/tests/fixtures), signed with the C2PA test certificate.
@@ -79,6 +80,20 @@ describe('readContentCredentials', () => {
     expect(await readContentCredentials(tampered, 'image/jpeg')).toMatchObject({
       credentials: 'invalid',
     });
+  });
+});
+
+describe('read queue', () => {
+  it('refuses reads past the per-process queue with a retryable error, and still answers the rest', async () => {
+    const reads = Array.from({ length: 9 }, () =>
+      readContentCredentials(signed, 'image/jpeg').then(
+        (r) => r.credentials,
+        (e) => (e instanceof VerifyBusyError ? 'busy' : String(e))
+      )
+    );
+    const results = await Promise.all(reads);
+    expect(results.filter((r) => r === 'busy')).toHaveLength(1);
+    expect(results.filter((r) => r === 'valid')).toHaveLength(8);
   });
 });
 

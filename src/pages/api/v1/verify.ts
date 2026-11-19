@@ -3,6 +3,7 @@ import {
   readContentCredentials,
   sniffImageType,
   VerifyBusyError,
+  VerifyUnavailableError,
 } from '~/server/services/content-credentials.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -67,9 +68,16 @@ export default MixedAuthEndpoint(
     try {
       return res.status(200).json(await readContentCredentials(body, mimeType));
     } catch (e) {
-      if (!(e instanceof VerifyBusyError)) throw e;
+      if (!(e instanceof VerifyUnavailableError)) throw e;
       res.setHeader('Retry-After', '5');
-      return fail(res, 503, 'Busy, please retry shortly.', 'TOO_MANY_REQUESTS');
+      return e instanceof VerifyBusyError
+        ? fail(res, 503, 'Busy, please retry shortly.', 'TOO_MANY_REQUESTS')
+        : fail(
+            res,
+            503,
+            'The check is unavailable, please retry shortly.',
+            'INTERNAL_SERVER_ERROR'
+          );
     }
   },
   ['POST']
