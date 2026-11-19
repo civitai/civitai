@@ -384,7 +384,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const action = (req.body as { action?: unknown } | undefined)?.action;
-  // Both return entity text and author ids: only the attributed, audited endpoint serves them.
+  // All three return entity text and author ids: only the attributed, audited endpoint serves them.
   if (
     action === 'composeEntities' ||
     action === 'composeComFaceIntent' ||
