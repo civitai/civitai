@@ -1,39 +1,10 @@
 /**
  * `/apps` store text search through the app index (`apps/app-index-go`), behind the
- * `app-index-search` Flipt flag.
+ * `app-index-search` flag.
  *
- * The app index follows the registry's app stream into its own database and answers
- * `GET /search`. With the flag on for the viewer, a store request that carries a text `query`
- * asks the index for the matching slugs (relevance order), then hydrates those slugs into store
- * cards from the database through the store's own gates (`listStoreListingsBySlugs`), keeping
- * the index's order. The index holds what an anonymous registry subscriber may read, the SFW
- * audience, so a viewer who may see r/x listings is never routed to it.
- *
- * A flagged request is sent to the index only when the index can answer it without dropping a
- * listing the database grid would show this viewer: an SFW-only viewer on the `public` audience
- * floor, a grid without sub-listing cards, and, for the `public-external` store scope (off-site
- * listings only), the index asked for off-site apps only. Everything else is today's database
- * path, unchanged: the flag off, no query, a mature viewer, a tester or moderator floor, sub-listing
- * cards, a developer-filtered or paged request, APP_INDEX_URL unset, and any index failure (a timeout of
- * APP_INDEX_SEARCH_TIMEOUT_MS, a non-2xx answer such as 503 before the index is ready, or a body
- * that is not a search response). On the database path the client filters by the query itself,
- * as it always has; a page answered by the index says so (`search: 'index'`), so the client does
- * not filter it again.
- *
- * Every routed request logs one line (no query text, no user):
- * `app-index-search: q_len=… index=N db=M overlap=K dropped=D source=index|db_fallback reason=…
- * field_diffs=name:…,tagline:…,iconUrl:…,rating:… field_expected=iconUrl:…,rating:…`.
- * `db` and `overlap` compare against the database page the request would have served: the slugs
- * of that first page whose name or tagline contains the query (the client-side rule, so for a
- * catalog larger than one page it undercounts). An index answer reads that page only for a sampled
- * fraction (APP_INDEX_SEARCH_COMPARE_SAMPLE), off the response path; unsampled, the two are
- * `none`. `searchThroughIndex` states the latency shape.
- *
- * Users only ever see database-hydrated cards. The index's own copy of each field the store card
- * shows (name, tagline, iconUrl, rating) is compared with the card the database hydrated for the
- * same slug (`compareIndexFields`), so a stale or wrong registry field is counted
- * (`civitai_app_index_search_field_diffs_total{field}`) without ever reaching a user. On the
- * database path there is nothing to compare: `field_diffs=none field_expected=none`.
+ * The index holds only the SFW audience, so only viewers it can answer completely are routed to
+ * it (`viewerNotRoutable`). It answers slugs; users only ever see cards the database hydrated for
+ * those slugs through the store's own gates. Any index failure serves the database path.
  */
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -52,7 +23,7 @@ import type {
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
 import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
-import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { isOffsiteContentRating } from '~/shared/constants/browsingLevel.constants';
 
 /** How long a store search waits for the index before serving the database path. */
@@ -225,6 +196,7 @@ async function searchThroughIndex(
   } else {
     logLine(r);
   }
+  // An index answer is one page, in the index's relevance order, with no cursor to a next one.
   return { items: cards, nextCursor: undefined, search: 'index' };
 }
 
@@ -260,10 +232,9 @@ async function fetchIndexResults(
   const base = (env.APP_INDEX_URL as string).replace(/\/+$/, '');
   let res: Response;
   try {
-    res = await fetch(`${base}/search?${params}`, {
+    res = await outboundFetch(`${base}/search?${params}`, {
       headers: { accept: 'application/json' },
-      // Dropped only by the outbound-fetch-timeouts-off switch (fetch-timeout.ts).
-      signal: fetchTimeoutSignal(APP_INDEX_SEARCH_TIMEOUT_MS),
+      timeoutMs: APP_INDEX_SEARCH_TIMEOUT_MS,
     });
   } catch (err) {
     throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'error');
@@ -289,9 +260,10 @@ const zeroCounts = (): FieldCounts => ({ name: 0, tagline: 0, iconUrl: 0, rating
  * known cause, `expected` do. The known causes, both from how each side gates what it publishes:
  *   - iconUrl: the store card gates the icon at the viewer's level AND the listing's rating, the
  *     registry at the listing's rating alone, so the card can have no icon where the index has
- *     one. On a red-capable request the card may also show the red-host icon override, which the
- *     registry never publishes. (Both build the url the same way, `gatedListingIconUrl`, so any
- *     other icon difference is a diff, including an index icon the card does not have.)
+ *     one (expected). On a red-capable request the card may also show the red-host icon override,
+ *     which the registry never publishes (expected). Both build the url the same way
+ *     (`gatedListingIconUrl`), so every other icon difference is a diff: a card icon the index
+ *     does not have, or two different icons off a red-capable request.
  *   - rating: the card shows the listing's own rating; the registry publishes it only when it is a
  *     known rating, and otherwise the backing block's. A card whose rating is not a known one may
  *     therefore differ.

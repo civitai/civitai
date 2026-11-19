@@ -43,7 +43,7 @@ no other sort and no paging. `/search` answers 503 until the index is ready.
   cannot be decoded at all is skipped and counted (`app_index_malformed_events_total`), advancing
   the cursor only when it carried one, so it cannot wedge the stream.
 - Only one process follows the stream (a Postgres session advisory lock); others serve searches.
-  Writes to a generation also check that this process still owns it (`Postgres.Lock` says exactly
+  Writes to a generation also check that this process still owns it (`Postgres.Claim` says exactly
   what that guarantees).
 
 The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` is set, so the registry serves it the

@@ -95,14 +95,18 @@ beforeEach(async () => {
   await holder.db.exec(`
     TRUNCATE app_listings, app_blocks, "User";
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
-    INSERT INTO app_blocks (id, status, current_version_deployed_at)
-      VALUES ('ab_live', 'approved', now());
+    INSERT INTO app_blocks (id, status, current_version_deployed_at) VALUES
+      ('ab_live', 'approved', now()),
+      ('ab_pending', 'approved', NULL);
     INSERT INTO app_listings (id, kind, slug, name, status, app_block_id, category, content_rating, user_id) VALUES
       ('al_off', 'offsite', 'off-utility', 'Off Utility', 'approved', NULL, 'utility', 'g', ${OWNER}),
       ('al_on', 'onsite', 'on-utility', 'On Utility', 'approved', 'ab_live', 'utility', 'g', ${OWNER}),
       ('al_gen', 'offsite', 'off-generation', 'Off Generation', 'approved', NULL, 'generation', 'pg', ${OWNER}),
       ('al_draft', 'offsite', 'still-a-draft', 'Still A Draft', 'draft', NULL, 'utility', 'g', ${OWNER}),
-      ('al_rated', 'offsite', 'rated-r-app', 'Rated R App', 'approved', NULL, 'utility', 'r', ${OWNER});
+      ('al_rated', 'offsite', 'rated-r-app', 'Rated R App', 'approved', NULL, 'utility', 'r', ${OWNER}),
+      ('al_undeployed', 'onsite', 'never-deployed', 'Never Deployed', 'approved', 'ab_pending', 'utility', 'g', ${OWNER});
+    INSERT INTO app_listings (id, kind, slug, name, status, visibility, category, content_rating, user_id) VALUES
+      ('al_testers', 'offsite', 'testers-only', 'Testers Only', 'approved', 'testers', 'utility', 'g', ${OWNER});
   `);
 });
 
@@ -179,6 +183,40 @@ describe('listStoreListingsBySlugs on real rows', () => {
     expect(await slugsFor(['off-generation', 'off-utility'], { category: 'generation' })).toEqual([
       'off-generation',
     ]);
+  });
+
+  it('drops a listing restricted to testers for a public viewer, and keeps it for a tester', async () => {
+    expect(await slugsFor(['testers-only', 'off-utility'])).toEqual(['off-utility']);
+    // Positive control: the same row for a viewer on the testers floor.
+    expect(
+      await slugsFor(['testers-only', 'off-utility'], {}, { ...SFW, floor: 'testers' })
+    ).toEqual(['testers-only', 'off-utility']);
+  });
+
+  it('drops an on-site listing whose block has never deployed', async () => {
+    expect(await slugsFor(['never-deployed', 'on-utility'])).toEqual(['on-utility']);
+    // Positive control: the same listing once its block has deployed.
+    await holder.db.exec(
+      `UPDATE app_blocks SET current_version_deployed_at = now() WHERE id = 'ab_pending'`
+    );
+    expect(await slugsFor(['never-deployed', 'on-utility'])).toEqual([
+      'never-deployed',
+      'on-utility',
+    ]);
+  });
+
+  // The manual-apply `visibility` column absent: the read degrades to the pre-feature predicate
+  // (approved only), as the store grid does, instead of failing the search.
+  it('without the visibility column, falls back to approved listings only', async () => {
+    await holder.db.exec(`ALTER TABLE app_listings DROP COLUMN visibility`);
+    try {
+      expect(await slugsFor(['still-a-draft', 'testers-only', 'off-utility'])).toEqual([
+        'testers-only',
+        'off-utility',
+      ]);
+    } finally {
+      await holder.db.exec(`ALTER TABLE app_listings ADD COLUMN visibility text`);
+    }
   });
 
   // Invariant guard, not a regression test: a slug names a listing, never a sub-listing, so a

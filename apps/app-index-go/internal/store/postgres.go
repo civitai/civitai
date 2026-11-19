@@ -21,7 +21,7 @@ import (
 // app_index_cursors is the cursor table: one row per generation, holding its subscription's cursor
 // and whether it is building, serving or retired. The partial unique index keeps at most one
 // generation building and one serving. owner is the process that last claimed the generation;
-// writes check it (see Postgres.Lock for what that guarantees).
+// writes check it (see Postgres.Claim for what that guarantees).
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS app_index_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -70,7 +70,8 @@ const lockKey = `hashtext(current_schema() || ':app-index-go')`
 // ErrLocked is returned by Lock while another process holds the consumer lock.
 var ErrLocked = errors.New("store: another consumer holds the lock")
 
-// ErrFenced is returned by a write to a generation another process has claimed since.
+// ErrFenced is returned by Apply, Live or Reset on a generation another process has claimed since
+// (see Claim for what that fences and what it does not).
 var ErrFenced = errors.New("store: generation claimed by another consumer")
 
 // Postgres is the production Store.
@@ -111,15 +112,7 @@ func NewPostgres(ctx context.Context, pool *pgxpool.Pool) (*Postgres, error) {
 // Lock takes the consumer lock: only its holder follows the registry and writes, so two processes
 // (a rolling update) never interleave cursors. Searches need no lock. ErrLocked while another
 // process holds it. The lock is a session advisory lock on a dedicated connection; the returned
-// func releases it.
-//
-// What the second line, Claim, guarantees: Apply, Live and Reset store the cursor only where the
-// generation's owner is this process, in the same transaction as their change, so once another
-// process has claimed a generation, every later write to it from this one fails with ErrFenced.
-// It does not stop writes that commit before the other process claims, nor NewBuilding, which is
-// not fenced. Writes committed before the claim are harmless: the new owner resumes from a cursor
-// at or before them and applies those events again, and replaying is idempotent (an upsert
-// replaces the whole row, a delete of a missing row does nothing).
+// func releases it. Claim is the second line.
 func (p *Postgres) Lock(ctx context.Context) (func(), error) {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {
@@ -143,7 +136,13 @@ func (p *Postgres) Lock(ctx context.Context) (func(), error) {
 	}, nil
 }
 
-// Claim makes this process the writer of gen; writes by any earlier claimant fail with ErrFenced.
+// Claim makes this process the writer of gen. What that guarantees: Apply, Live and Reset store the
+// cursor only where the generation's owner is this process, in the same transaction as their
+// change, so once another process has claimed a generation, every later write to it from this one
+// fails with ErrFenced. It does not stop writes that commit before the other process claims, nor
+// NewBuilding, which is not fenced. Writes committed before the claim are harmless: the new owner
+// resumes from a cursor at or before them and applies those events again, and replaying is
+// idempotent (an upsert replaces the whole row, a delete of a missing row does nothing).
 func (p *Postgres) Claim(ctx context.Context, gen int64) error {
 	tag, err := p.pool.Exec(ctx, `UPDATE app_index_cursors SET owner = $1 WHERE generation = $2 AND state <> 'retired'`, p.owner, gen)
 	if err != nil {

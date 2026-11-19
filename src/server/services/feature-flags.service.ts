@@ -959,8 +959,7 @@ const featureFlags = createFeatureFlags({
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
   // App index store search — `/apps` store text search through the app index service
   // (`app-index-search.service.ts`, APP_INDEX_URL) instead of filtering the loaded grid in the
-  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on. Only SFW-only
-  // viewers are routed (the index holds the SFW audience); any index failure serves the database path.
+  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on.
   appIndexSearch: { availability: [], fliptKey: 'app-index-search' },
   // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
   // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for

@@ -2,13 +2,7 @@
 // spec/registry.md: "Subscribe", "Errors", "Bindings" → "HTTP"): one `GET /subscribe` whose
 // `text/event-stream` response is read as events.
 //
-// Provenance: the event model and the SSE reader are ported from the registry-go reference
-// implementation (internal/protocol: protocol.go ParseEvent, http.go Subscribe and
-// Subscription.Next, at spec b7ded2e), trimmed to what a consumer needs. Changes from it: lines are
-// read with a bounded buffer (a line over MaxLine ends the stream instead of growing without
-// bound), and an event of a known type that cannot be decoded is returned as a Malformed event
-// instead of ending the stream, so one bad event cannot wedge a consumer that would otherwise
-// reconnect to the same event forever.
+// Ported from the registry-go reference implementation (internal/protocol, spec b7ded2e).
 //
 // Liveness: the spec says a consumer detects a lost connection "by the binding's pings — not by
 // how long the stream has been quiet: a live stream may be silent for any length of time"
@@ -120,7 +114,7 @@ const (
 	// DialTimeout bounds establishing a connection. It is not a stream-quietness timeout.
 	DialTimeout = 10 * time.Second
 	// TCP keepalive: probe a connection idle for KeepAliveIdle, every KeepAliveInterval, and drop it
-	// after KeepAliveCount unanswered probes (about a minute for a vanished peer).
+	// after KeepAliveCount unanswered probes.
 	KeepAliveIdle     = 30 * time.Second
 	KeepAliveInterval = 10 * time.Second
 	KeepAliveCount    = 3
