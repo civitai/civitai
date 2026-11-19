@@ -76,10 +76,10 @@ const isBlocked = (picture: BlockFields) =>
  * TS form of `fallbackUserImageColumn`. The block fields are required so a read that does not
  * select them fails to compile.
  */
-export function fallbackUserImage(
-  image: string | null | undefined,
+export function fallbackUserImage<T extends string | null | undefined>(
+  image: T,
   picture: ({ url: unknown; needsReview: unknown } & BlockFields) | null | undefined
-) {
+): T | null {
   if (!image || !picture) return image;
   if (!isHeldForReview(picture.needsReview as string | null) && !isBlocked(picture)) return image;
   return namesPicture(image, picture.url) ? null : image;

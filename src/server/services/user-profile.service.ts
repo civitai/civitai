@@ -783,8 +783,9 @@ async function servablePictureForVisitor<
     where: { id: picture.id },
     select: { modelRestricted: true, blockedFor: true },
   });
-  const modelRestricted = mature ? image?.modelRestricted ?? true : false;
-  return servableProfilePicture(picture, null, modelRestricted, image?.blockedFor ?? null);
+  // A missing row is served as none: its gate fields cannot be read.
+  if (!image) return null;
+  return servableProfilePicture(picture, null, mature && image.modelRestricted, image.blockedFor);
 }
 
 /** Null for a restricted picture unless `sameUser`: a moderator never sees one. */

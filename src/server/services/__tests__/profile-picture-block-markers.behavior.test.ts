@@ -7,7 +7,10 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import { gateProfilePictures } from '~/server/db/servable-profile-picture.extension';
+import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { readUserWithProfileViaKysely } from '~/server/services/hot-reads-9.reads';
+import { readCollectionByIdViaKysely } from '~/server/services/hot-reads-10.reads';
+import { readUsersWithCosmeticsViaKysely } from '~/server/services/hot-reads-12.reads';
 import {
   fallbackUserImage,
   servableProfilePicture,
@@ -188,5 +191,59 @@ describe('the Kysely user reads', () => {
     expect((await readUserWithProfileViaKysely(db, { id: CLEAN_ID })).image).toBe(
       imageOf('key-clean')
     );
+  });
+});
+
+describe('the other Kysely reads carrying a profile picture and User.image', () => {
+  const PLAIN_USERS = `INSERT INTO "User" (id, "profilePictureId", image) VALUES ${CASES.map(
+    (c) => `(${c.id}, ${c.id}, '${imageOf(c.url)}')`
+  ).join(', ')};`;
+  const ids = CASES.map((c) => c.id).join(', ');
+  const servedOnly = (served: (number | null)[]) =>
+    expect(served).toEqual(CASES.map((c) => (c.id === CLEAN_ID ? CLEAN_ID : null)));
+  const fallbackOnlyClean = (images: (string | null | undefined)[]) =>
+    expect(images).toEqual(CASES.map((c) => (c.id === CLEAN_ID ? imageOf(c.url) : null)));
+
+  it('model version owner (hot reads 6, also post detail)', async () => {
+    const db = await kysely(
+      'hot-reads-6-parity-schema.sql',
+      'hot_reads_6_parity',
+      `${IMAGES} ${PLAIN_USERS}
+      INSERT INTO "Model" (id, "userId") SELECT id, id FROM unnest(ARRAY[${ids}]) id;
+      INSERT INTO "ModelVersion" (id, "modelId") SELECT id, id FROM unnest(ARRAY[${ids}]) id;`
+    );
+    const users = [];
+    for (const c of CASES) users.push((await readModelVersionOwnerViaKysely(db, c.id))?.model.user);
+    servedOnly(users.map((u) => u?.profilePicture?.id ?? null));
+    fallbackOnlyClean(users.map((u) => u?.image));
+  });
+
+  it('collection owner (hot reads 10)', async () => {
+    const db = await kysely(
+      'hot-reads-10-parity-schema.sql',
+      'hot_reads_10_parity',
+      `${IMAGES} ${PLAIN_USERS}
+      INSERT INTO "Collection" (id, name, "userId") SELECT id, 'c' || id, id FROM unnest(ARRAY[${ids}]) id;`
+    );
+    const users = [];
+    for (const c of CASES) users.push((await readCollectionByIdViaKysely(db, c.id))?.user);
+    servedOnly(users.map((u) => u?.profilePicture?.id ?? null));
+    fallbackOnlyClean(users.map((u) => u?.image));
+  });
+
+  it('users with cosmetics (hot reads 12)', async () => {
+    const db = await kysely(
+      'hot-reads-12-parity-schema.sql',
+      'hot_reads_12_parity',
+      `${IMAGES} INSERT INTO "User" (id, username, "profilePictureId", image) VALUES ${CASES.map(
+        (c) => `(${c.id}, 'u${c.id}', ${c.id}, '${imageOf(c.url)}')`
+      ).join(', ')};`
+    );
+    const users = await readUsersWithCosmeticsViaKysely(
+      db,
+      CASES.map((c) => c.id)
+    );
+    servedOnly(CASES.map((c) => users.get(c.id)?.profilePicture?.id ?? null));
+    fallbackOnlyClean(CASES.map((c) => users.get(c.id)?.image));
   });
 });
