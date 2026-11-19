@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { envMock } from '~/__tests__/mocks/env.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
@@ -21,6 +23,9 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
+// Replica-lag routing is on for this file (the lag tracker reads the delay once, at load): a read
+// goes to the primary only for an entry a test flags as just written.
+envMock.set({ REPLICATION_LAG_DELAY: 3 });
 const { bulkSaveItems, saveItemInCollections } = await import(
   '~/server/services/collection.service'
 );
@@ -33,6 +38,7 @@ const IMAGE_ID = 42;
 const TAG_A = 1;
 const TAG_B = 2;
 const SYSTEM_TAG = 9;
+const SYSTEM_TAG_2 = 8;
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -55,6 +61,7 @@ const collectionRow = (metadata: Record<string, unknown> = {}) => ({
     { tag: { id: TAG_A, name: 'A' }, filterableOnly: false },
     { tag: { id: TAG_B, name: 'B' }, filterableOnly: false },
     { tag: { id: SYSTEM_TAG, name: 'Judged' }, filterableOnly: true },
+    { tag: { id: SYSTEM_TAG_2, name: 'Review me' }, filterableOnly: true },
   ],
 });
 
@@ -275,5 +282,97 @@ describe('bulkSaveItems and a system tag', () => {
     expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ imageId: NEW_IMAGE, tagId: TAG_B })],
     });
+  });
+});
+
+describe('a system tag sent back for an entry that already exists', () => {
+  const SECOND_COLLECTION_ID = 11;
+  const saveTo = (userId: number, collections: { collectionId: number; tagId?: number }[]) =>
+    saveItemInCollections({
+      input: {
+        type: 'Image',
+        userId,
+        imageId: IMAGE_ID,
+        collections,
+        removeFromCollectionIds: [],
+      } as never,
+    });
+  const writtenRows = () => {
+    const [, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as unknown[];
+    const json = values.find((v) => typeof v === 'string' && v.includes('"collectionId"'));
+    return JSON.parse(json as string) as { collectionId: number; tagId?: number | null }[];
+  };
+
+  beforeEach(() => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      collectionRow({ disableTagRequired: true }),
+      { ...collectionRow({ disableTagRequired: true }), id: SECOND_COLLECTION_ID, tags: [] },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue(
+      [COLLECTION_ID, SECOND_COLLECTION_ID].map((id) => ({
+        id,
+        read: 'Public',
+        write: 'Public',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      }))
+    );
+  });
+
+  it('keeps the stored system tag, and saves the rest of the request', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: SYSTEM_TAG_2, addedById: AUTHOR_ID, note: null },
+    ]);
+    await saveTo(AUTHOR_ID, [
+      { collectionId: COLLECTION_ID, tagId: SYSTEM_TAG },
+      { collectionId: SECOND_COLLECTION_ID },
+    ]);
+    const rows = writtenRows();
+    expect(rows.find((r) => r.collectionId === COLLECTION_ID)?.tagId).toBe(SYSTEM_TAG_2);
+    expect(rows.some((r) => r.collectionId === SECOND_COLLECTION_ID)).toBe(true);
+  });
+
+  it('refuses it for an entry holding a category tag', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: TAG_A, addedById: AUTHOR_ID, note: null },
+    ]);
+    await expect(
+      saveTo(AUTHOR_ID, [{ collectionId: COLLECTION_ID, tagId: SYSTEM_TAG }])
+    ).rejects.toMatchObject({
+      message: 'Provided tag is not part of this collection',
+    });
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('the existing entry, read right after a write', () => {
+  // The replica still has the entry with its system tag; the primary has it removed.
+  beforeEach(() => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: SYSTEM_TAG, addedById: AUTHOR_ID, note: null },
+    ]);
+    mockDbWrite.collectionItem.findMany.mockResolvedValue([]);
+  });
+
+  it('is read from the primary while the entry is flagged as just written', async () => {
+    redisMock.redis.get.mockImplementation((async (key: string) =>
+      String(key).includes(`collectionItem:${COLLECTION_ID}:imageId:${IMAGE_ID}`)
+        ? '1'
+        : null) as never);
+    await expect(resave(AUTHOR_ID, SYSTEM_TAG)).rejects.toMatchObject({
+      message: 'Provided tag is not part of this collection',
+    });
+    expect(mockDbWrite.collectionItem.findMany).toHaveBeenCalled();
+  });
+
+  it('is read from the replica otherwise (control)', async () => {
+    redisMock.redis.get.mockResolvedValue(null as never);
+    await resave(AUTHOR_ID, SYSTEM_TAG);
+    expect(mockDbWrite.collectionItem.findMany).not.toHaveBeenCalled();
+    expect(writtenTag()).toBe(SYSTEM_TAG);
   });
 });

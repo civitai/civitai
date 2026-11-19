@@ -34,7 +34,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
-import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  collectionItemLagId,
+  getDbWithoutLag,
+  kyselyMatching,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import {
@@ -1137,7 +1142,15 @@ export const saveItemInCollections = async ({
   upsertCollectionItems = upsertCollectionItems.filter((c) => canWrite(c.collectionId));
   const writableCollections = collections.filter((c) => canWrite(c.id));
 
-  const existingItems = await dbRead.collectionItem.findMany({
+  // An entry this item just gained, lost or had its tag changed reads from the primary, so a stale
+  // replica row cannot unlock a tag the entry no longer holds.
+  const lagDbs = await Promise.all(
+    touchedCollectionIds.map((id) =>
+      getDbWithoutLag('collectionItem', collectionItemLagId(id, itemKey, input[itemKey]))
+    )
+  );
+  const existingItemsDb = lagDbs.includes(dbWrite) ? dbWrite : dbRead;
+  const existingItems = await existingItemsDb.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
     select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
   });
@@ -1242,13 +1255,13 @@ export const saveItemInCollections = async ({
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
-        // A system tag (filterableOnly) is set by the platform, never chosen for a new entry. A
-        // re-save may send this collection's entry its own current tag back, as the pickers offer it.
-        if (
-          tagId &&
-          !inputTags.some((t) => t.tag.id === tagId) &&
-          existingItemsByCollection.get(collectionId)?.tagId !== tagId
-        ) {
+        // A system tag (filterableOnly) is set by the platform, never chosen. The pickers offer an
+        // entry its current system tag back, so one is let through only for an entry in this
+        // collection already holding a system tag, which the write below keeps (`keepsTag`).
+        const storedTagId = existingItemsByCollection.get(collectionId)?.tagId;
+        const holdsSystemTag =
+          storedTagId != null && !inputTags.some((t) => t.tag.id === storedTagId);
+        if (tagId && !inputTags.some((t) => t.tag.id === tagId) && !holdsSystemTag) {
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
@@ -1415,6 +1428,11 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  await Promise.all(
+    touchedCollectionIds.map((id) =>
+      preventReplicationLag('collectionItem', collectionItemLagId(id, itemKey, input[itemKey]))
+    )
+  );
   if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {

@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { collectionItemLagId, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { judgeReviewCommentSql } from '~/server/games/daily-challenge/challenge-helpers';
 import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-store';
@@ -108,6 +109,13 @@ export async function rejudgeEntries({
       WHERE id = ${challengeId}
     `,
   ]);
+  // A re-save right after this reads these entries from the primary, not a replica still holding
+  // the cleared tag.
+  await Promise.all(
+    imageIds.map((imageId) =>
+      preventReplicationLag('collectionItem', collectionItemLagId(collectionId, 'imageId', imageId))
+    )
+  );
   await bustContestCollectionItemsCache(imageIds);
   return { entries: imageIds.length, comments: commentIds.length };
 }
