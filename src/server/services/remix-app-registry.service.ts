@@ -24,7 +24,6 @@ import {
   userRemixSlugPrefix,
   remixManifestSchema,
   type RemixAppInput,
-  type RemixAppSpec,
   type RemixManifest,
   type RemixSlotId,
   type RemixStoredSpec,
@@ -155,7 +154,10 @@ function register(
 }
 
 /** A stored row as a registered app, or `null` (logged) when it no longer validates. */
-export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
+export function registerRow(
+  row: RemixAppRow,
+  minorThemed: ReadonlySet<number> = new Set()
+): RegisteredRemixApp | null {
   const parsed = remixManifestSchema.safeParse(row.manifest);
   if (!parsed.success || !row.blockId.startsWith(REMIX_BLOCK_ID_PREFIX)) {
     logToAxiom({
@@ -192,6 +194,11 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       blockId: row.blockId,
       payload: { issues: engineIssues },
     });
+  // A minor-themed mark on any of the author's rows bars the mature engine when a run starts.
+  const spec =
+    manifest.author && minorThemed.has(manifest.author.userId) && 'source' in manifest.remix
+      ? { ...manifest.remix, engine: { safe: manifest.remix.engine.safe } }
+      : manifest.remix;
   return register({
     slug,
     name: manifest.name,
@@ -199,7 +206,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
     target: manifest.targets[0].slotId,
     enabled: row.status === REMIX_STATUS.enabled,
     order: row.featuredOrder ?? Number.MAX_SAFE_INTEGER,
-    spec: manifest.remix,
+    spec,
     version: runVersionOf(manifest),
     ...(manifest.author ? { author: manifest.author, review: manifest.review } : {}),
   });
@@ -242,10 +249,23 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
           { ttl: REGISTRY_TTL }
         );
   if (!rows.length) return seedRegistry();
+  const marked = minorThemedAuthors(rows);
   return rows
-    .map(registerRow)
+    .map((row) => registerRow(row, marked))
     .filter((entry): entry is RegisteredRemixApp => entry !== null)
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug));
+}
+
+const USER_SLUG_AUTHOR = /^u([1-9][0-9]*)-/;
+
+/** Authors with a minor-themed mark on any row, one that no longer validates included. */
+function minorThemedAuthors(rows: RemixAppRow[]) {
+  const authors = new Set<number>();
+  for (const row of rows) {
+    const author = USER_SLUG_AUTHOR.exec(row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length));
+    if (author && hasMinorThemedMark(row.manifest)) authors.add(Number(author[1]));
+  }
+  return authors;
 }
 
 /**
@@ -641,36 +661,59 @@ export async function reviewUserRemixApp({
     ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
   });
   if (reason === 'minor-themed' && stored.author)
-    await revokeAuthorMature(stored.author.userId, moderatorId, row.id);
+    await holdAuthorMatureApps(stored.author.userId, moderatorId, row.id);
   return { slug, review: decision, version: runVersion };
 }
 
-/** A minor-themed mark takes the mature engine off every app its author already holds. */
-async function revokeAuthorMature(authorId: number, moderatorId: number, reviewedId: string) {
+const SWEEP_ATTEMPTS = 3;
+
+/**
+ * A minor-themed mark sends every other app its author holds on the mature engine back to review,
+ * out of menus and on the safe engine only. A row written mid-sweep is re-read and swept again.
+ */
+async function holdAuthorMatureApps(authorId: number, moderatorId: number, reviewedId: string) {
   // primary: the approvals to revoke are the ones stored now.
   const rows = await dbWrite.appBlock.findMany({
     where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
     select: remixAppRowSelect,
   });
   // The reviewed row was just written without the mature engine; its stale read here would conflict.
-  for (const row of rows.filter((r) => r.id !== reviewedId)) {
-    const parsed = remixManifestSchema.safeParse(row.manifest);
-    if (!parsed.success || !('source' in parsed.data.remix) || !parsed.data.remix.engine.mature)
-      continue;
-    const spec: RemixUserSpec = {
-      ...parsed.data.remix,
-      engine: { safe: parsed.data.remix.engine.safe },
-    };
-    const runVersion = nextRunVersion(row, parsed, spec);
-    const manifest = withReviewLog(
-      { ...parsed.data, version: `${runVersion}.0.0`, remix: spec },
-      { by: moderatorId, action: 'mature-revoked' }
-    );
-    await writeUserRemixApp(row, {
-      manifest,
-      version: manifest.version,
-      contentRating: contentRatingOf(spec),
-    });
+  for (const first of rows.filter((r) => r.id !== reviewedId)) {
+    let row: RemixAppRow | null = first;
+    for (let attempt = 1; row; attempt++) {
+      const parsed = remixManifestSchema.safeParse(row.manifest);
+      if (!parsed.success || !('source' in parsed.data.remix) || !parsed.data.remix.engine.mature)
+        break;
+      const spec: RemixUserSpec = {
+        ...parsed.data.remix,
+        engine: { safe: parsed.data.remix.engine.safe },
+      };
+      const runVersion = nextRunVersion(row, parsed, spec);
+      const manifest = withReviewLog(
+        { ...parsed.data, version: `${runVersion}.0.0`, remix: spec, review: 'submitted' },
+        { by: moderatorId, action: 'mature-revoked' }
+      );
+      try {
+        await writeUserRemixApp(row, {
+          manifest,
+          version: manifest.version,
+          contentRating: contentRatingOf(spec),
+          status: REMIX_STATUS.disabled,
+        });
+        break;
+      } catch (error) {
+        if (
+          attempt === SWEEP_ATTEMPTS ||
+          !(error instanceof TRPCError && error.code === 'CONFLICT')
+        )
+          throw error;
+        // primary: the write that beat this one.
+        row = await dbWrite.appBlock.findUnique({
+          where: { id: first.id },
+          select: remixAppRowSelect,
+        });
+      }
+    }
   }
 }
 

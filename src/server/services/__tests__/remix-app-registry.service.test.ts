@@ -50,6 +50,8 @@ import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import { REMIX_REVIEW_LOG_MAX } from '~/shared/remix-apps/row.schema';
+import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 const pixelArt = SEED_REMIX_APPS.find((app) => app.slug === 'pixel-art')!;
 const viewer = { features: { remixAppsUserCode: false } };
@@ -804,6 +806,9 @@ describe('user apps: submit, review and enable', () => {
     const revoke = lastWrite();
     expect(revoke.where).toEqual({ id: sibling.id, manifest: { equals: sibling.manifest } });
     expect(revoke.data.contentRating).toBe('pg');
+    // Out of menus and back to review, not deleted.
+    expect(revoke.data.status).toBe('remix_disabled');
+    expect(revoke.data.manifest.review).toBe('submitted');
     expect((revoke.data.manifest.remix as { engine: object }).engine).toEqual({
       safe: DEFAULT_ENGINE.safe,
     });
@@ -819,6 +824,87 @@ describe('user apps: submit, review and enable', () => {
       setRemixAppEnabled({ slug: 'u7-other', enabled: true, moderatorId: MOD })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses the mature engine at run time on any app of a marked author', async () => {
+    const sibling = {
+      ...userRow('approved', 'other', 'remix'),
+      id: 'ab_rx_u7_other_____________',
+      blockId: 'remix-u7-other',
+    };
+    (sibling.manifest as { remix: { engine: object } }).remix.engine = DEFAULT_ENGINE;
+    const markedRow = userRow('rejected', SOURCE, 'remix_disabled', marked);
+    const matureSource = {
+      id: 1,
+      url: 'abc-123',
+      type: MediaType.image,
+      nsfwLevel: 8,
+      ingestion: ImageIngestionStatus.Scanned,
+    };
+    const runOn = async (rows: RemixAppRow[]) => {
+      redis.cache.clear();
+      dbMock.dbWrite.appBlock.findMany.mockResolvedValue(rows as never);
+      const entry = await getRegisteredRemixApp(
+        'u7-other',
+        { features: { remixAppsUserCode: true } },
+        { allowDisabled: false }
+      );
+      return resolveRemixAppEngine(entry.app as never, matureSource, {
+        isGreen: false,
+        showNsfw: true,
+      });
+    };
+    const refused = { refusal: 'Probe does not run on mature images.' };
+
+    // POSITIVE CONTROL: with no mark the same row reaches the mature engine.
+    expect(await runOn([sibling])).toMatchObject({ tier: 'mature' });
+    expect(await runOn([sibling, markedRow])).toEqual(refused);
+    // A marked row that no longer validates still bars it.
+    const invalid = { ...markedRow, manifest: { ...(markedRow.manifest as object), remix: 'x' } };
+    expect(await runOn([sibling, invalid])).toEqual(refused);
+  });
+
+  it('re-reads and sweeps a sibling written while the minor-themed reject runs', async () => {
+    const reviewed = userRow('submitted');
+    const sibling = {
+      ...userRow('approved', 'other', 'remix'),
+      id: 'ab_rx_u7_other_____________',
+      blockId: 'remix-u7-other',
+    };
+    (sibling.manifest as { remix: { engine: object } }).remix.engine = DEFAULT_ENGINE;
+    // A mod enabled it after the sweep read it, so the sweep's first write is conditional on a stale copy.
+    const moved = {
+      ...sibling,
+      manifest: {
+        ...(sibling.manifest as object),
+        reviewLog: [{ by: 99, at: 'x', action: 'enabled' }],
+      },
+    };
+    dbMock.dbWrite.appBlock.findUnique
+      .mockResolvedValueOnce(reviewed as never)
+      .mockResolvedValueOnce(moved as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([reviewed, sibling] as never);
+    const current = new Map([reviewed, moved].map((r) => [r.id, JSON.stringify(r.manifest)]));
+    dbMock.dbWrite.appBlock.updateMany.mockImplementation((async ({ where, data }: Written) => {
+      const { id, manifest } = where as { id: string; manifest: { equals: unknown } };
+      if (current.get(id) !== JSON.stringify(manifest.equals)) return { count: 0 };
+      current.set(id, JSON.stringify(data.manifest));
+      return { count: 1 };
+    }) as never);
+
+    await reviewUserRemixApp({
+      slug: 'u7-probe',
+      sha256: hashOf(reviewed),
+      decision: 'rejected',
+      reason: 'minor-themed',
+      moderatorId: MOD,
+    });
+
+    const held = JSON.parse(current.get(sibling.id)!);
+    expect(held.review).toBe('submitted');
+    expect(held.remix.engine).toEqual({ safe: DEFAULT_ENGINE.safe });
+    expect(lastWrite().data.status).toBe('remix_disabled');
+    expect(lastWrite().where).toEqual({ id: sibling.id, manifest: { equals: moved.manifest } });
   });
 
   it('will not delete a marked app, which would drop its mark', async () => {
