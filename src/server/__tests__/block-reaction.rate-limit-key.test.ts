@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      `reaction.toggle`, which passes no `sharedKey` and is keyed by its path.
  *   2. `blocks.router.appReactions.test.ts`: `setReactionFromApp` hands the limiter the site's
  *      own `reactionRateLimits` array and that `sharedKey`.
- *   3. `reaction.router.rate-limit.test.ts`: the site's `reaction.toggle` hands the limiter the
+ *   3. Not pinned by a test: the site's `reaction.toggle` hands the limiter the
  *      same array and NO `sharedKey`, so its key really is the path-derived one used below.
  *
  * Harness shape copied from `middleware.trpc.rate-limit-key.test.ts`: capture the handler the

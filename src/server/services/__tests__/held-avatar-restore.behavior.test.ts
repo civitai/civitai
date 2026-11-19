@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearHeldUserImages,
   dropStaleHeldImageMarkers,
@@ -19,8 +19,7 @@ const db = {
 
 const marker = (pictureId: unknown) => JSON.stringify({ heldImageCleared: { pictureId } });
 
-beforeEach(async () => {
-  await pg?.close();
+beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
@@ -33,6 +32,7 @@ beforeEach(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, image text, meta jsonb);
   `);
 });
+beforeEach(() => pg.exec('TRUNCATE "Image", "User"'));
 afterAll(() => pg.close());
 
 const user = async (id: number) =>

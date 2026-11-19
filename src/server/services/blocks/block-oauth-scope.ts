@@ -73,3 +73,9 @@ export function manifestCanMintOauthToken(
 export function isConsentRequiredError(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === 'consent_required';
 }
+
+/** The hub refused the mint (403 access_denied): a suspended app's client, for one. */
+export function isAppTokenRefusedError(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown } | null;
+  return e?.code === 'access_denied' && e.status === 403;
+}
