@@ -4,7 +4,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import type * as EnvServer from '~/env/server';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 /**
  * A DELETED source app's data, reached through another app's import, against an in-process
@@ -21,17 +21,8 @@ import type * as EnvServer from '~/env/server';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const flags = vi.hoisted(() => ({ recordCore: false }));
-vi.mock('~/env/server', async (importOriginal) => {
-  const mod = await importOriginal<typeof EnvServer>();
-  return {
-    ...mod,
-    env: new Proxy(mod.env, {
-      get: (target, prop) =>
-        prop === 'APP_RECORD_CORE_ENABLED' ? flags.recordCore : Reflect.get(target, prop),
-    }),
-  };
-});
+// The record core's switch (`APP_RECORD_CORE_ENABLED`) through the canonical env mock.
+const recordCore = (on: boolean) => setEnv({ APP_RECORD_CORE_ENABLED: on });
 
 // `server-domain.ts` reads its host map at import: civitai.red is red-capable, civitai.com is not.
 vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.green');
@@ -171,7 +162,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  flags.recordCore = false;
+  recordCore(false);
   await holder.db.exec(`TRUNCATE "app_storage_import_grants"; DELETE FROM app_blocks;`);
   await holder.db.query(
     `INSERT INTO app_blocks (id, block_id, status, manifest, updated_at) VALUES ($1, 'consumer-app', 'approved', $2, $3)`,
@@ -222,7 +213,7 @@ describe('deletedAppBlockIds: the deleted-app predicate', () => {
 
 describe('an import of a DELETED source, record core ON', () => {
   beforeEach(() => {
-    flags.recordCore = true;
+    recordCore(true);
   });
 
   it('an existing grant still reads it, read-only, as the source app', async () => {

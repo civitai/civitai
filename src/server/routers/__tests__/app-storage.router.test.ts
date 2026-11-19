@@ -6,7 +6,6 @@ import type {
 } from '~/server/services/apps/doc-store';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
-import type * as EnvServer from '~/env/server';
 
 /**
  * `appStorage.*` — a signed-in user's own document-store data across apps — end to end below the
@@ -27,19 +26,7 @@ const h = vi.hoisted(() => ({
   store: undefined as unknown as DocStore,
   viewerData: undefined as unknown as DocStoreViewerData,
   appBlocksEnabled: true,
-  recordCore: false,
 }));
-// The record core's switch (`APP_RECORD_CORE_ENABLED`), per case.
-vi.mock('~/env/server', async (importOriginal) => {
-  const mod = await importOriginal<typeof EnvServer>();
-  return {
-    ...mod,
-    env: new Proxy(mod.env, {
-      get: (target, prop) =>
-        prop === 'APP_RECORD_CORE_ENABLED' ? h.recordCore : Reflect.get(target, prop),
-    }),
-  };
-});
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));
 vi.mock('~/server/services/apps/doc-store-viewer-data.instance', () => ({
   getDocStoreViewerData: () => h.viewerData,
@@ -63,6 +50,7 @@ vi.mock('~/server/utils/server-domain', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { appStorageRouter } from '~/server/routers/app-storage.router';
 import {
   createDocStore,
@@ -163,7 +151,8 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
 
   beforeEach(async () => {
     h.appBlocksEnabled = true;
-    h.recordCore = false;
+    // The record core's switch (`APP_RECORD_CORE_ENABLED`), through the canonical env mock.
+    setEnv({ APP_RECORD_CORE_ENABLED: false });
     h.store = createDocStore({ db: harness.db, limits: LIMITS });
     h.viewerData = createDocStoreViewerData({ db: harness.db, limits: LIMITS });
     await harness.raw(
@@ -634,7 +623,7 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
     const GONE_SKIPPED = { appBlockId: APP_GONE, reason: 'app_unknown', docs: 1 };
 
     beforeEach(async () => {
-      h.recordCore = true;
+      setEnv({ APP_RECORD_CORE_ENABLED: true });
       dbMock.dbRead.appBlock.findUnique.mockImplementation((async ({ where }: any) =>
         SLUGS[where.id]
           ? { blockId: SLUGS[where.id], manifest: MANIFESTS[where.id] }
@@ -646,7 +635,8 @@ function defineAppStorageSuite(makeHarness: () => Promise<Harness>) {
     });
 
     it('is not a route while the record core is off', async () => {
-      h.recordCore = false;
+      // The record core's switch (`APP_RECORD_CORE_ENABLED`), through the canonical env mock.
+      setEnv({ APP_RECORD_CORE_ENABLED: false });
       await expect(caller(user(USER)).exportMine({})).rejects.toMatchObject({
         code: 'NOT_FOUND',
       });
