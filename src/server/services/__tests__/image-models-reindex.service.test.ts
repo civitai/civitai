@@ -107,6 +107,7 @@ describe('queueDocumentsForImageMinorChanges', () => {
 
     await queueDocumentsForImageMinorChanges({ levelImageIds: [8, 9] });
 
+    expect(query(' minor')?.text).toMatch(/WHERE id = ANY\(\?::int\[\]\) AND minor\s*$/);
     expect(query(' minor')?.values[0]).toEqual([8, 9]);
     expect(query('"ModelVersion"')?.values[0]).toEqual([8]);
     expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([6000]);

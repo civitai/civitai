@@ -29,7 +29,7 @@ describe("a model's search document images, by browsing tag", () => {
     ).toEqual([1, 2, 3]);
   });
 
-  it('hoists a tagged cover', () => {
+  it('hoists a cover above PG13 carrying one of those tags', () => {
     const [tagId] = childBrowsingTagIds;
     expect(pick([image(1, NsfwLevel.PG), image(2, NsfwLevel.R, [tagId])], 2)).toEqual([2, 1]);
   });
