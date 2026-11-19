@@ -12,6 +12,7 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readPreviewErrors } from '~/server/services/app-assistant/preview-errors.service';
 import { listMyScopeInvocations } from '~/server/services/blocks/user-app-surface.service';
 import { appBlockTag, projectAppWorkflow } from '~/server/services/blocks/workflow.service';
+import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 
 /**
@@ -71,14 +72,20 @@ export function workflowError(workflow: Workflow, status: GenerationStatus): str
 /** One orchestrator workflow as an activity item. */
 export function generationOf(workflow: Workflow): GenerationActivity {
   const status = GENERATION_STATUS[workflow.status] ?? 'pending';
-  const projected = projectAppWorkflow(workflow);
+  // The count is of every available output, restricted ones included, so the
+  // ceiling does not move it; the fail-closed one (PG) is passed.
+  const projected = projectAppWorkflow(workflow, {
+    ...blockOutputCeilingFromClaims({}),
+    serving: false,
+    mint: null,
+  });
   return {
     kind: 'generation',
     at: workflow.createdAt,
     workflowId: workflow.id ?? '',
     status,
     completedAt: workflow.completedAt ?? null,
-    imageCount: projected.images.length,
+    imageCount: projected.outputs?.length ?? 0,
     cost: projected.cost,
     error: workflowError(workflow, status),
   };

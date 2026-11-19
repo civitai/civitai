@@ -45,7 +45,9 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     (bounded) for that build to pass: `blocks.getReviewStatus` reaching
  *     `preview-deploying` or `preview-live`, which the platform sets only once
  *     the whole build, manifest check included, succeeded
- *     (preview-review-build.ts). A `preview-failed` fails the test with the
+ *     (preview-review-build.ts). A PR preview is build-only (APPS_REVIEW_BUILD_ONLY): it
+ *     records a passed build as `preview-failed` with `buildOnly: true` and deploys
+ *     nothing, which also passes. Any other `preview-failed` fails the test with the
  *     failed step. The withdraw below ends the preview.
  *   - The automatic build is charged to the submitter's daily automatic-build
  *     budget. The test reads it (`blocks.getMyAutoReviewBuildBudget`) BEFORE

@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import {
   Box,
   Button,
@@ -64,6 +65,7 @@ type ImageDetailStats = Pick<
   | 'heartCountAllTime'
   | 'laughCountAllTime'
   | 'cryCountAllTime'
+  | 'tippedAmountCountAllTime'
   | 'statsUnknown'
 >;
 
@@ -279,6 +281,7 @@ export function ImageDetailByProps({
                           reactions={reactions}
                           stats={stats}
                           userId={user?.id}
+                          poi={!!(data?.poi || image.poi)}
                         />
                         {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
                       </Stack>
@@ -439,24 +442,16 @@ function ImageDetailByPropsReactions({
   reactions,
   stats,
   userId,
+  poi,
 }: {
   imageId: number;
   reactions: { userId: number; reaction: any }[];
   stats: ImageDetailStats | null;
   userId?: number;
+  poi: boolean;
 }) {
   return (
-    <Metrics
-      entityType="Image"
-      entityId={imageId}
-      initial={{
-        likeCount: stats?.likeCountAllTime ?? 0,
-        dislikeCount: stats?.dislikeCountAllTime ?? 0,
-        heartCount: stats?.heartCountAllTime ?? 0,
-        laughCount: stats?.laughCountAllTime ?? 0,
-        cryCount: stats?.cryCountAllTime ?? 0,
-      }}
-    >
+    <Metrics entityType="Image" entityId={imageId} initial={imageStatsToReactionMetrics(stats)}>
       {(metrics) => (
         <Reactions
           entityId={imageId}
@@ -465,6 +460,7 @@ function ImageDetailByPropsReactions({
           metrics={metrics}
           metricsUnknown={stats?.statsUnknown}
           targetUserId={userId}
+          disableBuzzTip={poi}
         />
       )}
     </Metrics>

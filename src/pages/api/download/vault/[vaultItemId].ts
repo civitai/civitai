@@ -14,7 +14,7 @@ import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
-import { isModelTakenDown } from '~/server/utils/model-version-gates';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import {
@@ -23,7 +23,12 @@ import {
 } from '~/server/utils/download-credential-gate';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getVaultState } from '~/utils/vault';
-import { FAILED_SCAN_DOWNLOAD_MESSAGE, hasFailedScan } from '~/server/utils/failed-scan';
+import {
+  FAILED_SCAN_DOWNLOAD_MESSAGE,
+  hasFailedScan,
+  hasSettledScanSnapshot,
+  refuseUnjudgedVaultFile,
+} from '~/server/utils/failed-scan';
 
 const schema = z.object({
   vaultItemId: z.preprocess((val) => Number(val), z.number()),
@@ -130,6 +135,18 @@ export default AuthedEndpoint(
       return onError(503, 'This model does not allow downloads.');
     }
 
+    // Unlike a deleted version, a taken-down model's files, images and details are moderators-only,
+    // vault included. A version removed from the site is judged by its model, which may remain.
+    if (!user.isModerator) {
+      const model =
+        modelVersion?.model ??
+        (await dbRead.model.findUnique({
+          where: { id: vaultItem.modelId },
+          select: { mode: true },
+        }));
+      if (model && isModelWithheld(model)) return onError(404, 'File not found');
+    }
+
     const fileName = `${vaultItem.modelName}-${vaultItem.versionName}`;
 
     switch (input.type) {
@@ -137,9 +154,6 @@ export default AuthedEndpoint(
         const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
         const file = input.fileId ? files.find((f) => f.id === input.fileId) : files[0];
         if (!file || !file.url) return onError(404, 'File not found');
-        // Unlike a deleted version, a taken-down model's files are moderators-only, vault included.
-        if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
-          return onError(404, 'File not found');
         if (!user.isModerator) {
           const select = { type: true, pickleScanResult: true, virusScanResult: true } as const;
           // A deleted row's bytes may still be other live rows': judge them by every one of those.
@@ -147,7 +161,9 @@ export default AuthedEndpoint(
           const rows = own
             ? [own]
             : await dbRead.modelFile.findMany({ where: { url: file.url }, select });
-          if (rows.some(hasFailedScan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          // With its own row gone, the snapshot is judged alongside any live row holding the bytes.
+          if ([...rows, ...(own ? [] : [file])].some(hasFailedScan))
+            return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
           // Training data is never a vault's file; the site's own rules decide who gets it. With no row
           // left, the name it was stored under (`getFileDisplayName`) still says what it was.
           if (
@@ -156,6 +172,8 @@ export default AuthedEndpoint(
               : file.displayName === 'Training Data'
           )
             return onError(404, 'File not found');
+          if (!rows.length && !hasSettledScanSnapshot(file) && refuseUnjudgedVaultFile(file))
+            return onError(403, 'This file is not available for download');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',
@@ -188,5 +206,6 @@ export default AuthedEndpoint(
       }
     }
   },
-  ['GET']
+  ['GET'],
+  { scope: 'selfGated' }
 );

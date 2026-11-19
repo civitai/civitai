@@ -62,10 +62,11 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
-      id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -187,8 +188,14 @@ async function errorOf(user: User, id: number) {
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['blocked for a policy reason', { image: { '"blockedFor"': `'tos'` } }],
   ['rated Blocked', { image: { '"nsfwLevel"': '32' } }],
+  ['unrated', { image: { '"nsfwLevel"': '0' } }],
   ['flagged acceptableMinor', { image: { '"acceptableMinor"': 'true' } }],
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
+  // Another review state, not one of the held ones below: the owner keeps it.
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],
   ['in a Private post', { post: { availability: `'Private'` } }],
   ['with no post', { post: null }],
@@ -212,6 +219,15 @@ describe('image.getDetail visibility', () => {
     expect(await sees(SELF)).toBe(true);
     expect(await sees(MOD)).toBe(true);
   });
+
+  it.each(['csam', 'minor'])(
+    'an image held for %s review is refused to its owner; a moderator still gets it',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await sees(SELF)).toBe(false);
+      expect(await sees(MOD)).toBe(true);
+    }
+  );
 
   it('a stranger the owner blocked gets NOT_FOUND; a moderator is not block-checked', async () => {
     await seed();
@@ -275,6 +291,15 @@ describe('tag.getVotableTags on an image', () => {
     async (_, state) => {
       await seed(state);
       expect(await seesTags(SELF)).toBe(true);
+      expect(await seesTags(MOD)).toBe(true);
+    }
+  );
+
+  it.each(['csam', 'minor'])(
+    'an image held for %s review returns no tags to its owner; a moderator still gets them',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await seesTags(SELF)).toBe(false);
       expect(await seesTags(MOD)).toBe(true);
     }
   );

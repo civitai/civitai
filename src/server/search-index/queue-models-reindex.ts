@@ -1,7 +1,7 @@
 import type * as z from 'zod';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { COLLECTIONS_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { modelsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { queueModelsReindexSchema } from '~/server/search-index/queue-models-reindex.schema';
 
@@ -9,10 +9,17 @@ export { queueModelsReindexSchema };
 
 const QUEUE_ACTION = SearchIndexUpdateQueueAction.Update;
 
-async function readQueuedIds() {
+type ReindexTarget = {
+  indexName: string;
+  index: {
+    queueUpdate: (items: { id: number; action: typeof QUEUE_ACTION }[]) => Promise<unknown>;
+  };
+};
+
+async function readQueuedIds(indexName: string) {
   // readOnly: does NOT append a new bucket or retire the current ones, so calling this cannot
   // consume work the 15-minute sync is about to pick up.
-  const queue = await SearchIndexUpdate.getQueue(MODELS_SEARCH_INDEX, QUEUE_ACTION, true);
+  const queue = await SearchIndexUpdate.getQueue(indexName, QUEUE_ACTION, true);
   return queue.content;
 }
 
@@ -31,34 +38,60 @@ async function readQueuedIds() {
  */
 export async function queueModelsReindex(
   modelIds: number[],
+  options: z.infer<typeof queueModelsReindexSchema>
+) {
+  const { count, ...result } = await queueReindex(
+    { indexName: MODELS_SEARCH_INDEX, index: modelsSearchIndex },
+    modelIds,
+    options
+  );
+  return { modelCount: count, ...result };
+}
+
+/** `queueModelsReindex` for the collections index. */
+export async function queueCollectionsReindex(
+  collectionIds: number[],
+  options: z.infer<typeof queueModelsReindexSchema>
+) {
+  const { count, ...result } = await queueReindex(
+    { indexName: COLLECTIONS_SEARCH_INDEX, index: collectionsSearchIndex },
+    collectionIds,
+    options
+  );
+  return { collectionCount: count, ...result };
+}
+
+async function queueReindex(
+  { indexName, index }: ReindexTarget,
+  ids: number[],
   { dryRun, chunkSize }: z.infer<typeof queueModelsReindexSchema>
 ) {
-  const before = await readQueuedIds();
+  const before = await readQueuedIds(indexName);
   // Set, not Array.includes: this queue reaches ~211K ids on a large fan-out, and scanning it once
-  // per model is enough to wedge the handler.
+  // per id is enough to wedge the handler.
   const beforeSet = new Set(before);
 
   if (dryRun) {
     return {
       dryRun: true,
-      modelCount: modelIds.length,
+      count: ids.length,
       queueDepthBefore: before.length,
-      alreadyQueued: modelIds.filter((id) => beforeSet.has(id)).length,
+      alreadyQueued: ids.filter((id) => beforeSet.has(id)).length,
     };
   }
 
-  for (let i = 0; i < modelIds.length; i += chunkSize) {
-    const chunk = modelIds.slice(i, i + chunkSize);
-    await modelsSearchIndex.queueUpdate(chunk.map((id) => ({ id, action: QUEUE_ACTION })));
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    await index.queueUpdate(chunk.map((id) => ({ id, action: QUEUE_ACTION })));
   }
 
-  const after = await readQueuedIds();
+  const after = await readQueuedIds(indexName);
   const afterSet = new Set(after);
   return {
     dryRun: false,
-    modelCount: modelIds.length,
+    count: ids.length,
     queueDepthBefore: before.length,
     queueDepthAfter: after.length,
-    landed: modelIds.filter((id) => afterSet.has(id)).length,
+    landed: ids.filter((id) => afterSet.has(id)).length,
   };
 }

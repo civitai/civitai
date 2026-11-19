@@ -6,6 +6,10 @@ export const eventSchema = z.object({
 });
 export type EventInput = z.infer<typeof eventSchema>;
 
+// A whole, positive number of Buzz: the Buzz wrapper refuses zero and negatives only once the
+// request reaches it, and lets a fraction through.
+export const donateToEventSchema = eventSchema.extend({ amount: z.number().int().positive() });
+
 export type TeamScoreHistoryInput = z.infer<typeof teamScoreHistorySchema>;
 export const teamScoreHistorySchema = eventSchema.extend({
   window: z.enum(['hour', 'day', 'week', 'month', 'year']).optional(),

@@ -37,7 +37,7 @@ const ENTRY_MTIME = new Date(Date.UTC(2020, 5, 15, 12));
 const ENTRY_MODE = 0o100644;
 
 const logRepack = (message: string, fields: Record<string, unknown>, type = 'info') =>
-  logToAxiom({ name: 'creator-service-repack', type, message, ...fields }).catch(() => null);
+  logToAxiom({ name: 'creator-service-repack', type, message, ...fields });
 
 type ClaimedZip = { id: number; dealId: number; round: number; s3Key: string; size: number };
 

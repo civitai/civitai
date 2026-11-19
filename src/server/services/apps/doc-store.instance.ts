@@ -31,7 +31,7 @@ export function getDocStore(): DocStore {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

@@ -19,7 +19,7 @@ export function GiftEndpoint(
   handler: (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => Promise<unknown>,
   allowedMethods: string[]
 ) {
-  return AuthedEndpoint(async (req, res, user) => {
+  const gated = async (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => {
     const { tokenScope } = getRequestCredential(req);
     if (
       tokenScope !== TokenScope.Full &&
@@ -37,7 +37,8 @@ export function GiftEndpoint(
     } catch (error) {
       return handleEndpointError(res, error);
     }
-  }, allowedMethods);
+  };
+  return AuthedEndpoint(gated, allowedMethods, { scope: { scope: TokenScope.ModelsWrite } });
 }
 
 /** The paging query of the claimer lists. */

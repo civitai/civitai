@@ -74,6 +74,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL REFERENCES "User"(id),
       "updatedAt" timestamp(3),
       "pHash" bigint,

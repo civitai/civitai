@@ -6,6 +6,7 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import {
   CREATE_APP,
+  WAKE_APP,
   GENERATE_APP_COVER,
   REPORT_READY,
   SET_FEEDBACK_STATUS,
@@ -172,7 +173,7 @@ export function createAssistantGate({
     },
     restoringChoices: (tools, chatId) => {
       const out = { ...tools };
-      for (const name of [CREATE_APP, USE_OPEN_APP]) {
+      for (const name of [CREATE_APP, USE_OPEN_APP, WAKE_APP]) {
         const tool = tools[name];
         if (!tool) continue;
         out[name] = {

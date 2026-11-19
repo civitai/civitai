@@ -50,7 +50,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
 
 import handler from '~/pages/api/mod/user/legal-hold';
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 const CLEAR = {
   report: false,
   'image-review': false,

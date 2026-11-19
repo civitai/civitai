@@ -33,10 +33,7 @@ export const checkLocalNotificationDb = () => {
 
 export const checkLocalMeili = () => {
   const localHosts = ['http://localhost:7700', 'http://127.0.0.1:7700', 'http://meilisearch:7700'];
-  if (
-    !localHosts.includes(env.METRICS_SEARCH_HOST ?? '') ||
-    !localHosts.includes(env.SEARCH_HOST ?? '')
-  ) {
+  if (!localHosts.includes(env.SEARCH_HOST ?? '')) {
     console.error('ERROR: not running with local meilisearch server.');
     process.exit(1);
   }

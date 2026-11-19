@@ -128,6 +128,9 @@ function logged() {
   return logToAxiom.mock.calls.map((c) => c[0] as Record<string, unknown>);
 }
 
+const missedOf = (p: Record<string, unknown>) =>
+  (p.payload as { indexesMissed?: unknown } | undefined)?.indexesMissed;
+
 function payloadFor(key: string) {
   return logged().find((p) => p.key === key);
 }
@@ -520,11 +523,13 @@ describe('search-index-cleanup: an index the run never reached is reported', () 
 
     await searchIndexCleanupJob.run({}).result;
 
-    const missedLine = logged().find((p) => p.indexesMissed !== undefined);
+    const missedLine = logged().find((p) => missedOf(p) !== undefined);
     expect(missedLine?.type).toBe('error');
-    expect(missedLine?.indexesConfigured).toBe(CLEANUP_INDEXES.length);
-    expect(missedLine?.indexesAttempted).toBe(2);
-    expect(missedLine?.indexesMissed).toEqual(rest.map((c) => c.key));
+    expect(missedLine?.payload).toEqual({
+      indexesConfigured: CLEANUP_INDEXES.length,
+      indexesAttempted: 2,
+      indexesMissed: rest.map((c) => c.key),
+    });
     expect(missedLine?.message).toBe(
       `run ENDED BEFORE ${rest.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
         `were attempted: ${rest.map((c) => c.key).join(', ')}`
@@ -540,7 +545,10 @@ describe('search-index-cleanup: an index the run never reached is reported', () 
 
     await searchIndexCleanupJob.run({}).result;
 
-    expect(logged().find((p) => p.indexesMissed !== undefined)).toBeUndefined();
+    // Matched on the message, not the payload, so a log that fires in any shape fails this.
+    expect(
+      logged().find((p) => String(p.message ?? '').startsWith('run ENDED BEFORE'))
+    ).toBeUndefined();
   });
 });
 
@@ -760,37 +768,5 @@ describe('search-index-cleanup: a resumed run is judged on the PASS, not on the 
 
     expect(payloadFor('tools')?.message).toBe('tools: scanned 55, stale 4, deleted 2');
     expect(payloadFor('tools')?.cursorDiscardReason).toBe('missing');
-  });
-});
-
-describe('search-index-cleanup: a failing log sink cannot leak an unhandled rejection', () => {
-  it('handles a rejected logToAxiom instead of passing it through', async () => {
-    // `.catch()` with NO argument is `then(undefined, undefined)` — a
-    // pass-through that leaves the rejection unhandled. Only `.catch(() => undefined)`
-    // actually swallows it. Nothing awaits these calls, so the observable is
-    // the process-level `unhandledRejection` event.
-    const seen: unknown[] = [];
-    const marker = new Error('axiom-down-marker');
-    const onUnhandled = (reason: unknown) => {
-      if (reason === marker) seen.push(reason);
-    };
-    process.on('unhandledRejection', onUnhandled);
-    try {
-      logToAxiom.mockImplementation(() => Promise.reject(marker));
-      cleanupAllIndexes.mockResolvedValue([
-        stats({ key: 'tools', idsScanned: 5, staleFound: 2, deleted: 1, totalInIndex: 5 }),
-      ]);
-
-      await searchIndexCleanupJob.run({}).result;
-      // Let the microtask queue drain and give Node a macrotask turn, which is
-      // when it decides a rejection went unhandled.
-      await new Promise((r) => setTimeout(r, 20));
-
-      expect(seen).toEqual([]);
-    } finally {
-      process.off('unhandledRejection', onUnhandled);
-      // Restore the canonical default for the rest of the file.
-      logToAxiom.mockImplementation(() => Promise.resolve(undefined));
-    }
   });
 });

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
 
@@ -74,6 +75,12 @@ export type NotificationProcessor = {
    * meant as "off" would subscribe the user instead.
    */
   optIn?: boolean;
+  /** Type sent by another app (today `apps/knights`, `/api/jobs/notify`) through the notifications client's bulk path, which does no settings lookup: that sender applies the settings rows itself, with the polarity `optIn` gives. The processor has no `prepareQuery`, and nothing here may call `createNotification` for it. */
+  externalProducer?: boolean;
+  /** Groups this type under its own heading in notification settings. The notification itself keeps `category`. */
+  section?: string;
+  /** Lists this type in notification settings only for viewers who have this feature. */
+  feature?: FeatureFlagKey;
   showCategory?: boolean;
   /** Push on for a user who never chose; see DEFAULT_PUSH_TYPES. */
   defaultPush?: boolean;

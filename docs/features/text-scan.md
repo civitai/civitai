@@ -53,6 +53,10 @@ fallback: only an active verdict reaches the song, which waits on it before goin
 (`audio-scan/apply-song-scan.ts`). The `nsfw` verdict is recorded and never rates or blocks the song.
 Off or in shadow, the lyrics get no verdict, and the song ends in Error, hidden, once the image scan's
 capped retry is spent.
+ServiceOffering's (a Creator Services offering's title and description → `nsfw`) feeds the
+offering's rating, which is the highest of the seller's pick, this verdict and its cover image's
+level. The offering is shown once its content checks complete. Off or in shadow, XGuard runs, as for
+Crucible. It has no Clavata counterpart.
 
 ChatMessage, CommentV3, UserProfile, Post, Model, Article and TrackLyrics also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;

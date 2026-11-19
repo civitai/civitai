@@ -785,9 +785,7 @@ function tryLog(durationMs: number, label: string, threshold: number, logPerMin:
       droppedSinceLastLog: dropped,
     },
     'eventloop-longtask'
-  ).catch(() => {
-    // Logging must never crash or block the detector.
-  });
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -642,8 +642,7 @@ async function fetchTopMedia(
         from,
         to,
         ceiling: TOP_MEDIA_READ_CEILING,
-      })
-      .catch(() => undefined);
+      });
   }
   return enrichTopImages(raw, from, to);
 }

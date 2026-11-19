@@ -283,7 +283,10 @@ Deliberately deferred; none blocks the three pages above.
   category colouring, which normalises — decoding HTML entities and stripping combining marks — and so
   folded away the evasion being reviewed. Reverted: the trigger card now renders the stored string
   unchanged and highlights the recorded `matchedWord` by literal search (`HighlightedText.svelte`). The
-  stored `matchedRegex` is still never executed; it is attacker-influenced text.
+  stored `matchedRegex` is still never executed; it is attacker-influenced text. This is about the
+  audit trigger card. The minor and remix-source image queues and Image Lookup do highlight through `getPromptHighlightSegments`
+  (categories from `reviewHighlightCategories` in `apps/moderator/src/lib/image-review.ts`), and Image
+  Lookup shows the stored prompt beside the highlighted copy.
 - **"Allowed to publish" widened.** The main app's Prisma `not: { path, equals: true }` compiled to SQL
   that excluded rows whose `meta` (or whose `cannotPublish` key) was null; the spoke's
   `IS DISTINCT FROM 'true'` includes them. The spoke's reading is almost certainly the intended one,

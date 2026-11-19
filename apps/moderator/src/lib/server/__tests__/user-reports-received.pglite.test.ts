@@ -37,7 +37,10 @@ CREATE TABLE "Chat" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "ChatMember" ("chatId" INTEGER NOT NULL, "userId" INTEGER NOT NULL);
 CREATE TABLE "ChatReport" ("reportId" INTEGER NOT NULL, "chatId" INTEGER NOT NULL);
 ${OWNED_REPORT_ENTITIES.map(
-  (e) => `CREATE TABLE "${e.table}" ("id" INTEGER PRIMARY KEY, "${e.ownerColumn}" INTEGER);
+  // IF NOT EXISTS: a post's and a post text's reports both name "Post".
+  (
+    e
+  ) => `CREATE TABLE IF NOT EXISTS "${e.table}" ("id" INTEGER PRIMARY KEY, "${e.ownerColumn}" INTEGER);
 CREATE TABLE "${e.reportTable}" ("reportId" INTEGER NOT NULL, "${e.fk}" INTEGER NOT NULL);`
 ).join('\n')}
 `;

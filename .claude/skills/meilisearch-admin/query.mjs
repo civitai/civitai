@@ -11,10 +11,8 @@
  *   node .claude/skills/meilisearch-admin/query.mjs task <taskId>
  *   node .claude/skills/meilisearch-admin/query.mjs indexes
  *   node .claude/skills/meilisearch-admin/query.mjs index <indexName> [settings|filterable|sortable|searchable|displayed]
- *   node .claude/skills/meilisearch-admin/query.mjs --feed <command>  (use feed/metrics search instead of main)
  *
  * Options:
- *   --feed        Use METRICS_SEARCH_HOST instead of SEARCH_HOST
  *   --json        Output raw JSON
  *   --limit <n>   Limit results (default: 20)
  */
@@ -64,7 +62,6 @@ loadEnv();
 
 // Parse arguments
 const args = process.argv.slice(2);
-let useFeed = false;
 let jsonOutput = false;
 let limit = 20;
 let status = null;
@@ -72,9 +69,7 @@ const positionalArgs = [];
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg === '--feed') {
-    useFeed = true;
-  } else if (arg === '--json') {
+  if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--limit') {
     limit = parseInt(args[++i], 10);
@@ -109,7 +104,6 @@ Commands:
   search <index> [filter]    Run a search with optional filter (q is empty)
 
 Options:
-  --feed         Use feed/metrics search (METRICS_SEARCH_HOST)
   --status <s>   Filter tasks by status (enqueued|processing|succeeded|failed)
   --limit <n>    Limit results (default: 20)
   --json         Output raw JSON
@@ -117,17 +111,16 @@ Options:
 Examples:
   node query.mjs health
   node query.mjs tasks --status failed
-  node query.mjs index models_v9 settings
-  node query.mjs --feed stats`);
+  node query.mjs index models_v9 settings`);
   process.exit(1);
 }
 
 // Select host and API key
-const host = useFeed ? process.env.METRICS_SEARCH_HOST : process.env.SEARCH_HOST;
-const apiKey = useFeed ? process.env.METRICS_SEARCH_API_KEY : process.env.SEARCH_API_KEY;
+const host = process.env.SEARCH_HOST;
+const apiKey = process.env.SEARCH_API_KEY;
 
 if (!host || !apiKey) {
-  console.error(`Error: ${useFeed ? 'METRICS_SEARCH_HOST/METRICS_SEARCH_API_KEY' : 'SEARCH_HOST/SEARCH_API_KEY'} not configured`);
+  console.error('Error: SEARCH_HOST/SEARCH_API_KEY not configured');
   process.exit(1);
 }
 
@@ -165,7 +158,7 @@ function formatDuration(ms) {
 }
 
 async function main() {
-  console.error(`Using: ${useFeed ? 'Feed/Metrics' : 'Main'} Search (${host})\n`);
+  console.error(`Using: Main Search (${host})\n`);
 
   try {
     switch (command) {

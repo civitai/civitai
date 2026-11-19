@@ -70,7 +70,8 @@ beforeAll(async () => {
       poi boolean NOT NULL DEFAULT false,
       "scannedAt" timestamp(3),
       metadata jsonb,
-      "scanJobs" jsonb
+      "scanJobs" jsonb,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,

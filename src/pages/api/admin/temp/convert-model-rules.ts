@@ -51,11 +51,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   }
 
   const result = await convertLegacyModelRules();
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'model-rules-convert',
     message: 'converted regex Model rules',
     ...result,
-  }).catch(() => null);
+  });
   return res.status(200).json({ action: 'apply', ...result });
 });

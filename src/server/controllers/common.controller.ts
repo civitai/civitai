@@ -108,7 +108,10 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
-        const images = await dbRead.image.findMany({ where: { postId: entityId } });
+        const images = await dbRead.image.findMany({
+          where: { postId: entityId },
+          select: { id: true },
+        });
         // TODO do we need this here?
         await imagesMetricsSearchIndex.queueUpdate(
           images.map((image) => ({

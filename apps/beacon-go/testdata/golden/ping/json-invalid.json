@@ -1,0 +1,27 @@
+{
+  "name": "json-invalid",
+  "endpoint": "ping",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/ping",
+    "headers": {
+      "host": "www.example.test",
+      "referer": "https://www.example.test/models/123/some-slug",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "cf-ipcountry": "US",
+      "content-type": "application/json"
+    },
+    "body": "{\"path\""
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 400,
+    "headers": {},
+    "body": "Invalid JSON",
+    "writes": []
+  },
+  "shadow": ""
+}

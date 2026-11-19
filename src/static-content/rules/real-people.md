@@ -44,9 +44,11 @@ Content that depicts, or is based on the likeness of real people - living or dec
 
 ### Q: I am the real person or a legal representitive of the real person displayed in images found on Civitai.
 
-**A:** If you find an image or resource depicting your likeness you can report it via the "flag" icon available on every image and model, or by filling out **[this form](/content/likeness-claim-request)**, or by emailing us at digital-likeness@civitai.com
+**A:** If you find an image or resource depicting your likeness you can report it via the "flag" icon available on every image and model, or by emailing us at [digital-likeness@civitai.com](mailto:digital-likeness@civitai.com)
 
-#### [Report real-person likeness](/content/likeness-claim-request)
+#### [Report real-person likeness](mailto:digital-likeness@civitai.com)
+
+If an intimate image or video of you was posted without your consent, see **[Request removal of intimate images of you](/content/take-it-down)**.
 
 ### Q: Are there any restrictions on using AI to create child-like models?
 

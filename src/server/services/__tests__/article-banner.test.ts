@@ -285,6 +285,83 @@ describe('getArticleById banner visibility', () => {
       id: BANNER,
     });
   });
+
+  it('gives a moderator, not a reader, a mature banner restricted by its base model', async () => {
+    const restricted = { ...bannerRow('Scanned'), nsfwLevel: NsfwLevel.R, modelRestricted: true };
+    expect(await readBanner(restricted, { userId: READER, isModerator: true })).toMatchObject({
+      id: BANNER,
+    });
+    expect(await readBanner(restricted, { userId: READER })).toBeUndefined();
+  });
+});
+
+describe('getArticleById and a banner its model withholds', () => {
+  const read = async (
+    viewer: { userId?: number; isModerator?: boolean },
+    { withheld, uploadedBy = OWNER }: { withheld: boolean; uploadedBy?: number }
+  ) => {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: ARTICLE_ID,
+      userId: OWNER,
+      nsfwLevel: NsfwLevel.PG,
+      content: '',
+      tags: [],
+      metadata: null,
+      coverImage: null,
+      bannerImage: {
+        id: BANNER,
+        userId: uploadedBy,
+        url: 'banner-key',
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        needsReview: null,
+        meta: null,
+        metadata: null,
+        tags: [],
+      },
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    // The model-withheld read answers with the banner when its model withholds it.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      withheld && strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: BANNER }]
+        : []) as never);
+    return getArticleById({ id: ARTICLE_ID, ...viewer });
+  };
+
+  it('🔴 hides it from a reader, without saying it is there', async () => {
+    const article = await read({ userId: READER }, { withheld: true });
+    expect(article.bannerImage).toBeUndefined();
+    expect(article.bannerImageWithheld).toBe(false);
+  });
+
+  it('says nothing of it to a signed-out reader', async () => {
+    const article = await read({}, { withheld: true });
+    expect(article.bannerImage).toBeUndefined();
+    expect(article.bannerImageWithheld).toBe(false);
+  });
+
+  it("🔴 hides it from the article's owner when someone else uploaded it", async () => {
+    const article = await read({ userId: OWNER }, { withheld: true, uploadedBy: READER });
+    expect(article.bannerImage).toBeUndefined();
+    expect(article.bannerImageWithheld).toBe(true);
+  });
+
+  // The edit form reads this: the owner's own upload is theirs to see and keep.
+  it.each([
+    ['a moderator', { userId: READER, isModerator: true }],
+    ['the article owner, who uploaded it', { userId: OWNER }],
+  ])('shows it to %s', async (_, viewer) => {
+    const article = await read(viewer, { withheld: true });
+    expect(article.bannerImage).toMatchObject({ id: BANNER });
+    expect(article.bannerImageWithheld).toBe(false);
+  });
+
+  it('shows a reader a banner its model does not withhold', async () => {
+    expect((await read({ userId: READER }, { withheld: false })).bannerImage).toMatchObject({
+      id: BANNER,
+    });
+  });
 });
 
 describe('getArticleById on a banner-only article', () => {

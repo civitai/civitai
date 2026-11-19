@@ -1,0 +1,37 @@
+-- `semanticSearchAudit.resultsServed` — ClickHouse DDL.
+--
+-- 🔴 MANUAL. Apply this by hand. We do not auto-run DDL.
+--
+-- false = the row's `resultIds` were computed for a refused search after its response, for review,
+-- and never shown to the viewer. true (the default, and every row written before this column) = the
+-- ids are what the viewer was served. A check for served results on refused searches must filter on
+-- `resultsServed`, or every computed row reads as a leak.
+--
+-- The app sends the key only on computed rows, and computes them only while the audit's sysRedis
+-- config carries `refusalCandidates = "1"`. Apply this BEFORE setting that field: a row carrying an
+-- unknown column can fail its whole batch (as 2026-11-08-user-activities-source.sql records).
+--
+-- Additive and metadata-only: ADD COLUMN with a constant DEFAULT on a MergeTree table writes no data
+-- and schedules no mutation.
+--
+-- Verify, AFTER applying:
+--
+--   SELECT name, type, default_expression FROM system.columns
+--   WHERE database = 'default' AND table = 'semanticSearchAudit' AND name = 'resultsServed';
+--     -- one row: Bool, default true.
+--
+-- Positive control once `refusalCandidates` is set: run a refused (blocked-word) search, then
+--
+--   SELECT countIf(NOT resultsServed) AS computed, count() AS control
+--   FROM default.semanticSearchAudit WHERE time > now() - INTERVAL 1 HOUR;
+--     -- computed must be non-zero. Zero beside a non-zero control means no refused search ran or
+--     -- the field is not set; zero on both means the window is empty.
+--
+-- Rollback: first remove `refusalCandidates` from the sysRedis config, then
+-- `ALTER TABLE default.semanticSearchAudit DROP COLUMN resultsServed`.
+
+-- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
+-- multi-statement query otherwise, so it can be run as-is.
+--
+ALTER TABLE default.semanticSearchAudit
+  ADD COLUMN IF NOT EXISTS `resultsServed` Bool DEFAULT true AFTER `resultIds`

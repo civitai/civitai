@@ -732,7 +732,10 @@ export const VIDEO: FieldDef<VideoValue | undefined> = {
   default: undefined,
 };
 
-/** Default sampler presets. */
+/**
+ * Default sampler presets. These are SD-family sampler names, so use them only on a control whose
+ * options include both (no-unoffered-sampler-preset.test.ts checks every family).
+ */
 export const defaultSamplerPresets = [
   { label: 'Fast', value: 'Euler a' },
   { label: 'Popular', value: 'DPM++ 2M Karras' },

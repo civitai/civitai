@@ -1,6 +1,6 @@
 {
   "name": "@civitai/moderator-app",
-  "version": "0.0.210",
+  "version": "0.0.222",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,7 +20,7 @@
     "@civitai/brand": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/clickhouse": "workspace:*",
-    "@civitai/orchestration-client": "0.2.4",
+    "@civitai/orchestration-client": "0.2.6",
     "@civitai/db": "workspace:*",
     "@civitai/db-queries": "workspace:*",
     "@civitai/email": "workspace:*",

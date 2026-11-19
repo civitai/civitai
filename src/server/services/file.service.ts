@@ -463,7 +463,7 @@ export const getFileForModelVersion = async ({
       fileUrl: file.url,
       fileType: file.type,
       userId: user?.id,
-    }).catch(() => undefined);
+    });
     return { status: 'resolve-failed' };
   }
 };

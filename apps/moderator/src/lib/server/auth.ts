@@ -23,7 +23,7 @@ export const isRevoked = createRevocationCheck({
       subtype: 'read-degraded',
       fn: 'spoke isRevoked',
       verdict,
-    }).catch(() => undefined);
+    });
   },
 });
 
@@ -40,7 +40,7 @@ export function admitsModerator(user: {
       type: 'error',
       source: 'moderator-app',
       userId: user.id,
-    }).catch(() => undefined);
+    });
     return false;
   }
   return true;

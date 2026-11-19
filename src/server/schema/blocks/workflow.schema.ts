@@ -12,6 +12,8 @@ import type {
 import type {
   CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
   INLINE_NODE_REFUSED_ERROR_CODE,
+  PROMPT_CHECK_UNAVAILABLE_ERROR_CODE,
+  PROMPT_POLICY_REFUSED_ERROR_CODE,
   SOURCE_SCAN_PENDING_ERROR_CODE,
 } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
@@ -422,8 +424,8 @@ export const blockCustomComfyBodySchema = z
  * false version read as "raising this changes nothing".
  *
  * Its VALUE is a policy choice about what one inline job may cost a viewer, set
- * comfortably above the largest shipped recipe ceiling (180, the `qwen-image`
- * engine of `seamless-pano-360`) so an inline graph is not more constrained than a
+ * comfortably above every registered recipe ceiling (`BUDGET_BY_ENGINE`,
+ * `STARTER_BUDGET`) so an inline graph is not more constrained than a
  * recipe. It must stay at or below `DEV_BUZZ_BUDGET_CAP` in
  * `services/blocks/dev-scoped-mint.service`, so a pre-approval token can afford any
  * inline job and an app can be developed and reviewed at the price it will charge.
@@ -587,6 +589,12 @@ export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
       kind: z.literal('step'),
       step: z.enum(stepIds),
       params: z.record(z.string(), z.unknown()),
+      // The Buzz pool tried FIRST — the same field and rule as `textToImage`'s
+      // `accountType`: blocks.router moves it to the front of the domain-allowed
+      // currencies and keeps the rest as fallback, and REJECTS a pick outside that
+      // set. Top-level, not in `params`: `params` is the step's own `.strict()`
+      // contract and a currency is not a step parameter.
+      accountType: blockAccountTypeSchema.optional(),
     })
     .strict();
 }
@@ -699,6 +707,11 @@ const blockPassThroughStepShape = {
   // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+  // The Buzz pool tried FIRST, the rest of the domain-allowed set kept as fallback;
+  // a pick outside that set is REJECTED (`resolveBlockCurrenciesForAccount`). Server
+  // field, never forwarded into `input`. INCLUDED in the confirmed-quote body hash, so
+  // a quote priced with one pool cannot be submitted with another.
+  accountType: blockAccountTypeSchema.optional(),
   // Present on a CONFIRMED submit only — the viewer-confirmed fixed-price quote
   // (`stepQuote.quoteId` on the estimate reply) this job is charged against in place
   // of the per-call budget. Excluded from the body hash that binds a quote to its
@@ -815,6 +828,10 @@ export const blockMultiStepWorkflowBodySchema = z
     kind: z.literal('workflow'),
     steps: z.array(blockMultiStepWorkflowStepSchema).min(1),
     arguments: z.record(z.string(), z.unknown()).optional(),
+    // PER-WORKFLOW, not per-step: the orchestrator takes ONE `currencies` list for
+    // the whole workflow, so a per-step pick could not be honoured. Same rule as the
+    // pass-through arm's `accountType`.
+    accountType: blockAccountTypeSchema.optional(),
   })
   .strict()
   // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
@@ -871,6 +888,11 @@ export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
     quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
   }),
 ]);
+/** Input of `blocks.consentQuoteGrantStanding`: step quotes only. */
+export const blockStepQuoteStandingConsentInputSchema = z.object({
+  blockToken: z.string().min(1),
+  quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+});
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */
@@ -1113,7 +1135,80 @@ export type BlockWorkflowSnapshot = {
      */
     authorFee?: number;
   };
+  /**
+   * The available media, as urls, in production order — with every RESTRICTED output
+   * removed (see {@link outputs}). Kept for back-compat; `outputs` is the full list.
+   * 🔴 NOT FOR INDEXING: an index is a position in `outputs`.
+   */
   imageUrls?: string[];
+  /**
+   * One entry per available output, in the same order `imageUrls` was built in, with
+   * RESTRICTED outputs kept IN POSITION. An entry is either
+   *   - `{ url, nsfwLevel? }` — within the app's ceiling. `nsfwLevel` is the
+   *     orchestrator rating (`pg`, `pg13`, `r`, `x`, `xxx`), absent when there is no
+   *     rating to report and none could restrict it; or
+   *   - `{ restricted: true, reason }` — NO url and NO rating. `'pool'`: the Buzz that
+   *     paid does not allow mature content for this viewer (the workflow's
+   *     `allowMatureContent` was set false at charge time) and the output is above
+   *     PG-13. `'ceiling'`: the output is above this viewer's maturity ceiling (the
+   *     token's domain ceiling cut to the viewer's own browsing level), or above a
+   *     cap the site itself put on the workflow, or a `MatureContent` block.
+   *     `'unrated'`: no rating will ever arrive (an `imageResourceTraining` sample, a
+   *     3D mesh on a finished step with no rating source) and one could restrict it —
+   *     terminal, fail closed. `'unrecognised_url'`: host media serving is on and the
+   *     host could not issue a media url for the output. Treat an unknown reason like
+   *     `'ceiling'`.
+   *   A video from an engine the orchestrator never rates (kling, veo3, vidu, grok,
+   *   gemini-omni) is DELIVERED with its url while unrated, as on the site — its
+   *   provider moderates it; a rating that arrives still meets the ceiling checks.
+   *   While host media serving is on for the viewer, every such video, and every
+   *   output rated `na`, is `{ restricted: true, reason: 'unrated' }` instead.
+   *
+   *   HOST MEDIA SERVING (per viewer, off by default). When on, every `url` here, in
+   *   `imageUrls`, `steps[]`, `model3dOutputs` and `AppWorkflow.images` is a host
+   *   media url valid for about two minutes, and each `{ url }` entry carries a
+   *   `mediaRef` to store instead. When off, entries are exactly as above.
+   * Restricted urls are withheld; an app shows a locked state for such an entry and
+   * must not try to fetch it. Not-yet-available outputs are dropped, as from
+   * `imageUrls`; a BLOCKED one keeps its slot (below).
+   *
+   * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes` on publish and post, and
+   * `imageIndex` on persist, name an output by its position here — a restricted output
+   * keeps its slot, so an index never moves when a rating lands late. Naming a
+   * restricted position is refused (`output N is restricted`, BAD_REQUEST), never
+   * replaced by another output. `imageUrls` / `AppWorkflow.images` /
+   * `steps[].imageUrls` drop restricted outputs and are NOT index spaces.
+   * ⚠️ MIGRATION: an app that built indexes from `images` / `imageUrls` positions
+   * (e.g. `images.map((_, i) => i)`) now names a DIFFERENT output whenever an earlier
+   * one is restricted, pending or blocked — and is refused or publishes the wrong
+   * one. Build indexes from `outputs` positions, or omit `imageIndexes`. Restriction
+   * is decided by `classifyBlockOutput` (`services/blocks/block-output-restriction`).
+   *
+   * Two more entry shapes, each with NO url and NO rating, each keeping its position:
+   *   - `{ pending: true }` — not rated yet, and its rating could still restrict it
+   *     (`ratingCouldRestrict`). The orchestrator marks a workflow succeeded seconds
+   *     before rating its last output, so poll again: see {@link ratingPending}.
+   *   - `{ blocked: true }` — blocked by moderation. A `MatureContent` block reads as
+   *     `{ restricted: true, reason: 'ceiling' }` instead.
+   * Naming a pending, blocked or restricted position on publish / post / persist is
+   * refused (`output N is still being rated, try again shortly`, or the existing
+   * not-available / restricted refusal).
+   *
+   * OMITTED when `outputs` would be empty.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /**
+   * `true` while any entry of {@link outputs} is `{ pending: true }`: an output may
+   * still gain a rating, so poll again until this is absent. OMITTED otherwise.
+   * While it is set on a workflow the orchestrator reports `succeeded`, `status` reads
+   * `processing`, so an app that predates this field keeps polling instead of keeping
+   * an empty result. That is bounded: 5 minutes after the workflow finished, the real
+   * status returns with the output still `{ pending: true }` and this flag still set
+   * (`appWorkflowStatus` / `isRatingHoldExpired` in `services/blocks/workflow.service`).
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  ratingPending?: true;
   error?: string;
   /**
    * A stable, machine-readable companion to `error`, for a block to branch on.
@@ -1146,9 +1241,13 @@ export type BlockWorkflowSnapshot = {
    * another node instead of a literal value. Estimate and submit alike, before anything is
    * reserved.
    *
-   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input, or an inline
-   * `customComfy` graph, names the viewer's own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * `'source-scan-pending'` — a `kind:'textToImage'` source image, a `kind:'step'` or
+   * `kind:'workflow'` input, or an inline `customComfy` graph, names the viewer's own upload
+   * (or a source kept with `PERSIST_GENERATION_SOURCE`) whose scan has not finished. Retry once the scan completes. Estimate and
    * submit alike, before anything is reserved.
+   *
+   * `'prompt-policy-refused'` / `'prompt-check-unavailable'` — the site's prompt check refused the
+   * prompt, or could not run. Submit only, before anything is reserved.
    */
   errorCode?:
     | TrainingQuoteErrorCode
@@ -1158,7 +1257,9 @@ export type BlockWorkflowSnapshot = {
     | InlineComfyRefusedCode
     | typeof INLINE_NODE_REFUSED_ERROR_CODE
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE
-    | typeof SOURCE_SCAN_PENDING_ERROR_CODE;
+    | typeof SOURCE_SCAN_PENDING_ERROR_CODE
+    | typeof PROMPT_POLICY_REFUSED_ERROR_CODE
+    | typeof PROMPT_CHECK_UNAVAILABLE_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
@@ -1540,15 +1641,117 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
    */
   steps?: BlockWorkflowStepSnapshot[];
+  /**
+   * Where the workflow is right now, for a "N ahead / starts at / x% done" display.
+   * Read off the orchestrator's steps in workflow order (every kind, not only
+   * `kind:'workflow'`): the first step with a {@link BlockWorkflowStepQueue}, else
+   * the first `processing` step. `stepName` is that step's name.
+   *
+   * While queued: `queuedAhead`, `startsAt`, `completesAt` and `support` come from
+   * that step's queue, and `progress` is null. While running the orchestrator clears
+   * the queue, so those four are null and `progress` is the step's progress (null
+   * for a step type whose estimate does not cover the whole step — see
+   * `BlockWorkflowStepSnapshot.progress`). Timestamps are ISO-8601, as the
+   * orchestrator gives them; every field is an estimate.
+   *
+   * OMITTED (read it as null) when the workflow is terminal or no step is queued or
+   * processing. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  eta?: BlockWorkflowEta | null;
+  /**
+   * `true` on a poll the host could not serve; keep the previous snapshot's values.
+   * The rest of such a reply is a placeholder (`status: 'processing'`, the caller's
+   * own `workflowId`, nothing else), not a reading of the workflow. Set by the
+   * shed `pollWorkflow` and `cancelWorkflow` replies (rate limit) and by the hosts'
+   * `pollFailureSnapshot` for a poll that threw without an answer. A real snapshot
+   * never carries it. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  throttled?: true;
+};
+
+/** The orchestrator content rating of an output the app may load. */
+export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+
+export type BlockWorkflowRestrictedReason = 'pool' | 'ceiling' | 'unrated' | 'unrecognised_url';
+
+/** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
+export type BlockWorkflowOutput =
+  | {
+      url: string;
+      nsfwLevel?: BlockWorkflowOutputRating;
+      /**
+       * Present only while host media serving is on for this viewer, and then `url` is a
+       * short-lived host media url. The value an app may store and replay through
+       * `GET_WORKFLOW_MEDIA`; opaque.
+       */
+      mediaRef?: string;
+    }
+  /**
+   * `'unrated'`: no rating will ever arrive, and one could restrict it (fail closed).
+   * `'unrecognised_url'`: the host could not issue a media url for it.
+   */
+  | { restricted: true; reason: BlockWorkflowRestrictedReason }
+  /** Not rated yet, and its rating could still restrict it: no url until it lands. */
+  | { pending: true }
+  /** Blocked by moderation: keeps its position, no url, never available. */
+  | { blocked: true };
+
+export type BlockWorkflowEta = {
+  stepName: string;
+  queuedAhead: number | null;
+  startsAt: string | null;
+  completesAt: string | null;
+  progress: number | null;
+  support: string | null;
+};
+
+/**
+ * A step's place in the orchestrator queue. `precedingJobs` is a whole number ≥ 0,
+ * or null when the orchestrator gave none (or gave something else). The timestamps
+ * are ISO-8601 strings exactly as the orchestrator gave them. `support` is the
+ * orchestrator's `JobSupport`: `available`, `unavailable` (no worker can take it
+ * right now) or `unsupported`.
+ */
+export type BlockWorkflowStepQueue = {
+  precedingJobs: number | null;
+  estimatedStartAt: string | null;
+  estimatedCompleteAt: string | null;
+  support: string;
 };
 
 export type BlockWorkflowStepSnapshot = {
   name: string;
   $type: string;
   status: BlockWorkflowSnapshot['status'];
+  /** This step's unrestricted media urls — see `BlockWorkflowSnapshot.imageUrls`. Not for indexing. */
   imageUrls?: string[];
+  /**
+   * This step's outputs, restricted ones in position — the same rules as
+   * `BlockWorkflowSnapshot.outputs`, and present exactly when `imageUrls` would be or
+   * an output is restricted. Omitted for a step submitted with `suppressOutput`.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /** `true` while any of this step's `outputs` is pending — see the snapshot field. */
+  ratingPending?: true;
   output?: unknown;
   error?: string;
+  /**
+   * Present only while the orchestrator reports the step as queued; omitted once it
+   * starts, and on any step or workflow that is terminal.
+   */
+  queue?: BlockWorkflowStepQueue | null;
+  /**
+   * The orchestrator's estimate of how much of the step is done, 0..1. Omitted when
+   * it gave none, when the step or workflow is terminal, and for every step type
+   * outside `WHOLE_STEP_PROGRESS_STEP_TYPES` in `services/blocks/workflow.service`
+   * (image and video generation) — some types, training among them, report a
+   * fraction that restarts at each phase, which would read as done many times over.
+   */
+  progress?: number | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step starts. */
+  startedAt?: string | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step ends. */
+  completedAt?: string | null;
 };
 
 export type BlockStepQuote = {
@@ -1569,3 +1772,21 @@ export type BlockTrainingQuote = {
 };
 
 export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };
+
+/**
+ * The host's OUTPUT UNLOCK request (`blocks.previewOutputUnlock` / `blocks.unlockOutput`): one
+ * output, named by its stable position in the snapshot's `outputs`.
+ */
+export const blockOutputUnlockInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+});
+
+/** `blocks.unlockOutput`: the same, plus the total the viewer confirmed in the host's dialog. */
+export const blockOutputUnlockConfirmInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+  expectedTotal: z.number().int().min(0),
+});

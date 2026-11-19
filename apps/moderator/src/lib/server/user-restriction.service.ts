@@ -126,6 +126,8 @@ const REMIX_SQL = sql<boolean>`(
 const ENHANCER_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
   '$.origin.enhancer'
 )})`;
+// Submitted through an App Block: the app may have written it, so it is never "typed".
+const APP_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath('$.origin.app')})`;
 // A prompt trigger is one with a non-empty `prompt`. `$[*]` wraps the legacy single-object shape too.
 const PROMPT_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
   '$[*] ? (@.prompt like_regex ".")'
@@ -140,7 +142,7 @@ const INCOMPLETE_SQL = sql<boolean>`jsonb_path_exists(ur."triggers", ${jsonPath(
 // Typed needs positive evidence: a row recorded before origin tracking has none, and neither does a
 // row whose triggers are not prompts (a manual mute), so neither may be called typed.
 const TYPED_SQL = sql<boolean>`(
-  ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${INCOMPLETE_SQL})
+  ${PROMPT_SQL} and not (${UNRECORDED_SQL} or ${REMIX_SQL} or ${ENHANCER_SQL} or ${APP_SQL} or ${INCOMPLETE_SQL})
 )`;
 
 // `promptMatch` is a server-side comparison against the source image's stored prompt, so this holds

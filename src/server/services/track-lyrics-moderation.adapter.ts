@@ -13,6 +13,7 @@ async function decideSong(imageId: number) {
 
 async function removeHeldSongFromSearch(imageId: number) {
   // A detection on text a moderator already ruled on writes no hold.
+  // primary: the hold was written by this detection
   const held = await dbWrite.textScanHold.findFirst({
     where: { ...SONG_LYRICS_HOLD, entityId: imageId, status: 'Pending' },
     select: { id: true },

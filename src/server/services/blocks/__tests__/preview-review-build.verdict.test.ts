@@ -47,6 +47,31 @@ describe('preview e2e: review-build verdict', () => {
     });
   });
 
+  it('a build-only environment (PR previews) passes on the recorded build, read from the flag', () => {
+    expect(
+      reviewBuildVerdict({
+        state: 'preview-failed',
+        detail: { buildOnly: true, error: 'anything at all' },
+      })
+    ).toEqual({
+      done: true,
+      pass: true,
+      message: 'review build passed (build-only environment: recorded, not deployed)',
+    });
+  });
+
+  it('a failure is not read as build-only from its WORDS: only the flag counts', () => {
+    const error =
+      'review build passed; this environment builds review previews but does not serve them';
+    expect(reviewBuildVerdict({ state: 'preview-failed', detail: { error } })).toMatchObject({
+      done: true,
+      pass: false,
+    });
+    expect(
+      reviewBuildVerdict({ state: 'preview-failed', detail: { error, buildOnly: false } })
+    ).toMatchObject({ done: true, pass: false });
+  });
+
   it('an expired preview fails', () => {
     expect(reviewBuildVerdict({ state: 'preview-expired' })).toMatchObject({
       done: true,

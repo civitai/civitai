@@ -15,6 +15,7 @@ import {
   REAP_AGE_DAYS,
 } from '~/server/common/draft-reaping';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { draftKeptSql } from '~/server/common/draft-keep';
 
 /**
  * SEAM GUARD between the `old-draft` notification and the reaper in
@@ -101,8 +102,26 @@ function notificationDef(source: typeof modelNotifications = modelNotifications)
   return def;
 }
 
-function notificationSql() {
+function notificationRawSql() {
   return executable(notificationDef().prepareQuery!({ lastSent: '2026-01-01' }));
+}
+
+/** The keep rule the reaper shares, which the guards below need not read: the reaper never
+ *  destroys a model it excludes (pinned in 'a draft the reaper keeps'). */
+const SHARED_KEEP = executable(`AND NOT ${draftKeptSql('m')}`);
+
+/** The notification's query without the shared keep rule. */
+function notificationSql() {
+  return notificationRawSql().replace(SHARED_KEEP, '');
+}
+
+/** Whether a `$queryRaw` call passes the shared keep rule right after an `AND NOT`. */
+function passesSharedKeep([strings, ...values]: [readonly string[], ...unknown[]]) {
+  return values.some(
+    (value, i) =>
+      (value as { sql?: unknown } | null)?.sql === draftKeptSql('m') &&
+      /AND NOT\s*$/.test(strings[i])
+  );
 }
 
 /** Quoted table names in FROM/JOIN position. */
@@ -171,6 +190,28 @@ const SHARED_VALUE_TERMS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('a draft the reaper keeps', () => {
+  it('is excluded by one shared rule from the warning, the reaper read and the DELETE', async () => {
+    expect(draftKeptSql('m')).toContain(`'TakenDown'`);
+    expect(draftKeptSql('m')).toContain('"CsamReport"');
+    expect(notificationRawSql().split(SHARED_KEEP)).toHaveLength(2);
+
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 1, userId: 2 }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    const isDelete = ([strings]: [readonly string[], ...unknown[]]) =>
+      strings.join('?').includes('DELETE FROM "Model"');
+    const reads = dbMock.dbRead.$queryRaw.mock.calls as [readonly string[], ...unknown[]][];
+    const deletes = (
+      dbMock.dbWrite.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]
+    ).filter(isDelete);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(deletes.length).toBeGreaterThan(0);
+    expect(passesSharedKeep(reads[0])).toBe(true);
+    expect(deletes.every(passesSharedKeep)).toBe(true);
+  });
 });
 
 describe('old-draft notification excludes a reapable model only via its named exclusions', () => {

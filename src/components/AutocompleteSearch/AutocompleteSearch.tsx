@@ -66,7 +66,11 @@ import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import {
   offersImageSearch,
   resolveSearchTarget,
-  searchesImagesFeedInPlace,
+  feedSearchPathname,
+  pageSearchFor,
+  profileFeedSection,
+  searchSectionFromPath,
+  searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
   buildFeedSearchUrl,
@@ -84,11 +88,18 @@ import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
+import { PageSearchBar } from '~/components/AutocompleteSearch/PageSearchBar';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
+import { imageIdFromDrop, mayCarryImage } from '~/components/AutocompleteSearch/image-drop';
+import {
+  searchUploadFileFromDrop,
+  setPendingSearchUpload,
+} from '~/components/Search/ImageSearchUpload/pending-search-upload';
+import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -141,7 +152,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const IndexSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -159,7 +170,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // their pick — so the category selector would only ever "work" when it picked what the URL
   // already said.
   const pathname = usePathname();
-  const currentSection = pathname.split('/')[1] || 'models';
+  const currentSection = searchSectionFromPath(pathname) || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
@@ -265,6 +276,24 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   );
 });
 
+IndexSearch.displayName = 'IndexSearch';
+
+/** The header bar: a plain search of the page on pages that search their own content, else the index search. */
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>((props, ref) => {
+  const features = useFeatureFlags();
+  const page = pageSearchFor(features, useRouter().pathname);
+  if (!page) return <IndexSearch {...props} ref={ref} />;
+  return (
+    <PageSearchBar
+      ref={ref}
+      placeholder={page.placeholder}
+      className={props.className}
+      variant={props.variant}
+      onClear={props.onClear}
+      onSubmit={props.onSubmit}
+    />
+  );
+});
 AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
 
 export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
@@ -288,7 +317,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
@@ -313,7 +342,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
-  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
+  const filtersFeedInPlace = searchesFeedInPlace(
+    features,
+    indexNameProp,
+    router.pathname,
+    profileFeedSection(router.query, currentUser?.username)
+  );
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
@@ -520,9 +554,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     focus: focusInput,
   }));
 
+  const feedPathname = feedSearchPathname(features, indexName);
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
   const searchPageUrl = () =>
-    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
+    (feedPathname && buildFeedSearchUrl(feedPathname, search)) ||
     buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {
@@ -551,6 +586,28 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     setSearch('');
     feedSearch.commit('');
     onClear?.();
+  };
+
+  const dropsImages =
+    offersMoreLikeThis(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
+  const dropsFiles = dropsImages && features.imageSearchUpload && !!currentUser;
+  const handleDragOver = (event: React.DragEvent) => {
+    if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
+    else if (dropsFiles && event.dataTransfer.types.includes('Files')) event.preventDefault();
+  };
+  const handleDrop = (event: React.DragEvent) => {
+    if (!dropsImages) return;
+    const imageId = imageIdFromDrop(event.dataTransfer, [window.location.host]);
+    if (imageId) {
+      event.preventDefault();
+      void router.push(moreLikeThisHref(features, imageId));
+      return;
+    }
+    const file = dropsFiles ? searchUploadFileFromDrop(event.dataTransfer) : undefined;
+    if (!file) return;
+    event.preventDefault();
+    setPendingSearchUpload(file);
+    void router.push('/search/by-image');
   };
 
   // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
@@ -687,6 +744,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         }}
         onBlur={handleBlur}
         onClear={handleClear}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         onKeyDown={getHotkeyHandler([
           ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],

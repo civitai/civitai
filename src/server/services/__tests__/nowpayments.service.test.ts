@@ -1749,7 +1749,7 @@ describe('watchOpenDeposits', () => {
           paymentId: 836,
           credited: false,
           held: true,
-          heldReason: reason,
+          payload: { heldReason: reason },
         }),
       ]);
     });

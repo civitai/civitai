@@ -31,8 +31,9 @@ const storage = vi.hoisted(() => ({ deletedKeys: [] as string[] }));
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getB2ImageS3Client: () => ({
-    send: async (command: { input: { Key: string } }) => {
-      storage.deletedKeys.push(command.input.Key);
+    // A key-only delete names `Key`; an all-versions delete lists by `Prefix` first.
+    send: async (command: { input: { Key?: string; Prefix?: string } }) => {
+      storage.deletedKeys.push((command.input.Key ?? command.input.Prefix)!);
       return {};
     },
   }),

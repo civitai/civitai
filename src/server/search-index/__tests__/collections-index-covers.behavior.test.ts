@@ -65,6 +65,10 @@ const MODEL_ITEM_PRIVATE_POST = 46;
 const POST_ITEM_REMOVAL_REASON = 47;
 const OWN_RESTRICTED_R = 48;
 const OWN_RESTRICTED_PG = 49;
+const OWN_HELD_ABOVE = 90;
+const HELD_POST_ITEM = 91;
+const ARTICLE_PENDING_COVER = 92;
+const ARTICLE_SERVABLE_COVER = 93;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -96,7 +100,7 @@ beforeAll(async () => {
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type "MediaType" NOT NULL DEFAULT 'image',
       poi boolean DEFAULT false, minor boolean DEFAULT false, index int,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "modelRestricted" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
     );
     CREATE TABLE "Post" (
@@ -113,11 +117,11 @@ beforeAll(async () => {
       availability text DEFAULT 'Public', "publishedAt" timestamp
     );
     CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp, availability text, mode text
+      id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp, availability text, mode text, minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, cover text, "coverId" int, status text, "publishedAt" timestamp,
-      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int
+      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int, "nsfwLevel" int NOT NULL DEFAULT 1
     );
     CREATE TABLE "Model3D" (
       id int PRIMARY KEY, "thumbnailImageId" int, status text, "deletedAt" timestamp,
@@ -284,6 +288,27 @@ beforeAll(async () => {
       (${OWN_RESTRICTED_R}, ${OWNER}, 126), (${OWN_RESTRICTED_PG}, ${OWNER}, 127);
     INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES
       (900, ${OWN_RESTRICTED_R}, 126), (901, ${OWN_RESTRICTED_PG}, 127);
+    -- Minor model 80, PG stored: its showcase post leads with an X image, then a PG one.
+    INSERT INTO "Model" (id, "userId", status, availability, minor, "gallerySettings") VALUES
+      (80, ${STRANGER}, 'Published', 'Public', true, '{"level": 1}');
+    INSERT INTO "ModelVersion" (id, "modelId", index) VALUES (81, 80, 0);
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+      (82, ${STRANGER}, 81, now() - interval '1 day');
+    INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel") VALUES
+      (180, ${STRANGER}, 82, 0, 16), (181, ${STRANGER}, 82, 1, 1);
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${OWN_HELD_ABOVE}, ${STRANGER}, 180), (${HELD_POST_ITEM}, ${OWNER}, NULL);
+    INSERT INTO "CollectionItem" (id, "collectionId", "imageId", "postId") VALUES
+      (950, ${OWN_HELD_ABOVE}, 180, NULL), (951, ${HELD_POST_ITEM}, NULL, 82);
+    -- Articles with a legacy cover string: 85's cover image awaits review, 86's is servable.
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES (185, ${STRANGER}, 'minor'), (186, ${STRANGER}, NULL);
+    INSERT INTO "Article" (id, cover, "coverId", status, "publishedAt", availability) VALUES
+      (85, 'legacy-pending', 185, 'Published', now() - interval '1 day', 'Public'),
+      (86, 'legacy-ok', 186, 'Published', now() - interval '1 day', 'Public');
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${ARTICLE_PENDING_COVER}, ${OWNER}, NULL), (${ARTICLE_SERVABLE_COVER}, ${OWNER}, NULL);
+    INSERT INTO "CollectionItem" (id, "collectionId", "articleId") VALUES
+      (952, ${ARTICLE_PENDING_COVER}, 85), (953, ${ARTICLE_SERVABLE_COVER}, 86);
   `);
 });
 afterAll(() => pg.close());
@@ -304,6 +329,16 @@ const pull = async (id: number) => {
 };
 
 describe('collections search index covers', () => {
+  it("indexes no legacy cover string for an article whose cover image awaits review, and keeps a servable one's", async () => {
+    expect((await pull(ARTICLE_PENDING_COVER)).itemSrcs).toEqual([]);
+    expect((await pull(ARTICLE_SERVABLE_COVER)).itemSrcs).toEqual(['legacy-ok']);
+  });
+
+  it("indexes no cover above a minor model's gallery level, taking the next item image within it", async () => {
+    expect(await pull(OWN_HELD_ABOVE)).toMatchObject({ cover: null, itemCovers: [] });
+    expect(await pull(HELD_POST_ITEM)).toMatchObject({ cover: null, itemCovers: [181] });
+  });
+
   it("indexes a collection's own cover a stranger could see (control)", async () => {
     expect((await pull(OWN_PUBLISHED)).cover).toBe(100);
   });

@@ -136,6 +136,7 @@ import {
   toggleCannotPromote,
 } from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -470,6 +471,61 @@ describe('privateModelFromTraining — moderation-owned meta', () => {
     expect(meta.textModeration).toEqual(STORED_MODERATION_META.textModeration);
     expect(meta.declinedReason).toBe('by mod');
     expect(meta).not.toHaveProperty('takenDownAt');
+  });
+});
+
+// The same ruling the model form records: a moderator's unlock here must not be re-locked either.
+describe('privateModelFromTraining — a moderator lifting the nsfw lock', () => {
+  const listingHash = comFaceIntentTextHash({
+    name: storedModel.name,
+    description: storedModel.description,
+    triggerWords: [],
+  });
+  const detection = { detected: true, textHash: listingHash, at: '2026-11-01T00:00:00.000Z' };
+
+  it("overturns the stored detection when the lock lifted is the intent check's own", async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: { source: 'com-face-intent', at: 'x' }, comFaceIntent: detection },
+    });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual({
+      ...detection,
+      overturnedAt: expect.any(String),
+    });
+  });
+
+  it('keeps the detection and suppresses only the re-lock when lifting another lock', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta().comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
+  // The private flow refuses a mature save, so the owner's only reach is a lock on a SFW listing.
+  it('neither overturns nor suppresses when the owner sends the lock lifted', async () => {
+    mockStored({ nsfw: false, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: owner, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta()).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it('leaves the verdict alone when the lock stays (control)', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: ['nsfw'] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
   });
 });
 

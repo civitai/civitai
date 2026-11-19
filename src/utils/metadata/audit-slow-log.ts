@@ -188,7 +188,7 @@ function emitSlowLog(input: SlowLogInput): void {
       // guard on `typeof window !== 'undefined'`. It is still compiled into the client
       // chunk graph: a dynamic import splits the chunk, it does not remove the edge.
       const { logToAxiom } = await import('~/server/logging/client');
-      await logToAxiom(payload);
+      logToAxiom(payload);
     } catch {
       // Instrumentation/log failure must never surface.
     }

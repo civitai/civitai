@@ -20,6 +20,8 @@ import { isReadFailure, pickOriginal } from '~/utils/unreadable-pick';
 // throttling from the bucket or want to let more through.
 const MAX_CONCURRENT_UPLOADS = 2;
 
+const UPLOADS_IN_PROGRESS_MESSAGE = 'Your files are still uploading. Leave anyway?';
+
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
   file: File;
@@ -104,12 +106,32 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   // preparing or uploading would reuse its index.
   const lastIndexRef = useRef(0);
 
+  // Warns before the page unloads while a pick is being prepared or uploaded, since an unload ends
+  // it. Added and removed with the work itself, not in an effect: on /posts/create the pick runs on
+  // after this hook's component has unmounted (see "after the dropzone unmounts" in the tests).
+  const busyRef = useRef(0);
+  const warnBeforeUnloadRef = useRef((event: BeforeUnloadEvent) => {
+    event.preventDefault();
+    return (event.returnValue = UPLOADS_IN_PROGRESS_MESSAGE);
+  });
+  function hold(n = 1) {
+    if (n <= 0) return;
+    if (busyRef.current === 0) window.addEventListener('beforeunload', warnBeforeUnloadRef.current);
+    busyRef.current += n;
+  }
+  function release() {
+    busyRef.current--;
+    if (busyRef.current === 0)
+      window.removeEventListener('beforeunload', warnBeforeUnloadRef.current);
+  }
+
   async function runWorker() {
     try {
       while (jobQueueRef.current.length > 0) {
         const job = jobQueueRef.current.shift()!;
         if (job.aborted) {
           URL.revokeObjectURL(job.processing.objectUrl);
+          release();
           continue;
         }
         const onComplete = onCompleteRef.current;
@@ -123,10 +145,17 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           URL.revokeObjectURL(data.objectUrl);
         } catch (e) {
           console.error(e);
-          onComplete(
-            { status: 'error', ...data, url: data.objectUrl, index: job.index },
-            job.context
-          );
+          // A throw here would end this worker and strand the jobs behind it, unuploaded.
+          try {
+            onComplete(
+              { status: 'error', ...data, url: data.objectUrl, index: job.index },
+              job.context
+            );
+          } catch (e) {
+            console.error(e);
+          }
+        } finally {
+          release();
         }
       }
     } finally {
@@ -185,6 +214,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       });
     }
 
+    hold(uniqueJobs.length);
     jobQueueRef.current.push(...uniqueJobs);
     while (activeWorkersRef.current < MAX_CONCURRENT_UPLOADS && jobQueueRef.current.length > 0) {
       activeWorkersRef.current++;
@@ -200,6 +230,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   // #region [file processor]
   async function processFiles(data: MediaUploadFile[], context?: TContext) {
     setLoading(true);
+    hold();
     try {
       const start = Math.max(count, lastIndexRef.current) + 1;
       const { maxSize } = uploadSettings;
@@ -345,6 +376,8 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       enqueueJobs(jobs);
     } catch (error: any) {
       setError(error);
+    } finally {
+      release();
     }
     setLoading(false);
   }

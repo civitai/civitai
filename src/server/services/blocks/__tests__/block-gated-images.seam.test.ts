@@ -55,6 +55,9 @@ const EXPECTED_CALL_SITES = [
   // Block collection covers and items — anything not `visible` is not served (a cover
   // falls back to the newest servable item), so `pending` never yields a url.
   'server/services/blocks/block-collections.service.ts',
+  // The model-version showcase block — anything not `visible` is not served, so `pending`
+  // (an unrated image) never yields a url.
+  'server/services/blocks/showcase.service.ts',
 ].sort();
 
 /** Files that may gate on `=== 'hidden'` (i.e. the projection, which handles
@@ -328,6 +331,7 @@ describe(`${SYMBOL} seam`, () => {
       'server/services/blocks/block-collections.service.ts',
       'server/services/blocks/block-post.service.ts',
       'server/services/blocks/listing-media-audience.ts',
+      'server/services/blocks/showcase.service.ts',
     ]);
 
     for (const rel of targets) {

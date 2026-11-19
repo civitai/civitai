@@ -34,6 +34,7 @@ const post = {
   wasPublished: false,
   publishedWithApp: null,
   tags: [],
+  texts: [],
   user: { id: 2, username: 'someone' },
 };
 

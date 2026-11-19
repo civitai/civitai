@@ -113,7 +113,7 @@ describe('createTextScanAdapter', () => {
     expect(await createTextScanShadowAdapter('Post').isEnabled!({ entityId: 1 })).toBe(enabled);
   });
 
-  it('registers a hookless shadow adapter for each entity', () => {
+  it('registers hookless shadow adapters, the service offering among them', () => {
     const adapters = textScanShadowAdapters();
     for (const key of [
       'Crucible:shadow',
@@ -121,6 +121,8 @@ describe('createTextScanAdapter', () => {
       'Storyline:shadow',
       'ImageCaption:shadow',
       'TrackLyrics:shadow',
+      'ServiceOffering:shadow',
+      'PostText:shadow',
       'ModelRules:shadow',
     ]) {
       expect(adapters[key]).toBeDefined();

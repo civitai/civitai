@@ -6,9 +6,12 @@ import {
   separateGenerationPriceMissing,
   type ModelVersionTerms,
 } from '@civitai/buzz';
-import { EARLY_ACCESS_CONFIG, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import type { ModelVersionPaidAccessInputSchema } from '~/server/schema/model-version.schema';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import {
+  isMatureRestricted,
+  matureRestrictedBaseModels,
+} from '~/shared/constants/basemodel.constants';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import type { FormPaidAccessConfig } from '~/components/Resource/Forms/model-version-monetization-defaults';
 
@@ -152,20 +155,16 @@ export function decideModelVersionSubmit(
   { recommendedResources: rawRecommendedResources, ...data }: ModelVersionSubmitData,
   ctx: ModelVersionSubmitContext
 ): ModelVersionSubmitDecision {
-  if (
-    ctx.modelNsfw &&
-    data.baseModel &&
-    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-  ) {
+  if (ctx.modelNsfw && data.baseModel && isMatureRestricted(data.baseModel, 'models')) {
     return {
       kind: 'refuse',
       code: 'nsfw_restricted_base_model',
       title: 'Base Model License Restriction',
       message: `NSFW models cannot use base models with license restrictions. The base model "${
         data.baseModel
-      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`,
+      }" is restricted for NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`,
     };
   }
 

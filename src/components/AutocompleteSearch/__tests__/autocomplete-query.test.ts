@@ -230,15 +230,15 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
 });
 
 describe('buildFeedSearchUrl', () => {
-  it('lands an images search on the feed, with @user as its user filter and #tag words kept', () => {
-    const url = buildFeedSearchUrl('images', 'red #dragon @someone -#blurry');
+  it('lands a search on the feed, with @user as its user filter and #tag words kept', () => {
+    const url = buildFeedSearchUrl('/images', 'red #dragon @someone -#blurry');
     const params = new URL(url!, 'https://x').searchParams;
     expect(params.get('query')).toBe('red dragon');
     expect(params.get('username')).toBe('someone');
   });
 
-  it('leaves other indexes on their search page', () => {
-    expect(buildFeedSearchUrl('models', 'flux')).toBeNull();
+  it('lands an empty search on the bare feed', () => {
+    expect(buildFeedSearchUrl('/models', '')).toBe('/models');
   });
 });
 
@@ -252,6 +252,17 @@ describe('nextFeedSearchQuery', () => {
     ).toEqual({ baseModels: 'Illustrious', period: 'AllTime', query: 'red dragon' });
   });
 
+  it("keeps a profile's route username whatever @user token is typed", () => {
+    expect(
+      nextFeedSearchQuery({ username: 'RisingV' }, '@someone red dragon', undefined, true)
+    ).toEqual({ username: 'RisingV', query: 'red dragon' });
+    expect(nextFeedSearchQuery({ username: 'RisingV', query: 'cat' }, '', 'RisingV', true)).toEqual(
+      {
+        username: 'RisingV',
+      }
+    );
+  });
+
   it('drops only the query when the bar is emptied', () => {
     expect(nextFeedSearchQuery({ baseModels: 'Illustrious', query: 'cat' }, '')).toEqual({
       baseModels: 'Illustrious',
@@ -260,6 +271,13 @@ describe('nextFeedSearchQuery', () => {
 
   it('changes nothing for the query already applied', () => {
     expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
+  });
+
+  it('replaces a "more like this" with a typed query', () => {
+    expect(nextFeedSearchQuery({ similarTo: '42', period: 'AllTime' }, 'red dragon')).toEqual({
+      period: 'AllTime',
+      query: 'red dragon',
+    });
   });
 });
 

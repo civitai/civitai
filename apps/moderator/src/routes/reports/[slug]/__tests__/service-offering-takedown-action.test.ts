@@ -6,9 +6,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * service-offering-takedown.pglite.test.ts.
  */
 
-const { setReportStatus, takedownServiceOffering, getReportServiceOfferingId } = vi.hoisted(() => ({
+const {
+  setReportStatus,
+  takedownServiceOffering,
+  releaseServiceOffering,
+  getReportServiceOfferingId,
+} = vi.hoisted(() => ({
   setReportStatus: vi.fn(async () => ({ ok: true })),
   takedownServiceOffering: vi.fn(async () => ({ changed: true })),
+  releaseServiceOffering: vi.fn(
+    async (): Promise<{ changed: boolean } | null> => ({
+      changed: true,
+    })
+  ),
   getReportServiceOfferingId: vi.fn(async () => 5),
 }));
 
@@ -34,6 +44,7 @@ vi.mock('$lib/server/service-offering-takedown.service', () => ({
   getReportedServiceOfferings: vi.fn(async () => []),
   getReportServiceOfferingId,
   takedownServiceOffering,
+  releaseServiceOffering,
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 
@@ -90,5 +101,65 @@ describe('taking down a reported service', () => {
     takedownServiceOffering.mockResolvedValueOnce(null as never);
     expect(status(await takeDown({ id: '9', reason: 'spam' }))).toBe(410);
     expect(setReportStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('releasing a held service', () => {
+  const release = (fields: Record<string, string>, slug = 'service') => {
+    const body = new FormData();
+    for (const [k, v] of Object.entries(fields)) body.set(k, v);
+    return (actions.releaseServiceOffering as (event: unknown) => Promise<unknown>)({
+      request: new Request('https://mod.example/reports/service', { method: 'POST', body }),
+      locals: { user: { id: MOD } },
+      params: { slug },
+      getClientAddress: () => '127.0.0.1',
+    });
+  };
+
+  const seen = '2027-01-06T12:00:00.123Z';
+
+  it('releases the reported offering as the moderator saw it, then sets the report Unactioned', async () => {
+    const result = await release({ id: '9', seenUpdatedAt: seen });
+    expect(releaseServiceOffering).toHaveBeenCalledWith({
+      offeringId: 5,
+      seenUpdatedAt: new Date(seen),
+      moderatorId: MOD,
+    });
+    expect(setReportStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, status: 'Unactioned', userId: MOD })
+    );
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it('leaves the report alone when the offering was not held', async () => {
+    releaseServiceOffering.mockResolvedValueOnce({ changed: false });
+    expect(status(await release({ id: '9', seenUpdatedAt: seen }))).toBe(409);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('refuses a release without the version the moderator read', async () => {
+    expect(status(await release({ id: '9' }))).toBe(400);
+    expect(releaseServiceOffering).not.toHaveBeenCalled();
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('is refused on another report type', async () => {
+    expect(status(await release({ id: '9', seenUpdatedAt: seen }, 'model'))).toBe(403);
+    expect(releaseServiceOffering).not.toHaveBeenCalled();
+  });
+});
+
+// The form and the action meet only at this field name: renamed on one side, every release is a 400
+// and no other test notices.
+describe('the release form', () => {
+  it('posts the version the moderator read, under the name the action reads', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const table = readFileSync(
+      fileURLToPath(new URL('../ReportsTable.svelte', import.meta.url)),
+      'utf8'
+    );
+    const form = table.slice(table.indexOf('action="?/releaseServiceOffering"'));
+    expect(form.slice(0, form.indexOf('</form>'))).toMatch(/name="seenUpdatedAt"/);
   });
 });

@@ -44,7 +44,7 @@ const updatePanel = (imageUrl: string) =>
     .updatePanel({ panelId: PANEL_ID, imageUrl } as never);
 
 const issuedTo = (userId: number) =>
-  redisMock.sysRedis.mGet.mockResolvedValue([String(userId)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(userId)] as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,7 +72,7 @@ describe('comics.updatePanel - the upload key of a new image url', () => {
     issuedTo(USER_ID);
 
     await updatePanel(NEW_URL);
-    expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data.imageUrl).toBe(NEW_URL);
   });
 
@@ -80,7 +80,7 @@ describe('comics.updatePanel - the upload key of a new image url', () => {
     issuedTo(OTHER_USER_ID);
 
     await updatePanel(CURRENT_URL);
-    expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+    expect(redisMock.redis.mGet).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comicPanel.update).toHaveBeenCalledTimes(1);
   });
 });

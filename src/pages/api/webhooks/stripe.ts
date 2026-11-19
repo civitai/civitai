@@ -37,7 +37,7 @@ import {
 import { extractAttribution } from '~/server/schema/blocks/attribution.schema';
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks');
 
 // Stripe requires the raw body to construct the event.
 export const config = {

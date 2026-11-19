@@ -127,6 +127,7 @@ const ECOSYSTEMS_WITH_A_LIMIT: string[] = [
  */
 const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['Ace', 'txt2music', 0, 1],
+  ['Fibo2', 'img2img:edit', 1, 16],
   ['Flux2', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B_base', 'img2img:edit', 1, 7],
   ['Flux2Klein_4B', 'img2img:edit', 1, 7],

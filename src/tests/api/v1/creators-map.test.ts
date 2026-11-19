@@ -27,29 +27,43 @@ const ORIGIN = 'https://civitai.com';
 
 describe('mapCreatorItem — _count.models → modelCount', () => {
   it('derives modelCount from _count.models', () => {
-    const out = mapCreatorItem(
-      { username: 'alice', image: 'img-key', _count: { models: 7 } },
-      ORIGIN
-    );
+    const out = mapCreatorItem({ username: 'alice', _count: { models: 7 } }, ORIGIN);
     expect(out.modelCount).toBe(7);
     expect(out.username).toBe('alice');
     expect(out.link).toBe('https://civitai.com/api/v1/models?username=alice');
-    expect(out.image).toBe('edge:img-key:96:alice');
   });
 
   it('omits modelCount (undefined) when _count.models is 0', () => {
-    const out = mapCreatorItem({ username: 'bob', image: null, _count: { models: 0 } }, ORIGIN);
+    const out = mapCreatorItem({ username: 'bob', _count: { models: 0 } }, ORIGIN);
     expect(out.modelCount).toBeUndefined();
   });
 
   it('omits modelCount when _count is absent', () => {
-    const out = mapCreatorItem({ username: 'carol', image: null }, ORIGIN);
+    const out = mapCreatorItem({ username: 'carol' }, ORIGIN);
     expect(out.modelCount).toBeUndefined();
   });
+});
 
-  it('omits image when there is no image key', () => {
-    const out = mapCreatorItem({ username: 'dave', image: null, _count: { models: 3 } }, ORIGIN);
+describe('mapCreatorItem — image', () => {
+  const picture = (nsfwLevel: number) => ({ url: 'avatar-key', type: 'image' as const, nsfwLevel });
+
+  it('serves a PG profile picture (control)', () => {
+    const out = mapCreatorItem({ username: 'dave', profilePicture: picture(1) }, ORIGIN);
+    expect(out.image).toBe('edge:avatar-key:96:dave');
+  });
+
+  it('omits a profile picture above PG', () => {
+    const out = mapCreatorItem({ username: 'erin', profilePicture: picture(2) }, ORIGIN);
     expect(out.image).toBeUndefined();
-    expect(out.modelCount).toBe(3);
+  });
+
+  it('omits the image when there is only the unrated one', () => {
+    const out = mapCreatorItem(
+      { username: 'fay', image: 'unrated-key', profilePicture: null } as Parameters<
+        typeof mapCreatorItem
+      >[0],
+      ORIGIN
+    );
+    expect(out.image).toBeUndefined();
   });
 });

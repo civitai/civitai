@@ -54,7 +54,7 @@ import { getBucket, getS3Client, uploadImageBufferToStore } from '~/utils/s3-uti
  */
 
 const logUnpack = (message: string, fields: Record<string, unknown>, type = 'info') =>
-  logToAxiom({ name: 'creator-service-unpack', type, message, ...fields }).catch(() => null);
+  logToAxiom({ name: 'creator-service-unpack', type, message, ...fields });
 
 /** The highest rating an image in a Final may carry: the deal's own. */
 const MAX_LEVEL = Prisma.sql`d."maxNsfwLevel"`;

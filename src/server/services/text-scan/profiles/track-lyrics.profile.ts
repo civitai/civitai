@@ -6,6 +6,7 @@ registerTextScanProfile({
   entityType: 'TrackLyrics',
   labels: ['nsfw', 'csam'],
   load: async (ids) => {
+    // primary: the lyrics are written just before their scan is submitted
     const rows = await dbWrite.trackLyrics.findMany({
       where: { imageId: { in: ids } },
       select: { imageId: true, text: true, image: { select: { userId: true } } },

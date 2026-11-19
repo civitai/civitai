@@ -18,7 +18,7 @@ const USER_ID = 5;
 const MODERATION = 900;
 const SYSTEM_META = { systemAccount: true };
 
-function keyOwnedBy(userId: number, tokenScope: number = TokenScope.UserRead) {
+function keyOwnedBy(userId: number, tokenScope: bigint = TokenScope.UserRead) {
   dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({
     id: 77,
     userId,

@@ -1,15 +1,25 @@
 import { TRPCError } from '@trpc/server';
+import { buildFliptContext } from '@civitai/flipt/context';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { isExternalModerationConfigured } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import {
   foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
-import { collectBlockStepTemplates } from '~/server/services/blocks/workflow-graph';
+import { collectBlockStepTemplates, foldCase } from '~/server/services/blocks/workflow-graph';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptServer,
   classifyPromptServer,
+  type AuditPromptOptions,
+  type PromptRefusalCause,
 } from '~/server/services/orchestrator/promptAuditing';
+import { env } from '~/env/server';
+import {
+  PROMPT_CHECK_UNAVAILABLE_ERROR_CODE,
+  PROMPT_POLICY_REFUSED_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 
 /**
  * Orchestrator `$type`s that generate media from caller text, enumerated from the
@@ -141,11 +151,11 @@ const GRAPH_STEP_TYPES: ReadonlySet<string> = new Set(['customcomfy', 'comfy']);
 
 /** The orchestrator's reference predicate (`$ref` and `path`, nothing else but `default`/`format`). */
 function refSource(value: Record<string, unknown>): PromptRefSource | null {
-  const keys = Object.keys(value).map((key) => key.toLowerCase());
+  const keys = Object.keys(value).map((key) => foldCase(key));
   if (!keys.includes('$ref') || !keys.includes('path')) return null;
   if (keys.some((key) => !REF_KEYS.has(key))) return null;
-  const target = Object.entries(value).find(([key]) => key.toLowerCase() === '$ref')?.[1];
-  return typeof target === 'string' && target.toLowerCase() === '$arguments' ? 'argument' : 'step';
+  const target = Object.entries(value).find(([key]) => foldCase(key) === '$ref')?.[1];
+  return typeof target === 'string' && foldCase(target) === '$arguments' ? 'argument' : 'step';
 }
 
 /**
@@ -188,7 +198,7 @@ export function collectPassThroughAuditText(
       if (at.text || at.graph || !at.media) promptRefs.push(ref);
       // A reference's `default` is literal text the step may use in its place.
       for (const [key, child] of Object.entries(value))
-        if (key.toLowerCase() === 'default') walk(child, at, depth + 1);
+        if (foldCase(key) === 'default') walk(child, at, depth + 1);
       return;
     }
     for (const [key, child] of Object.entries(value)) {
@@ -198,7 +208,7 @@ export function collectPassThroughAuditText(
           text: at.text || TEXT_KEY.test(key),
           negative: at.negative || NEGATIVE_KEY.test(key),
           graph: at.graph,
-          media: at.media || MEDIA_KEYS.has(key.toLowerCase()),
+          media: at.media || MEDIA_KEYS.has(foldCase(key)),
         },
         depth + 1
       );
@@ -218,7 +228,7 @@ export function collectPassThroughAuditText(
       else if (training) {
         if (!isPlainObject(template.input)) continue;
         for (const [key, child] of Object.entries(template.input))
-          if (TRAINING_SAMPLE_KEYS.has(key.toLowerCase()))
+          if (TRAINING_SAMPLE_KEYS.has(foldCase(key)))
             walk(
               child,
               {
@@ -253,15 +263,38 @@ export type PassThroughPromptAuditMode = 'off' | 'log' | 'enforce';
 
 let lastKnownMode: PassThroughPromptAuditMode | null = null;
 
+function toMode(variant: string): PassThroughPromptAuditMode {
+  return variant === 'log' || variant === 'enforce' ? variant : 'off';
+}
+
 /**
  * `null` from Flipt is an unreachable client or a failed evaluation as often as a missing flag,
  * so it keeps the last mode this process read rather than dropping an enforced gate to off.
+ * With a user, the flag is also evaluated for that user id (so a segment can hold one account in
+ * `enforce`); only the global read feeds the fallback, so one user's mode never becomes another's.
+ * Only `userId` is known here without a user lookup, so a segment on this flag must key on it.
  */
-export async function getPassThroughPromptAuditMode(): Promise<PassThroughPromptAuditMode> {
-  const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT);
-  if (variant === null) return lastKnownMode ?? 'off';
-  lastKnownMode = variant === 'log' || variant === 'enforce' ? variant : 'off';
-  return lastKnownMode;
+export async function getPassThroughPromptAuditMode(
+  userId?: number
+): Promise<PassThroughPromptAuditMode> {
+  const flag = FLIPT_FEATURE_FLAGS.APP_BLOCK_PASS_THROUGH_PROMPT_AUDIT;
+  // The global read runs every time so the fallback stays current; both are in-process evaluations.
+  const global = await getFliptVariant(flag);
+  if (global !== null) lastKnownMode = toMode(global);
+  const globalMode = lastKnownMode ?? 'off';
+  if (userId === undefined) return globalMode;
+  const variant = await getFliptVariant(flag, String(userId), buildFliptContext({ id: userId }));
+  // A user's segment may only make the audit stricter than the global mode, never laxer.
+  return variant === null ? globalMode : stricter(globalMode, toMode(variant));
+}
+
+const MODE_STRICTNESS: Record<PassThroughPromptAuditMode, number> = { off: 0, log: 1, enforce: 2 };
+
+function stricter(
+  a: PassThroughPromptAuditMode,
+  b: PassThroughPromptAuditMode
+): PassThroughPromptAuditMode {
+  return MODE_STRICTNESS[b] > MODE_STRICTNESS[a] ? b : a;
 }
 
 type AuditContext = {
@@ -271,6 +304,84 @@ type AuditContext = {
   /** Read only in `enforce`, so the other modes cost no user lookup. */
   loadIsModerator: () => Promise<boolean>;
 };
+
+/**
+ * A prompt refusal on an App Block submit, carrying the code the submit returns as a failed
+ * snapshot. `appError` is what the app may show: never the on-site account-status tail.
+ */
+export class AppBlockPromptRefusalError extends TRPCError {
+  constructor(
+    readonly errorCode:
+      | typeof PROMPT_POLICY_REFUSED_ERROR_CODE
+      | typeof PROMPT_CHECK_UNAVAILABLE_ERROR_CODE,
+    readonly appError: string,
+    cause: TRPCError
+  ) {
+    super({ code: cause.code, message: cause.message, cause });
+  }
+}
+
+/**
+ * `auditPromptServer` for an App Block submit, mapping its refusal to an App Block code.
+ * `refuseUnconfigured` (pass-through enforce only) also refuses when the external classifier is
+ * not configured.
+ */
+export async function auditAppBlockPrompt(
+  options: AuditPromptOptions & { appBlockId: string; stepType: string },
+  { refuseUnconfigured = false }: { refuseUnconfigured?: boolean } = {}
+): Promise<void> {
+  const { appBlockId, stepType, ...audit } = options;
+  try {
+    await auditPromptServer({ ...audit, appOrigin: { appBlockId, stepType } });
+  } catch (e) {
+    throw toAppBlockRefusal(e, { appBlockId, stepType });
+  }
+  if (refuseUnconfigured && options.prompt?.trim() && !isExternalModerationConfigured()) {
+    logWithoutWaiting({
+      name: 'prompt-check-unavailable',
+      type: 'error',
+      userId: options.userId,
+      reason: 'unconfigured',
+      appBlockId,
+    });
+    throw toAppBlockRefusal(new PromptCheckUnavailableError(), { appBlockId, stepType });
+  }
+}
+
+function toAppBlockRefusal(
+  e: unknown,
+  { appBlockId, stepType }: { appBlockId: string; stepType: string }
+): unknown {
+  let refusal: AppBlockPromptRefusalError | null = null;
+  if (e instanceof PromptCheckUnavailableError) {
+    refusal = new AppBlockPromptRefusalError(PROMPT_CHECK_UNAVAILABLE_ERROR_CODE, e.message, e);
+  } else if (e instanceof TRPCError && e.code === 'BAD_REQUEST') {
+    const blockedFor = (e.cause as Partial<PromptRefusalCause> | undefined)?.blockedFor;
+    if (Array.isArray(blockedFor)) {
+      refusal = new AppBlockPromptRefusalError(
+        PROMPT_POLICY_REFUSED_ERROR_CODE,
+        `Your prompt was flagged: ${blockedFor.join(', ')}`,
+        e
+      );
+    }
+  }
+  if (!refusal) return e;
+  logWithoutWaiting({
+    name: 'app-block-prompt-refusal',
+    type: 'info',
+    appBlockId,
+    stepType,
+    code: refusal.errorCode,
+  });
+  return refusal;
+}
+
+/** An ingest stall must not hold a submit. */
+function logWithoutWaiting(data: Parameters<typeof logToAxiom>[0]) {
+  void Promise.resolve()
+    .then(() => logToAxiom(data))
+    .catch(() => undefined);
+}
 
 /**
  * Log-only: what enforce would have done, with no consequence for the user and no prompt
@@ -299,23 +410,40 @@ export async function shadowPassThroughPromptAudit(
           negativePrompt: collected.negativePrompt,
           isGreen: ctx.isGreen,
         });
+    const externalError = verdict?.externalError != null;
+    const externalSkipped =
+      verdict !== null && !!collected.prompt.trim() && !isExternalModerationConfigured();
+    const outcome = externalError
+      ? 'error'
+      : externalSkipped
+      ? 'unconfigured'
+      : verdict?.outcome ?? null;
+    // Mirrors the refusals auditAppBlockPrompt makes in enforce.
+    const checkUnavailable =
+      verdict !== null &&
+      verdict.outcome !== 'hard' &&
+      ((externalError && env.PROMPT_CHECK_FAIL_CLOSED) || externalSkipped);
     const wouldRefuse =
-      !base.literal || collected.tooLarge || (verdict !== null && verdict.outcome !== 'pass');
-    await logToAxiom({
+      !base.literal ||
+      collected.tooLarge ||
+      (verdict !== null && verdict.outcome !== 'pass') ||
+      checkUnavailable;
+    logToAxiom({
       ...base,
-      outcome: verdict?.outcome ?? null,
+      outcome,
       source: verdict?.source ?? null,
-      externalError: verdict?.externalError != null,
+      externalError,
+      externalSkipped,
       wouldRefuse,
       durationMs: Math.round(performance.now() - started),
     });
   } catch (e) {
-    await logToAxiom({
+    logToAxiom({
       ...base,
       type: 'error',
       message: (e as Error).message,
       durationMs: Math.round(performance.now() - started),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -329,7 +457,7 @@ export async function auditPassThroughPrompts(
   ctx: AuditContext & { steps: ReadonlyArray<{ $type: string; input: unknown }> },
   mode?: PassThroughPromptAuditMode
 ): Promise<void> {
-  const resolved = mode ?? (await getPassThroughPromptAuditMode());
+  const resolved = mode ?? (await getPassThroughPromptAuditMode(ctx.userId));
   if (resolved === 'off') return;
   await runPromptAudit(ctx, collectPassThroughAuditText(ctx.steps), resolved);
 }
@@ -346,7 +474,7 @@ export async function auditTrainingSamplePrompts(
   ctx: AuditContext & { samplePrompts: readonly string[] },
   mode?: PassThroughPromptAuditMode
 ): Promise<void> {
-  const resolved = mode ?? (await getPassThroughPromptAuditMode());
+  const resolved = mode ?? (await getPassThroughPromptAuditMode(ctx.userId));
   if (resolved === 'off') return;
   const prompts = [...new Set(ctx.samplePrompts.map((p) => p.trim()).filter(Boolean))];
   if (prompts.length === 0) return;
@@ -382,11 +510,16 @@ async function runPromptAudit(
   if (collected.tooLarge) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: PROMPT_TOO_LARGE_MESSAGE });
   }
-  await auditPromptServer({
-    prompt: collected.prompt,
-    negativePrompt: collected.negativePrompt || undefined,
-    userId: ctx.userId,
-    isGreen: ctx.isGreen,
-    isModerator: await ctx.loadIsModerator(),
-  });
+  await auditAppBlockPrompt(
+    {
+      prompt: collected.prompt,
+      negativePrompt: collected.negativePrompt || undefined,
+      userId: ctx.userId,
+      isGreen: ctx.isGreen,
+      isModerator: await ctx.loadIsModerator(),
+      appBlockId: ctx.appBlockId,
+      stepType: collected.auditedTypes.join(','),
+    },
+    { refuseUnconfigured: true }
+  );
 }

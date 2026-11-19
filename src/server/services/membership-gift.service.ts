@@ -24,7 +24,7 @@ import { MembershipGiftStatus, PaymentProvider } from '~/shared/utils/prisma/enu
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'membership-gift', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'membership-gift', ...data }, 'webhooks');
 
 // Stripe subscription statuses that mean the row is dead and a fresh gift sub can be created.
 const TERMINAL_STATUSES = ['canceled', 'incomplete_expired'];

@@ -10,6 +10,8 @@ import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scs
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useRouter } from 'next/router';
+import { pageSearchFor } from '~/components/Search/search-target';
 import type { StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
 import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
@@ -61,6 +63,9 @@ import { trpc } from '~/utils/trpc';
 
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
+  // On /apps/store with pageSearch, the header bar is the search; the preview and review pages
+  // that share this body keep their own box.
+  const headerSearches = !!pageSearchFor(features, useRouter().pathname);
   const { filters, setFilters, hasPendingWrite } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
 
@@ -310,18 +315,20 @@ export function AppListingsMarketplaceBody() {
 
         🔴 `aria-label` carries the accessible name; an icon and a placeholder are not one.
       */}
-      <Group gap="sm" align="center" wrap="wrap" data-testid="apps-store-control-row">
-        <TextInput
-          aria-label="Search"
-          placeholder="Search by name"
-          leftSection={<IconSearch size={16} />}
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.currentTarget.value)}
-          radius="xl"
-          size="sm"
-          style={{ flex: 1, minWidth: 220 }}
-        />
-      </Group>
+      {!headerSearches && (
+        <Group gap="sm" align="center" wrap="wrap" data-testid="apps-store-control-row">
+          <TextInput
+            aria-label="Search"
+            placeholder="Search by name"
+            leftSection={<IconSearch size={16} />}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.currentTarget.value)}
+            radius="xl"
+            size="sm"
+            style={{ flex: 1, minWidth: 220 }}
+          />
+        </Group>
+      )}
 
       {/* THE FIRST-LOAD STATE. This used to be `<Center py="xl"><Loader /></Center>`
           — a spinner in a box whose height had nothing to do with the grid that

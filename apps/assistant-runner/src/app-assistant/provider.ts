@@ -21,11 +21,17 @@ import {
   createSandboxClient,
   openApp,
   GENERATE_APP_COVER,
+  LIST_APPS,
   READ_DOCS,
+  WAKE_APP,
+  sleepingNotLive,
+  startOrWakeApp,
+  wakeSleepingApp,
   type CoverEstimator,
   unconfiguredFeedbackSource,
   type AppFeedbackSource,
   type Sandbox,
+  type SleepingApp,
   type ToolResult,
 } from '@civitai/app-assistant';
 import {
@@ -59,6 +65,7 @@ import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
 import { unjustifiedManifestScopes } from './scope-justifications';
 import { SdkUpgrades, upgradeBeforeSubmit } from './sdk-pin';
+import type { RunSleepingApps } from './sleeping-apps';
 
 /**
  * What App Assistant's page says about itself as a reply starts (`remoteRunner.pageState`): the key
@@ -68,12 +75,18 @@ import { SdkUpgrades, upgradeBeforeSubmit } from './sdk-pin';
  */
 export interface AppAssistantPageState {
   app: string | null;
+  /**
+   * App hibernate: the user woke the open app from sleep on the page, so its dependencies need
+   * installing again. A hint for the instructions only; the page sends it only with the flag on.
+   */
+  woken?: true;
 }
 
 /** The page's state as the runner reads it; anything but a string is no app open. */
 export function readPageState(page: RunPageState | undefined): AppAssistantPageState {
   const app = page?.app;
-  return { app: typeof app === 'string' && app.length > 0 && app.length <= 200 ? app : null };
+  const open = typeof app === 'string' && app.length > 0 && app.length <= 200 ? app : null;
+  return open && page?.woken === true ? { app: open, woken: true } : { app: open };
 }
 
 /**
@@ -133,6 +146,9 @@ const RUNNER_PAGE_TOOLS = [
   GENERATE_APP_COVER,
   // What the open app did while it ran (`app_activity`), read by civitai as the run's user.
   ...RUNNER_ACTIVITY_TOOLS,
+  // App hibernate: offered only while civitai lists the user's sleeping apps (the flag on).
+  LIST_APPS,
+  WAKE_APP,
 ] as const;
 
 export interface AppAssistantToolsOptions {
@@ -167,6 +183,12 @@ export interface AppAssistantToolsOptions {
    * nothing is saved.
    */
   sourceSaves?(runId: string): (app: string) => Promise<void>;
+  /**
+   * App hibernate: civitai's sleeping-app reads with one run's grant (`CivitaiSleepingApps.forRun`).
+   * Unset, or listing `null` (the `app-hibernate` flag off for the user), the reply has no
+   * `list_apps` or `wake_app` and `create_app` is as before.
+   */
+  sleepingApps?(runId: string, signal: AbortSignal): RunSleepingApps;
   log: Logger;
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
@@ -228,8 +250,34 @@ export class AppAssistantTools implements ToolProvider {
       getToken: ({ refresh } = {}) => sandboxToken(refresh),
       ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
     });
+    // App hibernate: read beside the kept apps; `null` means the feature is off for this reply.
+    const sleepingSource = this.#options.sleepingApps?.(runId, signal) ?? null;
+    const sleepingRead = sleepingSource?.list().catch(() => null) ?? Promise.resolve(null);
+    let sleeping: SleepingApp[] | null = null;
+    /**
+     * Every start of an app on the runner (a reply's start, create_app's resume): the one rule
+     * (`startOrWakeApp`). A listed app is resumed with a plain open, its record or not; an app put to
+     * sleep since is woken, never made new and empty. Records come from the reply's ONE read above:
+     * a start never reads them again, so it never counts against civitai's list rate limit, and an
+     * unread list (`null`) is "no record".
+     */
+    const openOrWake = (app: string): Promise<{ sandbox: Sandbox; created: boolean }> => {
+      const records = sleepingSource ? sleeping : null;
+      if (!sleepingSource || !records) return openApp(client, app);
+      return startOrWakeApp(
+        app,
+        (apps ?? []).some((s) => s.app === app),
+        {
+          open: (key) => openApp(client, key),
+          remove: (name) => client.remove(name),
+          wake: (key) => wakeSleepingApp(client, key, (k) => sleepingSource.wakeSeed(k)),
+          hasRecord: (key) => records.some((s) => s.app === key),
+        }
+      );
+    };
     const newSandbox = (endReply?: (message: string) => void) =>
       new AppSandbox({
+        open: openOrWake,
         client,
         baseUrl: sandboxUrl,
         // Not ended by a Stop (the mint has its own bound): a Stop does not cut short an upgrade of
@@ -256,13 +304,15 @@ export class AppAssistantTools implements ToolProvider {
       if (error instanceof MintRefusedError && error.code !== 'unavailable') throw error;
       log.warn({ err: (error as Error)?.name, runId }, 'listing the user’s apps failed');
     }
+    sleeping = await sleepingRead;
     try {
       // Built again mid-reply (`reopenTools`, `rebuild`): the app this reply made or chose, which the
       // page may not have opened yet. Otherwise, a reply's start, Retry and Continue included, the app
       // open in the page: what the user has open wins.
+      const pageState = readPageState(context.page);
       const pageApp =
         (context.rebuild ? appChosenIn(toolResultsOf(context.history?.current ?? [])) : null) ??
-        readPageState(context.page).app;
+        pageState.app;
       await sandbox.open(pageApp, apps ?? []);
       const sandboxTools = await sandbox.tools();
 
@@ -275,7 +325,7 @@ export class AppAssistantTools implements ToolProvider {
         toolsReady: (app) => sandboxReady(newSandbox(), client, app, log, runId),
         open: async (app) => {
           const before = sandbox.active?.name ?? null;
-          const opened = await openApp(client, app);
+          const opened = await openOrWake(app);
           sandbox.opened(opened.sandbox);
           apps = [...(apps ?? []).filter((s) => s.name !== opened.sandbox.name), opened.sandbox];
           // What was verified belongs to the sandbox it was verified in, and so does a checklist,
@@ -283,6 +333,25 @@ export class AppAssistantTools implements ToolProvider {
           if (opened.sandbox.name !== before) core.reset();
           return opened;
         },
+        ...(sleepingSource && sleeping
+          ? {
+              sleeping: () => sleeping ?? undefined,
+              wake: async (app: string) => {
+                const before = sandbox.active?.name ?? null;
+                const woken = await wakeSleepingApp(client, app, (key) =>
+                  sleepingSource.wakeSeed(key)
+                );
+                sandbox.opened(woken.sandbox);
+                apps = [
+                  ...(apps ?? []).filter((s) => s.name !== woken.sandbox.name),
+                  woken.sandbox,
+                ];
+                sleeping = (sleeping ?? []).filter((s) => s.app !== app);
+                if (woken.sandbox.name !== before) core.reset();
+                return woken;
+              },
+            }
+          : {}),
       });
       // The app's source repo commits each spell of changes (one per pause, and one at the end).
       const saveSource = this.#options.sourceSaves?.(runId);
@@ -374,15 +443,11 @@ export class AppAssistantTools implements ToolProvider {
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same
       // descriptions and the same failure note. No chat files reach them on the runner.
-      const page = hostToolSet(
-        Object.fromEntries(RUNNER_PAGE_TOOLS.map((name) => [name, pageTools[name]!])),
-        sandboxTools,
-        {
-          conversationId,
-          findAttachment: () => undefined,
-          resolveArgs: async (args) => args,
-        }
-      );
+      const page = hostToolSet(runnerPageTools(pageTools), sandboxTools, {
+        conversationId,
+        findAttachment: () => undefined,
+        resolveArgs: async (args) => args,
+      });
       // Civitai's developer docs, which the sandbox cannot reach: the runner reads them itself. Not a
       // page tool (`hostTools`): the page has its own fetch_page. One per reply, so its cache is too.
       const docs = hostToolSet(
@@ -453,6 +518,12 @@ export class AppAssistantTools implements ToolProvider {
             canPreview: true,
             previewHost: null,
             runner: 'remote',
+            ...(sleeping
+              ? {
+                  sleeping: sleepingNotLive(apps ?? [], sleeping).map((s) => s.app),
+                  woken: pageState.woken === true && pageState.app === sandbox.active?.app,
+                }
+              : {}),
           }),
           ...(sdkUpgrade.kind === 'upgraded' ? [sdkUpgrade.instructions] : []),
         ].join('\n\n'),
@@ -599,4 +670,21 @@ export async function sandboxReady(
   } finally {
     await probe.close().catch(() => undefined);
   }
+}
+
+/** The page tools offered only with app hibernate on (civitai lists the user's sleeping apps). */
+const OPTIONAL_PAGE_TOOLS: ReadonlySet<string> = new Set([LIST_APPS, WAKE_APP]);
+
+/**
+ * `RUNNER_PAGE_TOOLS` out of the reply's page tools. Only the hibernate tools may be absent; any
+ * other one missing is a wiring bug, and it throws rather than offer a reply without it.
+ */
+export function runnerPageTools<T>(pageTools: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const name of RUNNER_PAGE_TOOLS) {
+    const tool = pageTools[name];
+    if (tool) out[name] = tool;
+    else if (!OPTIONAL_PAGE_TOOLS.has(name)) throw new Error(`page tool ${name} is missing`);
+  }
+  return out;
 }

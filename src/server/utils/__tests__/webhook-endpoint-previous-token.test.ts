@@ -30,7 +30,11 @@ const endpoint = WebhookEndpoint(inner) as unknown as (
 ) => Promise<void>;
 
 // Each test uses its own path so its counter series and its log throttle start empty.
-async function call(path: string, auth: { query?: string; bearer?: string }, userAgent?: string) {
+async function call(
+  path: string,
+  auth: { query?: string; bearer?: string; header?: string },
+  userAgent?: string
+) {
   let status = 200;
   const res = {
     status(code: number) {
@@ -46,6 +50,7 @@ async function call(path: string, auth: { query?: string; bearer?: string }, use
     query,
     headers: {
       ...(auth.bearer === undefined ? {} : { authorization: `Bearer ${auth.bearer}` }),
+      ...(auth.header === undefined ? {} : { 'x-webhook-token': auth.header }),
       ...(userAgent === undefined ? {} : { 'user-agent': userAgent }),
     },
   };
@@ -77,6 +82,21 @@ describe('WebhookEndpoint with WEBHOOK_TOKEN_PREVIOUS', () => {
 
     expect(await matches(path, 'current')).toBe(1);
     expect(await matches(path, 'previous')).toBe(2);
+  });
+
+  it('accepts the current and the previous value in the x-webhook-token header the Knights app sends', async () => {
+    const path = '/api/webhooks/header-slots';
+    expect(await call(path, { header: CURRENT })).toBe(200);
+    expect(await call(path, { header: PREVIOUS })).toBe(200);
+    expect(await matches(path, 'current')).toBe(1);
+    expect(await matches(path, 'previous')).toBe(1);
+  });
+
+  it('reads only a present x-webhook-token header, so a wrong one is refused beside a right Bearer', async () => {
+    const path = '/api/webhooks/header-only';
+    expect(await call(path, { header: 'x'.repeat(40), bearer: CURRENT })).toBe(401);
+    expect(await call(path, { header: 'x'.repeat(40), query: CURRENT })).toBe(401);
+    expect(inner).not.toHaveBeenCalled();
   });
 
   it('refuses a value that is neither, and counts nothing', async () => {

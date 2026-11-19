@@ -104,7 +104,11 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
   const { canReview, isMuted, isOwner } = useCanReview(ownerId);
 
   const { data } = trpc.post.getResources.useQuery({ id: postId }, { enabled: false });
-  const reviews = useMemo(() => dedupeByModelVersion(data ?? []), [data]);
+  // The post's owner is the reviewer, and nobody reviews their own model.
+  const reviews = useMemo(
+    () => dedupeByModelVersion(data ?? []).filter((r) => r.modelUserId !== ownerId),
+    [data, ownerId]
+  );
   const byModelVersionId = useMemo(
     () => new Map(reviews.map((r) => [r.modelVersionId as number, r])),
     [reviews]
@@ -132,7 +136,7 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
         const row = queryUtils.post.getResources
           .getData({ id: postId })
           ?.find((r) => r.modelVersionId === modelVersionId);
-        if (!row?.modelId) return 'ignored';
+        if (!row?.modelId || row.modelUserId === ownerId) return 'ignored';
 
         const previousReview: ReviewPatch = {
           reviewId: row.reviewId,
@@ -175,7 +179,7 @@ export function usePostResourceReviews({ postId, ownerId }: { postId: number; ow
         setPending(key, false);
       }
     },
-    [postId, canReview, queryUtils, upsert]
+    [postId, ownerId, canReview, queryUtils, upsert]
   );
 
   const rate = useCallback(

@@ -20,23 +20,29 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 import { NsfwLevel } from '~/server/common/enums';
+import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import { projectPostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const { PG, R } = NsfwLevel;
 
 type Img = ReturnType<typeof img>;
 
-function img(url: string, nsfwLevel: number, over: Record<string, unknown> = {}) {
+function img(
+  url: string,
+  nsfwLevel: number,
+  over: Record<string, unknown> = {}
+): ListingMediaImage {
   return {
     url,
     nsfwLevel,
     ingestion: 'Scanned',
-    needsReview: null as string | null,
+    needsReview: null,
     poi: false,
     minor: false,
     tosViolation: false,
     acceptableMinor: false,
-    blockedFor: null as string | null,
+    blockedFor: null,
+    modelRestricted: false,
     ...over,
   };
 }
@@ -44,6 +50,7 @@ function img(url: string, nsfwLevel: number, over: Record<string, unknown> = {})
 describe('T5 — the post "Published with" chip icon', () => {
   const chipRow = (icon: Img | null) => ({
     name: 'Client',
+    connectListings: [],
     appBlocks: [
       {
         status: 'approved',
@@ -81,8 +88,7 @@ describe('T5 — the post "Published with" chip icon', () => {
     expect(chip(img('chip-r.png', R), 'civitai.com', PG | R)?.iconUrl).toBeNull();
   });
 
-  // Every moderation flag the gate reads, through the chip's own defensive reader
-  // (`readChipIcon`), so a dropped or mis-mapped field for any one of them is caught.
+  // Each moderation flag the gate reads, so the chip path losing any one of them is caught.
   it.each([
     ['poi', true],
     ['minor', true],
@@ -119,6 +125,7 @@ describe('T5 — the listing rating caps a single-image surface', () => {
       projectPostAppChip(
         {
           name: 'Client',
+          connectListings: [],
           appBlocks: [
             {
               status: 'approved',
@@ -144,39 +151,5 @@ describe('T5 — the listing rating caps a single-image surface', () => {
     // pg13 listing's PG-13 icon. A red ceiling of "the viewer level alone" (the public floor, PG)
     // would hide it — so this case is what separates the two red-host rules.
     expect(chipFor('pg13', 'civitai.red')).toBe('edge:chip-pg13.png@256');
-  });
-});
-
-// The chip reads its row as `unknown`, so a moderation flag arriving as something other than a
-// boolean must count as SET (fail-closed), never as clear.
-describe('T5 — the chip icon reader fails closed on a malformed flag', () => {
-  it.each([
-    ['a string', 'yes'],
-    ['a number', 1],
-  ])('treats a tosViolation that is %s as flagged', (_label, value) => {
-    const chip = projectPostAppChip(
-      {
-        name: 'Client',
-        appBlocks: [
-          {
-            status: 'approved',
-            currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
-            appListing: {
-              id: 'apl_chip3',
-              slug: 'chip-three',
-              name: 'Chip Three',
-              status: 'approved',
-              kind: 'onsite',
-              contentRating: 'g',
-              revisionOfId: null,
-              icon: img('chip-flag.png', PG, { tosViolation: value }),
-            },
-          },
-        ],
-      },
-      { host: 'civitai.com', hiddenListingIds: new Set() }
-    );
-    expect(chip?.slug, 'the chip itself must still render').toBe('chip-three');
-    expect(chip?.iconUrl).toBeNull();
   });
 });

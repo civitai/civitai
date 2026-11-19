@@ -46,12 +46,8 @@ type Slot = { active: number };
 // reader in another graph saw nothing. Sharing the state makes the limit genuinely per-POD rather
 // than per-pod-per-graph, which is what the cap was always documented to mean.
 //
-// ONE key holding BOTH maps, rather than a key each. The two are a single invariant — un-sharing
-// either one reintroduces the defect on its own half — and `scripts/server-graph-watchlist.mjs`
-// carries one `globalKey` per entry, so two keys would mean two watchlist entries naming the same
-// module. That combination is not merely redundant, it is unenforceable: the gate's fixture emits
-// one chunk per entry carrying only that entry's key, so each entry fails on the other's chunk and
-// the module can never be green (measured — it red-lined the gate's own positive control).
+// ONE key holding BOTH maps, rather than a key each: the two are a single invariant, and
+// un-sharing either one reintroduces the defect on its own half.
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiBulkheadState:
@@ -60,10 +56,7 @@ declare global {
 }
 
 // `??=` is the repo's canonical adopt-or-create form for these pins, matching
-// `structured-log-sink.ts` and `server-fault-override.ts`. It is not a style preference:
-// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this exact shape against
-// comment-stripped source, so a key surviving only in prose, or a binding that quietly reverted to
-// module scope, cannot pass for a real pin. `??=` specifically (not `=`) is what makes the SECOND
+// `structured-log-sink.ts` and `server-fault-override.ts`. `??=` specifically (not `=`) is what makes the SECOND
 // copy adopt the first's state instead of replacing it — the original bug is `=` in one character.
 const bulkheadState = (globalThis.__civitaiBulkheadState ??= {
   slots: new Map(),

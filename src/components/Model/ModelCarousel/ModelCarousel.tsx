@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
@@ -219,13 +220,7 @@ function ModelCarouselContent({
                               entityType="image"
                               reactions={image.reactions}
                               metricsUnknown={image.stats?.statsUnknown}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
+                              metrics={imageStatsToReactionMetrics(image.stats)}
                               readonly={!safe}
                               className={classes.reactions}
                               targetUserId={image.user.id}

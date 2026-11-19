@@ -61,7 +61,7 @@ export async function approveAppealOfLift(
       message: 'takedown lifted, but its open appeal was not closed',
       storylineId: id,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 

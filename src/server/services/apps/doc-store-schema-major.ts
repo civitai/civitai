@@ -101,6 +101,6 @@ export const resolveSchemaMajor: SchemaMajorResolver = createSchemaMajorResolver
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
   },
 });

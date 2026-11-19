@@ -261,6 +261,16 @@ describe('workflowToDetail settings export', () => {
     expect(text).not.toContain('trace');
   });
 
+  it("leaves a continuation's source checkpoint out", () => {
+    const source = 'urn:air:sdxl:lora:orchestrator:blob@parent-weights-key';
+    const base = workflow();
+    const step = (base.steps as unknown as { input: Record<string, unknown> }[])[0]!;
+    step.input = { ...step.input, continueFrom: source };
+    const detail = workflowToDetail(base);
+    expect(detail?.settings.training).toMatchObject({ ecosystem: 'sdxl' });
+    expect(JSON.stringify(detail)).not.toContain('parent-weights-key');
+  });
+
   it("keeps a legacy kohya run's engine-specific params", () => {
     const detail = workflowToDetail(
       workflow({
@@ -498,4 +508,44 @@ describe('a run held for review', () => {
     expect(canDeleteRun({ state: 'rejected', hasModel: false })).toBe(true);
     expect(canDeleteRun({ state: 'unreviewed', hasModel: false })).toBe(true);
   });
+});
+
+it('reads checkpoint count, ecosystem and effective settings from Kohya runs', () => {
+  const detail = workflowToDetail(
+    workflow({
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'kohya',
+            model: 'urn:air:sdxl:checkpoint:civitai:123@456',
+            maxTrainEpochs: 5,
+            steps: 1000,
+            trainBatchSize: 2,
+            unetLR: 0.0005,
+            textEncoderLR: 0,
+            numRepeats: 20,
+            clipSkip: 1,
+            lrSchedulerNumCycles: 3,
+            vParameterization: true,
+            samples: { prompts: ['ohwx, portrait'], negativePrompt: 'blurry' },
+            trainingData: { type: 'blobs', items: [{ air: 'image-1', caption: 'ohwx, portrait' }] },
+          },
+          output: { epochs: [{ epochNumber: 1, model: { id: 'weights-1', available: true } }] },
+        },
+      ],
+    })
+  );
+  expect(detail).toMatchObject({ ecosystem: 'sdxl', plannedEpochs: 5 });
+  expect(detail!.settings.training).toMatchObject({
+    engine: 'kohya',
+    epochs: 5,
+    batchSize: 2,
+    lr: 0.0005,
+    textEncoderLr: 0,
+    numRepeats: 20,
+    vParameterization: true,
+  });
+  expect(detail!.dataset).toEqual([{ air: 'image-1', caption: 'ohwx, portrait' }]);
+  expect(detail!.settings.negativePrompt).toBe('blurry');
 });

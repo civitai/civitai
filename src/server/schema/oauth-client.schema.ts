@@ -31,7 +31,14 @@ export const createOauthClientSchema = z.object({
   redirectUris: z.array(z.string().url()).min(1),
   allowedOrigins: z.array(originSchema).default([]),
   isConfidential: z.boolean().default(true),
-  allowedScopes: z.number().int().min(0).max(TokenScope.Full).default(TokenScope.Full),
+  // A number on the wire (JSON has no bigint), a bigint once parsed. Every bit is below 2^53.
+  allowedScopes: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number(TokenScope.Full))
+    .default(Number(TokenScope.Full))
+    .transform((v) => BigInt(v)),
 });
 export type CreateOauthClientInput = z.infer<typeof createOauthClientSchema>;
 
@@ -41,7 +48,13 @@ export const updateOauthClientSchema = z.object({
   description: z.string().max(500).optional(),
   redirectUris: z.array(z.string().url()).min(1).optional(),
   allowedOrigins: z.array(originSchema).optional(),
-  allowedScopes: z.number().int().min(0).max(TokenScope.Full).optional(),
+  allowedScopes: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number(TokenScope.Full))
+    .transform((v) => BigInt(v))
+    .optional(),
 });
 export type UpdateOauthClientInput = z.infer<typeof updateOauthClientSchema>;
 

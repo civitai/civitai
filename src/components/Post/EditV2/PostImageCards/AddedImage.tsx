@@ -37,7 +37,7 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useId, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -54,6 +54,7 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
 import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
 import {
@@ -167,6 +168,8 @@ const useAddedImageContext = () => {
   return context;
 };
 // #endregion
+
+const COLLAPSED_RESOURCE_COUNT = 3;
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
   // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
@@ -725,12 +728,31 @@ function EditDetail() {
   const isAudio = image.type === MediaType.audio;
   const hidePromptDescriptionId = useId();
 
-  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  // Unrated resources stay expanded so they can be rated in place; only rated ones collapse.
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
+  const { byModelVersionId } = usePostResourceReviews({
+    postId: postId ?? 0,
+    ownerId: ownerId ?? 0,
+  });
+  const isUnrated = (r: ResourceHelper) => {
+    const review = r.modelVersionId ? byModelVersionId.get(r.modelVersionId) : undefined;
+    return !!review && review.reviewRecommended == null;
+  };
+  const namedResources = sortByModelTypes(resources).filter((x) => !!x.modelName);
+  // A row stays open once it has been seen unrated, so rating it in place doesn't make it vanish.
+  const openVersionIds = useRef(new Set<number>());
+  for (const r of namedResources)
+    if (r.modelVersionId && isUnrated(r)) openVersionIds.current.add(r.modelVersionId);
+  const isKeptOpen = (r: ResourceHelper) =>
+    !!r.modelVersionId && openVersionIds.current.has(r.modelVersionId);
+
+  // The review stepper may target a rated resource hidden behind "Show All"; unrated ones are never hidden.
   const reviewFocus = useReviewFocusStore((state) => state.target);
   useEffect(() => {
     if (reviewFocus?.imageId !== image.id) return;
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
-    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+    const targetIndex = visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId);
+    if (targetIndex >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(visible[targetIndex]))
       setShowMoreResources(true);
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -738,7 +760,6 @@ function EditDetail() {
   // A song's seed is in its source line; the other generation settings are image-only.
   const simpleMeta = isAudio ? [] : Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
-  const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
     const derived = meta?.unmatchedResources as UnmatchedResource[] | undefined;
     if (derived) return derived;
@@ -961,13 +982,15 @@ function EditDetail() {
             {(!!resources?.length || unmatchedResources.length > 0 || hasLegacyUnmatched) && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {resourcesSorted
-                  .filter((x) => !!x.modelName)
-                  .slice(0, !showMoreResources ? 3 : resources.length)
-                  .map((resource, i) => (
+                {namedResources.map((resource, i) =>
+                  showMoreResources || i < COLLAPSED_RESOURCE_COUNT || isKeptOpen(resource) ? (
                     <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
-                  ))}
-                {resources.length > 3 && (
+                  ) : null
+                )}
+                {(showMoreResources ||
+                  namedResources.some(
+                    (r, i) => i >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(r)
+                  )) && (
                   <div>
                     <Button
                       variant="light"

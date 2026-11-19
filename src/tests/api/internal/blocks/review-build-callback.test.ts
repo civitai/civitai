@@ -1167,3 +1167,75 @@ describe('watchDirectPublishedReview', () => {
     });
   });
 });
+
+/**
+ * BUILD-ONLY environments (APPS_REVIEW_BUILD_ONLY, PR previews): a passed review build is
+ * recorded, and nothing is deployed — no apply Job (it would land in the production apps
+ * namespace) and no slot held in `preview-deploying`. The row ends `preview-failed` with
+ * `buildOnly: true` and the reason, so nothing reads it as a live preview.
+ */
+describe('POST review-build-callback — build-only environment', () => {
+  beforeEach(() => {
+    mockFlag.enabled = true;
+    mockSetNx.mockResolvedValue(true);
+    mockEnvStore.APPS_REVIEW_BUILD_ONLY = true;
+  });
+  afterEach(() => {
+    delete mockEnvStore.APPS_REVIEW_BUILD_ONLY;
+    vi.clearAllMocks();
+  });
+
+  const body = () =>
+    JSON.stringify({
+      mode: 'review',
+      slug: SLUG,
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      imageRef: expectedReviewImageRef(SLUG, SHA),
+      status: 'Succeeded',
+    });
+
+  it('success: records the passed build, starts no apply Job and never marks deploying', async () => {
+    const { req, res } = makeReqRes(body());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true, applied: false, buildOnly: true });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
+    expect(mockReviewUnpublish).not.toHaveBeenCalled();
+    const states = (mockMarkPreview.mock.calls as unknown[][]).map((c) => c[1]);
+    expect(states).toEqual(['preview-failed']);
+    expect(mockMarkPreview).toHaveBeenCalledWith(
+      PUBREQ,
+      'preview-failed',
+      expect.objectContaining({
+        buildOnly: true,
+        error:
+          'review build passed; this environment builds review previews but does not serve them',
+      }),
+      { requireActivePreview: true }
+    );
+    expect(mockRecordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'succeeded' })
+    );
+    // Nothing was published, and no apply Job exists for the replay mark to protect.
+    expect((mockMarkPreview.mock.calls[0] as unknown[])[2]).toMatchObject({ sharedServer: false });
+    expect(mockRedisDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('failure: unchanged — marked failed without buildOnly', async () => {
+    const failed = JSON.stringify({ ...JSON.parse(body()), status: 'Failed' });
+    const { req, res } = makeReqRes(failed);
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    const detail = (mockMarkPreview.mock.calls[0] as unknown[])[2] as Record<string, unknown>;
+    expect((mockMarkPreview.mock.calls[0] as unknown[])[1]).toBe('preview-failed');
+    expect(detail.buildOnly).toBeUndefined();
+  });
+
+  it('off (unset): a success still applies (control for the cases above)', async () => {
+    delete mockEnvStore.APPS_REVIEW_BUILD_ONLY;
+    const { req, res } = makeReqRes(body());
+    await handler(req, res);
+    expect(mockTriggerApplyReview).toHaveBeenCalledTimes(1);
+  });
+});

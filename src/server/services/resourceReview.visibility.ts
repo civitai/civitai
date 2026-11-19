@@ -70,7 +70,7 @@ export const createResourceReviewNotification = async (
         message: 'Could not find modelVersion',
       },
       'notifications'
-    ).catch();
+    );
     return;
   }
 
@@ -321,6 +321,6 @@ function inBackground(
         message,
         ...ids,
         error: (error as Error)?.message,
-      }).catch(() => undefined)
+      })
     );
 }

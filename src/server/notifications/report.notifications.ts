@@ -109,7 +109,8 @@ export const reportNotifications = createNotificationProcessor({
         return {
           message: lockReviewRulingMessage(
             details.status === 'Approved',
-            Array.isArray(details.unlocked) ? details.unlocked : []
+            Array.isArray(details.unlocked) ? details.unlocked : [],
+            { reason: details.reason, resolvedAt: details.resolvedAt }
           ),
           url: `/models/${details.entityId}`,
         };

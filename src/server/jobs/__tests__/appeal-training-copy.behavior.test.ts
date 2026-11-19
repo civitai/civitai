@@ -235,9 +235,12 @@ describe('copyRejectedForTraining', () => {
   });
 
   it.each([
-    ['poi', 'None', 0, 'copied'],
+    ['poi', 'None', 1, 'copied'],
     ['poi', 'Soft', 2, 'copied'],
-    ['realPerson', 'None', null, 'copied'],
+    ['realPerson', 'None', 1, 'copied'],
+    ['realPerson', 'None', null, 'skipped'],
+    ['realPerson', 'None', 0, 'skipped'],
+    ['poi', 'Soft', 0, 'skipped'],
     ['poi', 'Mature', 0, 'skipped'],
     ['poi', 'X', 0, 'skipped'],
     ['poi', null, 0, 'skipped'],
@@ -353,7 +356,7 @@ describe('copyRejectedForTraining', () => {
   it('looks up a missing label, stores it, and copies on it', async () => {
     await record({ appealId: 1, imageId: 101, removalLabel: null });
     await record({ appealId: 2, imageId: 102, removalLabel: null });
-    await record({ appealId: 3, imageId: 103, removalLabel: null });
+    await record({ appealId: 3, imageId: 103, removalLabel: null, aiNsfwLevel: 1 });
     const lookup = vi.fn<RemovalLabelLookup>(
       async () =>
         new Map([
@@ -624,9 +627,29 @@ describe('appealTrainingHeld', () => {
   });
 
   it('holds a rated label only at a level the copy accepts', async () => {
-    await record({ appealId: 1, imageId: 101, removalLabel: 'poi', removalNsfw: 'Soft' });
+    await record({
+      appealId: 1,
+      imageId: 101,
+      removalLabel: 'poi',
+      removalNsfw: 'Soft',
+      aiNsfwLevel: 1,
+    });
     await record({ appealId: 2, imageId: 102, removalLabel: 'poi' });
     await record({ appealId: 3, imageId: 103, removalLabel: 'realPerson', removalNsfw: 'Mature' });
+    await record({
+      appealId: 4,
+      imageId: 104,
+      removalLabel: 'realPerson',
+      removalNsfw: 'None',
+      aiNsfwLevel: null,
+    });
+    await record({
+      appealId: 5,
+      imageId: 105,
+      removalLabel: 'poi',
+      removalNsfw: 'Soft',
+      aiNsfwLevel: 0,
+    });
 
     expect(await held()).toEqual([101]);
   });

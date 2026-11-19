@@ -1,10 +1,19 @@
 import { IMAGE_PREP_ERROR, ImagePrepError } from '~/shared/utils/canvas-utils';
-import { ConsumerBlobUploadError, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
+import {
+  ConsumerBlobUploadError,
+  uploadConsumerBlob,
+  type ConsumerBlobPresigner,
+} from '~/utils/consumer-blob-upload';
 import {
   probeMediaElement,
   releaseMediaElement,
 } from '~/utils/media-preprocessors/media-element-probe';
-import { uploadGenerationSourceImage } from './generationSourceImageUpload';
+import {
+  prepareGenerationSourceImage,
+  readBackUploadedImage,
+  uploadGenerationSourceImage,
+} from './generationSourceImageUpload';
+import { toGenerationSource, type ScannedRowsPath } from './generationSourceScannedRows';
 import {
   MEDIA_UPLOAD_FAILED_ERROR,
   MEDIA_UPLOAD_NO_VIDEO_TRACK_ERROR,
@@ -13,7 +22,9 @@ import {
   type MediaUploadKind,
 } from './mediaUploadLogic';
 
-const MEDIA_UPLOAD_BLOCKED_ERROR = {
+
+export const MEDIA_UPLOAD_BLOCKED_ERROR = {
+  image: 'this image was refused by the upload service',
   video: 'this video was refused by the upload service',
   audio: 'this audio was refused by the upload service',
 };
@@ -51,18 +62,25 @@ export async function probeMedia(
 /**
  * Validate in the browser, then upload as a private consumer blob. `contentType` is the sniffed
  * one. `null` when `isCurrent` turned false during an image upload (its read-back is skipped).
+ * An IMAGE is a generation source like the picker's, so with `scannedRows` it is answered as
+ * `toGenerationSource` decides: the blob, or (scanned rows on) the server's private scanned copy.
  */
 export async function uploadGenerationMedia(
   kind: MediaUploadKind,
   file: Blob,
   contentType: string,
-  isCurrent: () => boolean = () => true
+  isCurrent: () => boolean = () => true,
+  scannedRows?: ScannedRowsPath | null
 ): Promise<BlockMediaUploadInfo | null> {
   if (kind === 'image') {
     const image = await uploadGenerationSourceImage(file, isCurrent);
     if (!image) return null;
     const { url, width, height, sizeBytes } = image;
-    return { url, kind, mimeType: 'image/jpeg', sizeBytes, width, height };
+    return toGenerationSource(
+      { url, kind, mimeType: 'image/jpeg', sizeBytes, width, height },
+      scannedRows,
+      isCurrent
+    );
   }
   const probed = await probeMedia(kind, file);
   const body = file.type === contentType ? file : new Blob([file], { type: contentType });
@@ -77,6 +95,75 @@ export async function uploadGenerationMedia(
   if (probed.height !== undefined) info.height = probed.height;
   if (probed.durationMs !== undefined) info.durationMs = probed.durationMs;
   return info;
+}
+
+/**
+ * One item of an `OPEN_MEDIA_UPLOAD_BATCH`: validated and prepared exactly as a single bytes
+ * upload is, then uploaded with `presign` (the batch's own upload URLs). Unlike the single path,
+ * a blob the upload service blocked is refused for an IMAGE too, before its read-back, so a
+ * blocked item never comes back with a url. Returns the blob key for the batch's audit record.
+ */
+export async function uploadBatchMediaItem(
+  kind: MediaUploadKind,
+  file: Blob,
+  contentType: string,
+  presign: ConsumerBlobPresigner
+): Promise<{ blobKey: string; selected: BlockMediaUploadInfo }> {
+  const probed: Awaited<ReturnType<typeof probeMedia>> =
+    kind === 'image' ? {} : await probeMedia(kind, file);
+  const body =
+    kind === 'image'
+      ? await prepareGenerationSourceImage(file)
+      : file.type === contentType
+      ? file
+      : new Blob([file], { type: contentType });
+  const blob = await uploadConsumerBlob(body, { presign });
+  if (blob.blockedReason || blob.available === false) {
+    throw new MediaUploadError(MEDIA_UPLOAD_BLOCKED_ERROR[kind]);
+  }
+  const { url, id } = blob;
+  if (!url || !id) throw new Error('Upload did not return a URL');
+  if (kind === 'image') {
+    const { width, height } = await readBackUploadedImage(url);
+    return {
+      blobKey: id,
+      selected: { url, kind, mimeType: 'image/jpeg', sizeBytes: body.size, width, height },
+    };
+  }
+  const selected: BlockMediaUploadInfo = { url, kind, mimeType: contentType, sizeBytes: body.size };
+  if (probed.width !== undefined) selected.width = probed.width;
+  if (probed.height !== undefined) selected.height = probed.height;
+  if (probed.durationMs !== undefined) selected.durationMs = probed.durationMs;
+  return { blobKey: id, selected };
+}
+
+/**
+ * The batch's presign as the upload's retry logic expects it: a refusal becomes a
+ * `ConsumerBlobUploadError` carrying the HTTP status, so a 5xx or 429 is retried as the default
+ * presign's is and a 4xx is not.
+ */
+export function batchPresigner(mint: () => Promise<{ uploadUrl: string; expiresAt: string }>) {
+  return async () => {
+    try {
+      return await mint();
+    } catch (err) {
+      const status = (err as { data?: { httpStatus?: unknown } })?.data?.httpStatus;
+      if (typeof status !== 'number') {
+        throw new ConsumerBlobUploadError(
+          'Could not reach the server to start the upload.',
+          'presign-network-error',
+          true
+        );
+      }
+      const failure = { status, retryAfter: null };
+      throw new ConsumerBlobUploadError(
+        'Failed to get upload URL',
+        `presign-http-${status}`,
+        status === 429 || status >= 500,
+        failure
+      );
+    }
+  };
 }
 
 /**

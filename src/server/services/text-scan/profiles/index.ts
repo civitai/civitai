@@ -14,3 +14,5 @@ import './collection.profile';
 import './storyline.profile';
 import './image-caption.profile';
 import './track-lyrics.profile';
+import './service-offering.profile';
+import './post-text.profile';

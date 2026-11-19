@@ -46,7 +46,14 @@ import {
   isComicProjectHidden,
   isPanelTainted,
   readerPanelsWhere,
+  withholdRestrictedPanelImages,
 } from '~/server/services/comics/chapter-visibility';
+import {
+  imageNotRestrictedWhere,
+  imageRestrictionSelect,
+  isImageNotRestricted,
+  withServableImage,
+} from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
@@ -768,18 +775,21 @@ async function getReferenceImages(referenceId: number) {
     },
   });
 
-  if (!reference) return { referenceName: '', refImages: [] };
+  if (!reference) return { referenceName: '', refImages: [], skipped: false };
+  // A blocked image is never sent to a generation.
+  const refImages = reference.images
+    .filter((ri) => !ri.image.blockedFor)
+    .map((ri) => ({
+      imageId: ri.image.id,
+      url: getEdgeUrl(ri.image.url, { original: true }),
+      width: ri.image.width ?? 512,
+      height: ri.image.height ?? 512,
+    }));
   return {
     referenceName: reference.name,
-    // A blocked image is never sent to a generation.
-    refImages: reference.images
-      .filter((ri) => !ri.image.blockedFor)
-      .map((ri) => ({
-        imageId: ri.image.id,
-        url: getEdgeUrl(ri.image.url, { original: true }),
-        width: ri.image.width ?? 512,
-        height: ri.image.height ?? 512,
-      })),
+    refImages,
+    /** Every image it has was left out: the generation runs without this reference. */
+    skipped: reference.images.length > 0 && refImages.length === 0,
   };
 }
 
@@ -966,12 +976,18 @@ export const comicsRouter = router({
           status: ComicProjectStatus.Active,
         },
         include: {
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           chapters: {
             include: {
               _count: { select: { panels: true } },
               panels: {
+                where: {
+                  OR: [
+                    { imageId: null },
+                    { image: imageNotRestrictedWhere({ viewerId: ctx.user.id }) },
+                  ],
+                },
                 take: 1,
                 orderBy: { position: 'asc' },
                 select: { imageUrl: true },
@@ -991,14 +1007,16 @@ export const comicsRouter = router({
         // On green, strip NSFW cover/hero/thumbnail images so the card is still
         // visible and navigable but doesn't display mature imagery. This route is
         // protected so the viewer is always logged in — allow PG + PG13.
+        const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user.id);
+        const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user.id);
         const coverImage =
-          ctx.features.isGreen && p.coverImage && !hasSafeBrowsingLevel(p.coverImage.nsfwLevel)
+          ctx.features.isGreen && servableCover && !hasSafeBrowsingLevel(servableCover.nsfwLevel)
             ? null
-            : p.coverImage;
+            : servableCover;
         const heroImage =
-          ctx.features.isGreen && p.heroImage && !hasSafeBrowsingLevel(p.heroImage.nsfwLevel)
+          ctx.features.isGreen && servableHero && !hasSafeBrowsingLevel(servableHero.nsfwLevel)
             ? null
-            : p.heroImage;
+            : servableHero;
         const safeThumbnailUrl =
           ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
             ? null
@@ -1030,8 +1048,8 @@ export const comicsRouter = router({
       const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
         include: {
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           chapters: {
             orderBy: { position: 'asc' },
             include: {
@@ -1079,7 +1097,13 @@ export const comicsRouter = router({
                   orderBy: { position: 'asc' },
                   include: {
                     image: {
-                      select: { id: true, url: true, width: true, height: true, nsfwLevel: true },
+                      select: {
+                        id: true,
+                        url: true,
+                        width: true,
+                        height: true,
+                        ...imageRestrictionSelect,
+                      },
                     },
                   },
                 },
@@ -1087,12 +1111,14 @@ export const comicsRouter = router({
             })
           : [];
 
-      if (ctx.features.isGreen) {
-        for (const ref of references) {
-          ref.images = ref.images.filter(
-            (ri: any) => !ri.image.nsfwLevel || hasSafeBrowsingLevel(ri.image.nsfwLevel)
-          );
-        }
+      for (const ref of references) {
+        ref.images = ref.images.filter(
+          (ri) =>
+            isImageNotRestricted(ri.image, ctx.user.id) &&
+            (!ctx.features.isGreen ||
+              !ri.image.nsfwLevel ||
+              hasSafeBrowsingLevel(ri.image.nsfwLevel))
+        );
       }
 
       const chapters = project.chapters.map((chapter) => {
@@ -1146,7 +1172,11 @@ export const comicsRouter = router({
 
       const { chapters: _chapters, ...projectRest } = project;
       return {
-        ...projectRest,
+        ...withServableImage(
+          withServableImage(projectRest, 'coverImage', ctx.user.id),
+          'heroImage',
+          ctx.user.id
+        ),
         chapters,
         references,
         hiddenReason: projectHiddenReason,
@@ -1191,7 +1221,7 @@ export const comicsRouter = router({
               references: { select: { referenceId: true } },
               image: {
                 select: {
-                  nsfwLevel: true,
+                  ...imageRestrictionSelect,
                   width: true,
                   height: true,
                   // Exposed to the workspace UI so PanelCard can show *why*
@@ -1215,6 +1245,7 @@ export const comicsRouter = router({
       });
 
       if (!chapter) throw throwNotFoundError();
+      withholdRestrictedPanelImages([chapter], ctx.user.id);
 
       // Same green-domain mature-content stripping as `getProject`.
       if (ctx.features.isGreen) {
@@ -1258,7 +1289,7 @@ export const comicsRouter = router({
                   // Pull the underlying Image's nsfwLevel so the reader can
                   // blur and hide mature panels on a domain that doesn't
                   // permit them, instead of bypassing the site's NSFW guard.
-                  image: { select: { nsfwLevel: true } },
+                  image: { select: imageRestrictionSelect },
                 },
               },
             },
@@ -1269,6 +1300,7 @@ export const comicsRouter = router({
       if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
         throw throwAuthorizationError();
       }
+      withholdRestrictedPanelImages(project.chapters, ctx.user.id);
 
       // Server-side gate: on green, strip mature panels' `imageUrl` so the
       // raw CDN URL never reaches the client. Client-side blur on its own
@@ -1633,7 +1665,7 @@ export const comicsRouter = router({
             select: {
               id: true,
               url: true,
-              nsfwLevel: true,
+              ...imageRestrictionSelect,
               type: true,
               metadata: true,
               width: true,
@@ -1646,7 +1678,7 @@ export const comicsRouter = router({
             select: {
               id: true,
               url: true,
-              nsfwLevel: true,
+              ...imageRestrictionSelect,
               type: true,
               metadata: true,
               width: true,
@@ -1698,6 +1730,7 @@ export const comicsRouter = router({
                     ingestion: ImageIngestionStatus.Scanned,
                     needsReview: null,
                     tosViolation: false,
+                    ...imageNotRestrictedWhere({ viewerId: ctx.user?.id }),
                   },
                 },
                 take: 1,
@@ -1754,8 +1787,10 @@ export const comicsRouter = router({
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
+        const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user?.id);
+        const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user?.id);
         const rawThumbnailUrl =
-          p.coverImage?.url ??
+          servableCover?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
           null;
 
@@ -1763,13 +1798,13 @@ export const comicsRouter = router({
         // Logged-in viewers see PG + PG13; logged-out viewers see PG only.
         const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
         const coverImage =
-          ctx.features.isGreen && p.coverImage && !passesSfwGate(p.coverImage.nsfwLevel)
+          ctx.features.isGreen && servableCover && !passesSfwGate(servableCover.nsfwLevel)
             ? null
-            : p.coverImage;
+            : servableCover;
         const heroImage =
-          ctx.features.isGreen && p.heroImage && !passesSfwGate(p.heroImage.nsfwLevel)
+          ctx.features.isGreen && servableHero && !passesSfwGate(servableHero.nsfwLevel)
             ? null
-            : p.heroImage;
+            : servableHero;
         // Project nsfwLevel is bit_or of all chapters. Strip thumbnail if any R+
         // bit is present, or (for logged-out viewers) any PG13 bit is present.
         const thumbnailUrl =
@@ -1844,8 +1879,8 @@ export const comicsRouter = router({
           name: true,
           description: true,
           userId: true,
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           heroImagePosition: true,
           meta: true,
           genre: true,
@@ -1891,7 +1926,7 @@ export const comicsRouter = router({
                   image: {
                     select: {
                       id: true,
-                      nsfwLevel: true,
+                      ...imageRestrictionSelect,
                       hash: true,
                       width: true,
                       height: true,
@@ -1998,6 +2033,7 @@ export const comicsRouter = router({
         };
       });
 
+      withholdRestrictedPanelImages(chapters, ctx.user?.id);
       // On green, strip imageUrl from NSFW panels so they appear blocked.
       if (ctx.features.isGreen) {
         stripNsfwPanelImages(chapters, !!ctx.user);
@@ -2006,6 +2042,8 @@ export const comicsRouter = router({
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
       const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
+      const { coverImage } = withServableImage(project, 'coverImage', ctx.user?.id);
+      const { heroImage } = withServableImage(project, 'heroImage', ctx.user?.id);
 
       return {
         id: project.id,
@@ -2014,13 +2052,13 @@ export const comicsRouter = router({
         nsfwLevel: project.nsfwLevel,
         meta: parseComicProjectMeta(project.meta),
         coverImage:
-          ctx.features.isGreen && project.coverImage && !passesSfwGate(project.coverImage.nsfwLevel)
+          ctx.features.isGreen && coverImage && !passesSfwGate(coverImage.nsfwLevel)
             ? null
-            : project.coverImage,
+            : coverImage,
         heroImage:
-          ctx.features.isGreen && project.heroImage && !passesSfwGate(project.heroImage.nsfwLevel)
+          ctx.features.isGreen && heroImage && !passesSfwGate(heroImage.nsfwLevel)
             ? null
-            : project.heroImage,
+            : heroImage,
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
@@ -2203,6 +2241,8 @@ export const comicsRouter = router({
     )
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
+      // The enhancement is a paid step toward a panel the kill switch would refuse: refuse it first.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       // Get all user's ready references for prompt context
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
@@ -2291,6 +2331,23 @@ export const comicsRouter = router({
         isModerator: ctx.user.isModerator,
         surface: 'comic',
       });
+      // Images first, so a refused cover or hero leaves no project behind.
+      const cover = input.coverUrl
+        ? await createImage({
+            url: input.coverUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
+      const hero = input.heroUrl
+        ? await createImage({
+            url: input.heroUrl,
+            type: 'image',
+            clientUrl: true,
+            userId: ctx.user.id,
+          })
+        : null;
       const project = await dbWrite.comicProject.create({
         data: {
           userId: ctx.user.id,
@@ -2298,6 +2355,8 @@ export const comicsRouter = router({
           description: input.description ?? null,
           genre: input.genre ?? null,
           heroImagePosition: input.heroImagePosition ?? 50,
+          coverImageId: cover?.id ?? null,
+          heroImageId: hero?.id ?? null,
           chapters: {
             create: {
               name: 'Chapter 1',
@@ -2309,34 +2368,6 @@ export const comicsRouter = router({
           chapters: true,
         },
       });
-
-      // Handle cover image
-      if (input.coverUrl) {
-        const image = await createImage({
-          url: input.coverUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { coverImageId: image.id },
-        });
-      }
-
-      // Handle hero image
-      if (input.heroUrl) {
-        const image = await createImage({
-          url: input.heroUrl,
-          type: 'image',
-          clientUrl: true,
-          userId: ctx.user.id,
-        });
-        await dbWrite.comicProject.update({
-          where: { id: project.id },
-          data: { heroImageId: image.id },
-        });
-      }
 
       await comicsSearchIndex.queueUpdate(
         [{ id: project.id, action: SearchIndexUpdateQueueAction.Update }],
@@ -3020,13 +3051,15 @@ export const comicsRouter = router({
       // Get reference images for generation (skip if no references)
       let primaryReferenceName = '';
       let combinedRefImages: { url: string; width: number; height: number }[] = [];
+      let referenceImagesSkipped = false;
 
       if (generationReferenceIds.length > 0) {
         const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
 
         for (const refId of generationReferenceIds) {
-          const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+          const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
           if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+          if (skipped) referenceImagesSkipped = true;
           allRefImages.push(...imgs);
         }
 
@@ -3177,7 +3210,7 @@ export const comicsRouter = router({
           status: updated.status,
           workflowId: result.id,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped };
       } catch (error: any) {
         // Capture as much detail as possible for debugging
         const errorDetails: string[] = [];
@@ -3211,7 +3244,7 @@ export const comicsRouter = router({
             errorMessage: userFacingError,
           },
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 
@@ -4412,10 +4445,12 @@ export const comicsRouter = router({
 
       // Gather reference images from selected refs
       let primaryReferenceName = '';
+      let referenceImagesSkipped = false;
       const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
       for (const refId of generationReferenceIds) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        if (skipped) referenceImagesSkipped = true;
         allRefImages.push(...imgs);
       }
 
@@ -4486,6 +4521,7 @@ export const comicsRouter = router({
         width: panelWidth,
         height: panelHeight,
         cost: result.cost?.total ?? 0,
+        referenceImagesSkipped,
         enhancedPrompt: null,
       };
     }),
@@ -4701,13 +4737,19 @@ export const comicsRouter = router({
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
         number,
-        { referenceName: string; images: { url: string; width: number; height: number }[] }
+        {
+          referenceName: string;
+          images: { url: string; width: number; height: number }[];
+          skipped: boolean;
+        }
       >();
+      let referenceImagesSkipped = false;
       for (const ref of relevantRefs) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(ref.id);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(ref.id);
         refImagesByRefId.set(ref.id, {
           referenceName: referenceName ?? ref.name,
           images: imgs.map(({ url, width, height }) => ({ url, width, height })),
+          skipped,
         });
       }
 
@@ -4739,6 +4781,9 @@ export const comicsRouter = router({
         const mentionedRefImages = mentionedIds.flatMap(
           (id) => refImagesByRefId.get(id)?.images ?? []
         );
+        if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+          referenceImagesSkipped = true;
+        }
         const panelPrimaryRefName =
           mentionedIds.length > 0 ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? '' : '';
         const mentionedRefNames = mentionedIds
@@ -4786,6 +4831,7 @@ export const comicsRouter = router({
       return {
         ...chapter,
         panels: createdPanels,
+        referenceImagesSkipped,
       };
     }),
 
@@ -5579,7 +5625,7 @@ export const comicsRouter = router({
           },
         });
 
-        return panel;
+        return { ...panel, referenceImagesSkipped: false };
       }
 
       // With prompt → img2img generation
@@ -5642,10 +5688,12 @@ export const comicsRouter = router({
 
       // Gather reference images from selected refs
       let primaryReferenceName = '';
+      let referenceImagesSkipped = false;
       const allRefImages: { imageId: number; url: string; width: number; height: number }[] = [];
       for (const refId of generationReferenceIds) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(refId);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(refId);
         if (!primaryReferenceName && referenceName) primaryReferenceName = referenceName;
+        if (skipped) referenceImagesSkipped = true;
         allRefImages.push(...imgs);
       }
 
@@ -5766,7 +5814,7 @@ export const comicsRouter = router({
           status: updated.status,
           workflowId: result.id,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped };
       } catch (error: any) {
         console.error('Comics enhancePanel generation failed:', {
           panelId: panel.id,
@@ -5784,7 +5832,7 @@ export const comicsRouter = router({
           projectId: input.projectId,
           status: updated.status,
         });
-        return updated;
+        return { ...updated, referenceImagesSkipped: false };
       }
     }),
 
@@ -5833,13 +5881,19 @@ export const comicsRouter = router({
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
         number,
-        { referenceName: string; images: { url: string; width: number; height: number }[] }
+        {
+          referenceName: string;
+          images: { url: string; width: number; height: number }[];
+          skipped: boolean;
+        }
       >();
+      let referenceImagesSkipped = false;
       for (const ref of allUserRefs) {
-        const { referenceName, refImages: imgs } = await getReferenceImages(ref.id);
+        const { referenceName, refImages: imgs, skipped } = await getReferenceImages(ref.id);
         refImagesByRefId.set(ref.id, {
           referenceName: referenceName ?? ref.name,
           images: imgs.map(({ url, width, height }) => ({ url, width, height })),
+          skipped,
         });
       }
 
@@ -5971,6 +6025,9 @@ export const comicsRouter = router({
           const mentionedRefImages = mentionedIds.flatMap(
             (id) => refImagesByRefId.get(id)?.images ?? []
           );
+          if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+            referenceImagesSkipped = true;
+          }
           const panelPrimaryRefName =
             mentionedIds.length > 0
               ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? ''
@@ -6110,6 +6167,9 @@ export const comicsRouter = router({
           const mentionedRefImages = mentionedIds.flatMap(
             (id) => refImagesByRefId.get(id)?.images ?? []
           );
+          if (mentionedIds.some((id) => refImagesByRefId.get(id)?.skipped)) {
+            referenceImagesSkipped = true;
+          }
           const panelPrimaryRefName =
             mentionedIds.length > 0
               ? refImagesByRefId.get(mentionedIds[0])?.referenceName ?? ''
@@ -6154,7 +6214,7 @@ export const comicsRouter = router({
         throw throwBadRequestError(`Panel ${i + 1} has no prompt, source image, or image ID`);
       }
 
-      return { panels: createdPanels };
+      return { panels: createdPanels, referenceImagesSkipped };
     }),
 
   // ──── Phase 2: Create panel from existing Image (manual mode) ────

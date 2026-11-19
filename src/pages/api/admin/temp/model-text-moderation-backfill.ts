@@ -135,13 +135,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   // Logged here, before responding, so an HTTP timeout on a long batch cannot lose the
   // record of what already committed — same reasoning as minor-hash-sweep's summary log.
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'model-text-moderation',
     message: 'backfill batch complete',
     cursor: cursor ?? null,
     ...counts,
-  }).catch(() => null);
+  });
 
   return res.status(200).json({ dryRun: false, ...counts });
 });

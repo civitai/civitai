@@ -138,7 +138,7 @@ export const articleRouter = router({
             name: 'article-get-event-decoration',
             message: (error as Error).message,
             articleId: input.id,
-          }).catch(() => undefined);
+          });
           return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
         }),
       ]);

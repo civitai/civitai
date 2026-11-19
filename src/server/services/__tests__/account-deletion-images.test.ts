@@ -85,6 +85,38 @@ const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
+const CASE_EXPR = /^CASE\s+WHEN\s+([\s\S]+?)\s+THEN\s+([\s\S]+?)\s+ELSE\s+([\s\S]+?)\s+END$/;
+const takeKeys = (part: string, keys: string[]) => keys.splice(0, (part.match(/\?/g) ?? []).length);
+
+/** One SET value: a breadcrumb lookup, `"blockedFor"`, a Blocked literal, or a CASE over those.
+ *  `keys` holds the expression's parameters in text order and is consumed. */
+function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
+  const caseExpr = expr.match(CASE_EXPR);
+  if (caseExpr) {
+    const [, cond, then, otherwise] = caseExpr;
+    const condKeys = takeKeys(cond, keys);
+    const holds = cond.split(/\s+OR\s+/).some((clause) => {
+      const [operand, compared] = clause.split(/\s*=\s*\?\s*$/);
+      if (compared !== '') throw new Error(`unhandled CASE condition: ${clause}`);
+      const operandKeys = takeKeys(operand, condKeys);
+      return evalValue(operand.trim(), operandKeys, row) === condKeys.shift();
+    });
+    const thenKeys = takeKeys(then, keys);
+    const elseKeys = takeKeys(otherwise, keys);
+    return holds ? evalValue(then, thenKeys, row) : evalValue(otherwise, elseKeys, row);
+  }
+  const lookup = expr.match(METADATA_LOOKUP);
+  if (lookup) {
+    const value = row.metadata[keys[0]] ?? null;
+    if (lookup[1] === '::"ImageIngestionStatus"' && !INGESTION_STATUSES.includes(value!))
+      throw new Error(`invalid input value for enum ImageIngestionStatus: "${value}"`);
+    return value;
+  }
+  if (expr === '"blockedFor"') return row.blockedFor;
+  if (expr === `'Blocked'::"ImageIngestionStatus"`) return 'Blocked';
+  throw new Error(`unhandled assignment: ${expr}`);
+}
+
 function applyRestoreUpdate(sql: string, values: unknown[]) {
   const params = [...values];
   const whereAt = sql.indexOf('WHERE');
@@ -134,24 +166,23 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
-      const lookup = expr.match(METADATA_LOOKUP);
-      if (lookup) {
-        const value = row.metadata[keys[0]] ?? null;
-        if (lookup[1] === '::"ImageIngestionStatus"' && !INGESTION_STATUSES.includes(value!))
-          throw new Error(`invalid input value for enum ImageIngestionStatus: "${value}"`);
-        next[column as 'ingestion'] = value!;
-      } else if (METADATA_MINUS.test(expr)) {
+      if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
         next.metadata = metadata;
-      } else throw new Error(`unhandled assignment: ${expr}`);
+      } else next[column as 'ingestion'] = evalValue(expr, [...keys], row)!;
     }
     return { row, next };
   });
   for (const { row, next } of staged) if (!row.stuck) Object.assign(row, next);
 
   claimedPerPass.push(claimed.length);
-  return claimed.map(({ id, postId, ingestion }) => ({ id, postId, ingestion }));
+  return claimed.map(({ id, postId, ingestion, blockedFor }) => ({
+    id,
+    postId,
+    ingestion,
+    blockedFor,
+  }));
 }
 
 /**
@@ -284,6 +315,44 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'AiNotVerified' });
     expect(result.unblocked).toBe(0);
     expect(result.stillBlocked).toBe(1);
+  });
+
+  // Readers that gate on ingestion alone must see a CSAM row as Blocked too, so its prior
+  // ingestion is not restored.
+  it('puts back a CSAM reason and keeps that image Blocked', async () => {
+    images = [
+      hidden(1, 'Error', {
+        metadata: { [PRIOR_INGESTION_KEY]: 'Error', [PRIOR_BLOCKED_FOR_KEY]: 'CSAM' },
+      }),
+      hidden(2, 'Scanned'),
+    ];
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
+    // Control: the other image is restored and goes through the unhide follow-ups.
+    expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2]]]);
+    expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
+  });
+
+  it('keeps a CSAM block applied during the grace window over the older breadcrumb', async () => {
+    images = [
+      hidden(1, 'Scanned', {
+        blockedFor: 'CSAM',
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_BLOCKED_FOR_KEY]: 'moderated' },
+      }),
+      hidden(2, 'Scanned', {
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_BLOCKED_FOR_KEY]: 'moderated' },
+      }),
+    ];
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
+    // Control: the same breadcrumb on a non-CSAM row is put back as written.
+    expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: 'moderated' });
+    expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
   it('clears the breadcrumbs so a later moderator block is not mistaken for this one', async () => {

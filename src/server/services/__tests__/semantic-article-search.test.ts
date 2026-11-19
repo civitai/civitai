@@ -1,12 +1,18 @@
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   fetched: [] as number[][],
+  // The feed filters each hydration was asked for.
+  fetchArgs: [] as Record<string, unknown>[],
+  follows: [] as number[],
   stripBenignPhrases: vi.fn(async (text: string) => text),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
@@ -16,6 +22,11 @@ const h = vi.hoisted(() => ({
   isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
   evalBoolean: vi.fn<() => { enabled: unknown }>(),
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+}));
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -27,7 +38,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: h.stripBenignPhrases,
 }));
+vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
   includesMinor: h.includesMinor,
@@ -36,11 +49,15 @@ vi.mock('~/server/services/system-cache', () => ({
   getBrowsingSettingAddons: async () => h.addons,
 }));
 
+vi.mock('~/server/redis/caches', () => ({ getUserFollows: async () => h.follows }));
+
 // The feed's fetch path: every id it is asked for comes back, owned by `owner(id)`.
 const owner = (id: number) => (id >= 20 ? 7 : id);
 vi.mock('~/server/services/article.service', () => ({
-  getArticles: async ({ ids }: { ids: number[] }) => {
+  getArticles: async (args: { ids: number[] }) => {
+    const { ids } = args;
     h.fetched.push(ids);
+    h.fetchArgs.push(args);
     return {
       items: ids.map((id) => ({
         id,
@@ -109,6 +126,8 @@ beforeEach(() => {
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   sent = [];
   h.fetched = [];
+  h.fetchArgs = [];
+  h.follows = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
@@ -118,6 +137,9 @@ beforeEach(() => {
   dbMock.dbRead.article.findMany.mockImplementation((args: never) =>
     harness.prisma.article.findMany(args)
   );
+  // Calls are asserted per test, so none may carry over from an earlier one.
+  dbMock.dbRead.articleEngagement.findMany.mockClear();
+  dbMock.dbRead.collectionItem.findMany.mockClear();
 });
 
 const MOD = { id: 501, isModerator: true } as SessionUser;
@@ -154,7 +176,11 @@ describe('semantic article search', () => {
   it('logs how many candidates came back and how many survived hydration', async () => {
     await search([11, 12, 10]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'semantic-article-search', returned: 3, hydrated: 1 })
+      expect.objectContaining({
+        name: 'semantic-article-search',
+        hydrated: 1,
+        payload: expect.objectContaining({ returned: 3 }),
+      })
     );
   });
 });
@@ -184,6 +210,141 @@ describe('semantic article search refinements', () => {
     dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
     await refined({ usernames: ['someone'], tagNames: ['anime'] });
     expect(sent[0]).toMatchObject({ userIds: [10], tagIds: [1] });
+  });
+});
+
+describe("the articles feed's filters", () => {
+  const feedSearch = (input: Partial<Parameters<typeof searchSemanticArticles>[0]['input']>) =>
+    searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, ...input },
+      user: { id: 5, isModerator: false } as SessionUser,
+      candidateSource: ranking([10, 11]),
+    });
+
+  it("narrows the index to the feed's tags, beside any named ones", async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
+    await feedSearch({ tagIds: [4], tagNames: ['anime'] });
+    expect(sent[0].tagIds).toEqual([1, 4]);
+  });
+
+  it("bounds the published date by the feed's period, to the hour, and not for all time", async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-16T10:37:00Z'), toFake: ['Date'] });
+    try {
+      await feedSearch({ period: MetricTimeframe.Week });
+      expect(sent[0].range).toEqual({ key: 'publishedAt', gte: '2026-11-09T10:00:00.000Z' });
+      await feedSearch({ period: MetricTimeframe.AllTime });
+      expect(sent[1].range).toEqual({ key: 'publishedAt', gte: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('narrows the index to the creators the viewer follows', async () => {
+    h.follows = [7, 8];
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toEqual([7, 8]);
+  });
+
+  it('finds nothing in Followed for a viewer who follows no one, without asking the service', async () => {
+    expect((await feedSearch({ followed: true })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('leaves a very long follow list to hydration rather than the index filter', async () => {
+    h.follows = Array.from({ length: 1001 }, (_, i) => i + 1);
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toBeUndefined();
+    expect(h.fetchArgs[0]).toMatchObject({ followed: true });
+  });
+
+  // The viewer's Bookmarked/Hidden list and the collection, as getArticles reads them.
+  const lists = (over: { engaged?: number[]; collected?: number[] }) => {
+    dbMock.dbRead.articleEngagement.findMany.mockResolvedValue(
+      (over.engaged ?? []).map((articleId) => ({ articleId })) as never
+    );
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue(
+      (over.collected ?? []).map((articleId) => ({ articleId })) as never
+    );
+  };
+
+  it("narrows the index to the viewer's bookmarks, so a short list is not a page of misses", async () => {
+    lists({ engaged: [10, 20] });
+    await feedSearch({ favorites: true });
+    expect(sent[0].ids).toEqual([10, 20]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Favorite' } })
+    );
+  });
+
+  it('narrows the index to the hidden list in the Hidden view', async () => {
+    lists({ engaged: [11] });
+    await feedSearch({ hidden: true });
+    expect(sent[0].ids).toEqual([11]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Hide' } })
+    );
+  });
+
+  it("narrows the index to the collection's articles, within the bookmarks when both apply", async () => {
+    lists({ engaged: [10, 20, 21], collected: [21, 10, 30] });
+    await feedSearch({ favorites: true, collectionId: 9 });
+    expect(sent[0].ids).toEqual([10, 21]);
+  });
+
+  it('finds nothing for an empty list, without asking the service', async () => {
+    lists({ engaged: [10], collected: [20] });
+    expect((await feedSearch({ favorites: true, collectionId: 9 })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('leaves a very long list to hydration rather than the index filter', async () => {
+    lists({ collected: Array.from({ length: 1001 }, (_, i) => i + 1) });
+    await feedSearch({ collectionId: 9 });
+    expect(sent[0].ids).toBeUndefined();
+    expect(h.fetchArgs[0]).toMatchObject({ collectionId: 9 });
+    // Reads one past the cap, never the whole collection.
+    expect(dbMock.dbRead.collectionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { collectionId: 9, articleId: { not: null } },
+        take: 1001,
+      })
+    );
+  });
+
+  it('narrows by the short list alone when the other is past the cap', async () => {
+    // The long list lacks 10: intersecting it in would leave nothing.
+    lists({ engaged: Array.from({ length: 1001 }, (_, i) => i + 100), collected: [10] });
+    await feedSearch({ favorites: true, collectionId: 9 });
+    expect(sent[0].ids).toEqual([10]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 1001 })
+    );
+  });
+
+  it("reads no one's bookmarks for a signed-out visitor", async () => {
+    lists({ engaged: [10] });
+    await searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, favorites: true, hidden: true },
+      candidateSource: ranking([10]),
+    });
+    expect(dbMock.dbRead.articleEngagement.findMany).not.toHaveBeenCalled();
+    expect(sent[0].ids).toBeUndefined();
+  });
+
+  it("hydrates through the feed's views of the viewer's lists", async () => {
+    h.follows = [10];
+    lists({ engaged: [10], collected: [10] });
+    await feedSearch({ followed: true, favorites: true, hidden: true, collectionId: 9 });
+    expect(h.fetchArgs[0]).toMatchObject({
+      followed: true,
+      favorites: true,
+      hidden: true,
+      collectionId: 9,
+    });
+    // Bookmarked wins over Hidden, as in getArticles.
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Favorite' } })
+    );
   });
 });
 
@@ -356,4 +517,18 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(result.correctedQuery).toBe('corrected');
   });
+});
+
+describeSemanticAuditContract({
+  index: 'articles',
+  run: ({ source, user, cursor }) =>
+    searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, cursor },
+      user,
+      candidateSource: source,
+    }),
+  ids: [10, 20],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

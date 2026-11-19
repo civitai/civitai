@@ -9,7 +9,7 @@ import { logToAxiom } from '$lib/server/axiom';
 // reason`. A `no_token` majority confirms the client submits with no token (invisible widget failed for the
 // user) rather than a config/hostname problem (ClickUp 868k9gug8). Never logs the token or secret.
 const logRejectAxiom = (fields: Record<string, unknown>) =>
-  logToAxiom({ name: 'captcha-reject', ...fields }).catch(() => undefined);
+  logToAxiom({ name: 'captcha-reject', ...fields });
 
 // Cloudflare Turnstile verification, mirroring the main app's verifyCaptchaToken (recaptcha/client.ts).
 // Uses the INVISIBLE widget (CF dashboard widget-mode = Invisible):

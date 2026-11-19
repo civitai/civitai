@@ -424,6 +424,11 @@ export async function readAutoBuildBudget(
 /** New-submission alerts per submitter per UTC hour, before they are rolled up. */
 export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
+const clusterCounters = () => import('~/server/utils/cluster-window-count');
+
+/** A UTC-day window's TTL: a day plus slack, so a key outlives the day it counts. */
+const AGENT_DAY_KEY_TTL_S = 26 * 60 * 60;
+
 /**
  * Whether this submitter's next alert is posted: `alert` up to the hourly limit, `rollup` exactly
  * once when it is passed (one "more submissions" notice), `silent` after that. Fails to SILENT:
@@ -431,17 +436,11 @@ export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
  */
 async function takeSubmissionAlertSlot(userId: number): Promise<'alert' | 'rollup' | 'silent'> {
   try {
-    const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
+    const { REDIS_KEYS } = await import('~/server/redis/client');
     const hour = new Date().toISOString().slice(0, 13);
-    const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
-    const res = await withSysReadDeadline(
-      sysRedis
-        .multi()
-        .set(key, '0', { NX: true, EX: 2 * 60 * 60 })
-        .incr(key)
-        .exec()
-    );
-    const n = Number(res?.[1]);
+    const key = `${REDIS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
+    const { takeClusterWindowCount } = await clusterCounters();
+    const n = await takeClusterWindowCount('takeSubmissionAlertSlot', key, 2 * 60 * 60);
     if (!Number.isFinite(n)) return 'silent';
     if (n <= SUBMISSION_ALERTS_PER_USER_PER_HOUR) return 'alert';
     return n === SUBMISSION_ALERTS_PER_USER_PER_HOUR + 1 ? 'rollup' : 'silent';
@@ -712,9 +711,9 @@ export async function maybeAutoStartAgentReview(
 type AgentAutostartReservedKey = Awaited<ReturnType<typeof agentAutostartReservedKey>>;
 
 async function agentAutostartReservedKey() {
-  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  const { REDIS_KEYS } = await import('~/server/redis/client');
   const day = new Date().toISOString().slice(0, 10);
-  return `${REDIS_SYS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
+  return `${REDIS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
 }
 
 /**
@@ -725,16 +724,14 @@ async function reserveAgentAutostartBudget(
   cents: number
 ): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
     const key = await agentAutostartReservedKey();
-    const res = await withSysReadDeadline(
-      sysRedis
-        .multi()
-        .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
-        .incrBy(key, cents)
-        .exec()
+    const { takeClusterWindowCount } = await clusterCounters();
+    const total = await takeClusterWindowCount(
+      'reserveAgentAutostartBudget',
+      key,
+      AGENT_DAY_KEY_TTL_S,
+      { by: cents }
     );
-    const total = Number(res?.[1]);
     return Number.isFinite(total) ? { totalCents: total, key } : null;
   } catch {
     return null;
@@ -747,8 +744,10 @@ async function releaseAgentAutostartBudget(
   key: AgentAutostartReservedKey
 ): Promise<void> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.incrBy(key, -cents));
+    const { takeClusterWindowCount } = await clusterCounters();
+    await takeClusterWindowCount('releaseAgentAutostartBudget', key, AGENT_DAY_KEY_TTL_S, {
+      by: -cents,
+    });
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

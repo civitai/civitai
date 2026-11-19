@@ -9,7 +9,7 @@ vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { grantMysteryBoxes, takeBackGrantedBox } = vi.hoisted(() => ({
   grantMysteryBoxes: vi.fn(async () => ({
-    grantedUserIds: [8675309],
+    grantedUserIds: [990100034],
     alreadyGrantedUserIds: [] as number[],
     busyUserIds: [] as number[],
     failedUserIds: [] as number[],
@@ -27,7 +27,7 @@ vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
 
 const { actions } = await import('../+page.server');
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 const MODERATOR = 990000007;
 
 const formEvent = (grants: Record<string, boolean>, fields: Record<string, string>) => {

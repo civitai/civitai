@@ -94,8 +94,9 @@ text, its Qdrant pass-through for "more like this") instead of Qdrant and the or
 - `semantic-image-search.service.ts`: the user is optional. Signed out means the site's default
   hidden tags and browsing add-ons. Hydration through `getAllImages` already supports an anonymous
   viewer.
-- Query-embedding cost: every new text query is one orchestrator embedding call. The 7-day Redis
-  cache absorbs repeats. The service exports `search_request_duration_seconds` and
+- Query-embedding cost: every new text query is one orchestrator embedding call. The site keeps no
+  query-embedding cache; any caching of repeats happens in the search service or the orchestrator
+  (confirm with their owners). The service exports `search_request_duration_seconds` and
   `search_query_vector_cache_total`; check p95 and the hit rate before going public.
 - Schema: `userIds`, `sortAt` range, `aspectRatios`, `toolIds`, `techniqueIds`, `sort`.
 

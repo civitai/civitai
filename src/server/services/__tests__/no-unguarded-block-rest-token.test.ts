@@ -172,7 +172,11 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   },
   'src/pages/api/v1/blocks/gated-images.ts': {
     exposure: 'READ_VIEWER_SCOPED',
-    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
+    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the bare rows carrying metadata.blockPublishedAppId or metadata.blockSharedUploadAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs and the viewer uploads it opted in to share (those only once scanned and SFW). What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
+  },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The REST twin of GET_WORKFLOW_MEDIA: stored workflow media refs become media URLs judged for the VERIFIED subject (their browsing level, privateGen ownership), and a ref opens only for the appBlockId that stored it. Each visible entry hands out a ticket URL for bytes the caller cannot otherwise reach, so a suspended app left reachable here would keep serving its users generated clips. Anon is refused inside the shared body.',
   },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     exposure: 'READ_PUBLIC',
@@ -1354,12 +1358,15 @@ describe('no unguarded block-REST token verification', () => {
     // The per-viewer gated image read. It sits NEXT TO images.ts in the route
     // tree and on the opposite side of this line from it, which is the pairing
     // worth noticing: images.ts is READ_PUBLIC and opts out, this one may not.
-    // The corpus is the calling app's OWN published rows rather than the public
+    // The corpus is the calling app's OWN published and shared-upload rows rather than the public
     // catalog, every verdict is computed against the verified subject, and a
     // `visible` entry hands out a minted edge url for bytes that are otherwise
     // unreachable — so a suspended app left serving it keeps delivering its
     // users' generated images after the takedown.
     'src/pages/api/v1/blocks/gated-images.ts',
+    // Its media sibling: stored workflow media refs become viewer-bound media
+    // URLs, so a suspended app left serving it keeps delivering generated clips.
+    'src/pages/api/v1/blocks/workflow-media.ts',
     // The DIGITAL GOODS pair. `goods/purchase.ts` is the third SPEND route this
     // table has ever carried and `entitlements.ts` reads the viewer's purchase
     // history with the app. Neither may opt out: a suspended app reaching the
@@ -1994,6 +2001,7 @@ describe('the approval predicate is not open-coded a second time', () => {
     'src/pages/api/v1/blocks/resource-intent.ts',
     'src/pages/api/v1/blocks/tools.ts',
     'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+    'src/pages/api/v1/blocks/workflow-media.ts',
   ];
 
   it('POSITIVE CONTROL: the any-token population is derived and equals its ledger', () => {

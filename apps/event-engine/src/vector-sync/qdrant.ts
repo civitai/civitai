@@ -80,12 +80,8 @@ export function qdrantClient() {
 }
 
 /**
- * Runs a Qdrant call again, once, when it failed because its pooled keep-alive socket had already
- * been closed by the server (see connection-errors). Not every request on such a socket reaches
- * the server, so the retry is only for calls that are safe to repeat: reads, upserts and payload
- * overwrites by point id, deletes by point id, and metadata merges all leave the same state when
- * applied twice. The bootstrap creates (collection, payload index, alias) are not retried, since a
- * repeat may fail as already existing. HTTP error responses and timeouts are never retried.
+ * Marks a call as safe to repeat (see retryOnceOnConnectionError). Do not wrap the bootstrap
+ * creates (collection, payload index, alias): a repeat may fail as already existing.
  */
 const idempotent = retryOnceOnConnectionError;
 

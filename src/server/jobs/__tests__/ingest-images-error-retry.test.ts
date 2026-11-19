@@ -27,6 +27,7 @@ vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({
   env: {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: 200,
     IMAGE_SCANNING_RETRY_DELAY: 5,
     IMAGE_SCANNING_PENDING_TIMEOUT: 60,
     DATABASE_IS_PROD: true,

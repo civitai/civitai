@@ -373,9 +373,7 @@ export function RequiredComponentsSection({
               <Group gap={8}>
                 <span>
                   {needsPurchase
-                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, {
-                        decimals: 0,
-                      })} ${buzzLabel})`
+                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0)} ${buzzLabel})`
                     : 'Download All Components'}
                 </span>
                 {!needsPurchase && (

@@ -15,6 +15,10 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
+vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  matureRestrictedBaseModels: () => ['Restricted'],
+}));
 
 const { reconcileRestrictedImages } = await import('~/server/jobs/reconcile-restricted-images');
 
@@ -26,12 +30,10 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TABLE "RestrictedBaseModels" ("baseModel" text PRIMARY KEY);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "baseModel" text NOT NULL);
     CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
     CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, "modelRestricted" boolean NOT NULL DEFAULT false);
 
-    INSERT INTO "RestrictedBaseModels" VALUES ('Restricted');
     INSERT INTO "ModelVersion" VALUES (${RESTRICTED_VERSION}, 'Restricted'), (${OTHER_VERSION}, 'Open');
     INSERT INTO "Image" VALUES
       (1, 7, false), (2, 7, false), -- two images of one post

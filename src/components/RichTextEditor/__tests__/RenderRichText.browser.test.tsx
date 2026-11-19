@@ -1,3 +1,4 @@
+import { getSchema } from '@tiptap/core';
 import { generateJSON } from '@tiptap/html';
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
@@ -14,7 +15,9 @@ vi.mock('~/components/RenderHtml/RenderHtml', async (importOriginal) => ({
   RenderHtml: ({ html }: { html: string }) => <div data-testid="fallback">{html}</div>,
 }));
 
-const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichText');
+const { RenderRichText, renderExtensions } = await import(
+  '~/components/RichTextEditor/RenderRichText'
+);
 
 const paragraph = (text: string) => ({
   type: 'doc',
@@ -26,6 +29,19 @@ const paragraph = (text: string) => ({
 const unknownNode = { type: 'doc', content: [{ type: 'sticker', attrs: { id: '1' } }] };
 
 describe('RenderRichText', () => {
+  // The fallback renders the raw HTML without `imageGuard`, so a stored body must never reach it.
+  test('🔴 renders every node and mark a stored body can hold, so the fallback is unreachable', () => {
+    const stored = getSchema(tiptapExtensions);
+    const rendered = getSchema(renderExtensions);
+
+    const missing = (kind: 'nodes' | 'marks') =>
+      Object.keys(stored[kind]).filter((name) => !(name in rendered[kind]));
+
+    expect(Object.keys(stored.nodes)).toContain('image');
+    expect(missing('nodes')).toEqual([]);
+    expect(missing('marks')).toEqual([]);
+  });
+
   test('an @mention in an article links to the profile it names', async () => {
     // The stored HTML, through the same parse the article page does server-side.
     const doc = generateJSON(

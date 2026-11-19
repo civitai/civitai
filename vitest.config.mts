@@ -107,6 +107,7 @@ const civitaiWorkspacePkgs = [
   'db-schema',
   'db',
   'redis',
+  'email',
   'clickhouse',
   'axiom',
   // `@civitai/flipt` (packages/civitai-flipt) backs src/server/flipt/client.ts, which the
@@ -192,6 +193,8 @@ const componentAlias = [
 // What the split does buy: the sharp crash is deterministic and gone, and anyone who wants to
 // EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
 const sharpExecutingTestFiles = [
+  'src/server/services/blocks/__tests__/block-generation-source.behavior.test.ts',
+  'src/server/services/blocks/__tests__/block-generation-source.upload.behavior.test.ts',
   'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
   'src/server/services/blocks/__tests__/block-image-upload.service.test.ts',
   'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',

@@ -15,6 +15,7 @@ import {
   acceptServiceDealDelivery,
   assertDealText,
   cancelLateServiceDeal,
+  cancelServiceDealSellerUnavailable,
   declineServiceDeal,
   getServiceDealView,
   listMyServiceDeals,
@@ -122,6 +123,11 @@ export const creatorServiceDealRouter = router({
     .input(serviceDealActionSchema)
     .mutation(({ input, ctx }) =>
       done(input.id, cancelLateServiceDeal({ dealId: input.id, userId: ctx.user.id }))
+    ),
+  cancelAndRefund: protectedProcedure
+    .input(serviceDealActionSchema)
+    .mutation(({ input, ctx }) =>
+      done(input.id, cancelServiceDealSellerUnavailable({ dealId: input.id, userId: ctx.user.id }))
     ),
   requestCancellation: protectedProcedure
     .input(requestServiceDealCancellationSchema)

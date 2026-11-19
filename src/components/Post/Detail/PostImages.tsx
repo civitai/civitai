@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { Badge, Button, Center, Group, Loader, Paper } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
@@ -35,6 +36,9 @@ import {
   imageMediaHatClearLeft,
 } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { mergeDetailItems } from '~/components/Image/Detail/detail-items';
+import { PostTextBlock } from '~/components/Post/Detail/PostTextBlock';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -50,11 +54,17 @@ export function PostImages({
   collectionItems,
   isOwner,
   isModerator,
+  texts,
+  authorId,
 }: {
   postId: number;
   /** Names the post's songs in Up next. */
   postTitle?: string | null;
   images: ImagesInfiniteModel[];
+  /** The post's storyline text items (`post.get`), read inline between the images. */
+  texts?: DetailText[];
+  /** The post's author: their own unrated text is not blurred for them. */
+  authorId?: number;
   isLoading?: boolean;
   collectionItems?: PostContestCollectionItem[];
   isOwner?: boolean;
@@ -78,6 +88,7 @@ export function PostImages({
   );
   const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
   const songList: SongList = { name: postTitle || 'this post', songs };
+  const items = useMemo(() => mergeDetailItems(images, texts), [images, texts]);
 
   if (isLoading)
     return (
@@ -89,13 +100,18 @@ export function PostImages({
       </Paper>
     );
 
-  const remainingImages = images.length - maxInitialImages;
-  const _images = showMore ? images : images.slice(0, maxInitialImages);
+  const remainingItems = items.length - maxInitialImages;
+  const _items = showMore ? items : items.slice(0, maxInitialImages);
 
   return (
     <StickerPlacementBatchProvider imageIds={imageIds}>
       <ContainerProvider containerName="post-detail" className="gap-4">
-        {_images.map((image, i) => {
+        {_items.map((item, i) => {
+          if (item.type === 'text')
+            return (
+              <PostTextBlock key={item.key} text={item.text} postId={postId} userId={authorId} />
+            );
+          const image = item.image;
           const width = image.width ?? maxWidth;
           const imageCollectionItem = collectionItems?.find((item) => item.imageId === image.id);
           const showImageCollectionBadge =
@@ -221,6 +237,7 @@ export function PostImages({
                                 state={{
                                   imageId: image.id,
                                   images,
+                                  texts,
                                   collectionId: imageCollectionItem?.collection?.id,
                                 }}
                                 // A link drags by default, so a press-and-move on the video controls
@@ -274,13 +291,7 @@ export function PostImages({
                               entityType="image"
                               reactions={image.reactions}
                               metricsUnknown={image.stats?.statsUnknown}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
+                              metrics={imageStatsToReactionMetrics(image.stats)}
                               targetUserId={image.user.id}
                               readonly={!safe}
                               disableBuzzTip={image.poi}
@@ -305,8 +316,10 @@ export function PostImages({
             </Fragment>
           );
         })}
-        {remainingImages > 0 && (
-          <Button onClick={() => setShowMore(true)}>Load {remainingImages} more images</Button>
+        {remainingItems > 0 && (
+          <Button onClick={() => setShowMore(true)}>
+            Load {remainingItems} more {texts?.length ? 'items' : 'images'}
+          </Button>
         )}
       </ContainerProvider>
     </StickerPlacementBatchProvider>

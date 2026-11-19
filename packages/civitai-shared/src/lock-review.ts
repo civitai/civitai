@@ -17,19 +17,37 @@ export const REQUESTABLE_LOCKS = Object.keys(requestableLockLabels) as Requestab
 export const isRequestableLock = (value: unknown): value is RequestableLock =>
   typeof value === 'string' && (REQUESTABLE_LOCKS as string[]).includes(value);
 
-/** Stored on `Appeal.context`: the locked settings the owner asked about. */
-export type LockReviewContext = { kind: typeof LOCK_REVIEW_KIND; locks: RequestableLock[] };
+/** A lock review of an nsfw lock the listing intent check added when the owner tried to add a
+ *  civitai.com version: a job re-judges it before a moderator sees it. */
+export const COM_FACE_INTENT_DISPUTE = 'comFaceIntent';
 
-export const lockReviewContext = (locks: RequestableLock[]): LockReviewContext => ({
+/** Stored on `Appeal.context`: the locked settings the owner asked about. */
+export type LockReviewContext = {
+  kind: typeof LOCK_REVIEW_KIND;
+  locks: RequestableLock[];
+  dispute?: typeof COM_FACE_INTENT_DISPUTE;
+};
+
+export const lockReviewContext = (
+  locks: RequestableLock[],
+  dispute?: LockReviewContext['dispute']
+): LockReviewContext => ({
   kind: LOCK_REVIEW_KIND,
   locks: REQUESTABLE_LOCKS.filter((key) => locks.includes(key)),
+  ...(dispute && { dispute }),
 });
 
 /** The lock review an appeal's `context` describes, or null when it is a flag appeal. */
 export function parseLockReviewContext(context: unknown): LockReviewContext | null {
-  const value = context as { kind?: unknown; locks?: unknown } | null | undefined;
+  const value = context as
+    | { kind?: unknown; locks?: unknown; dispute?: unknown }
+    | null
+    | undefined;
   if (value?.kind !== LOCK_REVIEW_KIND || !Array.isArray(value.locks)) return null;
-  return lockReviewContext(value.locks.filter(isRequestableLock));
+  return lockReviewContext(
+    value.locks.filter(isRequestableLock),
+    value.dispute === COM_FACE_INTENT_DISPUTE ? COM_FACE_INTENT_DISPUTE : undefined
+  );
 }
 
 export type LockReviewModelFlags = {
@@ -52,11 +70,48 @@ export const requestableLocks = (model?: LockReviewModelFlags | null): Requestab
 export const locksToLift = (named: readonly string[], locked: readonly (string | null)[]) =>
   REQUESTABLE_LOCKS.filter((key) => named.includes(key) && locked.includes(key));
 
-/** What the owner is told of a ruling, in app and by email. Neutral, with no reason: a moderator's
- *  reason or note is never shown, and every rejection reads the same. */
-export function lockReviewRulingMessage(approved: boolean, unlocked: readonly unknown[] = []) {
-  if (!approved)
-    return 'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+const DECLINED =
+  'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+
+/** The owner's line for a rejection reason; any other reason, `other` included, reads as `DECLINED`. */
+const declinedFor = new Map([
+  ['lock-stands', 'A moderator reviewed your model and found the locked settings correct for it.'],
+  [
+    'sexual-purpose',
+    'A moderator reviewed your model and found that its main purpose is sexual content, so it keeps the mature setting.',
+  ],
+]);
+
+const ordinal = new Intl.PluralRules('en-US', { type: 'ordinal' });
+const ordinalSuffix: Record<string, string> = { one: 'st', two: 'nd', few: 'rd', other: 'th' };
+
+/** "November 1st", with the year only when it is not the year of the ruling. In UTC. */
+function nextRequestDate(resolvedAt: Date) {
+  const opens = new Date(resolvedAt.getTime() + LOCK_REVIEW_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+  const month = opens.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+  const day = opens.getUTCDate();
+  const year = opens.getUTCFullYear();
+  const date = `${month} ${day}${ordinalSuffix[ordinal.select(day)]}`;
+  return year === resolvedAt.getUTCFullYear() ? date : `${date}, ${year}`;
+}
+
+/**
+ * What the owner is told of a ruling, in app and by email. A rejection names the moderator's reason
+ * when it has an owner-facing line (not `other`) and, when `resolvedAt` is known, the date the
+ * cooldown (`getLockReviewState`) lets the owner ask again. A moderator's note is never shown.
+ */
+export function lockReviewRulingMessage(
+  approved: boolean,
+  unlocked: readonly unknown[] = [],
+  ruling: { reason?: string | null; resolvedAt?: Date | string | null } = {}
+) {
+  if (!approved) {
+    const line = (ruling.reason && declinedFor.get(ruling.reason)) || DECLINED;
+    const resolvedAt = ruling.resolvedAt ? new Date(ruling.resolvedAt) : null;
+    return resolvedAt && !Number.isNaN(resolvedAt.getTime())
+      ? `${line} You can request another review after ${nextRequestDate(resolvedAt)}.`
+      : line;
+  }
   const labels = REQUESTABLE_LOCKS.filter((key) => unlocked.includes(key)).map(
     (key) => requestableLockLabels[key]
   );

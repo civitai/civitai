@@ -231,7 +231,7 @@ export async function chargeEntryFees({
       // retries (completing the payment) or forever if they never do. Never refunded — see
       // the header invariant for why a refund here would enable free entries.
       houseOnlyImageIds: houseOrphans,
-    }).catch(() => {});
+    });
   }
 
   // Economy telemetry: Buzz newly charged this call (house + pool legs charged for the FIRST time —
@@ -393,7 +393,7 @@ export async function reportPoolFundingShortfall({
   const shortfall = expectedPool - challenge.prizePool;
   if (shortfall <= 0) return;
 
-  await logToAxiom({
+  logToAxiom({
     type: 'warning',
     name: 'challenge-pool-funding-shortfall',
     message: 'Challenge completing with a prize pool below what its accepted entries imply',
@@ -403,7 +403,7 @@ export async function reportPoolFundingShortfall({
     prizePool: challenge.prizePool,
     expectedPool,
     shortfall,
-  }).catch(() => {});
+  });
 }
 
 /**

@@ -1,9 +1,20 @@
-import { callModEndpoint, callModEndpointAs, type JsonResult } from '../user-actions.service';
+import {
+  callModEndpoint,
+  callModEndpointAs,
+  readModEndpoint,
+  type JsonResult,
+} from '../user-actions.service';
 import { LabError } from './errors';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { chunk } from '$lib/text-scan-lab/chunk';
 import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
-import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
+import type {
+  LabEntityType,
+  LabField,
+  LabLabel,
+  LabScanResult,
+  LabText,
+} from '$lib/text-scan-lab/types';
 
 // A timed-out request still runs every workflow it submitted. One chunk is one wave of
 // SCAN_CONCURRENCY, which stays under the harness's 120s budget.
@@ -167,7 +178,8 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
   };
 }
 
-export type LabOverrides = { prompts?: Record<string, string> };
+/** `labels` replaces the profile's labels; only the pinned intent set's runs send it. */
+export type LabOverrides = { prompts?: Record<string, string>; labels?: readonly LabLabel[] };
 export type LabRun = {
   results: LabScanResult[];
   system: string | null;
@@ -201,6 +213,7 @@ export async function scanTexts(
         entityType,
         texts: batch,
         promptOverrides: overrides.prompts,
+        ...(overrides.labels ? { labels: overrides.labels } : {}),
         concurrency: SCAN_CONCURRENCY,
         wait: SCAN_WAIT_SECONDS,
       },
@@ -298,4 +311,37 @@ export async function composeEntities(
     results.push(...body.results.map(toLabComposed));
   }
   return results;
+}
+
+export type LabIntentListing =
+  | { entityId: number; ok: true; fields: LabField[]; userId: number }
+  | { entityId: number; ok: false; error: string };
+
+function toLabIntent(r: LabIntentListing): LabIntentListing {
+  if (!r.ok) return { ...r, error: plainError(r.error) };
+  const fields = normaliseLabFields(r.fields);
+  if (typeof fields === 'string') return { entityId: r.entityId, ok: false, error: fields };
+  if (!fields.length) return { entityId: r.entityId, ok: false, error: plainError('too-short') };
+  return { ...r, fields };
+}
+
+export async function composeComFaceIntent(ids: number[]): Promise<LabIntentListing[]> {
+  const results: LabIntentListing[] = [];
+  for (const modelIds of chunk(ids, HARNESS_LIMITS.textsPerRequest)) {
+    const body = await callHarness<{ results: LabIntentListing[] }>(
+      'composeComFaceIntent',
+      { modelIds },
+      'Load model listings'
+    );
+    results.push(...body.results.map(toLabIntent));
+  }
+  return results;
+}
+
+/** Whether the signed-in moderator holds a main-app permission; a failed read is a refusal. */
+export async function holdsMainPermission(permission: string): Promise<boolean> {
+  const result = await readModEndpoint('whoami', {}, 'Check your permissions');
+  if (!result.ok) return false;
+  const permissions = (result.body as { permissions?: unknown } | null)?.permissions;
+  return Array.isArray(permissions) && permissions.includes(permission);
 }

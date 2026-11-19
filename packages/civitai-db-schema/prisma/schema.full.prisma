@@ -462,6 +462,7 @@ model User {
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
   emailOptOuts         UserEmailNotificationOptOut[]
+  notificationDigest   UserNotificationDigest?
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -1741,6 +1742,12 @@ model ModActivity {
   host       String?
   /// Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
   credential String?
+  /// The review batch a media view was served from. NULL on every other row.
+  reviewBatchId String?
+  /// That batch's tier: 'general' or 'held'. NULL on every other row.
+  reviewTier String?
+  /// Whether that batch was declared suspect at mint. NULL on every other row.
+  declaredSuspect Boolean?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
@@ -1812,6 +1819,7 @@ model Report {
   crucible       CrucibleReport?
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
+  postText       PostTextReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -2134,6 +2142,7 @@ model Post {
   moderatorNsfwLevelBasis Int?
 
   images          Image[]
+  texts           PostText[]
   tags            TagsOnPost[]
   reactions       PostReaction[]
   helper          PostHelper?
@@ -2144,6 +2153,7 @@ model Post {
   tagsComposite   PostTag[]
   tagVotes        TagsOnPostVote[]
   reports         PostReport[]
+  textReports     PostTextReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
@@ -2246,6 +2256,8 @@ model Image {
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
+  /// Made with a base model that restricts mature images. Read through imageNotRestrictedSql / imageNotRestrictedWhere.
+  modelRestricted   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -2294,6 +2306,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -2965,6 +2978,10 @@ model ApiKey {
   key        String       @unique
   name       String
   tokenScope Int          @default(33554431) // Bitwise flags — default = Full (all scopes)
+  /// The whole scope, past the 31 bits `tokenScope` holds. Read `tokenScopeWide ?? tokenScope`; a write sets both
+  /// (`apiKeyScopeColumns` in @civitai/auth/token-scope), `tokenScope` to the low 31 bits. Null on rows written
+  /// before the column existed, all of which fit `tokenScope`.
+  tokenScopeWide BigInt?
   userId     Int
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime     @default(now())
@@ -2992,7 +3009,7 @@ model OauthClient {
   redirectUris   String[]       @default([])
   allowedOrigins String[]       @default([])
   grants         String[]       @default(["authorization_code", "refresh_token"])
-  allowedScopes  Int            @default(33554431)
+  allowedScopes  BigInt         @default(33554431)
   isConfidential Boolean        @default(true)
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
@@ -3463,6 +3480,22 @@ model AppBlockPublishRequest {
   // migration `20261126120000_app_fork_provenance`.
   forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
   forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
+  // GITHUB ACTIONS RUN that submitted this request, from an OIDC token GitHub signed and the
+  // server verified at submit (flag `app-blocks-oidc-verified-submit`). Facts about the RUN, not
+  // the bundle: the developer's workflow uploads the bundle, so this says "submitted by a GitHub
+  // Actions run of <repo> at <tag> (<sha>)" and nothing more. A DIFFERENT trust level from the
+  // client-claimed sourceCommit/sourceDirty above and from forgejoCommitSha; never alias between
+  // them. Manual-apply and no-type (raw SQL only, in actions-run-source.service.ts), so no
+  // default-select query names them; migration
+  // `20271117130000_app_block_publish_request_actions_run_source`.
+  actionsRunRepository           String? @map("actions_run_repository") // @no-type
+  actionsRunRepositoryId         String? @map("actions_run_repository_id") // @no-type
+  actionsRunRepositoryOwnerId    String? @map("actions_run_repository_owner_id") // @no-type
+  actionsRunSha                  String? @map("actions_run_sha") // @no-type
+  actionsRunRef                  String? @map("actions_run_ref") // @no-type
+  actionsRunWorkflowRef          String? @map("actions_run_workflow_ref") // @no-type
+  actionsRunRepositoryVisibility String? @map("actions_run_repository_visibility") // @no-type
+  actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -4112,6 +4145,45 @@ model AppReviewAgentReport {
   // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
   // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
+}
+
+// App review holds: a moderator or agent's open check on an app's pending publish requests;
+// approve is refused while one is open unless overridden with a reason. RAW SQL ONLY
+// (`publish-request-holds.service.ts`). Scoped by slug, so a withdraw + resubmit keeps the hold.
+// CHECKs and the partial index live in migration `20270114120000_app_publish_request_holds`,
+// applied by hand.
+// @no-type
+model AppPublishRequestHold {
+  id               Int       @id @default(autoincrement())
+  slug             String
+  publishRequestId String    @map("publish_request_id")
+  requestKind      String    @map("request_kind")
+  placedByUserId   Int       @map("placed_by_user_id")
+  placedByLabel    String    @map("placed_by_label")
+  reason           String
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  clearedAt        DateTime? @map("cleared_at") @db.Timestamptz(6)
+  clearedByUserId  Int?      @map("cleared_by_user_id")
+  clearedKind      String?   @map("cleared_kind")
+  clearedReason    String?   @map("cleared_reason")
+
+  @@index([publishRequestId], map: "app_publish_request_holds_request_idx")
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_holds_slug_created_idx")
+  @@map("app_publish_request_holds")
+}
+
+// While an on-site approve that passed its hold check is running, placing a hold on the app is
+// refused. RAW SQL ONLY (`publish-request-holds.service.ts`); same migration as the holds.
+// @no-type
+model AppPublishRequestApproveClaim {
+  slug             String   @id
+  publishRequestId String   @map("publish_request_id")
+  claimedByUserId  Int      @map("claimed_by_user_id")
+  claimedAt        DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  claimToken       String   @map("claim_token")
+
+  @@index([publishRequestId], map: "app_publish_request_approve_claims_request_idx")
+  @@map("app_publish_request_approve_claims")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -4884,7 +4956,7 @@ model BlockScopeInvocation {
   /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
   /// OauthClient it references (an audit trail must outlive the app).
   oauthClientId    String?  @map("oauth_client_id")
-  /// Discriminates the token population that made the call. THREE values, and this
+  /// Discriminates the token population that made the call. FOUR values, and this
   /// comment is the single source for the generated type docs, so keep it complete:
   ///   * `'app-block'`      — an App Block block-token, the historical default.
   ///   * `'external-oauth'` — a standard external OAuth access token verified at
@@ -4897,6 +4969,9 @@ model BlockScopeInvocation {
   ///                          load-bearing discriminator rather than a label. Written
   ///                          only from the verified `privateRun` token claim; see
   ///                          `scope-activity-predicate.ts`.
+  ///   * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+  ///                          the app in host UI. Shown on the viewer's own Activity feed,
+  ///                          excluded from the app owner's analytics.
   /// Free-text with NO CHECK constraint — the value space is enforced in TypeScript
   /// (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
   /// backfill to `'app-block'` via the column DEFAULT.
@@ -4983,9 +5058,53 @@ model AppUserScopeGrant {
   /// apply and the tighter one binds. Meaningful only alongside the
   /// `ai:write:budgeted` scope (nothing else in a grant can spend).
   buzzBudgetPerDay Int?    @map("buzz_budget_per_day")
+  /// Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+  /// (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+  /// 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+  /// select, so a database without it breaks no other grant read.
+  confirmWithinLimitMaxJob Int? @map("confirm_within_limit_max_job")
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
+}
+
+/// One batch of private generation inputs an App Block uploaded for a viewer through
+/// `OPEN_MEDIA_UPLOAD_BATCH` (`media-upload-batch.service.ts`): the moderator audit record of
+/// which consumer blobs a batch created, for which user and app. Written when the viewer confirms
+/// the batch, then one key appended per uploaded file.
+///
+/// No foreign keys, on purpose: an audit row must outlive the app (a deleted or synthetic dev
+/// `app_block_id`) the same way `BlockScopeInvocation.oauthClientId` does.
+///
+/// MANUALLY APPLIED (migration 20270102120000_app_block_upload_batches). Until it is, the batch
+/// path refuses every batch with a clear error; the single-file upload paths do not touch it.
+model AppBlockUploadBatch {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  /// The verified token's AppBlock id (`apb_*`), its OauthClient id and its block id.
+  appBlockId   String   @map("app_block_id")
+  appId        String   @map("app_id")
+  blockId      String   @map("block_id")
+  /// `AppBlock.version` when the batch started; NULL when the token's app has no AppBlock row.
+  version      String?
+  itemCount    Int      @map("item_count")
+  /// Raw bytes the host declared for the items it was about to upload (before an image's JPEG
+  /// re-encode). Declared by the browser, so an upper bound the quota counted, not a measurement.
+  totalBytes   BigInt   @map("total_bytes")
+  /// Upload URLs minted for this batch so far (a retried file takes a second one).
+  presignCount Int      @default(0) @map("presign_count")
+  /// Upload URLs minted per declared file, by position: at most three each.
+  presignCounts Int[]   @default([]) @map("presign_counts")
+  /// The consumer blob keys of the files uploaded, in upload-completion order.
+  blobKeys     String[] @default([]) @map("blob_keys")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+  /// consumer-blob retention). Not a deletion time.
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "app_block_upload_batches_user_created_idx")
+  @@index([appBlockId, createdAt(sort: Desc)], map: "app_block_upload_batches_app_created_idx")
+  @@map("app_block_upload_batches")
 }
 
 // App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
@@ -5147,7 +5266,7 @@ model OauthConsent {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   clientId  String
   client    OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  scope     Int
+  scope     BigInt
   buzzLimit Json?
   createdAt DateTime    @default(now())
   updatedAt DateTime    @default(now()) @updatedAt
@@ -5275,6 +5394,19 @@ model UserEmailNotificationOptOut {
   @@id([userId, type])
 }
 
+// The weekly missed-notification digest: when each user was last sent one, so a user gets at most
+// one a week and no notification is listed in two of them. RAW SQL ONLY
+// (`notification-digest.service.ts`). Migration `20271117150000_user_notification_digest`, applied
+// by hand; the digest sends nothing while the table is missing.
+// @no-type
+model UserNotificationDigest {
+  userId     Int      @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSentAt DateTime
+
+  @@map("UserNotificationDigest")
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -5375,6 +5507,7 @@ enum CommentEntityType {
   appListing
   crucible
   storyline
+  postText
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -7704,6 +7837,10 @@ enum JobQueueType {
   ImageStorageDelete
   CdnAccessSync
   ImageCdnPersistRetry
+  /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
+  /// by that service's own database functions. No job in this app processes these rows; the
+  /// moderator queue-health panel only counts them.
+  CsamArchive
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -7801,6 +7938,7 @@ model VaultItem {
 
   @@index([vaultId], type: Hash)
   @@index([modelVersionId], type: Hash)
+  @@index([files(ops: JsonbPathOps)], type: Gin)
 }
 
 model Vault {
@@ -7974,6 +8112,9 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+
+  // donateToGoal's keyed "already recorded?" lookup (userId + buzzTransactionId equality).
+  @@index([userId, buzzTransactionId])
 }
 
 model Blocklist {
@@ -8412,12 +8553,263 @@ model NewOrderPlayer {
   fervor        Int              @default(0)
   smiteReceived NewOrderSmite[]  @relation("smiteReceived")
   smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
+
+  payoutBlockedAt   DateTime?
+  payoutBlockReason String?
+  payoutBlockedBy   Int?
+  payoutReleaseFrom DateTime?
+
+  /// Gold from votes not yet graded / already earned.
+  goldPending Int @default(0)
+  goldEarned  Int @default(0)
+  /// Gold already converted to Buzz, reservations included. Convertible = earned - converted.
+  goldConverted Int @default(0)
+}
+
+model NewOrderLinkReview {
+  id          Int       @id @default(autoincrement())
+  fingerprint String    @unique
+  userIds     Int[]
+  evidence    Json
+  buzzMoved   Int       @default(0)
+  autoBlocked Boolean   @default(false)
+  status      String    @default("Pending")
+  reviewedBy  Int?
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+/// Knights of New Order v2: a question a player can be asked about an image. `key` is `family.question`.
+model KnightsQuestion {
+  key            String             @id
+  version        Int                @default(1)
+  kind           String // choice | bool
+  prompt         String
+  options        Json
+  minRank        String             @default("Knight")
+  votesToResolve Int                @default(5)
+  maxVotes       Int                @default(10)
+  threshold      Float              @default(0.6)
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  items          KnightsQueueItem[]
+  yesNoReferences KnightsYesNoReference[]
+}
+
+/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed; a yes/no item (question kind `bool`) is Open | Consensus | Closed and is never Resolved. Ruling is an Inquisitor's claim: resolvedBy holds it, nextAttemptAt is the lease end.
+model KnightsQueueItem {
+  id                Int             @id @default(autoincrement())
+  questionKey       String
+  question          KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
+  imageId           Int
+  source            String
+  minRank           String // the stage the item is at (Knight, Templar, Paladin); starts at the question's minRank
+  votesNeeded       Int // votes the current stage needs; starts at the question's votesToResolve, reset to the stage's rule on escalation
+  escalatedAt       DateTime? // when the item last moved up a stage; the feed serves it first for a limited time
+  priority          Int             @default(2)
+  status            String          @default("Open")
+  expiresAt         DateTime?
+  isHiddenCheck     Boolean         @default(false)
+  resolvedValue     String?
+  resolvedAt        DateTime?
+  resolvedBy        Int?
+  appliedAt         DateTime? // null while a settled rating is still to be written to the image
+  resolvedFromLevel Int? // the image's level when the vote settled; a write-back finding another is rerouted
+  applyAttempts     Int             @default(0) // write-back tries so far; the cap hands the item to the Inquisitors
+  nextAttemptAt     DateTime? // the next write-back try is not due before this; also the lease of a running try
+  reason            String? // why an item left the normal path: blocked | moderator-ruled | missing | level-moved | attempts-exhausted
+  escalationReason  String? // why an item went to the Inquisitors (KNIGHTS_ESCALATION_REASONS); null for write-back handovers, which use reason
+  prediction        Json? // the producing model's expected answer; not served to players
+  /// Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.
+  externalId        String?         @unique
+  /// Yes/no items only: the question as asked about this image. Rating items use their question's prompt.
+  prompt            String?
+  /// Yes/no items only: who answers it, `players` | `moderators`. Null for rating items.
+  audience          String?
+  /// Yes/no items only: what the producing model would rate the image if the answer were yes / no. Never served.
+  yesEffect         String?
+  noEffect          String?
+  /// Yes/no items only: where the question came from (provenance, not served).
+  meta              Json?
+  /// Yes/no items only: answers so far; serving finishes questions that are under way first.
+  voteCount         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([status, minRank, priority, createdAt])
+  @@index([status, appliedAt])
+  @@index([status, expiresAt])
+  @@index([imageId])
+}
+
+/// One row per vote, partitioned by month on `createdAt` (see the migration). The partition key must
+/// be in every unique key, so one-vote-per-player is enforced under the item row lock, not here.
+model KnightsVote {
+  itemId      Int
+  playerId    Int
+  createdAt   DateTime @default(now())
+  questionKey String
+  imageId     Int
+  stage       String // the item's minRank when the vote was cast
+  answer      String
+  weight      Float
+  verdict     String   @default("pending") // pending | correct | failed | inconclusive
+  gold        Int?
+  xp          Int      @default(0)
+  settledAt   DateTime? // idempotency marker: set once progression for the final verdict is granted
+  labelled    Boolean  @default(false)
+  converted   Boolean  @default(false)
+  consequence String? // what a graded hidden check cost the player (warning | smite)
+  noticedAt   DateTime? // when the player dismissed the notice of that cost
+  blockReason String? // why a Knight blocked an image (a NewOrderDamnedReason name); only on Blocked rating votes
+
+  @@id([itemId, playerId, createdAt])
+  @@index([playerId, createdAt])
+  @@index([playerId, imageId])
+  @@index([itemId, stage])
+}
+
+/// Knights-owned per-player state for the daily loop; days are UTC. `shieldWeek` is the Monday of the last
+/// ISO week a shield was granted, `lastWatchDay` the last day a Daily Watch was completed.
+model KnightsPlayer {
+  playerId          Int       @id
+  streak            Int       @default(0)
+  lastWatchDay      DateTime? @db.Date
+  shields           Int       @default(0)
+  shieldWeek        DateTime  @db.Date
+  recapDismissedFor DateTime? @db.Date
+  /// The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+  startAtSeen DateTime?
+  /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
+  recapPopupOptOut Boolean @default(false)
+}
+
+/// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
+/// `bonusGold` (the streak bonus) is paid straight to goldEarned and does not.
+model KnightsPlayerDay {
+  playerId         Int
+  day              DateTime  @db.Date
+  votes            Int       @default(0)
+  goldRecorded     Int       @default(0)
+  watchCompletedAt DateTime?
+  bonusGold        Int       @default(0)
+
+  @@id([playerId, day])
+  @@index([day, votes])
+}
+
+/// One daily-loop notification per player per UTC day. The primary key is the cap; a send claims its row first.
+model KnightsNotificationSend {
+  playerId    Int
+  day         DateTime  @db.Date
+  kind        String // verdicts | streak | new-images
+  sentAt      DateTime  @default(now())
+  confirmedAt DateTime? // null until the notifications app accepted the send; an unconfirmed claim still holds the day
+
+  @@id([playerId, day])
+  @@index([playerId, kind, sentAt])
+}
+
+/// One conversion of earned gold to Yellow Buzz. The row is written `pending` with the gold reserved in `NewOrderPlayer.goldConverted`; `paid` once Buzz confirms, `failed` when Buzz refuses it for good (the reservation is released). `externalTransactionId` is the idempotency key sent to Buzz.
+model KnightsGoldConversion {
+  id                    Int       @id @default(autoincrement())
+  playerId              Int
+  gold                  Int
+  buzz                  Int
+  status                String    @default("pending") // pending | paid | failed
+  externalTransactionId String    @unique
+  buzzTransactionId     String?
+  createdAt             DateTime  @default(now())
+  lastAttemptAt         DateTime?
+  paidAt                DateTime?
+
+  @@index([playerId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// An image with a known answer for the Acolyte apprenticeship or hidden checks. `answer` is the option value of `questionKey`.
+model KnightsReferenceImage {
+  id            Int      @id @default(autoincrement())
+  imageId       Int      @unique
+  questionKey   String   @default("knights.image.nsfwLevel")
+  pool          String // trials | hiddenCheck
+  answer        String
+  source        String // core | harvested | agreement
+  explanation   String? // required for core
+  status        String   @default("active") // active | retired
+  modActivityId Int? // the moderator ruling a harvested item came from
+  harvestedAt   DateTime @default(now())
+  answers       Int      @default(0)
+  failures      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([pool, status, source])
+  @@index([modActivityId])
+}
+
+/// An image with a known yes/no answer to one yes/no question (kind `bool`), curated by moderators for grading Acolytes. Never touches Knight+ consensus. The imageId foreign key (cascade) lives in the migration only, like the other Knights tables.
+model KnightsYesNoReference {
+  id          Int             @id @default(autoincrement())
+  imageId     Int
+  questionKey String
+  question    KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
+  answer      Boolean
+  explanation String?
+  /// The question text Acolytes see for this pair. Null on pairs made before it existed: they show the axis question's prompt.
+  prompt      String?
+  active      Boolean         @default(true)
+  createdBy   Int
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([imageId, questionKey])
+  @@index([active, questionKey])
+}
+
+/// One graded Acolyte apprenticeship answer, to a rating reference image (`referenceId`) or a yes/no pair (`yesNoReferenceId`). Exactly one is set until that reference is deleted; then both are NULL and `imageId` + `questionKey` identify the answer. `correctAnswer` is the answer as it stood when given, `xp` what it paid, `checkpointSeenAt` is set on the answer that closed a checkpoint once the player moved past its recap. The foreign keys (ON DELETE SET NULL), the one-of check and the partial unique indexes live in the migration only.
+model KnightsApprenticeAnswer {
+  id               Int       @id @default(autoincrement())
+  playerId         Int
+  referenceId      Int?
+  yesNoReferenceId Int?
+  imageId          Int?
+  questionKey      String?
+  answer           String
+  correctAnswer    String
+  correct          Boolean
+  xp               Int       @default(0)
+  createdAt        DateTime  @default(now())
+  checkpointSeenAt DateTime?
+
+  @@index([playerId, id])
+}
+
+/// One row per paid Acolyte level; kept across career restarts so a level never pays twice. `gold` is the amount paid at the time.
+model KnightsAcolyteLevelGold {
+  playerId  Int
+  level     Int
+  gold      Int
+  createdAt DateTime @default(now())
+
+  @@id([playerId, level])
+}
+
+/// Where a harvest job stopped reading `ModActivity`.
+model KnightsHarvestCursor {
+  name           String   @id
+  lastActivityId Int      @default(0)
+  updatedAt      DateTime @updatedAt
 }
 
 enum NewOrderRankType {
   Acolyte
   Knight
   Templar
+  Paladin
 }
 
 model NewOrderRank {
@@ -8450,10 +8842,6 @@ model ReportAutomated {
   report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   metadata  Json     @default("{}")
   createdAt DateTime @default(now())
-}
-
-model RestrictedBaseModels {
-  baseModel String @id
 }
 
 // ============================================
@@ -10923,6 +11311,51 @@ model ImageCaption {
   updatedAt DateTime @updatedAt
 }
 
+/// Storylines: a text item in a post's reading order, between or around its images. `index` shares
+/// `Image.index`'s number space on the post; ties sort images first, then texts by id.
+model PostText {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+  userId    Int
+  index     Int
+  /// Sanitized HTML.
+  content   String
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+  nsfwLevel Int      @default(0)
+  /// The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+  refused   Boolean  @default(false)
+  /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+  csamHeld  Boolean  @default(false)
+  /// A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
+  /// scan verdict lifts it.
+  refusedByModerator Boolean @default(false)
+  /// The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+  /// restore falls back to. False whenever `refusedByModerator` is.
+  refusedByScan      Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reports   PostTextReport[]
+
+  @@index([postId, index])
+}
+
+/// A report on one storyline text. Filed in the post report queue, so it names the text's post too;
+/// it outlives the text (`postTextId` goes NULL), and `Report.details.postText` keeps the words as
+/// reported, stamped from the row when it was filed.
+model PostTextReport {
+  reportId   Int       @id
+  report     Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  postTextId Int?
+  postText   PostText? @relation(fields: [postTextId], references: [id], onDelete: SetNull)
+  postId     Int
+  post       Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postTextId], type: Hash)
+  @@index([postId], type: Hash)
+}
+
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
 /// are listed before everyone else's. A row is an invitation until the user accepts it: until
 /// then they are not shown on the storyline and have no collaborator rights.
@@ -11040,6 +11473,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11138,11 +11578,24 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11165,6 +11618,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {
@@ -11755,4 +12209,61 @@ model CreatorProgramPayoutReviewRun {
   error          String?
 
   @@index([period, startedAt])
+}
+
+/// One thing the Knights gold shop sells. `kind` decides which reference columns apply (see the migration's CHECK): a Buzz pack (`buzz`), a cosmetic (`cosmeticId`) or membership time (`tier` + `months`). Prices and the catalog live here, so changing them needs no deploy. `rotating` items take part in the daily rotation; the others are always on sale. `minRank` gates the purchase to that rank or above.
+model KnightsShopItem {
+  id          Int      @id @default(autoincrement())
+  kind        String // buzz_pack | cosmetic | membership
+  name        String
+  description String   @default("")
+  price       Int
+  buzz        Int?
+  cosmeticId  Int?
+  tier        String? // bronze | silver | gold
+  days        Int?
+  minRank     String?
+  active      Boolean  @default(true)
+  rotating    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  purchases KnightsShopPurchase[]
+  changes   KnightsShopItemChange[]
+}
+
+/// Audit trail of catalog edits: field -> {from, to} (a create is {from: null, to} per field). userId is the moderator, deliberately not a foreign key so deleting a user never rewrites the trail.
+model KnightsShopItemChange {
+  id        Int             @id @default(autoincrement())
+  itemId    Int
+  item      KnightsShopItem @relation(fields: [itemId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userId    Int
+  action    String // create | update | retire | restore
+  changes   Json
+  createdAt DateTime        @default(now())
+
+  @@index([itemId, createdAt(sort: Desc)])
+}
+
+/// The shop's gold ledger. A purchase reserves its gold in `NewOrderPlayer.goldConverted` in the same transaction that writes the row (`pending`), and is `granted` once the Buzz, cosmetic or membership is delivered, or `failed` when it was refused for good and the gold is released. `requestKey` is the buyer's idempotency key (unique per player); `externalKey` is the server's key for the downstream grant (UserCosmetic claimKey, membership grant key). A Buzz pack points at its `KnightsGoldConversion` through `conversionId`. `dealDay` is set when the deal price was paid.
+model KnightsShopPurchase {
+  id            Int             @id @default(autoincrement())
+  playerId      Int
+  requestKey    String
+  externalKey   String          @unique
+  itemId        Int
+  item          KnightsShopItem @relation(fields: [itemId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kind          String
+  gold          Int
+  grant         Json
+  status        String          @default("pending") // pending | granted | failed
+  conversionId  Int?
+  dealDay       DateTime?       @db.Date
+  attempts      Int             @default(0)
+  createdAt     DateTime        @default(now())
+  lastAttemptAt DateTime?
+  grantedAt     DateTime?
+
+  @@unique([playerId, requestKey])
+  @@index([playerId, createdAt])
 }

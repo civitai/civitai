@@ -8,7 +8,9 @@ import bingbotIps from './bingbot-ips.json';
 
 export type VerifiedBot = 'googlebot' | 'bingbot';
 
-const BOT_UA_PATTERNS: Record<VerifiedBot, RegExp> = {
+// Exported for scripts/feed-go-api-policy.ts: the Go feed service hands a request whose user agent
+// matches one of these to the app, which then decides whether it is a verified crawler.
+export const BOT_UA_PATTERNS: Record<VerifiedBot, RegExp> = {
   googlebot:
     /(Googlebot|AdsBot-Google|Mediapartners-Google|FeedFetcher-Google|GoogleOther|Storebot-Google|APIs-Google)/i,
   bingbot: /(bingbot|adidxbot|MicrosoftPreview|BingPreview)/i,

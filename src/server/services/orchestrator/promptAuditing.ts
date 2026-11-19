@@ -10,6 +10,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   attachPromptOrigin,
+  type AppPromptOrigin,
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
@@ -316,7 +317,12 @@ export interface AuditPromptOptions {
   // deadline and no verdict. Absent ⇒ `other`, so a caller that declares nothing can never inflate
   // the `generate` population. See `~/server/prom/external-moderation.metrics`.
   moderationSource?: ExternalModerationSource;
+  /** An App Block submit: recorded on a stored block's origin so moderators see it came from an app. */
+  appOrigin?: AppPromptOrigin;
 }
+
+/** The `cause` of `auditPromptServer`'s refusal. */
+export type PromptRefusalCause = { softBlock?: boolean; blockedFor: string[] };
 
 export type PromptClassificationOutcome = 'pass' | 'soft' | 'hard';
 export type PromptClassificationSource = 'regex' | 'external';
@@ -566,6 +572,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
+    appOrigin,
   } = options;
 
   // Skip auditing only when there is nothing to audit — the prompt AND the negative prompt both
@@ -725,7 +732,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       remixOfId: remixOfId ?? null,
       inputImages,
       inputVideo,
-      origin: { incomplete: true },
+      origin: appOrigin ? { incomplete: true, app: appOrigin } : { incomplete: true },
       time: new Date().toISOString(),
     };
 
@@ -776,8 +783,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     }
   }
 
-  // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
-  throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
+  // Flags ride `cause`; trpc.ts's errorFormatter lifts only `softBlock` onto data. `blockedFor` lets
+  // App Blocks rebuild the message without the account-status tail.
+  throw throwBadRequestError(message, {
+    ...(softBlock ? { softBlock: true } : {}),
+    blockedFor: error.blockedFor,
+  } satisfies PromptRefusalCause);
 }
 
 /**

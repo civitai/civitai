@@ -6,36 +6,14 @@ import {
   getFliptClientSync,
   isFliptSync,
 } from '~/server/flipt/client';
+import { CACHED_FLAG_GATE_REFRESH_MS, createCachedFlagGate } from '~/server/utils/cached-flag-gate';
+
+// `createCachedFlagGate` lives in its own import-free module so client-reachable code can use it;
+// re-exported here for the existing importers.
+export { createCachedFlagGate };
 
 /** How long one read of the flag is reused. A flip takes effect within this window. */
-export const WITHSPAN_GATE_REFRESH_MS = 5_000;
-
-/**
- * Wrap a synchronous flag read so it runs at most once per `refreshMs`. `withSpan` consults the
- * gate on every call that has an unsampled parent — several times per request — so even the
- * Flipt eval-cache lookup (a key build plus a map read) is paid once per window instead.
- * `null` (unknown flag, or Flipt not initialized yet) and any throw read as OFF.
- */
-export function createCachedFlagGate(
-  read: () => boolean | null,
-  refreshMs: number = WITHSPAN_GATE_REFRESH_MS,
-  now: () => number = Date.now
-): () => boolean {
-  let value = false;
-  let expiresAt = Number.NEGATIVE_INFINITY;
-  return () => {
-    const t = now();
-    if (t >= expiresAt) {
-      try {
-        value = read() === true;
-      } catch {
-        value = false;
-      }
-      expiresAt = t + refreshMs;
-    }
-    return value;
-  };
-}
+export const WITHSPAN_GATE_REFRESH_MS = CACHED_FLAG_GATE_REFRESH_MS;
 
 type FlagKey = (typeof FLIPT_FEATURE_FLAGS)[keyof typeof FLIPT_FEATURE_FLAGS];
 

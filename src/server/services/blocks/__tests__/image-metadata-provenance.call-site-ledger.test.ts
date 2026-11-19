@@ -120,6 +120,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
 const STAMPER_FUNCTIONS: string[] = [
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
   'src/server/services/image.service.ts#createImage',
 ];
 
@@ -642,6 +643,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  'src/server/services/image.service.ts#setImageNsfwLevelFromKnights': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#handleUnblockImages': {
     decision: 'raw-server-keys',
     sites: 1,
@@ -765,7 +770,8 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (
         expr !==
-        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
+        // A stored CSAM block keeps the stored value: the rule did not decide it.
+        `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (

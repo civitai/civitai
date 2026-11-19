@@ -23,7 +23,7 @@ const make = (): PrismaClients => {
       type: 'error',
       name: 'servable-profile-picture-extension',
       message: (error as Error)?.message,
-    }).catch(() => undefined);
+    });
   });
 };
 

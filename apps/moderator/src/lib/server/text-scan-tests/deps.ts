@@ -28,7 +28,7 @@ export const workerDeps = (credential: string): WorkerDeps => ({
   scanTexts: (entityType, texts, overrides) => scanTexts(entityType, texts, overrides, credential),
   workerId: WORKER_ID,
   log: (event, data, level = 'error') =>
-    void logToAxiom({ type: level, name: 'text-scan', event, ...data }).catch(() => {}),
+    void logToAxiom({ type: level, name: 'text-scan', event, ...data }),
 });
 
 const MOD_ACTIVITY = { start: 'startTestSetRun', cancel: 'cancelTestSetRun' } as const;
@@ -42,16 +42,15 @@ async function auditRun(event: RunAuditEvent) {
     entityId: setId,
     activity: MOD_ACTIVITY[action],
   });
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'text-scan',
     event: `test-set-run-${action}`,
-    setId,
-    runIds,
     userId,
+    payload: { setId, runIds },
     ...(calls === undefined ? {} : { calls }),
     ...(buzz === undefined ? {} : { buzz }),
-  }).catch(() => {});
+  });
 }
 
 /**

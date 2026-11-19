@@ -121,6 +121,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   // way on every machine, rather than whatever the flag client resolves to locally.
   isAppBlocksAuthorEnabled: async () => false,
 }));
+// The held-image filter reads post and model caches; this table is about admission, not images.
+vi.mock('~/server/services/image-search.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/image-search.service')>()),
+  withoutHeldImages: async <T>(items: T[]) => items,
+}));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => h.isRevoked(...a) },
 }));
@@ -320,6 +325,12 @@ const ROUTES: Record<string, RouteSpec> = {
     load: () => import('~/pages/api/v1/blocks/gated-images'),
     method: 'GET',
     query: { ids: '1' },
+    scope: null,
+  },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    load: () => import('~/pages/api/v1/blocks/workflow-media'),
+    method: 'POST',
+    body: { refs: ['bm1.not-a-ref'] },
     scope: null,
   },
   'src/pages/api/v1/blocks/generation-resources.ts': {
@@ -2417,6 +2428,148 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
+  'src/pages/api/v1/blocks/workflow-media.ts': {
+    'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      { error: 'Block token required' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], [], null),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    revoked: X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'token carries an unknown scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['made:up:scope']
+    ),
+    'anonymous subject': X(
+      401,
+      { message: 'workflow media read requires an authenticated viewer' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'ai:write:budgeted without a positive buzzBudget': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'rate limited': X(
+      429,
+      { error: 'Rate limit exceeded, please retry shortly.' },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      [],
+      []
+    ),
+    'hub OAuth token': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'missing approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'approval row read throws': X(
+      503,
+      { error: 'app block status unavailable' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'consent revoked for the route scope': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      ['buzz:read:self']
+    ),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'dev token, no approval row': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+    'private-run token, row not approved': X(
+      200,
+      { media: [{ status: 'hidden', reason: 'paused' }] },
+      true,
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['hydrate:42', 'hydrate:42'],
+      []
+    ),
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
@@ -2496,7 +2649,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'hub OAuth token': X(
       200,
-      { items: [], maturity: { browsingLevel: 3, sfwOnly: true } },
+      // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
       true,
       ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
       ['getResourceData([1])'],
@@ -3215,7 +3369,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         noneProbability: null,
         model: 'jev-unavailable',
         criteriaVersion: 2,
-        maturity: { browsingLevel: 3, sfwOnly: true },
+        // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+        maturity: { browsingLevel: 1, sfwOnly: true },
       },
       true,
       ['checkBlockLLMRateLimit("page_apb_hubrow")'],
@@ -6063,7 +6218,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -6384,7 +6539,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockPollRateLimit("bki_char", 42)'],
       [

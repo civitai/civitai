@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
+import { trainingStudioUrl } from '~/utils/training-studio-url';
+import { isPreview } from '~/env/other';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -35,10 +37,7 @@ import { trpc } from '~/utils/trpc';
  * the studio origin.
  */
 
-const STUDIO_URL =
-  process.env.NODE_ENV === 'development'
-    ? 'http://localhost:5174'
-    : env.NEXT_PUBLIC_TRAINING_STUDIO_URL;
+const STUDIO_URL = trainingStudioUrl();
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };
 
@@ -59,6 +58,7 @@ export const getServerSideProps = createServerSideProps({
     return {
       props: {
         session,
+        studioUrl: isPreview ? '/training-studio' : STUDIO_URL,
         // Config rides in as props so el.host can be set the moment the element upgrades — a
         // config fetch on the critical path put ~600ms of "Waiting for a host context…" on every
         // mount. Tokens still mint per-call through /api/training-studio/host.
@@ -76,7 +76,13 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | 'prod' }) {
+function TrainingStudioEmbed({
+  orchestratorMode,
+  studioUrl,
+}: {
+  orchestratorMode: 'dev' | 'prod';
+  studioUrl: string;
+}) {
   // Browser-facing, so the PUBLIC origin — never the server's in-cluster `ORCHESTRATOR_ENDPOINT`.
   const orchestratorEndpoint = env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT;
   const ref = useRef<HTMLElement>(null);
@@ -97,9 +103,9 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
-  // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
+  // Epoch generation runs off UNPUBLISHED weights, which this app gates on sign-in — the same
   // predicate as the training-results Generate button (TrainingSelectFile). Passed explicitly so
-  // the element can explain the gate instead of a non-member's click silently doing nothing.
+  // the element can explain the gate instead of a click silently doing nothing.
   const currentUser = useCurrentUser();
   const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
   const isPaidMember = paidMemberHostFlag(currentUser);
@@ -125,7 +131,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     const bust = process.env.NODE_ENV === 'development' ? `?v=${Date.now()}` : '';
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = `${STUDIO_URL}/element/civitai-training-studio.css${bust}`;
+    link.href = `${studioUrl}/element/civitai-training-studio.css${bust}`;
     document.head.appendChild(link);
 
     // Reuse an already-injected module script and never remove it on cleanup: removing a module
@@ -136,7 +142,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       const script = document.createElement('script');
       script.type = 'module';
       script.dataset.civitaiTrainingStudio = '';
-      script.src = `${STUDIO_URL}/element/civitai-training-studio.js${bust}`;
+      script.src = `${studioUrl}/element/civitai-training-studio.js${bust}`;
       script.onerror = () => {
         // A failed tag would satisfy the reuse lookup forever; drop it so a later mount retries.
         script.remove();
@@ -159,6 +165,13 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
+        // Every paid call, pricing a continuation, and Review's mature count are the Studio
+        // server's: this app forwards them (/api/training-studio/studio/*). The element refuses
+        // them without it.
+        studioServer: (path: string, init?: RequestInit) => {
+          if (!path.startsWith('/api/')) return Promise.reject(new Error(`Unknown route ${path}`));
+          return fetch(`/api/training-studio/studio/${path.slice('/api/'.length)}`, init);
+        },
         // Auto-label is free: it runs on the system token here, never the user's (which would be
         // charged). The element refuses auto-label when a host lacks these.
         autoLabelSubmit: (
@@ -288,6 +301,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   }, [
     orchestratorEndpoint,
     orchestratorMode,
+    studioUrl,
     canGenerate,
     buzzMode,
     canGenerateUnpublished,
@@ -310,14 +324,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
-  const classicTrainerUrl =
-    isNew || !currentUser?.username
-      ? '/models/train'
-      : `/user/${currentUser.username}/models?section=training`;
+  const pastRunsUrl = currentUser?.username
+    ? `/user/${currentUser.username}/models?section=training`
+    : undefined;
+  const classicTrainerUrl = isNew || !pastRunsUrl ? '/models/train' : pastRunsUrl;
 
   return (
     <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
-      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} pastRunsUrl={pastRunsUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

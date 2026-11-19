@@ -248,9 +248,28 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         'LEFT JOIN "Bounty" b ON b.id = CASE e."entityType" ' +
         `WHEN 'Bounty' THEN e."entityId" WHEN 'BountyEntry' THEN be."bountyId" END ` +
         `LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId" ` +
+        // The linked image's post model, for the held gallery level.
+        'LEFT JOIN "Post" p ON p.id = i."postId" ' +
+        'LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId" ' +
+        'LEFT JOIN "Model" m ON m.id = mv."modelId" ' +
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
         // `imageNotFlagged`; its rows are in entity-cover-image-visibility.behavior.test.ts.
         'AND ( i."acceptableMinor" = FALSE OR (?::boolean AND i."userId" = ?) OR ?::boolean ) ' +
+        // `minorMatureImageVisibleSql`, for a signed-out viewer here; its rows are in
+        // minor-mature-image-visibility.behavior.test.ts.
+        'AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) ' +
+        // `coverRated`: an unrated image is a cover for moderators only.
+        'AND (i."nsfwLevel" != 0 OR ?::boolean) ' +
+        // `heldGalleryImageSql`, exempting the model owner and moderators; its rows are in
+        // entity-cover-image-visibility.behavior.test.ts.
+        'AND ( NOT (COALESCE(m.minor, FALSE) OR COALESCE(m."sfwOnly", FALSE)) ' +
+        `OR (i."nsfwLevel" & COALESCE(NULLIF((CASE WHEN jsonb_typeof(m."gallerySettings"->'level') = 'number' ` +
+        `AND (m."gallerySettings"->>'level')::numeric BETWEEN 0 AND 2147483647 ` +
+        `THEN trunc((m."gallerySettings"->>'level')::numeric)::int ELSE 0 END) ` +
+        '& (CASE WHEN m.minor THEN ?::int ELSE ?::int END), 0), ' +
+        '(CASE WHEN m.minor THEN ?::int ELSE ?::int END))) <> 0 ' +
+        'OR (?::boolean AND m."userId" = ?) OR ?::boolean ) ' +
+        'AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted") ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         'AND ( ?::boolean ' +

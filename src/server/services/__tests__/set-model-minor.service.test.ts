@@ -102,6 +102,10 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+// Its own suite covers the image documents; here only that the fan-out runs is under test.
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -169,9 +173,11 @@ function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }
 }
 
 const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
-/** The fan-out's raw reads, without the row lock the setter takes first. */
+/** The fan-out's raw reads, without the row lock the setter takes first or the collection reindex's cover-index probe. */
 const fanOutQueries = () =>
-  mockDbWrite.$queryRaw.mock.calls.filter((call) => !sqlOf(call).includes('FOR NO KEY UPDATE'));
+  mockDbWrite.$queryRaw.mock.calls.filter(
+    (call) => !sqlOf(call).includes('FOR NO KEY UPDATE') && !sqlOf(call).includes('pg_index')
+  );
 
 function mockTracker() {
   return { entityChanges: vi.fn().mockResolvedValue(undefined) };
@@ -1536,7 +1542,8 @@ describe('setModelMinor — lift restore on a real row', () => {
         mode text, meta jsonb, "lockedProperties" text[] NOT NULL DEFAULT '{}',
         nsfw bool NOT NULL DEFAULT false, minor bool NOT NULL DEFAULT false,
         "sfwOnly" bool NOT NULL DEFAULT false, poi bool NOT NULL DEFAULT false,
-        "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1);
+        "gallerySettings" jsonb, "nsfwLevel" int NOT NULL DEFAULT 1,
+        "sfwName" text, "sfwCoverImageId" int);
       CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
       CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
       CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor bool NOT NULL DEFAULT false);

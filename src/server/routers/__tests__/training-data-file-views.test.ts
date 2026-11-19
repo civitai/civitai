@@ -86,6 +86,7 @@ function listingRow(row: { nsfwLevel?: number; fullyRated?: boolean; restricted:
       nsfwLevel: row.nsfwLevel ?? 1,
       fullyRated: row.fullyRated ?? true,
       restricted: row.restricted,
+      virusScanResult: 'Success',
     },
   ]);
 }

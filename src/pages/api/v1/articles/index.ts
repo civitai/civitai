@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -15,6 +16,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * GET /api/v1/articles — public list/search over articles, edge-cacheable except at `?nsfw=true`,
@@ -69,7 +71,9 @@ function parseArticleCursor(
   return { v, id };
 }
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: { anyOf: [TokenScope.ArticlesRead] } });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -128,8 +132,13 @@ export default MixedAuthEndpoint(async function handler(
     const nextCursorStr = nextCursor ? `${nextCursor.v}|${nextCursor.id}` : undefined;
     const { nextPage } = getNextPage({ req, nextCursor: nextCursorStr });
 
-    return res.status(200).json({ items, metadata: { nextCursor: nextCursorStr, nextPage } });
+    return res.status(200).json({
+      items: items.map((item) =>
+        item.user ? { ...item, user: withPublicAvatar(item.user, browsingLevel) } : item
+      ),
+      metadata: { nextCursor: nextCursorStr, nextPage },
+    });
   } catch (e) {
     return handleEndpointError(res, e);
   }
-});
+}

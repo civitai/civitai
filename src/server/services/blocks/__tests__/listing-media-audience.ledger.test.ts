@@ -139,6 +139,9 @@ const EXPECTED_PROJECTORS: Record<
   'server/registry-adapter/catalog-source.live.ts': 'hydrates for the gate',
   // The owner's own "My builds" row: shows exactly what is attached.
   'server/services/blocks/app-access.service.ts': 'raw: author',
+  // The author's own listing-edit prefill (icon, cover, screenshots and the civitai.red overrides):
+  // shows exactly what is attached, through the same `listingMediaEdgeUrl` the store uses.
+  'server/services/blocks/offsite-listing.service.ts': 'raw: author',
   // Author/moderator audience labels: reads the civitai.com ceiling, builds no url.
   'shared/utils/listing-media-split.ts': 'ceiling only: labels',
   // Reads the civitai.red icon / cover overrides WITH the gate's columns (its type), builds no

@@ -57,7 +57,7 @@ async function failSong({
       reason,
     },
     'webhooks'
-  ).catch(() => null);
+  );
   await sendIngestionSignal({
     imageId,
     userId,
@@ -174,7 +174,7 @@ async function decideSong({ imageId, workflowId, steps, audio, fromLyrics }: Son
         reason: error instanceof Error ? error.message : 'Unknown error',
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 }
 
@@ -199,6 +199,7 @@ export async function applySongScanResult({ imageId, workflowId, steps, parsed }
  * otherwise the audio callback will. Throws, so the moderation callback is retried.
  */
 export async function applySongLyricsVerdict(imageId: number) {
+  // primary: the audio verdict this decides on may have just been written
   const scan = await dbWrite.imageAudioScan.findUnique({
     where: { imageId },
     select: { status: true, workflowId: true, flagged: true, hasAudio: true, result: true },

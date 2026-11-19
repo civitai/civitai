@@ -18,11 +18,7 @@ import {
   snapToInterval,
 } from '../types/image-feed-types';
 import { chunk } from '../utils/basic';
-import {
-  NSFW_RESTRICTED_BASE_MODELS,
-  NSFW_RESTRICTED_LEVELS,
-  FEED_REDIS_KEYS,
-} from '../constants/feed.constants';
+import { FEED_REDIS_KEYS } from '../constants/feed.constants';
 
 // ============================================================================
 // Schema Definition
@@ -538,18 +534,6 @@ async function queryDocuments(
 
   filters.push(`(${nsfwFilters.join(' OR ')})`);
   console.log('[ImageFeed:queryDocuments] NSFW filter added');
-
-  // NSFW License Restrictions Filter
-  // Filter out images with R/X/XXX NSFW levels that use restricted base models
-  if (NSFW_RESTRICTED_BASE_MODELS.length > 0) {
-    const restrictedBaseModelsQuoted = NSFW_RESTRICTED_BASE_MODELS.map((bm: string) => `'${bm}'`);
-
-    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
-    filters.push(
-      `NOT (${nsfwLevelField} IN [${NSFW_RESTRICTED_LEVELS.join(',')}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
-    );
-    console.log('[ImageFeed:queryDocuments] NSFW restricted base models filter added');
-  }
 
   console.log('[ImageFeed:queryDocuments] Step 4: Content filters (model versions, remixes, tags, etc.)...');
 

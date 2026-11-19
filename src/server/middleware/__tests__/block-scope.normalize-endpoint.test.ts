@@ -411,6 +411,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'v1',
       'vote',
       'withdraw',
+      'workflow-media',
       'workflows',
     ]);
   });

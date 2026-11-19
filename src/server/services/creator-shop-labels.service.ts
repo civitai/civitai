@@ -335,7 +335,7 @@ const logVerdictNotRecorded = (listingId: number, action: ShopVerdictAction) => 
     shopItemId: listingId,
     action,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
 
 /**
  * Records a moderator's verdict on a listing as a label, inside the verdict's transaction and after its
@@ -382,9 +382,7 @@ export async function recordShopTakedownLabel(
       failed = true;
     });
   if (failed)
-    await logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: listingId }).catch(
-      () => null
-    );
+    logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: listingId });
 }
 
 /** Takes a deleted listing's subjects out of training: judgements stay, content goes. */
@@ -405,6 +403,6 @@ export function excludeDeletedShopListing(tx: LabelStoreTx, listingId: number) {
         message: 'deleted listing not excluded from the label store',
         shopItemId: listingId,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null)
+      })
   );
 }

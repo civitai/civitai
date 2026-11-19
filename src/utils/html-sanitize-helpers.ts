@@ -90,7 +90,13 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // `data-id` is load-bearing for blurbs: it is the only thing tying a stored blurb back to its
   // row, and every host body passes through here on save. Drop it and the fan-out has nothing
   // left to find — the words stay and silently stop updating.
-  div: ['data-youtube-video', 'data-type', 'data-id', 'data-provider'],
+  div: [
+    'data-youtube-video',
+    'data-type',
+    'data-id',
+    'data-provider',
+    { name: 'data-display', multiple: false, values: ['full'] },
+  ],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
@@ -287,8 +293,13 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
         : supplied
         ? (supplied as Transformer)(tagName, attribs)
         : { tagName, attribs };
-    const next = applied.attribs ?? {};
-    if (allowBlurbs || !isBlurbAttribs(next)) return applied;
+    const { 'data-display': display, ...others } = applied.attribs ?? {};
+    // Only a full-width embed carries `data-display`; on any other div it is dropped.
+    const next =
+      display !== undefined && applied.attribs?.['data-type'] === 'civitaiEmbed'
+        ? { ...others, 'data-display': display }
+        : others;
+    if (allowBlurbs || !isBlurbAttribs(next)) return { ...applied, attribs: next };
     const { 'data-type': _type, 'data-id': _id, ...rest } = next;
     return { ...applied, attribs: rest };
   };

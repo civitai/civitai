@@ -24,6 +24,9 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 vi.mock('~/server/services/text-scan/actions/csam-hold', () => ({ lockCsamHold: vi.fn() }));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  requeueBlockedServiceOffering: vi.fn(),
+}));
 
 const { decideCsamHold } = await import('~/server/services/text-scan/csam-hold-decision');
 

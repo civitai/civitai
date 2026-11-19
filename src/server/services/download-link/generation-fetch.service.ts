@@ -128,7 +128,10 @@ export async function checkGenerationFetch({
   principal: GenerationFetchPrincipal | ProviderFetchPrincipal | null;
   /** Provider principal only: the download route's file selectors. */
   selectors?: GenerationFetchSelectors;
-  /** Share the version and file reads across a link's GETs (see `gateReads`). Mint reads fresh. */
+  /**
+   * Share the version and file reads across a link's GETs and mini's provider mints (see
+   * `gateReads`). Other mints read fresh.
+   */
   cacheReads?: boolean;
 }): Promise<GenerationFetchResult> {
   const { kyselyRead } = await loadKyselyDb();

@@ -51,6 +51,9 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   CdnAccessSync: 15,
   // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
   ImageCdnPersistRetry: 15,
+  // Drained outside this repo, by the CSAM report archiver's own database functions; never 0,
+  // which would read as stranded.
+  CsamArchive: MINUTES_PER_DAY,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

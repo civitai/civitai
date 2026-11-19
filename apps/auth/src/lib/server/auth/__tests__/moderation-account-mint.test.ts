@@ -83,6 +83,6 @@ describe('other ways to become the moderation account at the hub', () => {
   });
 
   it('no OAuth token pair is issued for it', async () => {
-    await expect(createOAuthTokenPair(900, 'client', 1)).rejects.toMatchObject({ status: 403 });
+    await expect(createOAuthTokenPair(900, 'client', 1n)).rejects.toMatchObject({ status: 403 });
   });
 });

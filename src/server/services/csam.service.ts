@@ -209,9 +209,12 @@ export async function createCsamReport({
   imageIds = [],
   details,
   type,
+  writeBlocklist = true,
 }: Omit<CreateCsamReportSchema, 'details'> & {
   reportedById: number;
   details?: CreateCsamReportSchema['details'] | GeneratorEvidenceDetails;
+  /** Off for a caller that writes the blocklist itself, after the account removal. */
+  writeBlocklist?: boolean;
 }) {
   const isInternalReport = userId === -1;
   const data = {
@@ -261,7 +264,7 @@ export async function createCsamReport({
               subType: 'fold-skip-claimed',
               message: `report ${claimedId} is being sent; filed as report ${created.id}`,
               reportId: claimedId,
-              newReportId: created.id,
+              payload: { newReportId: created.id },
             });
           return created;
         };
@@ -295,7 +298,7 @@ export async function createCsamReport({
         });
       });
 
-  if (imageIds.length) {
+  if (writeBlocklist && imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
       where: { id: { in: imageIds } },
       select: { pHash: true },
@@ -400,6 +403,8 @@ async function getReportedUser(id: number) {
 
 export async function getUserIpInfo(report: Partial<CsamReportProps>) {
   if (!report.userId || !report.type || !clickhouse) return [];
+  // Interpolated into ClickHouse SQL below.
+  const userId = Number(report.userId);
 
   let captureEvents: CsamReportUserActivity[] = await clickhouse.$query<{
     ip: string;
@@ -411,7 +416,8 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE userId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
+    WHERE (targetUserId = ${userId} OR (userId = ${userId} AND targetUserId != ${userId}))
+      AND (type = 'Registration' OR type = 'Login')
   `);
 
   switch (report.type) {
@@ -431,7 +437,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             postId,
             time
           FROM posts
-          WHERE userId = ${report.userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
+          WHERE userId = ${userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
         `)
         ).map(({ postId, ...data }) => ({
           ...data,
@@ -454,7 +460,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             modelVersionId,
             time
           FROM modelVersionEvents
-          WHERE userId = ${report.userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
+          WHERE userId = ${userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
         `)
         ).map(({ modelVersionId, ...data }) => ({
           ...data,

@@ -5,6 +5,8 @@ import { getServerSideProps } from '~/pages/hubs/[id]/[[...slug]]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { encodeHubId } from '~/server/utils/hub-id';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * `/hubs/<id>` — the SSR WIRING, as distinct from `hubRouteIsDark`'s logic.
@@ -29,7 +31,7 @@ import { encodeHubId } from '~/server/utils/hub-id';
 
 // The page's `createServerSideProps` wrapper resolves a session; stub it so these
 // exercise the resolver rather than auth.
-vi.mock('~/server/utils/get-server-auth-session', () => ({
+vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
@@ -138,5 +140,53 @@ describe('/hubs/<id> — getServerSideProps wiring', () => {
 
     expect(result.notFound).toBeUndefined();
     expect(result.props).toMatchObject({ hubMeta: { name: 'Neat models!' } });
+  });
+});
+
+// A moderator's reach over other users' hubs follows the credential, as the tRPC read does: a
+// browser session keeps it, a scoped API key presented on the page request does not.
+describe('/hubs/<id> — moderator reach follows the credential', () => {
+  const moderator = { user: { id: 7, isModerator: true } };
+  const runAs = async (credential?: { authorization: string; context: object }) =>
+    (await (getServerSideProps as any)({
+      params: { id: HUB_KEY, slug: [SLUG] },
+      req: {
+        url: `/hubs/${HUB_KEY}/${SLUG}`,
+        headers: {
+          host: `case-${nextHost++}.civitai.com`,
+          'cf-ipcountry': 'US',
+          ...(credential ? { authorization: credential.authorization } : {}),
+        },
+        cookies: {},
+        ...(credential ? { context: credential.context } : {}),
+      },
+      res: { setHeader: vi.fn(), getHeader: vi.fn() },
+      query: {},
+      resolvedUrl: `/hubs/${HUB_KEY}/${SLUG}`,
+    })) as any;
+  const lookup = () => (findFirstHub.mock.calls.at(-1)?.[0] as { where: object }).where;
+
+  beforeEach(() => {
+    fliptResult.value = true;
+    findFirstHub.mockResolvedValue(hubRow(Availability.Private));
+    vi.mocked(getServerAuthSession).mockResolvedValue(moderator as never);
+  });
+
+  it("a moderator's session looks the hub up with no viewer filter", async () => {
+    await runAs();
+    expect(lookup()).not.toHaveProperty('OR');
+  });
+
+  it("a moderator's scoped API key looks it up as a plain viewer", async () => {
+    await runAs({
+      authorization: 'Bearer scoped',
+      context: {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: Number(TokenScope.UserRead),
+      },
+    });
+    expect(lookup()).toHaveProperty('OR');
   });
 });

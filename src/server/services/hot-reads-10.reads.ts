@@ -73,6 +73,7 @@ export async function readCollectionByIdViaKysely(
             scannedAt: row.coverScannedAt,
             ingestion: row.coverIngestion,
             blockedFor: row.coverBlockedFor,
+            modelRestricted: row.coverModelRestricted,
             postId: row.coverPostId,
             type: row.coverType,
             metadata: row.coverMetadata,
@@ -122,7 +123,8 @@ export async function readCollectionByIdViaKysely(
               metadata: row.profilePictureMetadata,
             }
           : null,
-        row.profilePictureNeedsReview
+        row.profilePictureNeedsReview,
+        row.profilePictureModelRestricted
       ),
       cosmetics: row.cosmetics.map((cosmetic) => ({
         data: cosmetic.data,

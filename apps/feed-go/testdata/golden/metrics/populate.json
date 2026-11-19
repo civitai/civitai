@@ -1,0 +1,2311 @@
+{
+  "generatedBy": "gen-metrics.mjs",
+  "nowMs": 1794830400000,
+  "scripts": {
+    "nxWithTtl": "\n      if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'KEEPTTL') then\n        return redis.call('EXPIRE', KEYS[1], ARGV[2])\n      else\n        return 0\n      end\n    ",
+    "hReplaceStampedEx": "\n      redis.call('DEL', KEYS[1])\n      local stamp = ARGV[3]\n      if redis.call('EXISTS', KEYS[2]) == 1 then stamp = ARGV[4] end\n      redis.call('HSET', KEYS[1], ARGV[2], stamp, unpack(ARGV, 5))\n      return redis.call('EXPIRE', KEYS[1], ARGV[1])\n    "
+  },
+  "cases": [
+    {
+      "name": "cold",
+      "about": "three cold images (one requested twice): two with rows, one with none (a notFound marker, 5 min); image 8002 has a recent-event marker, so its stamp is aged",
+      "ids": [
+        8001,
+        8002,
+        8003,
+        8001
+      ],
+      "rows": [
+        {
+          "entityId": 8001,
+          "metricType": "Like",
+          "value": 5
+        },
+        {
+          "entityId": 8001,
+          "metricType": "Heart",
+          "value": 2
+        },
+        {
+          "entityId": 8001,
+          "metricType": "Laugh",
+          "value": 4
+        },
+        {
+          "entityId": 8001,
+          "metricType": "Cry",
+          "value": 1
+        },
+        {
+          "entityId": 8001,
+          "metricType": "commentCount",
+          "value": 3
+        },
+        {
+          "entityId": 8001,
+          "metricType": "Collection",
+          "value": 7
+        },
+        {
+          "entityId": 8001,
+          "metricType": "tippedAmount",
+          "value": 100
+        },
+        {
+          "entityId": 8001,
+          "metricType": "tippedCount",
+          "value": 2
+        },
+        {
+          "entityId": 8002,
+          "metricType": "Like",
+          "value": 1
+        }
+      ],
+      "chError": null,
+      "fillLater": null,
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8001,8002,8003)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8001,8002,8003)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": {
+            "max_threads": 1,
+            "max_execution_time": 6,
+            "timeout_overflow_mode": "throw"
+          }
+        }
+      ],
+      "result": {
+        "8001": {
+          "Cry": 1,
+          "Heart": 2,
+          "Laugh": 4,
+          "Like": 5,
+          "Collection": 7,
+          "commentCount": 3,
+          "tippedAmount": 100,
+          "tippedCount": 2
+        },
+        "8002": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 1,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "8003": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        }
+      },
+      "error": null,
+      "before": {
+        "strings": {
+          "{metrics:Image:8002}:recent": {
+            "value": "1",
+            "ttl": 900
+          }
+        },
+        "hashes": {}
+      },
+      "after": {
+        "strings": {
+          "{metrics:Image:8002}:recent": {
+            "value": "1",
+            "ttl": 900
+          }
+        },
+        "hashes": {
+          "metrics:Image:8001": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "Like": "5",
+              "Heart": "2",
+              "Laugh": "4",
+              "Cry": "1",
+              "commentCount": "3",
+              "Collection": "7",
+              "tippedAmount": "100",
+              "tippedCount": "2"
+            },
+            "ttl": 43200
+          },
+          "metrics:Image:8002": {
+            "fields": {
+              "_populatedAt": "1794827700",
+              "Like": "1"
+            },
+            "ttl": 43200
+          },
+          "metrics:Image:8003": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          }
+        }
+      }
+    },
+    {
+      "name": "timeout-marker",
+      "about": "an image a capped lookup was stopped for: the lookup runs with the retry settings (no cap)",
+      "ids": [
+        8004
+      ],
+      "rows": [
+        {
+          "entityId": 8004,
+          "metricType": "Heart",
+          "value": 6
+        }
+      ],
+      "chError": null,
+      "fillLater": null,
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8004)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8004)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": {
+            "max_threads": 1
+          }
+        }
+      ],
+      "result": {
+        "8004": {
+          "Cry": 0,
+          "Heart": 6,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        }
+      },
+      "error": null,
+      "before": {
+        "strings": {
+          "metrics:timeout:Image:8004": {
+            "value": "1",
+            "ttl": 43200
+          }
+        },
+        "hashes": {}
+      },
+      "after": {
+        "strings": {
+          "metrics:timeout:Image:8004": {
+            "value": "1",
+            "ttl": 43200
+          }
+        },
+        "hashes": {
+          "metrics:Image:8004": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "Heart": "6"
+            },
+            "ttl": 43200
+          }
+        }
+      }
+    },
+    {
+      "name": "server-timeout",
+      "about": "the server stops the capped lookup (code 159): the ids are marked for an uncapped retry, the locks are left to expire, and fetch throws",
+      "ids": [
+        8005,
+        8006
+      ],
+      "rows": null,
+      "chError": {
+        "message": "Timeout exceeded: elapsed 6.0 seconds, maximum: 6",
+        "code": "159"
+      },
+      "fillLater": null,
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8005,8006)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8005,8006)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": {
+            "max_threads": 1,
+            "max_execution_time": 6,
+            "timeout_overflow_mode": "throw"
+          }
+        }
+      ],
+      "result": null,
+      "error": {
+        "message": "Timeout exceeded: elapsed 6.0 seconds, maximum: 6",
+        "code": "159"
+      },
+      "before": {
+        "strings": {},
+        "hashes": {}
+      },
+      "after": {
+        "strings": {
+          "metrics:lock:Image:8005": {
+            "value": "1",
+            "ttl": 10
+          },
+          "metrics:lock:Image:8006": {
+            "value": "1",
+            "ttl": 10
+          },
+          "metrics:timeout:Image:8005": {
+            "value": "1",
+            "ttl": 43200
+          },
+          "metrics:timeout:Image:8006": {
+            "value": "1",
+            "ttl": 43200
+          }
+        },
+        "hashes": {}
+      }
+    },
+    {
+      "name": "other-error",
+      "about": "any other ClickHouse error: the locks are released, nothing is marked, fetch throws",
+      "ids": [
+        8009
+      ],
+      "rows": null,
+      "chError": {
+        "message": "Too many simultaneous queries",
+        "code": "202"
+      },
+      "fillLater": null,
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8009)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8009)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": {
+            "max_threads": 1,
+            "max_execution_time": 6,
+            "timeout_overflow_mode": "throw"
+          }
+        }
+      ],
+      "result": null,
+      "error": {
+        "message": "Too many simultaneous queries",
+        "code": "202"
+      },
+      "before": {
+        "strings": {},
+        "hashes": {}
+      },
+      "after": {
+        "strings": {},
+        "hashes": {}
+      }
+    },
+    {
+      "name": "large",
+      "about": "more than 100 ids: the server defaults (no per-query settings)",
+      "ids": [
+        9001,
+        9002,
+        9003,
+        9004,
+        9005,
+        9006,
+        9007,
+        9008,
+        9009,
+        9010,
+        9011,
+        9012,
+        9013,
+        9014,
+        9015,
+        9016,
+        9017,
+        9018,
+        9019,
+        9020,
+        9021,
+        9022,
+        9023,
+        9024,
+        9025,
+        9026,
+        9027,
+        9028,
+        9029,
+        9030,
+        9031,
+        9032,
+        9033,
+        9034,
+        9035,
+        9036,
+        9037,
+        9038,
+        9039,
+        9040,
+        9041,
+        9042,
+        9043,
+        9044,
+        9045,
+        9046,
+        9047,
+        9048,
+        9049,
+        9050,
+        9051,
+        9052,
+        9053,
+        9054,
+        9055,
+        9056,
+        9057,
+        9058,
+        9059,
+        9060,
+        9061,
+        9062,
+        9063,
+        9064,
+        9065,
+        9066,
+        9067,
+        9068,
+        9069,
+        9070,
+        9071,
+        9072,
+        9073,
+        9074,
+        9075,
+        9076,
+        9077,
+        9078,
+        9079,
+        9080,
+        9081,
+        9082,
+        9083,
+        9084,
+        9085,
+        9086,
+        9087,
+        9088,
+        9089,
+        9090,
+        9091,
+        9092,
+        9093,
+        9094,
+        9095,
+        9096,
+        9097,
+        9098,
+        9099,
+        9100,
+        9101
+      ],
+      "rows": [
+        {
+          "entityId": 9001,
+          "metricType": "Like",
+          "value": 1
+        },
+        {
+          "entityId": 9101,
+          "metricType": "commentCount",
+          "value": 2
+        }
+      ],
+      "chError": null,
+      "fillLater": null,
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (9001,9002,9003,9004,9005,9006,9007,9008,9009,9010,9011,9012,9013,9014,9015,9016,9017,9018,9019,9020,9021,9022,9023,9024,9025,9026,9027,9028,9029,9030,9031,9032,9033,9034,9035,9036,9037,9038,9039,9040,9041,9042,9043,9044,9045,9046,9047,9048,9049,9050,9051,9052,9053,9054,9055,9056,9057,9058,9059,9060,9061,9062,9063,9064,9065,9066,9067,9068,9069,9070,9071,9072,9073,9074,9075,9076,9077,9078,9079,9080,9081,9082,9083,9084,9085,9086,9087,9088,9089,9090,9091,9092,9093,9094,9095,9096,9097,9098,9099,9100,9101)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (9001,9002,9003,9004,9005,9006,9007,9008,9009,9010,9011,9012,9013,9014,9015,9016,9017,9018,9019,9020,9021,9022,9023,9024,9025,9026,9027,9028,9029,9030,9031,9032,9033,9034,9035,9036,9037,9038,9039,9040,9041,9042,9043,9044,9045,9046,9047,9048,9049,9050,9051,9052,9053,9054,9055,9056,9057,9058,9059,9060,9061,9062,9063,9064,9065,9066,9067,9068,9069,9070,9071,9072,9073,9074,9075,9076,9077,9078,9079,9080,9081,9082,9083,9084,9085,9086,9087,9088,9089,9090,9091,9092,9093,9094,9095,9096,9097,9098,9099,9100,9101)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": null
+        }
+      ],
+      "result": {
+        "9001": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 1,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9002": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9003": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9004": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9005": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9006": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9007": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9008": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9009": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9010": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9011": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9012": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9013": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9014": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9015": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9016": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9017": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9018": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9019": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9020": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9021": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9022": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9023": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9024": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9025": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9026": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9027": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9028": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9029": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9030": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9031": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9032": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9033": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9034": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9035": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9036": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9037": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9038": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9039": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9040": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9041": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9042": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9043": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9044": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9045": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9046": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9047": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9048": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9049": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9050": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9051": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9052": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9053": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9054": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9055": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9056": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9057": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9058": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9059": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9060": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9061": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9062": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9063": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9064": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9065": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9066": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9067": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9068": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9069": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9070": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9071": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9072": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9073": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9074": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9075": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9076": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9077": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9078": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9079": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9080": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9081": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9082": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9083": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9084": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9085": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9086": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9087": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9088": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9089": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9090": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9091": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9092": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9093": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9094": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9095": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9096": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9097": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9098": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9099": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9100": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "9101": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 2,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        }
+      },
+      "error": null,
+      "before": {
+        "strings": {},
+        "hashes": {}
+      },
+      "after": {
+        "strings": {},
+        "hashes": {
+          "metrics:Image:9001": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "Like": "1"
+            },
+            "ttl": 43200
+          },
+          "metrics:Image:9002": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9003": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9004": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9005": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9006": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9007": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9008": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9009": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9010": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9011": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9012": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9013": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9014": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9015": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9016": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9017": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9018": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9019": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9020": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9021": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9022": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9023": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9024": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9025": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9026": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9027": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9028": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9029": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9030": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9031": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9032": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9033": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9034": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9035": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9036": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9037": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9038": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9039": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9040": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9041": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9042": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9043": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9044": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9045": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9046": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9047": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9048": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9049": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9050": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9051": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9052": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9053": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9054": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9055": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9056": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9057": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9058": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9059": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9060": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9061": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9062": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9063": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9064": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9065": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9066": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9067": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9068": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9069": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9070": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9071": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9072": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9073": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9074": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9075": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9076": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9077": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9078": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9079": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9080": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9081": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9082": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9083": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9084": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9085": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9086": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9087": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9088": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9089": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9090": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9091": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9092": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9093": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9094": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9095": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9096": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9097": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9098": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9099": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9100": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "notFound": "1"
+            },
+            "ttl": 300
+          },
+          "metrics:Image:9101": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "commentCount": "2"
+            },
+            "ttl": 43200
+          }
+        }
+      }
+    },
+    {
+      "name": "locked-filled",
+      "about": "image 8008's populate lock is held elsewhere: fetch waits on the cache and takes the holder's hash; 8007 is looked up",
+      "ids": [
+        8007,
+        8008
+      ],
+      "rows": [
+        {
+          "entityId": 8007,
+          "metricType": "Cry",
+          "value": 2
+        }
+      ],
+      "chError": null,
+      "fillLater": {
+        "key": "metrics:Image:8008",
+        "fields": {
+          "Like": "9",
+          "_populatedAt": "1794830395"
+        }
+      },
+      "queries": [
+        {
+          "query": "\n          SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8007)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0;\n        ",
+          "wire": "SELECT\n            entityId,\n            metricType,\n            sum(total) AS value\n          FROM (\n            SELECT entityId, metricType, day, total\n            FROM entityMetricDailyAgg_v2\n            WHERE entityType = 'Image'\n              AND entityId IN (8007)\n              AND metricType IN ('Cry','Heart','Laugh','Like','Collection','commentCount','tippedAmount','tippedCount')\n          )\n          GROUP BY entityId, metricType\n          HAVING value > 0 \nFORMAT JSONEachRow",
+          "format": "JSONEachRow",
+          "settings": {
+            "max_threads": 1,
+            "max_execution_time": 6,
+            "timeout_overflow_mode": "throw"
+          }
+        }
+      ],
+      "result": {
+        "8007": {
+          "Cry": 2,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        },
+        "8008": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 9,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        }
+      },
+      "error": null,
+      "before": {
+        "strings": {
+          "metrics:lock:Image:8008": {
+            "value": "1",
+            "ttl": 10
+          }
+        },
+        "hashes": {}
+      },
+      "after": {
+        "strings": {
+          "metrics:lock:Image:8008": {
+            "value": "1",
+            "ttl": 10
+          }
+        },
+        "hashes": {
+          "metrics:Image:8007": {
+            "fields": {
+              "_populatedAt": "1794830400",
+              "Cry": "2"
+            },
+            "ttl": 43200
+          },
+          "metrics:Image:8008": {
+            "fields": {
+              "Like": "9",
+              "_populatedAt": "1794830395"
+            },
+            "ttl": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "locked-never-filled",
+      "about": "image 8010's lock is held and its holder never fills the cache: after the retries it is all zeros",
+      "ids": [
+        8010
+      ],
+      "rows": [],
+      "chError": null,
+      "fillLater": null,
+      "queries": [],
+      "result": {
+        "8010": {
+          "Cry": 0,
+          "Heart": 0,
+          "Laugh": 0,
+          "Like": 0,
+          "Collection": 0,
+          "commentCount": 0,
+          "tippedAmount": 0,
+          "tippedCount": 0
+        }
+      },
+      "error": null,
+      "before": {
+        "strings": {
+          "metrics:lock:Image:8010": {
+            "value": "1",
+            "ttl": 10
+          }
+        },
+        "hashes": {}
+      },
+      "after": {
+        "strings": {
+          "metrics:lock:Image:8010": {
+            "value": "1",
+            "ttl": 10
+          }
+        },
+        "hashes": {}
+      }
+    }
+  ]
+}

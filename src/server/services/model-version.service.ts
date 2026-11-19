@@ -31,7 +31,6 @@ import {
   constants,
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -168,10 +167,11 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostImage, bustCachesForPosts, createPost } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  handleLogError,
   runClickHouseRead,
   sleep,
   throwAuthorizationError,
@@ -214,14 +214,17 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelConfig,
   getBaseModelsByGroup,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
@@ -620,6 +623,24 @@ function assertOwnerTrainingStatusChange(
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
 
+// Internal and External generation are set by moderators: an owner can neither set them nor move a
+// version out of them. Replaying the stored value is not a change.
+const MODERATOR_MANAGED_USAGE_CONTROLS: ModelUsageControl[] = [
+  ModelUsageControl.InternalGeneration,
+  ModelUsageControl.ExternalGeneration,
+];
+function assertOwnerUsageControlChange(
+  stored: ModelUsageControl,
+  next: ModelUsageControl | undefined
+) {
+  if (next === undefined || next === stored) return;
+  if (
+    MODERATOR_MANAGED_USAGE_CONTROLS.includes(stored) ||
+    MODERATOR_MANAGED_USAGE_CONTROLS.includes(next)
+  )
+    throw throwBadRequestError("This version's usage control is managed by moderators.");
+}
+
 type PublishState = {
   status: ModelStatus;
   publishedAt: Date | null;
@@ -878,17 +899,13 @@ export const upsertModelVersion = async ({
   }
 
   // Validate NSFW + restricted base model combination
-  if (
-    model.nsfw &&
-    data.baseModel &&
-    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-  ) {
+  if (model.nsfw && data.baseModel && isMatureRestricted(data.baseModel, 'models')) {
     throw throwBadRequestError(
       `NSFW models cannot use base models with license restrictions. The base model "${
         data.baseModel
-      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" is restricted for NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -1167,6 +1184,7 @@ export const upsertModelVersion = async ({
       }
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
       assertOwnerBaseModelChange(existingVersion, data.baseModel);
+      assertOwnerUsageControlChange(existingVersion.usageControl, data.usageControl);
     }
 
     const baseModel = data.baseModel ?? existingVersion.baseModel;
@@ -1212,20 +1230,23 @@ export const upsertModelVersion = async ({
             name: string;
             trainedWords: string[];
             trainingStatus: TrainingStatus | null;
+            usageControl: ModelUsageControl;
           } & PublishState & { baseModel: string })[]
         >`
-          SELECT name, "trainedWords", "trainingStatus", "baseModel", status, "publishedAt",
-            "initialPublishedAt"
+          SELECT name, "trainedWords", "trainingStatus", "baseModel", "usageControl", status,
+            "publishedAt", "initialPublishedAt"
           FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
         `;
         if (storedText && locked && !sameVersionText(locked, storedText))
           throw throwConflictError(
             'This version changed while you were saving. Reload and try again.'
           );
-        // A run can start, or the version publish, between the read above and this lock.
+        // A run can start, the version publish, or a moderator change its usage control between the read
+        // above and this lock.
         if (!isModerator && locked) {
           assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
           assertOwnerBaseModelChange(locked, data.baseModel);
+          assertOwnerUsageControlChange(locked.usageControl, data.usageControl);
         }
 
         const updated = await tx.modelVersion.update({
@@ -1958,16 +1979,16 @@ export const publishModelVersionsWithEarlyAccess = async ({
     if (
       version.model.nsfw &&
       version.baseModel &&
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     ) {
       throw throwBadRequestError(
         `Cannot publish NSFW model version "${
           version.name
         }" with restricted base model. The base model "${
           version.baseModel
-        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
 
@@ -2117,14 +2138,14 @@ export const publishModelVersionById = async ({
   if (
     currentVersion.model.nsfw &&
     currentVersion.baseModel &&
-    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+    isMatureRestricted(currentVersion.baseModel, 'models')
   ) {
     throw throwBadRequestError(
       `Cannot publish NSFW model version with restricted base model. The base model "${
         currentVersion.baseModel
-      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -3389,10 +3410,11 @@ export const createModelVersionPostFromTraining = async ({
   });
 
   await Promise.all(
-    uploadedImages.map((image) =>
+    uploadedImages.map((image, index) =>
       addPostImage({
         type: image.type,
         postId: post.id,
+        index,
         modelVersionId,
         width: image.metadata?.width,
         height: image.metadata?.height,
@@ -4154,6 +4176,9 @@ export const mergeVersions = async ({
     { timeout: 60000 }
   );
 
+  const restricted = await flagImagesOnRestrictedVersions({ modelVersionIds: [targetVersionId] });
+  if (restricted.postIds.length) await bustCachesForPosts(restricted.postIds).catch(handleLogError);
+
   // Post-transaction cache busting
   const allVersionIds2 = [targetVersionId, ...sourceVersionIds];
   await Promise.all([
@@ -4189,7 +4214,7 @@ export const mergeVersions = async ({
       name: 'model-version-merge',
       message: `Failed to bust file AIRs for merged versions of model ${modelId}`,
       error,
-    }).catch(() => undefined)
+    })
   );
   scanModelAndRules(modelId);
 

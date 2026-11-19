@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assistantSystemPrompt } from '@civitai/app-assistant';
+import {
+  assistantRules,
+  assistantSystemPrompt,
+  checkKindOf,
+} from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,
@@ -72,7 +76,7 @@ describe('buildAssistantInstructions', () => {
     });
     // The whole sentence: a reworded scaffold step must be re-read here.
     expect(text).toContain(
-      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
+      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId> --template page-elements. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
     );
   });
 
@@ -159,7 +163,7 @@ describe('buildAssistantSystemPrompt', () => {
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
         "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'. The price is a bare number of Buzz: write the word Buzz once beside it (`${price} Buzz`), never also inside a helper that formats it, or the app shows \"104 Buzz Buzz\".",
-        "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.",
+        "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.",
         BUZZ_TRANSACTIONS_RULE_TEXT,
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
         SUBMIT_RULE_TEXT,
@@ -278,5 +282,44 @@ describe('buildAssistantSystemPromptWithSubagents', () => {
         '- A subagent sees nothing of this chat: write each task as a self-contained brief naming the files or pages to look at, what to find out and what to return.',
       ].join('\n')
     );
+  });
+});
+
+// The checks rule names commands; report_ready's gate counts only the commands it recognises
+// (checkKindOf). A rule naming a command the gate does not count leaves report_ready refused however
+// often the assistant runs it, so every command the rule names must be one the gate counts.
+// An invariant guard: the rule and the gate agree today; this fails if either moves alone.
+describe('the checks rule names commands the report_ready gate counts', () => {
+  const commands = (rules: string) => {
+    const line = rules.split('\n').find((l) => l.includes('the exit code must be the check’s own'));
+    expect(line).toBeDefined();
+    return [...line!.matchAll(/cd <blockId> && [^,.;()]+/g)].map((m) => m[0].trim());
+  };
+
+  it.each(['browser', 'remote'] as const)('%s, without run_checks', (runner) => {
+    const named = commands(assistantRules(runner));
+    expect(named).toEqual(['cd <blockId> && npm test', 'cd <blockId> && npx tsc --noEmit']);
+    expect(named.map((c) => checkKindOf(c.replace('<blockId>', 'my-app')))).toEqual([
+      'tests',
+      'typecheck',
+    ]);
+  });
+});
+
+// The checks rule and report_ready's gate assume the scaffold defines a test and a typecheck script,
+// which page-elements does and page-vite and static do not. The scaffold step passes it explicitly,
+// so a change to the CLI's default template cannot change what is scaffolded.
+describe('the scaffold step pins the page-elements template', () => {
+  it('names --template page-elements in the app create command', () => {
+    const text = buildAssistantInstructions({
+      sandbox: running,
+      apps: ['my-app'],
+      canPreview: true,
+      previewHost: null,
+    });
+    const scaffold = text.match(/npx -y @civitai\/cli@latest app create [^.]*\./g);
+    expect(scaffold).toEqual([
+      'npx -y @civitai/cli@latest app create <blockId> --template page-elements.',
+    ]);
   });
 });

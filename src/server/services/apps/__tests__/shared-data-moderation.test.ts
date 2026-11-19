@@ -43,6 +43,9 @@ vi.mock('~/server/clickhouse/client', () => ({
 import {
   blockingHit,
   classifySharedTexts,
+  describeSharedRefusalField,
+  SHARED_REFUSAL_FIELD_MAX_CHARS,
+  sharedRefusalField,
   recordSharedDataScan,
   resolveSharedDataModerationMode,
   scanCounterKey,
@@ -108,6 +111,17 @@ describe('resolveSharedDataModerationMode — two flags, enforce implies scan', 
 describe('classifySharedTexts — the local checks, one leaf at a time', () => {
   it('a clean leaf produces no hit', async () => {
     await expect(classifySharedTexts([leaf('a perfectly ordinary label')])).resolves.toEqual([]);
+  });
+
+  it('flags an orchestrator media link as a link hit, without recording the url', async () => {
+    const url = 'https://orchestration.civitai.com/v2/consumer/blobs/K1.png?sig=s';
+    const hits = await classifySharedTexts([leaf(url)]);
+    expect(hits).toContainEqual({
+      category: 'link',
+      matched: 'private_media',
+      label: 'private_media',
+      leaf: leaf(url),
+    });
   });
 
   it('flags a minor term, with the leaf it came from', async () => {
@@ -867,6 +881,87 @@ describe('scheduleSharedDataShadow', () => {
         surface: 'counter',
       }),
       'block-audit'
+    );
+  });
+});
+
+describe('sharedRefusalField — the field a refusal names, never the refused text', () => {
+  const scanWith = (...hits: SharedTextScan['hits']): SharedTextScan => ({
+    leafCount: hits.length,
+    overflow: null,
+    hits,
+  });
+  const hitOn = (
+    raw: string,
+    segments: Array<string | number>,
+    kind: 'value' | 'key' = 'value',
+    category: SharedTextScan['hits'][number]['category'] = 'audit_regex',
+    matched = 'zqmatched'
+  ): SharedTextScan['hits'][number] => ({
+    category,
+    matched,
+    label: 'profanity',
+    leaf: { raw, path: segments.join('/'), segments, kind },
+  });
+
+  it.each([
+    [['a', 'b'], 'value', 'data.a.b'],
+    [['list', 3], 'value', 'data.list[3]'],
+    [['my key', 0, 'x'], 'value', 'data["my key"][0].x'],
+    [['tags', 'the zq text'], 'key', 'data.tags'],
+    [['the zq text'], 'key', 'data'],
+  ] as const)('%j (%s) → %s', (segments, kind, field) => {
+    const hit = hitOn('the zq text', [...segments], kind);
+    expect(sharedRefusalField(scanWith(hit), hit, 'data')).toEqual({ field, fieldKind: kind });
+  });
+
+  it('the key root is `key`, whatever the leaf', () => {
+    const hit = hitOn('a-zq-key', []);
+    expect(sharedRefusalField(scanWith(hit), hit, 'key')).toEqual({
+      field: 'key',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a walk-cap overflow (no leaf) names the whole blob', () => {
+    const hit = { category: 'overflow' as const, matched: 'depth', label: 'depth', leaf: null };
+    expect(sharedRefusalField(scanWith(hit), hit, 'data')).toEqual({
+      field: 'data',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a key on the path that is another hit’s leaf, or holds a matched term, is replaced', () => {
+    const refusedKey = hitOn('zqbadkey', ['outer', 'zqbadkey'], 'key', 'pattern', 'blocklist:1#2');
+    const value = hitOn(
+      'a value',
+      ['outer', 'zqbadkey', 'pre-ZQMATCHED-post', 'v'],
+      'value',
+      'minor',
+      'zqmatched'
+    );
+    expect(sharedRefusalField(scanWith(refusedKey, value), value, 'data')).toEqual({
+      field: 'data.outer[*][*].v',
+      fieldKind: 'value',
+    });
+  });
+
+  it('a long path is cut to the cap', () => {
+    const hit = hitOn(
+      'x',
+      Array.from({ length: 100 }, () => 'segment')
+    );
+    const { field } = sharedRefusalField(scanWith(hit), hit, 'data');
+    expect(field).toHaveLength(SHARED_REFUSAL_FIELD_MAX_CHARS);
+    expect(field.endsWith('…')).toBe(true);
+  });
+
+  it('describeSharedRefusalField words a key as a key', () => {
+    expect(describeSharedRefusalField({ field: 'data.a[1]', fieldKind: 'value' })).toBe(
+      'field: data.a[1]'
+    );
+    expect(describeSharedRefusalField({ field: 'data.meta', fieldKind: 'key' })).toBe(
+      'field: an object key in data.meta'
     );
   });
 });

@@ -429,6 +429,10 @@ export enum BlocklistType {
   // app's listing edit). Edited by moderators at /moderator/blocklists; an empty list fails
   // that check rather than passing it.
   AppProtectedBrandTerm = 'AppProtectedBrandTerm',
+  // Semantic search query rules, added on top of the audit lists in `utils/metadata/audit.ts`,
+  // never a copy of them. What a match does is fixed in `semantic-query-guard.ts`.
+  SemanticSearchPoiRefuse = 'SemanticSearchPoiRefuse',
+  SemanticSearchMinorSafe = 'SemanticSearchMinorSafe',
 }
 
 export enum ToolSort {

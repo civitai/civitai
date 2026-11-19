@@ -18,6 +18,7 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueArticlesAndComicsForImages } from '~/server/services/image-models-reindex.service';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -90,6 +91,8 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ids: jobQueueIds.imageIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
+    // Every Image."nsfwLevel" write lands here through the image trigger.
+    await queueArticlesAndComicsForImages(jobQueueIds.imageIds);
 
     const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
     const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);
@@ -131,6 +134,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       collectionIds: [], // Collections processed by separate job
       comicProjectIds,
       model3dIds,
+      serviceOfferingIds: relatedEntities.serviceOfferingIds,
     });
 
     const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
@@ -299,6 +303,8 @@ const handleJobQueueCleanIfEmpty = createJob(
                   AND mv.status = 'Published'::"ModelStatus"
               )
               AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+              -- Text items are content: a post with them is not empty.
+              AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = p.id)
               AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
           )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)

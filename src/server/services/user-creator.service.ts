@@ -125,7 +125,7 @@ export async function bustUserCreatorCache(userIds: number | number[]) {
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
   }
 }
 

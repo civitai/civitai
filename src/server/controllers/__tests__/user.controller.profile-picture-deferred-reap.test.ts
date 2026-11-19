@@ -102,7 +102,7 @@ const replacePicture = (pictureId = NEW_PICTURE_ID) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(USER_ID)] as never);
   mockGetUserById.mockResolvedValue({
     profilePictureId: OLD_PICTURE_ID,
     profilePicture: { userId: USER_ID },

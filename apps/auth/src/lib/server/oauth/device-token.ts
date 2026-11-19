@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { REDIS_KEYS } from '@civitai/redis';
-import { ALL_SCOPES } from '@civitai/auth/token-scope';
+import { parseTokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -8,7 +8,7 @@ import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createOAuthTokenPair } from '$lib/server/oauth/token-helpers';
 import { ACCESS_TOKEN_TTL, DEVICE_CODE_GRANT } from '$lib/server/oauth/constants';
-import { isScopeGrantable } from '$lib/server/oauth/scope';
+import { isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
 // The device-flow token poll (RFC 8628 §3.4). RFC 8628 has the device poll the token endpoint, so
@@ -78,13 +78,12 @@ export async function deviceTokenGrant(
   // status === 'approved'
   if (!data.userId) return json({ error: 'server_error' }, { status: 400, headers });
 
-  const rawScope = parseInt(data.scope, 10);
-  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`; the client allowedScopes gate below
+  // Bound against ALL_SCOPES (incl. the opt-in bits), NOT `Full`; the client allowedScopes gate below
   // is the real authorization.
-  if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
+  const scope = parseTokenScope(data.scope);
+  if (scope === null) {
     return json({ error: 'invalid_scope' }, { status: 400, headers });
   }
-  const scope = rawScope;
 
   const client = await db
     .selectFrom('OauthClient')
@@ -99,7 +98,7 @@ export async function deviceTokenGrant(
       { status: 400, headers }
     );
   }
-  if (!isScopeGrantable(client.allowedScopes, scope, 'user')) {
+  if (!isScopeGrantable(scopeFromColumn(client.allowedScopes), scope, 'user')) {
     return json(
       { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
       { status: 400, headers }

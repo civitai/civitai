@@ -20,8 +20,7 @@ export const isRevoked = createRevocationCheck({
         subtype: 'read-degraded',
         fn: 'spoke isRevoked',
         verdict,
-      })
-      .catch(() => undefined);
+      });
   },
 });
 

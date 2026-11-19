@@ -339,7 +339,7 @@ describe('🔴 the author paths before the migration runs', () => {
       slug: 'brand-new-app',
       name: 'Brand New App',
       connectClientId: CLIENT_ID,
-      requestedScopes: 0,
+      requestedScopes: 0n,
       scopeJustifications: {},
       contentRating: 'g',
       ...overrides,
@@ -348,7 +348,7 @@ describe('🔴 the author paths before the migration runs', () => {
     mockRead.oauthClient.findUnique.mockResolvedValue({
       id: CLIENT_ID,
       userId: OWNER,
-      allowedScopes: 0,
+      allowedScopes: 0n,
     });
     mockRead.appListingPublishRequest.count.mockResolvedValue(0);
     mockRead.appListing.findUnique.mockResolvedValue(null);

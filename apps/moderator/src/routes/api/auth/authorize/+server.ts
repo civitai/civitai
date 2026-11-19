@@ -12,5 +12,5 @@ export const GET: RequestHandler = ({ request, url }) =>
         outcome,
         host: url.host,
         ...detail,
-      }).catch(() => {}),
+      }),
   });

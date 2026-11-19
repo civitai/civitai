@@ -27,6 +27,8 @@ src/
 ## Components and styling
 
 - **Mantine first:** `import { Button, Group, Text } from '@mantine/core'`, icons from `@tabler/icons-react`.
+- **Colours:** theme tokens (Tailwind classes with `dark:` variants, or `var(--mantine-color-*)`); no hex literals in components.
+- **Responsive:** do layout in CSS or Tailwind variants (`@max-md:` and the other `@` variants query the nearest `@container`; `max-md:` queries the viewport), not in JS. `useIsMobile()` measures the nearest container, not the viewport (pass `{ type: 'media' }` for a viewport query).
 - **Tailwind with `clsx`:** `<div className={clsx('flex items-center gap-2', cond && 'bg-blue-500')} />`.
 - **SCSS modules only when needed:** `import styles from './Component.module.scss'`.
 - **TypeScript:** use `import type { ButtonProps } from '@mantine/core'`, define Props interfaces, and take enums from `~/shared/utils/prisma/enums`.
@@ -49,7 +51,7 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 
 ## Data, state and forms
 
-- **State:** Zustand for global state, React Query for server state, React Hook Form (with Zod schemas) for forms.
+- **State:** Zustand for global state, React Query for server state, React Hook Form (with Zod schemas) for forms. Form entry point: `~/libs/form` (`useForm` + `Form` + `Input*`); generation forms use form-graph.
 - **API calls:** `import { trpc } from '~/utils/trpc'`, then `trpc.user.getProfile.useQuery()`.
 - **Current user:** `import { useCurrentUser } from '~/hooks/useCurrentUser'`.
 - **File uploads:** use the S3 upload hooks and providers.
@@ -63,7 +65,6 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 
 ## Modals
 
-Use Mantine modals with proper accessibility and keyboard handling, managed through the dialog registry:
-- Register dialogs in `src/components/Dialog/dialog-registry2.ts`; URL-routed ones as a `<name>.dialog.ts` in `src/components/Dialog/routed-dialog/`, imported by its `registry.ts`.
-- `DialogProvider` for context-based modal management; `RoutedDialogProvider` for URL-based modal state.
-- Open dialogs through the registry so modal handling stays consistent.
+- Open dialogs with `dialogStore.trigger({ component, props })` (`src/components/Dialog/dialogStore.ts`); the dialog component calls `useDialogContext()`. Confirms use `src/components/Dialog/Common/ConfirmDialog`. Don't add new `@mantine/modals` calls (`openConfirmModal`, `modals.open`).
+- URL-routed dialogs: a `<name>.dialog.ts` in `src/components/Dialog/routed-dialog/`, imported by its `registry.ts`.
+- `DialogProvider` renders the dialog stack; `RoutedDialogProvider` handles URL-based modal state.

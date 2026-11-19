@@ -11,6 +11,17 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 const now = new Date('2026-11-11T15:42:00Z');
 
 describe('toSemanticImageSearchInput', () => {
+  it('asks to leave out the viewer\'s own images only for "more like this"', () => {
+    const base = { filters: {}, browsingLevel: 1, excludeOwn: true };
+    expect(toSemanticImageSearchInput({ ...base, imageId: 6 }).excludeOwn).toBe(true);
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, query: 'cat' }).excludeOwn
+    ).toBeUndefined();
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, excludeOwn: false }).excludeOwn
+    ).toBeUndefined();
+  });
+
   it('sends the filters the index can apply and never the ones it cannot', () => {
     const input = toSemanticImageSearchInput({
       query: 'castle',
@@ -24,6 +35,7 @@ describe('toSemanticImageSearchInput', () => {
         userId: 7,
         period: MetricTimeframe.Week,
         fromPlatform: true,
+        withMeta: true,
         tools: [9],
         techniques: [3],
         remixesOnly: true,
@@ -41,6 +53,7 @@ describe('toSemanticImageSearchInput', () => {
       userIds: [7],
       postedAfter: new Date('2026-11-04T15:00:00Z'),
       fromPlatform: true,
+      withMeta: true,
       limit: 50,
     });
   });
@@ -53,6 +66,29 @@ describe('toSemanticImageSearchInput', () => {
       filters: { period: MetricTimeframe.AllTime },
     });
     expect(input.postedAfter).toBeUndefined();
+  });
+
+  it('searches for images like imageId while no query is set, in similarity order', () => {
+    const input = toSemanticImageSearchInput({
+      imageId: 42,
+      browsingLevel: 1,
+      sort: 'newest',
+      filters: { baseModels: ['Pony'] },
+    });
+    expect(input).toMatchObject({ imageId: 42, baseModels: ['Pony'] });
+    expect(input.query).toBeUndefined();
+    expect(input.sort).toBeUndefined();
+  });
+
+  it('lets a query replace imageId', () => {
+    const input = toSemanticImageSearchInput({
+      query: 'castle',
+      imageId: 42,
+      browsingLevel: 1,
+      filters: {},
+    });
+    expect(input).toMatchObject({ query: 'castle' });
+    expect(input.imageId).toBeUndefined();
   });
 });
 
@@ -134,6 +170,19 @@ describe('imageFeedUrlFromLegacySearch', () => {
     expect(url.searchParams.getAll('baseModels')).toEqual(['SDXL 1.0', 'Pony']);
     expect(url.searchParams.getAll('tags')).toEqual(['12', '40']);
     expect(url.searchParams.has('sort')).toBe(false);
+  });
+
+  it('carries "more like this" to the feed, without a legacy sort', async () => {
+    const url = parse(
+      await imageFeedUrlFromLegacySearch(
+        { similarTo: '42', sortBy: 'images_v6:createdAt:desc' },
+        resolveTags
+      )
+    );
+    expect(url.pathname).toBe('/images');
+    expect(url.searchParams.get('similarTo')).toBe('42');
+    expect(url.searchParams.has('sort')).toBe(false);
+    expect(await imageFeedUrlFromLegacySearch({ similarTo: 'abc' }, resolveTags)).toBe('/images');
   });
 
   it('looks up at most 20 tag names', async () => {

@@ -58,11 +58,6 @@ export function observeSessionLeg(
   if (outcome === 'timeout') timeoutsCounter.inc({ leg });
 }
 
-// --- Revocation verdicts given without sysRedis ------------------------------------------------------------
-// When the revocation read fails, the verdict comes from the markers this process has already read (the
-// @civitai/auth revocation record). `deny_cached` = a known marker revoked the session; `allow_unknown` = no
-// known marker revoked it, so it was allowed. A sustained `allow_unknown` rate is the volume of sessions whose
-// revocation state nobody checked.
 const revocationDegradedCounter = registerCounterWithLabels({
   name: 'session_revocation_degraded_total',
   help:

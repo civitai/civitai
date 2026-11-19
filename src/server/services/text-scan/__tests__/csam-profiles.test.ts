@@ -13,6 +13,8 @@ const CSAM_PROFILES: readonly string[] = [
   'Model',
   'Article',
   'TrackLyrics',
+  'ServiceOffering',
+  'PostText',
 ];
 
 describe('csam profiles', () => {

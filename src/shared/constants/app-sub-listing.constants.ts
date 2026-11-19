@@ -47,7 +47,12 @@ export function isValidSubListingSubPath(value: string): boolean {
   return value.length <= APP_SUB_LISTING_SUB_PATH_MAX && APP_SUB_LISTING_SUB_PATH_RE.test(value);
 }
 
-/** `asl_` + a 26-char Crockford ULID — the shape `newAppSubListingId` mints. */
+/**
+ * `asl_` + a 26-char Crockford ULID — the shape `newAppSubListingId` mints. The run page reads
+ * it from the `sl` query parameter, which is HOST-OWNED: listed in `HOST_OWNED_RUN_PARAMS`
+ * (`~/shared/utils/apps-run-origin`), so it is stripped from what an embedded app sees and from
+ * share links. A new host parameter on the run URL must be added there too.
+ */
 export const APP_SUB_LISTING_ID_RE = /^asl_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export function isAppSubListingId(value: unknown): value is string {

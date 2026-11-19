@@ -109,13 +109,6 @@ node .claude/skills/postgres-query/query.mjs --dev -f my-query.sql
 node .claude/skills/postgres-query/query.mjs --prod --json "SELECT id, username FROM \"User\" LIMIT 3"
 ```
 
-### There is a second skill with this name
-
-`apps/event-engine/.claude/skills/postgres-query/` is a separate copy with its own `.env`, and it
-has **none** of the above — no target flag, no banner. Skills are directory-scoped, so work under
-`apps/event-engine` resolves to that one. Check which script you are invoking by path before
-trusting its output.
-
 ## Querying the dev database (cnpg)
 
 The dev database is not reachable directly — it needs an SSH tunnel to an internal

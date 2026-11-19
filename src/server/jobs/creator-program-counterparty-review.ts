@@ -82,7 +82,7 @@ export const creatorProgramCounterpartyReview = createJob(
           type: name.endsWith('-reported') ? 'info' : 'warning',
           name,
           ...data,
-        }).catch(() => undefined),
+        }),
     }),
   { lockExpiration: 10 * 60 }
 );

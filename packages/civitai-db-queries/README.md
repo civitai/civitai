@@ -117,6 +117,14 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-11.kysely-parity.test.ts`, on the same
   Postgres service.
 
+  `hot-reads-12.db.ts` holds `userWithCosmeticsSelect` (a user with its profile picture and
+  equipped cosmetics) as ONE statement, where Prisma issues one per relation: a list of users by
+  id (the users of a `resourceReview.getInfinite` page) and `model.getSimple`'s model with its
+  owner. It is served behind the default-off server Flipt flag `kysely-hot-reads-12`. It reads base
+  tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-12.kysely-parity.test.ts`, on the same
+  Postgres service.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

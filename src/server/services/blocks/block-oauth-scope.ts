@@ -8,12 +8,12 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 export type BlockTokenKind = 'block' | 'oauth';
 
 /** Block-only scopes (apps:storage:*, …) have no OAuth bit and are left to the host. */
-export function oauthScopeBitsFor(scopes: string[]): number {
-  let bits: number = TokenScope.UserRead;
+export function oauthScopeBitsFor(scopes: string[]): bigint {
+  let bits: bigint = TokenScope.UserRead;
   for (const scope of scopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
-    if (typeof requirement === 'number') bits |= requirement;
+    if (typeof requirement === 'bigint') bits |= requirement;
   }
   return bits;
 }

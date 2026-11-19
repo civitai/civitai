@@ -5,7 +5,15 @@ import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/Sel
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
-import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
+import {
+  Form,
+  InputNumber,
+  InputSelect,
+  InputSimpleImageUpload,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
 import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
 import {
   SERVICE_DELIVERY_DAYS_MAX,
@@ -46,21 +54,43 @@ const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
     : browsingLevelLabels[rating],
 }));
 
-export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffering }) {
+const COPY_SUFFIX = ' (copy)';
+
+/**
+ * `offering` edits it. `copyOf` starts a NEW offering from another one's wording and terms: not its
+ * cover, rating or affirmation.
+ */
+export function ServiceOfferingFormModal({
+  offering,
+  copyOf,
+}: {
+  offering?: ServiceOffering;
+  copyOf?: ServiceOffering;
+}) {
   const dialog = useDialogContext();
   const { upsert } = useMutateMyServices();
+  const source = offering ?? copyOf;
 
   const form = useForm({
     schema: formSchema,
     defaultValues: {
-      title: offering?.title ?? '',
-      description: offering?.description ?? '',
-      price: offering?.price ?? 1000,
-      deliveryDays: offering?.deliveryDays ?? 5,
-      revisionsIncluded: offering?.revisionsIncluded ?? 2,
-      maxOpenDeals: offering?.maxOpenDeals ?? 3,
-      previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
-      maxNsfwLevel: offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+      title: copyOf
+        ? copyOf.title.slice(0, SERVICE_TITLE_MAX - COPY_SUFFIX.length) + COPY_SUFFIX
+        : offering?.title ?? '',
+      description: source?.description ?? '',
+      price: source?.price ?? 1000,
+      deliveryDays: source?.deliveryDays ?? 5,
+      revisionsIncluded: source?.revisionsIncluded ?? 2,
+      maxOpenDeals: source?.maxOpenDeals ?? 3,
+      previewKind: source?.previewKind ?? ServicePreviewKind.Image,
+      declaredNsfwLevel:
+        offering?.declaredNsfwLevel ?? offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+      coverImage: offering?.coverImage
+        ? {
+            ...offering.coverImage,
+            metadata: (offering.coverImage.metadata as MixedObject | null) ?? undefined,
+          }
+        : null,
     },
   });
 
@@ -80,7 +110,11 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
     });
 
   return (
-    <Modal {...dialog} size="lg" title={offering ? 'Edit service' : 'New service'}>
+    <Modal
+      {...dialog}
+      size="lg"
+      title={offering ? 'Edit service' : copyOf ? 'Duplicate service' : 'New service'}
+    >
       <Form form={form}>
         <Stack gap="md">
           <InputText name="title" label="Title" maxLength={SERVICE_TITLE_MAX} withAsterisk />
@@ -91,6 +125,11 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             minRows={3}
             maxLength={SERVICE_DESCRIPTION_MAX}
             withAsterisk
+          />
+          <InputSimpleImageUpload
+            name="coverImage"
+            label="Cover image"
+            description="Shown at the top of your service card once it has been reviewed."
           />
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             <InputNumber
@@ -134,9 +173,9 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             />
           </SimpleGrid>
           <InputSelect
-            name="maxNsfwLevel"
+            name="declaredNsfwLevel"
             label="Highest rating you deliver"
-            description="Buyers only see this service where that rating is allowed. Changing it later applies to new requests only."
+            description="Buyers only see this service where its rating is allowed. Our content check can rate it higher than you pick, never lower. Changing it later applies to new requests only."
             data={ratingOptions}
             withAsterisk
           />

@@ -71,6 +71,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",
@@ -442,6 +443,40 @@ describe('the nsfwAxes write never changes the scan', () => {
 
     await expect(scan('wf-1', axes(3))).rejects.toThrow('connection reset');
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The reviewed gate reads these keys; the verdict writes set only workflowId, so they must keep them.
+describe('the scan verdict keeps the recorded scan failure', () => {
+  const failure = {
+    workflowId: 'wf-0',
+    error: { failureClass: 'transient' },
+    lastFailure: { failureClass: 'permanent' },
+    permanentFailure: true,
+  };
+  const scanJobs = async () =>
+    (
+      await holder.db.query<{ scanJobs: Record<string, unknown> }>(
+        `SELECT "scanJobs" FROM "Image" WHERE id = $1`,
+        [ID]
+      )
+    ).rows[0].scanJobs;
+
+  beforeEach(() =>
+    holder.db.query(
+      `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "scanJobs") VALUES ($1, 'Pending', 0, $2)`,
+      [ID, JSON.stringify(failure)]
+    )
+  );
+
+  it('on a Scanned verdict', async () => {
+    expect((await scan('wf-1')).ingestion).toBe('Scanned');
+    expect(await scanJobs()).toEqual({ ...failure, workflowId: 'wf-1' });
+  });
+
+  it('on the legacy blocked branch', async () => {
+    await scan('wf-1', undefined, { blocked: true });
+    expect(await scanJobs()).toEqual({ ...failure, workflowId: 'wf-1' });
   });
 });
 

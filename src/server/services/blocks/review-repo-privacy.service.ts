@@ -47,7 +47,7 @@ export type BackfillReviewRepoPrivacyResult = {
 };
 
 const logBackfill = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'backfill-review-repo-privacy', ...data }, 'webhooks').catch(() => undefined);
+  logToAxiom({ name: 'backfill-review-repo-privacy', ...data }, 'webhooks');
 
 export async function backfillReviewRepoPrivacy(
   params: BackfillReviewRepoPrivacyParams = {}

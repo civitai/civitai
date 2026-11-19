@@ -26,6 +26,7 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { registerApiRouteMetrics } from '~/server/prom/api-route.metrics';
 import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -56,6 +57,10 @@ if (pgDbWrite) {
 // Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
 // before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
 registerStandaloneApiPolicy();
+
+// Must run before either server takes its first request (the standalone server awaits register();
+// Next runs it while preparing).
+registerApiRouteMetrics();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -167,7 +172,6 @@ try {
 // reads its result, so it cannot change readiness. It runs in every process that runs this file,
 // which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
 // calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
-// The sequence lives in ~/server/health/start-after-warmup (tested there); the imports stay here.
 void startWarmupAndHealthMetricsLoop({
   warmup: import('~/server/warmup'),
   metricsLoop: import('~/server/health/metrics-loop'),
@@ -186,8 +190,7 @@ void startWarmupAndHealthMetricsLoop({
 // single call armed the one copy that happened to be merged alongside this file (which is
 // why `eventloop-longtask`, merged into this same runtime module, was the ONLY call site
 // that ever emitted) and left the other 13 permanently dark. See the header of
-// `~/server/logging/structured-log-sink`, and `scripts/check-server-graph-singletons.mjs`,
-// which fails the build if a copy of that module ever loses the globalThis pin.
+// `~/server/logging/structured-log-sink`.
 //
 // Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
 // off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a

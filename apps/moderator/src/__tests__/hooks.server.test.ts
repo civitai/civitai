@@ -252,33 +252,9 @@ describe('locals.tokenClient stays exactly "webhook"', () => {
 });
 
 describe('attribution never breaks a request', () => {
-  it('ATTACHES a rejection handler to the emit — a logger that REJECTS must not surface anywhere', async () => {
-    // 🔴 The behavioural half of this (request still 204) passes with the `.catch()` DELETED, because
-    // an unhandled rejection inside a vitest worker is reported out-of-band and does not fail the
-    // request. Measured: removing `.catch(() => {})` left this file fully green. In the server it is
-    // not benign — Node's default `--unhandled-rejections=throw` terminates the process, so the
-    // deleted handler turns a logging blip into a pod restart.
-    //
-    // So the assertion is on the handler being attached, observed on the very promise the hook is
-    // handed. That IS the code path, not a word about it.
-    const rejected = Promise.reject(new Error('axiom ingest refused'));
-    const catchSpy = vi.spyOn(rejected, 'catch');
-    logToAxiom.mockReturnValue(rejected);
-
-    const { response, resolve } = await run(eventFor({ query: INBOUND_SECRET }));
-    // Read BEFORE this test attaches its own handler below, or the count stops being about the hook.
-    const attachedByHook = catchSpy.mock.calls.length;
-    rejected.catch(() => {});
-
-    expect(attachedByHook).toBe(1);
-    expect(resolve).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(204);
-  });
-
-  it('survives a logger that throws SYNCHRONOUSLY, which a bare .catch() would not', async () => {
-    // The half a promise `.catch()` cannot cover: a throw on the way IN never produces a promise to
-    // attach a handler to. Distinct from the rejecting case above, and it fails differently — the
-    // throw propagates out of the hook and the request 500s.
+  it('survives a logger that throws SYNCHRONOUSLY', async () => {
+    // A throw on the way IN never produces a promise at all; without the hook's guard it
+    // propagates out of the hook and the request 500s.
     logToAxiom.mockImplementation(() => {
       throw new Error('logger constructed badly');
     });

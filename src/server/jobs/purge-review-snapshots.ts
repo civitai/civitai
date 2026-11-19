@@ -92,7 +92,7 @@ export type PurgeReviewSnapshotsResult = {
 };
 
 const logPurge = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'purge-review-snapshots', ...data }, 'webhooks').catch(() => undefined);
+  logToAxiom({ name: 'purge-review-snapshots', ...data }, 'webhooks');
 
 /**
  * Core sweep (exported for unit tests, mirroring the service-fn +

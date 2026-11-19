@@ -104,13 +104,4 @@ describe('reapDevTunnelsJob', () => {
       'webhooks'
     );
   });
-
-  it('does not reject even if the error logger itself throws', async () => {
-    mockReap.mockRejectedValue(new Error('boom'));
-    mockLogToAxiom.mockReturnValue(Promise.reject(new Error('axiom down')));
-
-    // The catch attaches `.catch(() => undefined)` to the log call, so a logging
-    // failure is absorbed too — the handler still resolves benignly.
-    await expect(runJob()).resolves.toMatchObject({ listOk: false, error: true });
-  });
 });

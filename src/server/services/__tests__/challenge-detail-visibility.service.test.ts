@@ -200,6 +200,22 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
 
       expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
     });
+
+    it('hides an unrated cover from other users, reading only the fields it selects', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', coverImageId: 77 })
+      );
+      // The row as stored; the mock returns only what the query selects, so a select that leaves
+      // out nsfwLevel lets the cover through.
+      const row = { poi: false, ingestion: 'Scanned', nsfwLevel: 0 };
+      mockDbRead.image.findUnique.mockImplementation((async ({
+        select,
+      }: {
+        select: Record<string, boolean>;
+      }) => Object.fromEntries(Object.entries(row).filter(([key]) => select[key]))) as never);
+
+      expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
+    });
   });
 
   describe('domain-currency gate', () => {

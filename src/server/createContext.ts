@@ -26,7 +26,7 @@ export const createContext = async ({
   req: NextApiRequest;
   res: NextApiResponse;
 }) => {
-  const session = await getServerAuthSession({ req, res });
+  const session = await getServerAuthSession({ req, res, scope: 'defer' });
   // ATTRIBUTION surface. `ctx.ip` labels a caller for tracking, audit trails and
   // actor hashing; it is not an input to an allow/deny decision, so it takes the
   // derivation that always yields a label rather than the fail-closed one that

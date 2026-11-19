@@ -16,8 +16,8 @@ import { createJob } from './job';
  * dispatch for that request with "a review is already running".
  *
  * This job flips rows that have been `running` past a generous ceiling → `failed`,
- * releasing the guard so a fresh review can be dispatched. The threshold (60m)
- * sits well beyond the Job's 30m `activeDeadlineSeconds` + the callback retry
+ * releasing the guard so a fresh review can be dispatched. The threshold (90m)
+ * sits well beyond the Job's 60m `activeDeadlineSeconds` + the callback retry
  * window, so it can only ever catch a genuinely dead run — never a legitimately
  * in-flight one. NO schema change: it uses the existing `status` enum + `startedAt`.
  *
@@ -28,13 +28,19 @@ import { createJob } from './job';
 
 /**
  * A `running` row older than this is definitely dead. INVARIANT: this threshold
- * MUST stay GREATER than the review Job's `activeDeadlineSeconds` (~30m, set in
- * the infra template) plus the callback retry window — otherwise the sweep reaps
- * a still-in-flight review mid-run, flipping a live report to `failed` under it.
- * 60m clears the ~30m deadline with ample margin; if that deadline is ever raised,
- * raise this too.
+ * MUST stay GREATER than the review Job's `activeDeadlineSeconds` (set in the
+ * infra template) plus the callback retry window — otherwise the sweep reaps a
+ * still-in-flight review mid-run, flipping a live report to `failed` under it.
+ *
+ * 90m: the Job deadline is being raised from 30m to 60m, because real reviews
+ * were reaching the 30m deadline. This must ship (and be live) BEFORE the
+ * deadline moves; at the old 60m a review running for 60m would be swept while
+ * still in flight. It also stays above the callback bearer's TTL
+ * (`AGENT_CALLBACK_TOKEN_TTL_SECONDS`, 75m): past that, the runner can no longer
+ * report, so the row really is dead. If the deadline is ever raised again, raise
+ * this too.
  */
-export const STALE_AGENT_REVIEW_RUNNING_MS = 60 * 60 * 1000;
+export const STALE_AGENT_REVIEW_RUNNING_MS = 90 * 60 * 1000;
 
 /**
  * Core sweep (exported for unit tests, mirroring reap-dev-tunnels' service-fn +
@@ -68,9 +74,7 @@ export const sweepStaleAgentReviewsJob = createJob(
     try {
       const swept = await sweepStaleAgentReviews();
       if (swept > 0) {
-        logToAxiom({ type: 'sweep-stale-agent-reviews', swept }, 'webhooks').catch(
-          () => undefined
-        );
+        logToAxiom({ type: 'sweep-stale-agent-reviews', swept }, 'webhooks');
       }
       return { swept };
     } catch (error) {
@@ -82,7 +86,7 @@ export const sweepStaleAgentReviewsJob = createJob(
           stack: (error as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return { swept: 0, error: true as const };
     }
   }

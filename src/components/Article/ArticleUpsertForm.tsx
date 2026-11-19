@@ -55,6 +55,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const schema = articleFormSchema(true);
 const querySchema = z.object({
@@ -89,9 +91,10 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const hasWithheldImage = !!(article?.coverImageWithheld || article?.bannerImageWithheld);
   const formSchema = useMemo(
-    () => articleFormSchema(!!features.articleTypography),
-    [features.articleTypography]
+    () => articleFormSchema(!!features.articleTypography, hasWithheldImage),
+    [features.articleTypography, hasWithheldImage]
   );
   const result = querySchema.safeParse(router.query);
 
@@ -142,6 +145,11 @@ export function ArticleUpsertForm({ article }: Props) {
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
   const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
+  // The saved image, while it is still selected: its owner and moderators see it, its readers don't.
+  const isSavedRestricted = (
+    saved: ArticleGetById['coverImage'],
+    watched: { id?: number } | null | undefined
+  ) => !!saved && watched?.id === saved.id && isRestrictedImage(saved);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -515,12 +523,15 @@ export function ArticleUpsertForm({ article }: Props) {
               label="Cover Image"
               description={
                 features.articleTypography
-                  ? `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner once it has been reviewed.`
-                  : `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
+                  ? 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top. Optional if you add a banner.'
+                  : 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top; keep the subject near the top center.'
               }
               cardCrop={aspectRatioMap.portrait}
               previewWidth={constants.article.coverImageWidth}
               withAsterisk={!features.articleTypography}
+            />
+            <MatureRestrictedBadge
+              restricted={isSavedRestricted(article?.coverImage, watchedCover)}
             />
             {features.articleTypography && (
               <ReframeButton
@@ -533,10 +544,15 @@ export function ArticleUpsertForm({ article }: Props) {
               <InputSimpleImageUpload
                 name="bannerImage"
                 label="Banner Image"
-                description={`Optional. Shown across the full width of the top of your article. Cards use your cover image, or this banner if there is no cover. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
+                description="Optional. Wide 4:1, e.g. 2400 x 600, across the top of your article. Cards use it when there is no cover."
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }
+              />
+            )}
+            {features.articleTypography && (
+              <MatureRestrictedBadge
+                restricted={isSavedRestricted(article?.bannerImage, watchedBanner)}
               />
             )}
             {features.articleTypography && (

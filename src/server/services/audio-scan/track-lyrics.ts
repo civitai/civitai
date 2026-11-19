@@ -67,11 +67,13 @@ export type LyricsVerdict =
 
 /** Where a song's lyrics verdict stands; `none` for a song without lyrics. */
 export async function readLyricsVerdict(imageId: number): Promise<LyricsVerdict> {
+  // primary: decides a song right after its lyrics are written
   const lyrics = await dbWrite.trackLyrics.findUnique({
     where: { imageId },
     select: { imageId: true },
   });
   if (!lyrics) return { state: 'none' };
+  // primary: the verdict may have just been written by its callback
   const moderation = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: TRACK_LYRICS_ENTITY_TYPE, entityId: imageId } },
     select: { status: true },

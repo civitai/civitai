@@ -225,6 +225,28 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
 };
 
 /**
+ * May a block on this surface ask for a SHARE_LINK? The link is
+ * `<origin><BLOCK_HOST_DEEP_LINK_BASE[surface]>/<slug>/…`, so it is only worth handing out
+ * where that URL opens the same app for someone else. Total over `BlockHostSurface`, like the
+ * two maps above, so a new surface is a compile error until someone decides.
+ *
+ *  - `dev-tunnel` is `false`: its `slug` prop is the BLOCK ID (`DevTunnelBlockHost` passes
+ *    `slug={blockId}`), and `/apps/run/<blockId>` is not the app's run route, so the link
+ *    would 404.
+ *  - `private-run` is `true`: `/apps/run/<slug>` serves the private run to its own audience
+ *    (the author, testers, moderators), so a link opens for exactly the people who could
+ *    already open the app there.
+ *  - `model-slot` and `review-preview` have no app route (`null` base) and are `false`.
+ */
+export const BLOCK_HOST_SHARE_LINK: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': true,
+  'dev-tunnel': false,
+  'review-preview': false,
+  'private-run': true,
+};
+
+/**
  * Does BLOCK_INIT on this surface carry `storageMode: 'local-preview'`?
  *
  * ADVISORY: it tells the SDK to serve the block's document store from a local,

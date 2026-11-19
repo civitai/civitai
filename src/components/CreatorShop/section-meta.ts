@@ -2,6 +2,7 @@ import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconBox,
   IconBriefcase,
+  IconGift,
   IconShirt,
   IconSparkles,
   IconStar,
@@ -23,10 +24,12 @@ export const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   services: IconBriefcase,
   merch: IconShirt,
   models: IconBox,
+  mysteryPacks: IconGift,
 };
 
 const sectionFlags: Partial<Record<CreatorShopSectionKey, keyof FeatureAccess>> = {
   services: 'creatorServices',
+  mysteryPacks: 'creatorMysteryPacks',
 };
 
 export const isSectionAvailable = (key: CreatorShopSectionKey, features: FeatureAccess) => {

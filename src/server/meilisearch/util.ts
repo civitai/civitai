@@ -239,7 +239,7 @@ export const processUserContentRemovalQueue = async () => {
   ];
 
   // METRICS_IMAGES_SEARCH_INDEX (the feeds index) is omitted: it is retired with the feeds
-  // Meilisearch, and its readers answer without it (see search-index/retired-index-read.ts).
+  // Meilisearch and nothing reads it (see search-index/retired-indexes.ts).
 
   const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
     if (!client) return;
@@ -254,14 +254,14 @@ export const processUserContentRemovalQueue = async () => {
       await index.deleteDocuments({ filter });
     } catch (error) {
       console.error(`processUserContentRemovalQueue :: Error on ${indexName}:`, error);
-      await logToAxiom({
+      logToAxiom({
         name: 'process-user-content-removal-error',
         type: 'error',
         indexName,
         filter,
         userIds,
         error: error instanceof Error ? error.message : String(error),
-      }).catch();
+      });
     }
   };
 
@@ -269,12 +269,12 @@ export const processUserContentRemovalQueue = async () => {
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     name: 'process-user-content-removal-summary',
     type: 'info',
     userCount: entries.length,
     userIds,
-  }).catch();
+  });
 
   console.log(
     `processUserContentRemovalQueue :: Completed batch removal for ${entries.length} users`

@@ -137,6 +137,7 @@
       </span>
     </div>
     <ReportRowMeta report={r}>
+      {#if r.postText}<Badge variant="secondary">Text</Badge>{/if}
       {@const unpublishedReason = unpublishedReasonOf(r.details)}
       {#if unpublishedReason}
         <Badge variant="secondary">{modelUnpublishReasonLabel(unpublishedReason)}</Badge>

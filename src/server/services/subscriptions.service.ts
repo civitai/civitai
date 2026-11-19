@@ -652,6 +652,232 @@ export const syncFreshdeskMembership = async ({
   return { success: true, userId: user.id, tier };
 };
 
+export type BuzzMembershipRefusal = 'active-membership' | 'unavailable' | 'not-monthly';
+
+/** A refusal no retry can change: the caller may treat it as final. Any other throw is transient. */
+export class BuzzMembershipRefusedError extends Error {
+  constructor(readonly reason: BuzzMembershipRefusal, message: string) {
+    super(message);
+    this.name = 'BuzzMembershipRefusedError';
+  }
+}
+
+const MAX_BUZZ_GRANT_KEYS = 20;
+
+const grantKeysOf = (metadata: unknown): string[] => {
+  const keys = (metadata as { grantKeys?: unknown } | null)?.grantKeys;
+  return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === 'string') : [];
+};
+
+type BuzzMembershipPriceRef = { priceId: string } | { tier: string };
+
+const buzzMembershipPriceSelect = {
+  id: true,
+  interval: true,
+  intervalCount: true,
+  unitAmount: true,
+  product: { select: { id: true, name: true, metadata: true, provider: true, active: true } },
+} as const;
+
+/** The monthly price of a perks-only membership, or a `BuzzMembershipRefusedError` saying why it cannot be sold. */
+const resolveBuzzMembershipPrice = async (ref: BuzzMembershipPriceRef) => {
+  const price = await dbWrite.price.findFirst({
+    where:
+      'priceId' in ref
+        ? { id: ref.priceId, active: true }
+        : {
+            active: true,
+            interval: 'month',
+            intervalCount: 1,
+            product: {
+              active: true,
+              provider: PaymentProvider.Civitai,
+              AND: [
+                { metadata: { path: ['buzzPurchase'], equals: true } },
+                { metadata: { path: ['tier'], equals: ref.tier } },
+              ],
+            },
+          },
+    select: buzzMembershipPriceSelect,
+  });
+
+  if (!price || !price.product.active)
+    throw new BuzzMembershipRefusedError('unavailable', 'Membership is not available');
+  if (price.product.provider !== PaymentProvider.Civitai)
+    throw new BuzzMembershipRefusedError(
+      'unavailable',
+      'This membership cannot be purchased with Buzz'
+    );
+  // The price is only the product pointer, but a multi-month one would still be sold short on the month path.
+  if (price.interval !== 'month' || (price.intervalCount ?? 1) !== 1)
+    throw new BuzzMembershipRefusedError(
+      'not-monthly',
+      'Memberships can only be purchased with Buzz one month at a time'
+    );
+
+  const productMeta = subscriptionProductMetadataSchema.parse(price.product.metadata);
+  if (!productMeta.buzzPurchase)
+    throw new BuzzMembershipRefusedError(
+      'unavailable',
+      'This membership cannot be purchased with Buzz'
+    );
+  if (!productMeta.tier || productMeta.tier === 'free' || productMeta.tier === 'founder')
+    throw new BuzzMembershipRefusedError(
+      'unavailable',
+      'This membership cannot be purchased with Buzz'
+    );
+  return { price, productMeta };
+};
+
+type ResolvedBuzzMembershipPrice = Awaited<ReturnType<typeof resolveBuzzMembershipPrice>>;
+
+/**
+ * Writes the membership period (one month, or `days`): the conflict re-check, the subscription row and the badge delivery, in one transaction.
+ * The user row is locked first, for every caller. With `idempotencyKey` a key already on the row answers
+ * `already`, before any refusal, so a replay is never refused and never adds a second month. The slot's
+ * stored keys survive whichever path writes it; the rest of its metadata starts over each month.
+ */
+const commitBuzzMembership = async ({
+  userId,
+  resolved: { price },
+  subscriptionId,
+  idempotencyKey,
+  days,
+}: {
+  userId: number;
+  resolved: ResolvedBuzzMembershipPrice;
+  subscriptionId: string;
+  idempotencyKey?: string;
+  /** Length of the period in days; one calendar month when absent. */
+  days?: number;
+}): Promise<{ outcome: 'granted' | 'already'; currentPeriodEnd: Date }> => {
+  const dayjs = (await import('~/shared/utils/dayjs')).default;
+  const now = dayjs.utc();
+
+  return dbWrite.$transaction(
+    async (tx) => {
+      const slot = { userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } };
+      // Every caller takes the user row lock before the conflict check, so a Buzz purchase and a gold
+      // grant for the same user cannot both pass it. A cash subscription writes a different slot and is not
+      // serialised here; `supersedeBuzzMembershipForPaidSubscription` cleans that case up.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      const prior = await tx.customerSubscription.findUnique({
+        where: slot,
+        select: { metadata: true, currentPeriodEnd: true },
+      });
+      const priorKeys = grantKeysOf(prior?.metadata);
+      if (idempotencyKey && prior && priorKeys.includes(idempotencyKey))
+        return { outcome: 'already' as const, currentPeriodEnd: prior.currentPeriodEnd };
+
+      // Re-check inside the transaction: the balance check is a network round trip, so a
+      // concurrent purchase could have created a membership in the meantime.
+      const conflicting = await tx.customerSubscription.findFirst({
+        where: {
+          userId,
+          status: { notIn: terminalSubscriptionStatuses },
+          currentPeriodEnd: { gt: now.toDate() },
+        },
+        select: { id: true },
+      });
+      if (conflicting)
+        throw new BuzzMembershipRefusedError(
+          'active-membership',
+          'You already have an active membership'
+        );
+
+      // Upsert rather than insert: a repeat buyer's lapsed row still holds the
+      // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
+      // conflicting check above already proved this row carries no live benefit.
+      const currentPeriodEnd = (days ? now.add(days, 'day') : now.add(1, 'month')).toDate();
+      const grantKeys = idempotencyKey
+        ? [...priorKeys, idempotencyKey].slice(-MAX_BUZZ_GRANT_KEYS)
+        : priorKeys;
+      const period = {
+        productId: price.product.id,
+        priceId: price.id,
+        status: 'active',
+        currentPeriodStart: now.toDate(),
+        currentPeriodEnd,
+        // Never renews — buying another month is an explicit purchase.
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        canceledAt: null,
+        endedAt: null,
+        // Only the keys carry over: a Buzz purchase must not erase the ones a gold grant stored, and any other
+        // per-period flag on the row must not leak into the new month.
+        metadata: grantKeys.length ? { grantKeys } : {},
+      };
+
+      await tx.customerSubscription.upsert({
+        where: slot,
+        create: {
+          id: subscriptionId,
+          userId,
+          buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+          createdAt: now.toDate(),
+          ...period,
+        },
+        update: { ...period, updatedAt: now.toDate() },
+      });
+
+      // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
+      // any other client reads no active sub and silently inserts nothing.
+      await deliverMonthlyCosmetics({ userIds: [userId], tx });
+      return { outcome: 'granted' as const, currentPeriodEnd };
+    },
+    // Same allowance as code redemption, which delivers cosmetics in its transaction too.
+    { timeout: 30000 }
+  );
+};
+
+/** After a committed grant. Also run on a replay, so a try that died before this point is repaired by the retry. */
+const afterBuzzMembershipGrant = async (userId: number) => {
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+  // The grant is already committed, so a support-desk failure must not turn it into an error the caller retries forever.
+  await syncFreshdeskMembership({ userId }).catch(() => undefined);
+};
+
+/**
+ * Grants a perks-only membership in the Buzz-membership slot, without taking payment: the caller has already been
+ * paid in some other currency (the Knights gold shop). Same rules as `purchaseMembershipWithBuzz`: only when the
+ * user holds no membership, no monthly Buzz. It lasts `days` days, or one month when `days` is absent.
+ *
+ * With `idempotencyKey` a retry after a successful grant answers `already` and grants nothing, whatever the user's
+ * membership has become since. Refusals throw `BuzzMembershipRefusedError`; any other throw is transient and safe
+ * to retry with the same key.
+ */
+export const grantBuzzPurchaseMembership = async ({
+  userId,
+  idempotencyKey,
+  days,
+  ...ref
+}: { userId: number; idempotencyKey?: string; days?: number } & BuzzMembershipPriceRef) => {
+  if (idempotencyKey) {
+    const prior = await dbWrite.customerSubscription.findUnique({
+      where: { userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } },
+      select: { metadata: true, currentPeriodEnd: true },
+    });
+    if (prior && grantKeysOf(prior.metadata).includes(idempotencyKey)) {
+      await afterBuzzMembershipGrant(userId);
+      return { outcome: 'already' as const, currentPeriodEnd: prior.currentPeriodEnd };
+    }
+  }
+
+  const resolved = await resolveBuzzMembershipPrice(ref);
+  const result = await commitBuzzMembership({
+    userId,
+    resolved,
+    subscriptionId: `buzz-membership:${userId}:${resolved.price.id}:${
+      idempotencyKey ?? Date.now()
+    }`,
+    idempotencyKey,
+    days,
+  });
+  await afterBuzzMembershipGrant(userId);
+  return result;
+};
+
 /**
  * Buys one month of a perks-only membership with Buzz.
  *
@@ -676,31 +902,10 @@ export const purchaseMembershipWithBuzz = async ({
   const { createBuzzTransaction, refundTransaction } = await import(
     '~/server/services/buzz.service'
   );
-  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
   const dayjs = (await import('~/shared/utils/dayjs')).default;
 
-  const price = await dbWrite.price.findFirst({
-    where: { id: priceId, active: true },
-    select: {
-      id: true,
-      interval: true,
-      intervalCount: true,
-      unitAmount: true,
-      product: { select: { id: true, name: true, metadata: true, provider: true, active: true } },
-    },
-  });
-
-  if (!price || !price.product.active) throw new Error('Membership is not available');
-  if (price.product.provider !== PaymentProvider.Civitai)
-    throw new Error('This membership cannot be purchased with Buzz');
-  // The grant below is hard-coded to one month, so a multi-month price would be sold short.
-  if (price.interval !== 'month' || (price.intervalCount ?? 1) !== 1)
-    throw new Error('Memberships can only be purchased with Buzz one month at a time');
-
-  const productMeta = subscriptionProductMetadataSchema.parse(price.product.metadata);
-  if (!productMeta.buzzPurchase) throw new Error('This membership cannot be purchased with Buzz');
-  if (!productMeta.tier || productMeta.tier === 'free' || productMeta.tier === 'founder')
-    throw new Error('This membership cannot be purchased with Buzz');
+  const resolved = await resolveBuzzMembershipPrice({ priceId });
+  const { price, productMeta } = resolved;
 
   // Enforced at the debit rather than trusting the caller: Blue is earned, not bankable,
   // and must never buy a membership.
@@ -709,7 +914,8 @@ export const purchaseMembershipWithBuzz = async ({
 
   const existing = await getAllUserSubscriptions(userId);
   if (existing.some((s) => isMembershipActive(s)))
-    throw new Error(
+    throw new BuzzMembershipRefusedError(
+      'active-membership',
       'You already have an active membership. Let it lapse before purchasing one with Buzz.'
     );
 
@@ -739,73 +945,26 @@ export const purchaseMembershipWithBuzz = async ({
     insufficientFundsErrorMsg: `You need ${amount} Buzz to purchase this membership.`,
   });
 
+  let currentPeriodEnd: Date;
   try {
-    await dbWrite.$transaction(
-      async (tx) => {
-        // Re-check inside the transaction: the balance check above is a network round trip,
-        // so a concurrent purchase could have created a membership in the meantime.
-        const conflicting = await tx.customerSubscription.findFirst({
-          where: {
-            userId,
-            status: { notIn: terminalSubscriptionStatuses },
-            currentPeriodEnd: { gt: now.toDate() },
-          },
-          select: { id: true },
-        });
-        if (conflicting) throw new Error('You already have an active membership');
-
-        // Upsert rather than insert: a repeat buyer's lapsed row still holds the
-        // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
-        // conflicting check above already proved this row carries no live benefit.
-        const period = {
-          productId: price.product.id,
-          priceId: price.id,
-          status: 'active',
-          currentPeriodStart: now.toDate(),
-          currentPeriodEnd: now.add(1, 'month').toDate(),
-          // Never renews — buying another month is an explicit purchase.
-          cancelAtPeriodEnd: true,
-          cancelAt: null,
-          canceledAt: null,
-          endedAt: null,
-          metadata: {},
-        };
-
-        await tx.customerSubscription.upsert({
-          where: {
-            userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
-          },
-          create: {
-            id: externalTransactionId,
-            userId,
-            buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-            createdAt: now.toDate(),
-            ...period,
-          },
-          update: { ...period, updatedAt: now.toDate() },
-        });
-
-        // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
-        // any other client reads no active sub and silently inserts nothing.
-        await deliverMonthlyCosmetics({ userIds: [userId], tx });
-      },
-      // Same allowance as code redemption, which delivers cosmetics in its transaction too.
-      { timeout: 30000 }
-    );
+    ({ currentPeriodEnd } = await commitBuzzMembership({
+      userId,
+      resolved,
+      subscriptionId: externalTransactionId,
+    }));
   } catch (error) {
     if (transactionId)
       await refundTransaction(transactionId, 'Failed to purchase membership with Buzz');
     throw error;
   }
 
-  await invalidateSubscriptionCaches(userId);
-  await syncFreshdeskMembership({ userId });
+  await afterBuzzMembershipGrant(userId);
 
   return {
     tier: productMeta.tier,
     amount,
     buzzType,
-    currentPeriodEnd: now.add(1, 'month').toDate(),
+    currentPeriodEnd,
   };
 };
 

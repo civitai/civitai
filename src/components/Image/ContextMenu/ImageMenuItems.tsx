@@ -156,7 +156,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {isImage && isMoreLikeThisVisible(features, image) && (
         <Menu.Item
           component={NextLink}
-          href={moreLikeThisHref(imageId)}
+          href={moreLikeThisHref(features, imageId)}
           leftSection={<IconSparkles size={14} stroke={1.5} />}
         >
           More like this

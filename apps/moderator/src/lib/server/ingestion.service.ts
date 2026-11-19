@@ -11,6 +11,7 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustProfilePictures } from './profile-picture-cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import { getMediaProbeStorage } from './storage';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -422,4 +423,5 @@ export async function resolveIngestionError({
       bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),
     ])
   );
+  if (image.postId != null) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
 }

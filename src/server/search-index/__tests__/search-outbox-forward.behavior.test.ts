@@ -88,6 +88,12 @@ describe('the search Outbox forward', () => {
     expect(h.queued).toHaveLength(1);
   });
 
+  it('never forwards a refresh pass, but still queues it for Meilisearch', async () => {
+    await processor('Comic').queueUpdate([{ id: 1 }], { reason: 'refresh' });
+    expect(await outbox()).toEqual([]);
+    expect(h.queued).toHaveLength(1);
+  });
+
   it('forwards nothing for an entity the flag leaves out', async () => {
     setEnv({ SEARCH_OUTBOX_FORWARD: [] });
     await processor('Article').queueUpdate([{ id: 1 }], { reason: 'edit' });

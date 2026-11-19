@@ -39,7 +39,7 @@ const CALLER = 101;
 type Credential = {
   apiKeyType: string;
   subject: { type: 'apiKey' | 'oauth'; id: number | string };
-  tokenScope: number;
+  tokenScope: bigint;
 };
 // What getServerAuthSession puts on req.context for a bearer token.
 const FULL_KEY: Credential = {

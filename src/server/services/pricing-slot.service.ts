@@ -67,9 +67,7 @@ async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number 
     );
     return feeAllowanceBoost(granted, now);
   } catch (error) {
-    logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId }).catch(
-      () => undefined
-    );
+    logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId });
     return null;
   }
 }
@@ -134,9 +132,7 @@ async function licensingFeeChargedSince(versionId: number, since: Date): Promise
     if (rows === null) return null;
     return rows.length > 0;
   } catch (error) {
-    logToAxiom({ type: 'error', name: 'pricing-slot-charge-lookup', error, versionId }).catch(
-      () => undefined
-    );
+    logToAxiom({ type: 'error', name: 'pricing-slot-charge-lookup', error, versionId });
     return null;
   }
 }
@@ -224,7 +220,7 @@ export async function releasePricingSlot(args: ReleaseArgs): Promise<boolean> {
       error,
       entityId: args.entityId,
       ownerId: args.ownerId,
-    }).catch(() => undefined);
+    });
     return false;
   }
 }

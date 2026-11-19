@@ -1,5 +1,6 @@
 import { listingSortSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { createContext, useCallback, useContext, useRef } from 'react';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
@@ -481,13 +482,9 @@ export function useFiltersContext<T>(selector: (state: StoreState) => T) {
   return useStore(store, selector);
 }
 
-export const FiltersProvider = ({
-  children,
-  isRed = false,
-}: {
-  children: React.ReactNode;
-  isRed?: boolean;
-}) => {
+export const FiltersProvider = ({ children }: { children: React.ReactNode }) => {
+  // Not the domain color: civitai.red resolves to blue.
+  const isRed = useOptionalFeatureFlags()?.isRed ?? false;
   const storeRef = useRef<FilterStore>();
   if (!storeRef.current) storeRef.current = createFilterStore({ isRed });
 

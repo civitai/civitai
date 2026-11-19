@@ -11,8 +11,8 @@ import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const TEXT_MODERATION_RETRY_DELAY_MINUTES = 60; // 1 hour for terminal failures
-const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
-const TEXT_MODERATION_RETRY_LIMIT = 9;
+export const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
+export const TEXT_MODERATION_RETRY_LIMIT = 9;
 const FETCH_LIMIT = 500; // max rows pulled per job tick
 const SUBMIT_CONCURRENCY = 5; // parallel orchestrator submissions
 
@@ -116,7 +116,7 @@ export const retryFailedTextModeration = createJob(
         // Unknown entityType — likely a row left over after an entity was
         // removed from the adapter registry. Log loudly and skip.
         errors += items.length;
-        await logToAxiom({
+        logToAxiom({
           name: 'retry-failed-text-moderation',
           type: 'error',
           message: `no moderation adapter registered for entityType: ${entityType}`,
@@ -131,7 +131,7 @@ export const retryFailedTextModeration = createJob(
         contentMap = await adapter.resolveContent(items.map((x) => x.entityId));
       } catch (error) {
         errors += items.length;
-        await logToAxiom({
+        logToAxiom({
           name: 'retry-failed-text-moderation',
           type: 'error',
           message: `Bulk content resolve failed: ${(error as Error).message}`,
@@ -163,7 +163,7 @@ export const retryFailedTextModeration = createJob(
           else errors++;
         } catch (error) {
           errors++;
-          await logToAxiom({
+          logToAxiom({
             name: 'retry-failed-text-moderation',
             type: 'error',
             message: (error as Error).message,

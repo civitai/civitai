@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock, redisMock } from '~/__tests__/mocks';
 import type { Context } from '~/server/createContext';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as CollectionService from '~/server/services/collection.service';
@@ -8,6 +8,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { TRPCError } from '@trpc/server';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 /**
  * A Collection home block shows its collection only to viewers who may read it, and only a
@@ -49,10 +50,19 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   getCollectionItemsByCollectionId: getCollectionItems,
 }));
 
+// A Leaderboard block renders through this; it fails in the editor-list test.
+vi.mock('~/server/services/leaderboard.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getLeaderboardsWithResults: vi.fn(async () => {
+    throw new Error('read failed');
+  }),
+}));
+
 const { getHomeBlocksByIdHandler, getHomeBlocksHandler, deleteUserHomeBlockHandler } = await import(
   '~/server/controllers/home-block.controller'
 );
 const { getHomeBlockCached } = await import('~/server/services/home-block-cache.service');
+const { getCollectionById } = await import('~/server/services/collection.service');
 
 const COLLECTION_OWNER = 100;
 const BLOCK_OWNER = 200;
@@ -185,6 +195,57 @@ describe('Unlisted collections', () => {
     expect(await errorOf(loadAs(MOD))).toBeNull();
     expect(getHomeBlockCached).not.toHaveBeenCalled();
   });
+
+  describe('with the real shared entry', () => {
+    // Every write of a rendered home block, to the entry every viewer reads.
+    const sharedWrites = () =>
+      redisMock.redis.packed.set.mock.calls.filter(([key]) =>
+        String(key).startsWith(`${REDIS_KEYS.HOMEBLOCKS.BASE}:`)
+      );
+
+    const fakeCached = vi.mocked(getHomeBlockCached).getMockImplementation();
+    const fakeCollection = vi.mocked(getCollectionById).getMockImplementation();
+    const fakeGet = redisMock.redis.packed.get.getMockImplementation();
+    afterEach(() => {
+      vi.mocked(getHomeBlockCached).mockImplementation(fakeCached!);
+      vi.mocked(getCollectionById).mockImplementation(fakeCollection!);
+      if (fakeGet) redisMock.redis.packed.get.mockImplementation(fakeGet);
+      else redisMock.redis.packed.get.mockReset();
+    });
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof HomeBlockCache>(
+        '~/server/services/home-block-cache.service'
+      );
+      vi.mocked(getHomeBlockCached).mockImplementation(actual.getHomeBlockCached);
+      redisMock.redis.packed.get.mockResolvedValue(null as never);
+      // The rendered collection carries its read setting, which the shared entry checks.
+      vi.mocked(getCollectionById).mockImplementation((async ({
+        input,
+      }: {
+        input: { id: number };
+      }) => ({
+        id: input.id,
+        read: collection?.read,
+      })) as never);
+    });
+
+    // Unlisted counts as shared for the entry, so keeping this block out of it is all that holds.
+    // Asserted on the write itself, so a second path to the entry fails it too, not only a call
+    // to getHomeBlockCached.
+    it("never writes someone else's Unlisted collection to it, for the block's owner or a stranger", async () => {
+      seed({ read: 'Unlisted', userId: COLLECTION_OWNER, type: 'Image' }, BLOCK_OWNER);
+      expect(itemsOf(await loadAs({ id: BLOCK_OWNER }))).toEqual(['for-viewer']);
+      await errorOf(loadAs(STRANGER));
+      expect(sharedWrites()).toEqual([]);
+    });
+
+    it("writes the owner's own Unlisted collection to it (control)", async () => {
+      seed({ read: 'Unlisted', userId: COLLECTION_OWNER, type: 'Image' }, COLLECTION_OWNER);
+      await loadAs(STRANGER);
+      expect(sharedWrites()).toHaveLength(1);
+    });
+  });
 });
 
 describe('cache headers', () => {
@@ -290,6 +351,49 @@ describe("the block editor's list (withCoreData)", () => {
     expect(await listFor({ id: BLOCK_OWNER })).toEqual([
       { id: BLOCK_ID, collection: expect.objectContaining({ id: COLLECTION_ID }) },
     ]);
+  });
+
+  it('lists a block that renders nothing, and one that fails to render, without their data', async () => {
+    seed({ read: 'Private', userId: BLOCK_OWNER, type: 'Image' }, BLOCK_OWNER);
+    const EMPTY_FEED = 8;
+    const BROKEN_BLOCK = 9;
+    dbMock.dbRead.homeBlock.findMany.mockResolvedValue([
+      {
+        id: BLOCK_ID,
+        type: HomeBlockType.Collection,
+        userId: BLOCK_OWNER,
+        sourceId: null,
+        index: 0,
+        metadata: { collection: { id: COLLECTION_ID } },
+      },
+      // A Feed block with no feed renders null.
+      {
+        id: EMPTY_FEED,
+        type: HomeBlockType.Feed,
+        userId: BLOCK_OWNER,
+        sourceId: null,
+        index: 1,
+        metadata: {},
+      },
+      // A Leaderboard block whose leaderboards fail to load throws while rendering.
+      {
+        id: BROKEN_BLOCK,
+        type: HomeBlockType.Leaderboard,
+        userId: BLOCK_OWNER,
+        sourceId: null,
+        index: 2,
+        metadata: { leaderboards: [{ id: 'overall', index: 0 }] },
+      },
+    ] as never);
+
+    const listed = await getHomeBlocksHandler({
+      ctx: ctxFor({ id: BLOCK_OWNER }),
+      input: { withCoreData: true, ownedOnly: true },
+    });
+
+    expect(listed.map((b) => b.id)).toEqual([BLOCK_ID, EMPTY_FEED, BROKEN_BLOCK]);
+    // The readable block still carries its data (control).
+    expect(listed[0]).toHaveProperty('collection');
   });
 });
 

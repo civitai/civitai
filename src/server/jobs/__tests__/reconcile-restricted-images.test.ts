@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as Constants from '~/server/common/constants';
+import type * as BaseModelConstants from '~/shared/constants/basemodel.constants';
 import { logToAxiom } from '~/server/logging/client';
 
 const queryRaw = dbMock.dbWrite.$queryRaw;
@@ -12,27 +12,22 @@ const bustCachesForPosts = vi.fn(async (_postIds: number[]) => undefined);
 
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
 import {
-  restrictedBaseModelDivergenceGauge,
   restrictedImageDriftGauge,
   restrictedImageOverhiddenGauge,
   restrictedImageReconcileLastSuccessGauge,
 } from '~/server/prom/client';
 
-// Synthetic, deliberately NOT the real prod rows and NOT the real code list. The
-// divergence is a set difference, and a fixture snapshotting production would go red
-// the moment a licence is added in code — greenable only by a production DB write,
-// which is the wrong-direction guard this job's gauge exists to avoid.
-const { CODE_LIST } = vi.hoisted(() => ({ CODE_LIST: ['Alpha', 'Beta', 'Gamma'] }));
-const TABLE_ROWS = ['Alpha', 'Beta'].map((baseModel) => ({ baseModel }));
+// Synthetic, so a base model gaining or losing the restriction doesn't rewrite these tests.
+const restricted = vi.hoisted(() => ({ list: ['Alpha', 'Beta'] }));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   bustCachesForPosts: (postIds: number[]) => bustCachesForPosts(postIds),
 }));
 
-vi.mock('~/server/common/constants', async (importOriginal) => ({
-  ...(await importOriginal<typeof Constants>()),
-  nsfwRestrictedBaseModels: CODE_LIST,
+vi.mock('~/shared/constants/basemodel.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof BaseModelConstants>()),
+  matureRestrictedBaseModels: () => restricted.list,
 }));
 
 const sqlOf = (call: unknown[]) => (call[0] as string[]).join('');
@@ -46,7 +41,6 @@ const isVersionQuery = (call: unknown[]) =>
   !isOverhiddenQuery(call) && sqlOf(call).includes('"ModelVersion"');
 
 let versionIds: number[] = [1, 2, 3];
-let tableRows = TABLE_ROWS;
 let overhidden = 0;
 let chunkPostIds: number[][] = [];
 
@@ -54,15 +48,13 @@ const run = () =>
   reconcileRestrictedImages.run({}).result as Promise<{
     flagged: number;
     overhidden: number;
-    missingInDb: string[];
-    missingInCode: string[];
     versions: number;
   }>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   versionIds = [1, 2, 3];
-  tableRows = TABLE_ROWS;
+  restricted.list = ['Alpha', 'Beta'];
   overhidden = 0;
   chunkPostIds = [];
   executeRaw.mockReset();
@@ -76,69 +68,13 @@ beforeEach(() => {
     }
     if (isOverhiddenQuery(call)) return Promise.resolve([{ count: BigInt(overhidden) }]);
     if (isVersionQuery(call)) return Promise.resolve(versionIds.map((id) => ({ id })));
-    return Promise.resolve(tableRows);
+    return Promise.resolve([]);
   });
 });
 
 describe('reconcile-restricted-images', () => {
   it('runs hourly', () => {
     expect(reconcileRestrictedImages.cron).toBe('0 * * * *');
-  });
-
-  it('names the base models the code list has and the table does not', async () => {
-    const result = await run();
-
-    expect(result.missingInDb).toEqual(['Gamma']);
-    expect(result.missingInCode).toEqual([]);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      1
-    );
-  });
-
-  it('names the base models the table has and the code list does not', async () => {
-    tableRows = [...TABLE_ROWS, { baseModel: 'Retired' }];
-
-    const result = await run();
-
-    expect(result.missingInCode).toEqual(['Retired']);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_code' },
-      1
-    );
-  });
-
-  it('publishes zero divergence when the lists agree, so a fixed divergence clears', async () => {
-    tableRows = CODE_LIST.map((baseModel) => ({ baseModel }));
-
-    const result = await run();
-
-    expect(result.missingInDb).toEqual([]);
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      0
-    );
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_code' },
-      0
-    );
-  });
-
-  // DELIBERATE: the divergence read is sequenced BEFORE the chunk loop. A labelled
-  // gauge that is never set does not scrape at all, so a chunk hitting
-  // statement_timeout would otherwise take the divergence signal down with it — going
-  // silent in exactly the state the alert exists to report.
-  it('publishes divergence even when the chunk loop fails', async () => {
-    executeRaw.mockRejectedValue(new Error('statement timeout'));
-
-    await expect(run()).rejects.toThrow('statement timeout');
-
-    expect(restrictedBaseModelDivergenceGauge.set).toHaveBeenCalledWith(
-      { direction: 'missing_in_db' },
-      1
-    );
-    expect(restrictedImageDriftGauge.set).not.toHaveBeenCalled();
-    expect(restrictedImageReconcileLastSuccessGauge.set).not.toHaveBeenCalled();
   });
 
   it('publishes the flagged count and a heartbeat, so a zero from a job that never ran is distinguishable', async () => {
@@ -201,18 +137,13 @@ describe('reconcile-restricted-images', () => {
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
   });
 
-  it('reconciles against the table, not the code list', async () => {
+  it('selects the versions of the base models that restrict mature images', async () => {
     await run();
 
     const versionQuery = queryRaw.mock.calls.find(isVersionQuery);
-    expect(versionQuery && sqlOf(versionQuery)).toContain('"RestrictedBaseModels"');
-    for (const call of executeRaw.mock.calls) {
-      expect(sqlOf(call)).not.toContain('RestrictedBaseModels');
-      for (const baseModel of CODE_LIST) {
-        expect(sqlOf(call)).not.toContain(baseModel);
-        expect(valuesOf(call)).not.toContain(baseModel);
-      }
-    }
+    expect(versionQuery && valuesOf(versionQuery)).toEqual(restricted.list);
+    const overhiddenQuery = queryRaw.mock.calls.find(isOverhiddenQuery);
+    expect(overhiddenQuery && valuesOf(overhiddenQuery)).toEqual(restricted.list);
   });
 
   // DELIBERATE, DO NOT UNCHUNK: the whole-table anti-join measured 22.4 s, then
@@ -252,11 +183,11 @@ describe('reconcile-restricted-images', () => {
   // `Prisma.join([])` throws, so a chunking rewrite that yields a trailing empty chunk
   // would turn an empty restricted list into a job that fails every hour.
   it('issues no statement when nothing is restricted', async () => {
-    versionIds = [];
-    tableRows = [];
+    restricted.list = [];
 
     const result = await run();
 
+    expect(queryRaw.mock.calls.filter((call) => !isOverhiddenQuery(call))).toEqual([]);
     expect(executeRaw).not.toHaveBeenCalled();
     expect(result.flagged).toBe(0);
     expect(restrictedImageReconcileLastSuccessGauge.set).toHaveBeenCalledTimes(1);
@@ -300,7 +231,6 @@ describe('reconcile-restricted-images', () => {
 
     vi.clearAllMocks();
     executeRaw.mockResolvedValue(0);
-    tableRows = CODE_LIST.map((baseModel) => ({ baseModel }));
 
     await run();
 

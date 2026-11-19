@@ -26,7 +26,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       type "MediaType" NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
   `);
@@ -69,13 +70,21 @@ describe('profile picture lookup', () => {
     expect(result[OTHER]).toMatchObject({ id: 20 });
   });
 
-  it('returns no picture for a user whose avatar is flagged for review', async () => {
-    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 10`);
+  it.each(['csam', 'minor'])(
+    'returns no picture for a user whose avatar is held %s',
+    async (hold) => {
+      await db.query(`UPDATE "Image" SET "needsReview" = $1 WHERE id = 10`, [hold]);
 
-    const result = await lookupProfilePictures([OWNER, OTHER]);
+      const result = await lookupProfilePictures([OWNER, OTHER]);
 
-    expect(result).not.toHaveProperty(String(OWNER));
-    expect(result[OTHER]).toMatchObject({ id: 20 });
+      expect(result).not.toHaveProperty(String(OWNER));
+      expect(result[OTHER]).toMatchObject({ id: 20 });
+    }
+  );
+
+  it('returns the picture of a user whose avatar is held for another review', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 10`);
+    expect((await lookupProfilePictures([OWNER]))[OWNER]).toMatchObject({ id: 10 });
   });
 
   it.each(['Pending', 'Error'])(

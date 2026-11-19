@@ -708,7 +708,7 @@ describe('page-data hands the bootstrap seeds the session lookup’s credential'
 
   it('passes the bearer credential the lookup recorded', async () => {
     const credential = {
-      tokenScope: 1,
+      tokenScope: 1n,
       apiKeyId: 7,
       apiKeyType: 'User',
       subject: { type: 'apiKey', id: 7 },

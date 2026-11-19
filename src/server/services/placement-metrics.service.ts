@@ -314,7 +314,7 @@ export async function sweepUncountedPlacements({
       counted += await markPlacementsCounted(group.ids, lease);
       amount += group.amount;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'placement-metrics',
         type: 'error',
         message: 'could not reconcile a placement group onto the image buzz counter',
@@ -328,7 +328,7 @@ export async function sweepUncountedPlacements({
         // only remaining symptom is a counter that is quietly short.
         abandonedAfterThis: group.attempts >= MAX_CLAIM_ATTEMPTS,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 

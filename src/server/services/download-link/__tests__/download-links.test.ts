@@ -22,6 +22,7 @@ const {
   mockResolveDownloadUrl,
   mockModelVersionEvent,
   mockTrackerSession,
+  mockCountProviderDownload,
   world,
 } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
@@ -29,6 +30,7 @@ const {
   mockResolveDownloadUrl: vi.fn(),
   mockModelVersionEvent: vi.fn(),
   mockTrackerSession: vi.fn(),
+  mockCountProviderDownload: vi.fn(),
   world: {
     reads: { version: 0, files: 0 },
     versions: new Map<number, Record<string, any>>(),
@@ -44,7 +46,7 @@ const {
       {
         userId: number;
         grants: string[];
-        allowedScopes: number;
+        allowedScopes: bigint;
         secret: string;
         user: { bannedAt: Date | null; deletedAt: Date | null };
       }
@@ -67,11 +69,11 @@ vi.mock('~/server/auth/bearer-token', async () => {
       token: string,
       options: { allowClientCredentialsOnly?: boolean } = {}
     ) => {
-      const session = mockSessions.get(token) as { tokenScope?: number } | undefined;
+      const session = mockSessions.get(token) as { tokenScope?: bigint } | undefined;
       if (!session) return null;
       if (
         !options.allowClientCredentialsOnly &&
-        ((session.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+        ((session.tokenScope ?? 0n) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n
       )
         return null;
       return session;
@@ -87,6 +89,13 @@ vi.mock('~/server/clickhouse/client', () => ({
     }
     modelVersionEvent = mockModelVersionEvent;
   },
+}));
+// A provider's gate also reads moderator-review flags; none are set in this world.
+vi.mock('~/server/services/download-link/moderator-review.reads', () => ({
+  readModeratorFlags: async () => ({ inReview: false, removedWithOwner: false }),
+}));
+vi.mock('~/server/prom/provider-download.metrics', () => ({
+  countProviderDownload: mockCountProviderDownload,
 }));
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: { file: { name: string } }) => file.name,
@@ -157,11 +166,17 @@ vi.mock('~/server/redis/caches', () => ({
 import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
-import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import {
+  revokeLinksOfRevokedCredentials,
+  takeMintBudget,
+} from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
+import { mintProviderLink } from '~/server/services/download-link/download-link.service';
+import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
+import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis.
+// In-memory sysRedis (and the cache cluster, for the mint-rate windows).
 
 type Entry =
   | { type: 'hash'; value: Map<string, string>; expiresAt: number | null }
@@ -192,8 +207,11 @@ const ops = {
     const entry = live(key);
     if (entry) entry.expiresAt = Date.now() + seconds * 1000;
   },
-  set(key: string, value: string, options?: { PXAT?: number }) {
-    store.set(key, { type: 'string', value, expiresAt: options?.PXAT ?? null });
+  set(key: string, value: string, options?: { PXAT?: number; NX?: boolean; EX?: number }) {
+    if (options?.NX && live(key)) return null;
+    const expiresAt = options?.PXAT ?? (options?.EX ? Date.now() + options.EX * 1000 : null);
+    store.set(key, { type: 'string', value, expiresAt });
+    return 'OK';
   },
   sAdd(key: string, member: string) {
     const entry = live(key);
@@ -258,7 +276,18 @@ function installFakeSysRedis() {
       throw new Error('unknown script');
     }
   );
-  r.multi.mockImplementation(() => {
+  sysMultiKeys = [];
+  clusterMultiKeys = [];
+  r.multi.mockImplementation(fakeMulti(sysMultiKeys));
+  // The mint-rate windows are on the cache cluster; one store backs both clients here, and each
+  // records the keys its MULTIs touched.
+  redisMock.redis.multi.mockImplementation(fakeMulti(clusterMultiKeys));
+}
+
+let sysMultiKeys: string[] = [];
+let clusterMultiKeys: string[] = [];
+function fakeMulti(seen: string[]) {
+  return () => {
     const queued: (() => unknown)[] = [];
     const chain: Record<string, unknown> = {
       exec: async () => {
@@ -268,12 +297,13 @@ function installFakeSysRedis() {
     };
     for (const name of Object.keys(ops) as (keyof typeof ops)[]) {
       chain[name] = (...args: unknown[]) => {
+        seen.push(String(args[0]));
         queued.push(() => (ops[name] as (...a: unknown[]) => unknown)(...args));
         return chain;
       };
     }
     return chain;
-  });
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1081,6 +1111,13 @@ describe('reuse', () => {
 });
 
 describe('mint limits', () => {
+  it('counts the mint windows on the cache cluster, and only them', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    expect(clusterMultiKeys.length).toBeGreaterThan(0);
+    expect(clusterMultiKeys.every((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
+    expect(sysMultiKeys.filter((key) => key.startsWith('dl:mint-rate:'))).toEqual([]);
+  });
+
   it('answers an item 429 past the per-user limit', async () => {
     setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 2 });
     const res = await mint([
@@ -1123,5 +1160,201 @@ describe('mint limits', () => {
     ]);
     expect(res.status).toBe(429);
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('a mint window key carries its TTL from the first take', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    const windows = [...store.entries()].filter(([key]) => key.startsWith('dl:mint-rate:'));
+    expect(windows.length).toBeGreaterThan(0);
+    for (const [key, entry] of windows) expect(entry.expiresAt, key).not.toBeNull();
+  });
+
+  it('a hung cache cluster refuses the take by its deadline, not stalling the mint', async () => {
+    redisMock.redis.multi.mockImplementation(() => {
+      const chain: Record<string, unknown> = {
+        exec: () => new Promise(() => undefined),
+      };
+      for (const name of ['set', 'incr', 'incrBy', 'expire']) chain[name] = () => chain;
+      return chain;
+    });
+    const STILL_HUNG = 'takeMintBudget still pending 3s after the cluster stopped answering';
+    const outcome = await Promise.race([
+      takeMintBudget('user:1', 1, 10, Date.now()).then(
+        () => 'takeMintBudget resolved against a hung cluster',
+        (err: unknown) => err
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(STILL_HUNG), 3_000)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'ClusterCacheUnavailableError', reason: 'timeout' });
+  });
+});
+
+describe('provider links', () => {
+  const ORCH: DownloadLinkCredential = { kind: 'apikey', id: '555' };
+  const UNPUBLISHED = 120;
+  const mintFor = (modelVersionId: number, now?: number, credential = ORCH) =>
+    mintProviderLink(
+      credential,
+      { provider: 'orchestrator', modelVersionId, fileId: fileOf(modelVersionId) },
+      now
+    );
+  const minted = async (modelVersionId: number, now?: number) => {
+    const result = await mintFor(modelVersionId, now);
+    if (!result?.ok) throw new Error(`no link: ${JSON.stringify(result)}`);
+    return result;
+  };
+
+  beforeEach(() => {
+    setEnv({ DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: ['555'] });
+    version(UNPUBLISHED, { status: 'Unpublished' });
+  });
+
+  it.each([
+    ['a private version', PRIVATE_VERSION],
+    ['an unpublished version', UNPUBLISHED],
+  ])('serves %s to the provider as itself', async (_name, versionId) => {
+    const { url } = await minted(versionId);
+    const res = await fetchLink(url);
+    expect(res.status).toBe(302);
+    expect(res.location).toMatch(`https://storage.example/${fileOf(versionId)}?`);
+    expect(mockModelVersionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'GenerationFetch', provider: 'orchestrator' })
+    );
+    expect(mockCountProviderDownload).toHaveBeenCalledWith('orchestrator', 'granted', 'nonpublic');
+    expect(mockResolveDownloadUrl).toHaveBeenCalledWith(
+      fileOf(versionId),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ expiresInSeconds: 21600 })
+    );
+  });
+
+  it('refuses a taken-down version at mint, and at use once taken down', async () => {
+    expect(await mintFor(TAKEN_DOWN)).toMatchObject({ ok: false });
+    const { url } = await minted(PUBLIC_VERSION);
+    world.versions.get(PUBLIC_VERSION)!.mode = 'TakenDown';
+    clearGateReadCache();
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('has no fetch cap', async () => {
+    const { url } = await minted(PUBLIC_VERSION);
+    const statuses = new Set<number>();
+    for (let i = 0; i < 10 * 50; i++) statuses.add((await fetchLink(url)).status);
+    expect([...statuses]).toEqual([302]);
+  });
+
+  it('is never handed to a credential missing from either allowlist', async () => {
+    setEnv({ DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: ['777'] });
+    expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+    expect(await mintFor(PUBLIC_VERSION, undefined, { kind: 'apikey', id: '777' })).toBeNull();
+    expect(store.size).toBe(0);
+  });
+
+  it.each(['DOWNLOAD_LINK_API_KEY_IDS', 'DOWNLOAD_LINK_PROVIDER_API_KEY_IDS'])(
+    'dies at use once its credential leaves %s',
+    async (allowlist) => {
+      const { url } = await minted(PUBLIC_VERSION);
+      setEnv({ [allowlist]: [] });
+      expect((await fetchLink(url)).status).toBe(404);
+    }
+  );
+
+  it('records at most one download however many times the link is fetched', async () => {
+    const { url } = await minted(PRIVATE_VERSION);
+    for (let i = 0; i < 3; i++) expect((await fetchLink(url)).status).toBe(302);
+    expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
+    expect(mockCountProviderDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it('records its first fetch once provider links are back on, not one refused while off', async () => {
+    const { url } = await minted(PRIVATE_VERSION);
+    mockIsFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.mode === 'api'
+    );
+    expect((await fetchLink(url)).status).toBe(404);
+    mockIsFlipt.mockResolvedValue(true);
+    expect((await fetchLink(url)).status).toBe(302);
+    expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend a user link's fetch cap while only provider links are on", async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    mockIsFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.mode === 'provider'
+    );
+    for (let i = 0; i < 60; i++) expect((await fetchLink(url)).status).toBe(404);
+    mockIsFlipt.mockResolvedValue(true);
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  it('takes mint budget for fresh mints only', async () => {
+    setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: 2 });
+    const now = Date.now();
+    const first = await minted(PUBLIC_VERSION, now);
+    for (let i = 0; i < 5; i++)
+      expect(await mintFor(PUBLIC_VERSION, now)).toMatchObject({ ok: true, url: first.url });
+    expect(await mintFor(PRIVATE_VERSION, now)).toMatchObject({ ok: true, reused: false });
+    expect(await mintFor(UNPUBLISHED, now)).toMatchObject({ ok: false, error: 'rate-limited' });
+  });
+
+  it('is minted fresh by a refresh at the X-Expires it was served with', async () => {
+    const now = Date.now();
+    const first = await minted(PUBLIC_VERSION, now);
+    const expires = (link: { expiresAt: string }, at: number) =>
+      miniResponseExpiresAt({
+        now: at,
+        moderation: false,
+        downloadLinkExpiresAt: Date.parse(link.expiresAt),
+      })!;
+    // Refresh at each X-Expires: every one is in the future, and a fresh link arrives before the
+    // first one expires.
+    let at = now;
+    let link = first;
+    while (link.url === first.url) {
+      const next = expires(link, at);
+      expect(next).toBeGreaterThan(at);
+      expect(next).toBeLessThan(Date.parse(first.expiresAt));
+      at = next;
+      link = await minted(PUBLIC_VERSION, at);
+    }
+    expect(expires(link, at)).toBeGreaterThan(at);
+  });
+
+  it('answers the mint route 503 and serves provider links when the flag is on for provider only', async () => {
+    const apiLink = await mintOne(userItem(PUBLIC_VERSION));
+    mockIsFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.mode === 'provider'
+    );
+    expect((await mint([userItem(PUBLIC_VERSION)])).status).toBe(503);
+    expect((await fetchLink(apiLink.url)).status).toBe(404);
+    const { url } = await minted(PUBLIC_VERSION);
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  describe('is a no-op, minting and storing nothing', () => {
+    it('without DOWNLOAD_LINK_SECRET', async () => {
+      setEnv({ DOWNLOAD_LINK_SECRET: undefined });
+      expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+      expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+      expect(store.size).toBe(0);
+    });
+
+    it('with a DOWNLOAD_LINK_SECRET too short to use', async () => {
+      setEnv({ DOWNLOAD_LINK_SECRET: 'short' });
+      expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+      expect(store.size).toBe(0);
+    });
+
+    it('while the flag is off or missing', async () => {
+      mockIsFlipt.mockResolvedValue(false);
+      expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+      mockIsFlipt.mockRejectedValue(new Error('flag missing'));
+      expect(await mintFor(PUBLIC_VERSION)).toBeNull();
+      expect(store.size).toBe(0);
+    });
   });
 });

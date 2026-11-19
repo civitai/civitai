@@ -131,9 +131,7 @@ async function isRunsTableMissing(err: unknown): Promise<boolean> {
 }
 
 function log(type: 'info' | 'error', fields: Record<string, unknown>): void {
-  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks').catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'app-storage-migration-run', type, ...fields }, 'app-blocks');
 }
 
 function toRun(r: Record<string, unknown>): StorageMigrationRun {

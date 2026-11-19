@@ -196,7 +196,7 @@ export async function backpayTrackedAttributions(opts: BackpayOpts = {}): Promis
         signedOffVersion,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return summary;
   };
 
@@ -290,7 +290,7 @@ export async function backpayTrackedAttributions(opts: BackpayOpts = {}): Promis
           platformNonNeg,
         },
         'webhooks'
-      ).catch(() => null);
+      );
       continue;
     }
 
@@ -359,7 +359,7 @@ export async function backpayTrackedAttributions(opts: BackpayOpts = {}): Promis
         dryRun,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   logToAxiom(
@@ -376,7 +376,7 @@ export async function backpayTrackedAttributions(opts: BackpayOpts = {}): Promis
       cappedAppCount: cappedApps.length,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return summary;
 }

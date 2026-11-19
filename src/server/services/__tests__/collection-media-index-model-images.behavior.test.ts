@@ -36,6 +36,9 @@ const BY_STRANGER_POST_ITEM = 102;
 const BY_IMAGE_ITEM = 103;
 const BY_COVER = 104;
 const UNRELATED = 105;
+const BY_ARTICLE_COVER = 106;
+const BY_ARTICLE_BANNER = 107;
+const BY_UNRELATED_ARTICLE = 108;
 
 beforeAll(async () => {
   await db.exec(`
@@ -46,8 +49,9 @@ beforeAll(async () => {
     CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL,
-      "modelId" int, "postId" int, "imageId" int
+      "modelId" int, "postId" int, "imageId" int, "articleId" int
     );
+    CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
 
     INSERT INTO "ModelVersion" (id, "modelId") VALUES (20, ${MODEL}), (21, ${OTHER_MODEL});
     INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES
@@ -62,6 +66,11 @@ beforeAll(async () => {
       (${BY_STRANGER_POST_ITEM}, NULL, 31, NULL),
       (${BY_IMAGE_ITEM}, NULL, NULL, 41),
       (${UNRELATED}, ${OTHER_MODEL}, 32, 42);
+    -- Article 50's cover and article 51's banner are the model's images; article 52's cover is
+    -- the other model's.
+    INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (50, 40, NULL), (51, NULL, 41), (52, 42, NULL);
+    INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES
+      (${BY_ARTICLE_COVER}, 50), (${BY_ARTICLE_BANNER}, 51), (${BY_UNRELATED_ARTICLE}, 52);
   `);
 });
 
@@ -74,6 +83,8 @@ describe('getCollectionIdsForModelImages', () => {
       BY_STRANGER_POST_ITEM,
       BY_IMAGE_ITEM,
       BY_COVER,
+      BY_ARTICLE_COVER,
+      BY_ARTICLE_BANNER,
     ]);
     expect(truncated).toBe(false);
   });
@@ -87,6 +98,8 @@ describe('getCollectionIdsForModelImages', () => {
         BY_OWNER_POST_ITEM,
         BY_STRANGER_POST_ITEM,
         BY_IMAGE_ITEM,
+        BY_ARTICLE_COVER,
+        BY_ARTICLE_BANNER,
       ]);
       // Said, not silent: those covers stay stale until a full reindex.
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -123,9 +136,9 @@ describe('getCollectionIdsForModelImages', () => {
   it('is not cut short at exactly the cap', async () => {
     const { collectionIds, truncated } = await getCollectionIdsForModelImages({
       modelId: MODEL,
-      cap: 5,
+      cap: 7,
     });
-    expect(collectionIds).toHaveLength(5);
+    expect(collectionIds).toHaveLength(7);
     expect(truncated).toBe(false);
   });
 

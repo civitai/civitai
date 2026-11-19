@@ -74,6 +74,21 @@ export function watermarkSvg(width: number, height: number) {
   );
 }
 
+/** One unrotated word on transparency, for the orchestrator to tile and rotate across a video. */
+export async function watermarkTilePng() {
+  const sharp = (await import('sharp')).default;
+  const word = wordRects();
+  const pad = 8;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${word.width + pad * 2}" height="${
+    word.height + pad * 2
+  }"><g transform="translate(${pad + 1.5} ${pad + 1.5})" fill="#000" fill-opacity="0.45">${
+    word.rects
+  }</g><g transform="translate(${pad} ${pad})" fill="#fff" fill-opacity="0.6">${
+    word.rects
+  }</g></svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 export type PreviewResult = {
   data: Buffer;
   mimeType: 'image/webp';
