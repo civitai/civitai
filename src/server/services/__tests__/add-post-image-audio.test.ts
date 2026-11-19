@@ -139,7 +139,9 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: mocks.throwOnBlockedUserContent,
 }));
 
-const { addPostImage } = await import('~/server/services/post.service');
+const { addPostImage, SONG_ON_SCHEDULED_POST_MESSAGE } = await import(
+  '~/server/services/post.service'
+);
 const { thumbnailCache } = await import('~/server/redis/caches');
 const { getVotableImageTags } = await import('~/server/services/tag.service');
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
@@ -182,6 +184,40 @@ describe('addPostImage — audio', () => {
     expect(mocks.createImage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'audio', allowAudio: true, metadata: song })
     );
+  });
+
+  // A scheduled post goes live by time alone, so a song added to it would skip the genre check.
+  describe('on a scheduled post', () => {
+    const scheduled = (publishedAt: Date | null) =>
+      dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, publishedAt });
+
+    it('refuses a song, creating nothing', async () => {
+      mocks.music = true;
+      scheduled(new Date(Date.now() + 86_400_000));
+      await expect(addSong()).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: SONG_ON_SCHEDULED_POST_MESSAGE,
+      });
+      expect(mocks.createImage).not.toHaveBeenCalled();
+    });
+
+    it('still takes an image', async () => {
+      scheduled(new Date(Date.now() + 86_400_000));
+      await expect(
+        addPostImage({ url: KEY, type: 'image', postId: 1, user } as never)
+      ).rejects.toThrow('stop after create');
+      expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['a draft', null],
+      ['a published post', new Date(Date.now() - 86_400_000)],
+    ])('takes a song on %s', async (_, publishedAt) => {
+      mocks.music = true;
+      scheduled(publishedAt);
+      await expect(addSong()).rejects.toThrow('stop after create');
+      expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('refuses a song whose title the blocked-content check rejects, creating nothing', async () => {
@@ -446,7 +482,9 @@ describe('addPostImage — generated song cover', () => {
     $type: 'imageGen',
     metadata: { suppressOutput: true },
     output: {
-      images: [{ url: COVER_URL, available: true, width: 1024, height: 1024, nsfwLevel: 'pg', ...blob }],
+      images: [
+        { url: COVER_URL, available: true, width: 1024, height: 1024, nsfwLevel: 'pg', ...blob },
+      ],
     },
   });
   const songStep = { $type: 'aceStepAudio', input: {}, output: {} };
@@ -475,8 +513,7 @@ describe('addPostImage — generated song cover', () => {
       'An unexpected error'
     );
   /** The link statement's bound values: the cover id, then the song id. */
-  const linkValues = () =>
-    dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
+  const linkValues = () => dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
   const linkSql = () =>
     (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as unknown as TemplateStringsArray).join('');
 
@@ -518,7 +555,10 @@ describe('addPostImage — generated song cover', () => {
   it("reads the workflow with the caller's own orchestrator token", async () => {
     await postFromGenerator();
     expect(getOrchestratorToken).toHaveBeenCalledWith(5, expect.anything());
-    expect(mocks.getWorkflow).toHaveBeenCalledWith({ token: 'token', path: { workflowId: 'wf-1' } });
+    expect(mocks.getWorkflow).toHaveBeenCalledWith({
+      token: 'token',
+      path: { workflowId: 'wf-1' },
+    });
   });
 
   it('links the cover before reading the song back, so the add result carries it', async () => {

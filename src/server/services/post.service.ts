@@ -1360,6 +1360,9 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
+export const SONG_ON_SCHEDULED_POST_MESSAGE =
+  'This post is scheduled. Unschedule it to add a song, then pick its genre and schedule it again.';
+
 /**
  * Refuses publishing or scheduling a post while any of its songs has no genre. A post already
  * public is left alone: its publish write is a no-op, and songs posted before genres existed must
@@ -2032,11 +2035,14 @@ export const addPostImage = async ({
 
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
-    select: { userId: true },
+    select: { userId: true, publishedAt: true },
   });
 
   if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
   if (post.userId !== user.id) throw throwAuthorizationError();
+  // A scheduled post goes live by time alone, past the publish-time genre check.
+  if (props.type === MediaType.audio && post.publishedAt && post.publishedAt > new Date())
+    throw throwBadRequestError(SONG_ON_SCHEDULED_POST_MESSAGE);
 
   // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
   // a retried mutation or a duplicated client submission — return the existing
