@@ -552,16 +552,24 @@ describe('a restore and the recorded review flag, on the real statement', () => 
         (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')}),
         (98, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null}'),
         (99, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs(null)}),
-        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')});
+        (100, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('not-a-review')}),
+        (101, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('appeal')}),
+        (102, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('appeal')});
     `);
+    // 101's appeal is still Pending; 102's was decided.
+    dbMock.dbWrite.appeal.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { entityId: { in: number[] } };
+    }) => where.entityId.in.filter((id) => id === 101).map((entityId) => ({ entityId }))) as never);
 
     await unblockAccountDeletionImages(OWNER);
 
     const rows = await reviewsOf([
-      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100,
+      81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 102,
     ]);
     // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(19).fill('Scanned'));
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(21).fill('Scanned'));
     expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
       // Nothing set since: every listed review but csam comes back.
       [81, 'poi'],
@@ -588,6 +596,9 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       [98, 'minor'],
       [99, 'poi'],
       [100, 'tag'],
+      // An approval must not publish an image a minor or poi review is still owed on.
+      [101, 'minor'],
+      [102, 'poi'],
     ]);
 
     const logged = loggingMock.logToAxiom.mock.calls
@@ -599,6 +610,8 @@ describe('a restore and the recorded review flag, on the real statement', () => 
       { imageId: 92, kept: 'minor', dropped: 'poi' },
       { imageId: 93, kept: 'minor', dropped: 'newUser' },
       { imageId: 94, kept: 'poi', dropped: 'newUser' },
+      { imageId: 101, kept: 'minor', dropped: 'appeal', pendingAppeal: true },
+      { imageId: 102, kept: 'poi', dropped: 'appeal' },
     ]);
   });
 

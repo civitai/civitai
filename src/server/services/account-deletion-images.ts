@@ -13,6 +13,7 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { IMAGE_REVIEW_PRECEDENCE } from '@civitai/shared/image-review-types';
+import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -136,13 +137,22 @@ export async function unblockAccountDeletionImages(userId: number) {
       const dropped = needsReview === currentReview ? recordedReview : currentReview;
       return [{ imageId: id, kept: needsReview, dropped }];
     });
-    if (competing.length)
+    if (competing.length) {
+      // An appeal outranked here leaves the appeals queue while its Appeal stays Pending.
+      const pendingAppeals = await getPendingAppealImageIds(
+        competing.filter((review) => review.dropped === 'appeal').map((review) => review.imageId)
+      );
       logToAxiom({
         type: 'warning',
         name: 'account-deletion-image-restore',
         message: 'kept the higher of two competing review flags',
-        payload: { reviews: competing },
+        payload: {
+          reviews: competing.map((review) =>
+            pendingAppeals.has(review.imageId) ? { ...review, pendingAppeal: true } : review
+          ),
+        },
       });
+    }
 
     const visible = restored.filter(
       (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
