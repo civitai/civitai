@@ -1186,6 +1186,8 @@ export const PUBLISHES_AFTER_EXPIRY_REASON = 'publishes-after-expiry';
 export const UNPUBLISHED_DRAFT_REASON = 'unpublished-draft';
 /** Hours after queueing an item on a draft post (`publishedAt` null) is given to publish before `closeUnservableItems` closes it. */
 export const UNPUBLISHED_DRAFT_HOURS = 24;
+/** The main app's scan-sampling `source`: the only items `unpublished-draft` closes. */
+export const SCAN_SAMPLE_SOURCE = 'scan-sample';
 
 const hours = (n: number) => sql`${sql.lit(`${n} hours`)}::interval`;
 
@@ -1209,8 +1211,9 @@ END`;
  *   stage it was queued at (never escalated, `minRank` Knight, where nobody serving the stage means nobody serves any stage, so
  *   it expires instead of being handed up) with no counted vote there (a voted item is handed up, not expired). A draft has no
  *   date and is left to the next reason, as is an item that never expires.
- * - `unpublished-draft`: the post is still a draft (`publishedAt` null) more than `UNPUBLISHED_DRAFT_HOURS` after the item was
- *   queued. Many drafts never publish, and until then the item only fills the queue. At any stage.
+ * - `unpublished-draft`: a scan sample (`SCAN_SAMPLE_SOURCE`) whose post is still a draft (`publishedAt` null) more than
+ *   `UNPUBLISHED_DRAFT_HOURS` after the item was queued. Many drafts never publish, and until then the item only fills the
+ *   queue; nothing re-queues it if the post publishes later. At any stage. An owner's rating on a draft is left open.
  * Hidden checks and yes/no items are never touched. At most `limit` items per call, shared by every reason, oldest item id
  * first; rows another transaction holds are skipped.
  */
@@ -1237,6 +1240,7 @@ export async function closeUnservableItems(
           // Also true when the image is gone: the Post join then has nothing to match.
           eb('p.id', 'is', null),
           eb.and([
+            eb('i.source', '=', SCAN_SAMPLE_SOURCE),
             eb('p.id', 'is not', null),
             eb('p.publishedAt', 'is', null),
             eb('i.createdAt', '<', utc(addHours(now, -UNPUBLISHED_DRAFT_HOURS))),

@@ -1651,22 +1651,27 @@ describe('closeModeratorRuledItems', () => {
 describe('closeUnservableItems', () => {
   const at = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
   const sweep = (limit?: number) => closeUnservableItems(db, { now: NOW, limit });
-  /** An item queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
+  /** A scan sample (or `source`) queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
   async function queued(
     id: number,
     {
       publishedAt = at(-1000),
       createdAt = NOW,
       expiresAt = at(72) as Date | null,
-    }: { publishedAt?: Date | null; createdAt?: Date; expiresAt?: Date | null } = {}
+      source = 'scan-sample',
+    }: {
+      publishedAt?: Date | null;
+      createdAt?: Date;
+      expiresAt?: Date | null;
+      source?: string;
+    } = {}
   ) {
     await image(id, 4, publishedAt === null ? null : publishedAt.toISOString());
     const itemId = await item(id, { expires: expiresAt ?? undefined });
-    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2 WHERE id=$3`, [
-      createdAt,
-      expiresAt,
-      itemId,
-    ]);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2, source=$3 WHERE id=$4`,
+      [createdAt, expiresAt, source, itemId]
+    );
     return itemId;
   }
   async function countedVote(itemId: number, playerId: number, imageId: number) {
@@ -1836,6 +1841,12 @@ describe('closeUnservableItems', () => {
     const votedDraft = await queued(47, { ...day, publishedAt: null });
     await countedVote(votedDraft, 3, 47);
     const neverExpiresDraft = await queued(48, { ...day, publishedAt: null, expiresAt: null });
+    // Only scan samples: an owner's rating on a day-old draft stays open.
+    const ownerRatingDraft = await queued(49, {
+      ...day,
+      publishedAt: null,
+      source: 'owner-rating',
+    });
     const before = await counterValue('knights_escalations_total', {
       reason: 'unpublished-draft',
     });
@@ -1857,6 +1868,7 @@ describe('closeUnservableItems', () => {
         escalatedDraft,
         votedDraft,
         neverExpiresDraft,
+        ownerRatingDraft,
       ])
     ).toEqual([
       ['Open', null],
@@ -1868,6 +1880,7 @@ describe('closeUnservableItems', () => {
       ['Closed', 'unpublished-draft'],
       ['Closed', 'unpublished-draft'],
       ['Closed', 'unpublished-draft'],
+      ['Open', null],
     ]);
     expect(await itemRow(staleDraft)).toMatchObject({
       resolvedValue: null,
@@ -1898,11 +1911,10 @@ describe('closeUnservableItems', () => {
     await image(51, 4, null);
     const yesNo = await item(51, { question: 'knights.test.bool' });
     await pg.query(`UPDATE "KnightsQueueItem" SET audience='players' WHERE id=$1`, [yesNo]);
-    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt"=$1 WHERE id IN ($2, $3)`, [
-      at(-25),
-      hidden,
-      yesNo,
-    ]);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "createdAt"=$1, source='scan-sample' WHERE id IN ($2, $3)`,
+      [at(-25), hidden, yesNo]
+    );
 
     expect(await sweep()).toEqual({
       unservable: 0,
