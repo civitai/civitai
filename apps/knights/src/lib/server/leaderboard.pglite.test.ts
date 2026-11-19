@@ -170,6 +170,31 @@ describe('queryBoard', () => {
     expect(rows.map((r) => r.image)).toEqual([null, null, 'img-3']);
   });
 
+  it('serves no picture that carries a block marker, and drops a legacy User.image naming one', async () => {
+    await member(1, 'Knight', 4);
+    await member(2, 'Knight', 3);
+    await member(3, 'Knight', 2);
+    await member(4, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","ingestion","blockedFor") VALUES
+        (70,'pic-ingestion-blocked',1,'Blocked',NULL),
+        (71,'pic-reason',1,'Scanned','moderated'),
+        (72,'pic-named',1,'Blocked','moderated'),
+        (73,'pic-ok',1,'Scanned',NULL)`
+    );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=70 WHERE "id"=1`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=71 WHERE "id"=2`);
+    await pg.exec(
+      `UPDATE "User" SET "profilePictureId"=72, "image"='https://cdn.example/pic-named/width=96' WHERE "id"=3`
+    );
+    // Control: the same shape with no marker is served.
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=73 WHERE "id"=4`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual(['img-1', 'img-2', null, 'pic-ok']);
+  });
+
   it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {
     await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
       (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}'),
