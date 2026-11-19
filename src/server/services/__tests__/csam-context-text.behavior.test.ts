@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type { CsamContextText } from '~/server/services/csam-context-text';
 import {
   Kysely,
   PostgresAdapter,
@@ -280,13 +281,88 @@ describe('snapshot', () => {
 });
 
 describe('fold', () => {
-  it('keeps the first capture of a source and adds new ones', () => {
-    const first = { source: 'comment', id: 11, text: 'first' } as never;
-    const again = { source: 'comment', id: 11, text: 'edited later' } as never;
-    const other = { source: 'comment', id: 12, text: 'new' } as never;
+  const capture = (id: number, text: string, day: number) =>
+    ({ source: 'postText', id, text, capturedAt: at(day).toISOString() } as CsamContextText);
 
-    expect(foldContextText([first], [again, other])).toEqual([first, other]);
+  it('keeps an earlier capture as it was and adds a later capture of the same item with new text', () => {
+    const first = capture(7, 'first', 8);
+    const before = structuredClone(first);
+    const edited = capture(7, 'edited later', 12);
+    const other = capture(8, 'new', 12);
+
+    const prior = [first];
+    expect(foldContextText(prior, [edited, other])).toEqual([first, edited, other]);
+    expect(first).toEqual(before);
+    expect(prior).toEqual([first]);
     expect(foldContextText(undefined, undefined)).toBeUndefined();
+  });
+
+  it('adds an item changed back to an earlier text, and skips text equal to its latest capture', () => {
+    const a = capture(7, 'text A', 8);
+    const b = capture(7, 'text B', 10);
+    const aAgain = capture(7, 'text A', 12);
+    const heard: CsamContextText[] = [];
+    expect(foldContextText([a, b], [aAgain], (c) => heard.push(c))).toEqual([a, b, aAgain]);
+    expect(heard).toEqual([]);
+
+    const latestAgain = capture(7, 'text B', 12);
+    expect(foldContextText([a, b], [latestAgain], (c) => heard.push(c))).toEqual([a, b]);
+    expect(heard).toEqual([latestAgain]);
+  });
+
+  it('judges the latest capture by capture time, not by place in the list', () => {
+    const b = capture(7, 'text B', 10);
+    const a = capture(7, 'text A', 8);
+    expect(foldContextText([b, a], [capture(7, 'text A', 12)])).toHaveLength(3);
+    expect(foldContextText([b, a], [capture(7, 'text B', 12)])).toHaveLength(2);
+  });
+
+  it('adds a capture whose text differs only in whitespace', () => {
+    const first = capture(7, 'same words', 8);
+    const spaced = capture(7, 'same  words ', 12);
+    expect(foldContextText([first], [spaced])).toEqual([first, spaced]);
+  });
+
+  it('adds nothing for the same text captured again, in the report or within one filing', () => {
+    const first = capture(7, 'same words', 8);
+    expect(foldContextText([first], [capture(7, 'same words', 12)])).toEqual([first]);
+    const twice = [capture(9, 'once', 12), capture(9, 'once', 12)];
+    const heard: CsamContextText[] = [];
+    expect(foldContextText([], twice, (c) => heard.push(c))).toEqual([twice[0]]);
+    // A repeat within one filing is not a re-file of text the report held.
+    expect(heard).toEqual([]);
+    // The report's own text captured twice in one filing is heard once.
+    const heardOnce: CsamContextText[] = [];
+    foldContextText([first], [capture(7, 'same words', 12), capture(7, 'same words', 12)], (c) =>
+      heardOnce.push(c)
+    );
+    expect(heardOnce).toHaveLength(1);
+  });
+
+  it('keeps the same text on another item or source as its own capture', () => {
+    const first = capture(7, 'same words', 8);
+    const comment = { ...capture(7, 'same words', 12), source: 'comment' } as CsamContextText;
+    expect(foldContextText([first], [comment, capture(8, 'same words', 12)])).toHaveLength(3);
+  });
+
+  it('sends each capture of an edited item as its own page incident, at its capture time', () => {
+    const base = {
+      postId: 100,
+      authorId: OWNER,
+      authorIsReportedUser: true,
+      postedAt: at(2).toISOString(),
+      capturedById: MOD,
+      reviewed: { byId: MOD, at: at(3).toISOString() },
+    };
+    const folded = foldContextText(
+      [{ ...base, ...capture(7, 'the first text', 8) }],
+      [{ ...base, ...capture(7, 'the edited text', 12) }]
+    );
+    const incidents = contextWebPageIncidents(folded);
+    expect(incidents).toHaveLength(2);
+    expect(incidents[0].additionalInfo).toContain('the first text');
+    expect(incidents[0].additionalInfo).not.toContain('the edited text');
+    expect(incidents[1].additionalInfo).toContain('the edited text');
   });
 });
 

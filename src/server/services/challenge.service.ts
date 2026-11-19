@@ -158,6 +158,7 @@ import {
   hasBlockMarker,
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
+  challengeCoverWhere,
 } from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -398,7 +399,10 @@ async function mapChallengeRowsToCards(
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
   const coverImages = await dbRead.image.findMany({
-    where: { id: { in: coverImageIds }, ...imageNotRestrictedWhere({ viewerId: site.viewerId }) },
+    where: {
+      id: { in: coverImageIds },
+      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
+    },
     select: imageSelect,
   });
 
@@ -968,7 +972,14 @@ async function buildChallengeDetail(
         where: {
           id: challenge.coverImageId,
           // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: green?.viewerId })),
+          ...(forEdit
+            ? {}
+            : {
+                AND: [
+                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                  challengeCoverWhere(),
+                ],
+              }),
         },
         select: imageSelect,
       })
@@ -3377,7 +3388,9 @@ async function getEventCoverImages(
   const images = await dbRead.image.findMany({
     where: {
       id: { in: ids },
-      ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: site.viewerId })),
+      ...(forEdit
+        ? {}
+        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
     },
     select: imageSelect,
   });
@@ -3528,7 +3541,7 @@ export async function getActiveEvents(
           .findMany({
             where: {
               id: { in: coverImageIds },
-              ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
+              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
             },
             select: imageSelect,
           })
@@ -4443,7 +4456,7 @@ export async function getCompletedChallengesWithWinners(
       ? await dbRead.image.findMany({
           where: {
             id: { in: coverImageIds },
-            ...imageNotRestrictedWhere({ viewerId: currentUserId }),
+            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
           },
           select: imageSelect,
         })

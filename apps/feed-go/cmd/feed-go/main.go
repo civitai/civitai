@@ -274,6 +274,7 @@ func run(log *slog.Logger) error {
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   addons,
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,

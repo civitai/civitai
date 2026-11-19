@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { middleware } from '~/server/trpc';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 
@@ -34,17 +35,20 @@ export async function resolveOwnerOnlyFileUrls<TData, TInput>(
     data,
     input,
     user,
+    ownerView,
     redCapable = false,
   }: {
     data: TData;
     input: TInput;
     user?: { id: number; isModerator?: boolean };
+    /** Whether the request may read as the owner: a session or a full-access key. */
+    ownerView: boolean;
     redCapable?: boolean;
   }
 ): Promise<TData> {
   if (data == null) return data;
   if (user?.isModerator) return data;
-  if (user && user.id === (await config.ownerId({ data, input })))
+  if (ownerView && user && user.id === (await config.ownerId({ data, input })))
     return config.forOwner ? config.forOwner(data) : data;
   return config.strip(data, { redCapable });
 }
@@ -59,6 +63,7 @@ export function ownerOnlyFileUrls<TData, TInput = unknown>(
       data: result.data as TData,
       input: input as TInput,
       user: ctx.user,
+      ownerView: isSessionOrFullUserKey(ctx),
       redCapable: isRedCapableHost(ctx.req?.headers?.host),
     });
     return data === result.data ? result : { ...result, data };

@@ -44,6 +44,18 @@ export function credentialViews(
 }
 
 /**
+ * The viewer an owner-or-moderator check reads: the request's user on a session or a full-access
+ * key, or a moderator whose rights the credential kept (`withModeratorRightsFor` already ran in
+ * request context). Anyone else on any other key reads as no one.
+ */
+export function ownerOrModeratorViewer<T extends { isModerator?: boolean | null }>(
+  ctx: BearerCredential & { apiKeyId?: number | null; user?: T | null }
+): T | undefined {
+  if (!ctx.user) return undefined;
+  return ctx.user.isModerator || isSessionOrFullUserKey(ctx) ? ctx.user : undefined;
+}
+
+/**
  * Whether a moderator presenting this bearer credential loses moderator rights: they come only
  * through a full-scope personal key. The internal system account's keys are limited to read scopes
  * and keep its rights by id.
