@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   list: vi.fn(),
   start: vi.fn(),
 }));
+// Apart from `h`, whose every entry the first test expects one call of.
+const u = vi.hoisted(() => ({ submit: vi.fn(), review: vi.fn() }));
 
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Registry>()),
@@ -28,6 +30,8 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   orderRemixApps: h.order,
   deleteRemixApp: h.remove,
   listRemixAppsForAdmin: h.list,
+  submitUserRemixApp: u.submit,
+  reviewUserRemixApp: u.review,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RunService>()),
@@ -165,5 +169,46 @@ describe('remixApp.admin', () => {
     expect(h.start.mock.lastCall![0].quote).toBeUndefined();
     await as(moderator).testStart({ ...tap(), quote: 30 });
     expect(h.start).toHaveBeenLastCalledWith(expect.objectContaining({ quote: 30 }));
+  });
+});
+
+describe('user app code: submit and review', () => {
+  const flags = (more: object) => ({ trpcFlagGuardPerRequest: true, remixApps: true, ...more });
+  const submission = () => ({
+    name: 'probe',
+    title: 'Probe',
+    icon: 'sparkles' as const,
+    source: 'export default 1',
+  });
+  const decision = () => ({
+    slug: 'u88-probe',
+    sha256: 'a'.repeat(64),
+    decision: 'approved' as const,
+  });
+
+  it('submits only with remixAppsUserCode and remixAppBuilder both on, always as the caller', async () => {
+    for (const features of [flags({ remixAppsUserCode: true }), flags({ remixAppBuilder: true })])
+      await expect(
+        remixAppRouter.createCaller(ctx(moderator, features)).submit(submission())
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.submit).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: with both on it reaches the service, and an authorId in the input is dropped.
+    const both = flags({ remixAppsUserCode: true, remixAppBuilder: true });
+    await remixAppRouter
+      .createCaller(ctx(moderator, both))
+      .submit({ ...submission(), authorId: 1 } as never);
+    expect(u.submit).toHaveBeenCalledWith(expect.objectContaining({ authorId: moderator.id }));
+  });
+
+  it('reviews only as a moderator with remixAppsUserCode on', async () => {
+    await expect(as(moderator).review(decision())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(user, on).review(decision())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.review).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: a moderator with the flag reaches the service.
+    await as(moderator, on).review(decision());
+    expect(u.review).toHaveBeenCalledTimes(1);
   });
 });

@@ -27,7 +27,12 @@ import {
   type RemixManifest,
   type RemixSlotId,
   type RemixStoredSpec,
+  type RemixUserSpec,
+  type RemixAppSubmitInput,
+  remixAppSlugSchema,
 } from '~/shared/remix-apps/row.schema';
+import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
+import type { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 
@@ -294,7 +299,7 @@ function runShape(spec: RemixStoredSpec) {
 }
 
 /** `x` when the app runs on mature sources, as every App Block row records its rating. */
-const contentRatingOf = (spec: RemixAppSpec) =>
+const contentRatingOf = (spec: RemixStoredSpec) =>
   ('code' in spec ? CODE_REMIX_APPS[spec.code].engine : spec.engine).mature ? 'x' : 'pg';
 
 export function manifestOf(input: RemixAppInput, runVersion: number): RemixManifest {
@@ -314,15 +319,7 @@ export function manifestOf(input: RemixAppInput, runVersion: number): RemixManif
  * version, so a run started on the old content is not replayed on the new.
  */
 export async function saveRemixApp(input: RemixAppInput) {
-  const client = await dbWrite.oauthClient.findUnique({
-    where: { id: REMIX_APPS_CLIENT_ID },
-    select: { id: true },
-  });
-  if (!client)
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'The remix apps seed migration has not been applied to this database yet.',
-    });
+  await assertRemixAppsClient();
   // The slug as a store app's blockId would be: the remix- prefix is the one id this allows.
   const slugError = newBlockIdError(input.slug);
   if (slugError) throw new TRPCError({ code: 'BAD_REQUEST', message: slugError });
@@ -342,13 +339,7 @@ export async function saveRemixApp(input: RemixAppInput) {
   if (!isSavableTarget(input.target) && input.target !== storedTarget)
     throw new TRPCError({ code: 'BAD_REQUEST', message: `New apps cannot target ${input.target}` });
 
-  let runVersion = 1;
-  if (existing && previous) {
-    runVersion = previous.success
-      ? runVersionOf(previous.data) +
-        (runShape(previous.data.remix) === runShape(input.spec) ? 0 : 1)
-      : Number(existing.version.split('.')[0]) + 1 || 1;
-  }
+  const runVersion = nextRunVersion(existing, previous, input.spec);
   const manifest = manifestOf(input, runVersion);
   const fields = {
     manifest,
@@ -356,26 +347,166 @@ export async function saveRemixApp(input: RemixAppInput) {
     contentRating: contentRatingOf(input.spec),
   };
 
-  if (existing) {
-    await dbWrite.appBlock.update({ where: { blockId }, data: fields });
-  } else {
-    const last = await dbWrite.appBlock.aggregate({
-      where: { status: { in: REMIX_STATUSES } },
-      _max: { featuredOrder: true },
-    });
-    await dbWrite.appBlock.create({
-      data: {
-        ...fields,
-        id: remixAppBlockRowId(input.slug),
-        appId: REMIX_APPS_CLIENT_ID,
-        blockId,
-        status: REMIX_STATUS.disabled,
-        featuredOrder: (last._max.featuredOrder ?? -1) + 1,
-      },
-    });
-  }
+  if (existing) await dbWrite.appBlock.update({ where: { blockId }, data: fields });
+  else await createRemixAppRow(input.slug, fields);
   await bumpRemixAppRegistry();
   return { slug: input.slug, version: runVersion };
+}
+
+async function assertRemixAppsClient() {
+  const client = await dbWrite.oauthClient.findUnique({
+    where: { id: REMIX_APPS_CLIENT_ID },
+    select: { id: true },
+  });
+  if (!client)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'The remix apps seed migration has not been applied to this database yet.',
+    });
+}
+
+type StoredRow = { version: string } | null;
+type ParsedManifest = ReturnType<typeof remixManifestSchema.safeParse> | undefined;
+
+/** The run version a write of `spec` gets: the stored one, or the next when what runs changes. */
+function nextRunVersion(existing: StoredRow, previous: ParsedManifest, spec: RemixStoredSpec) {
+  if (!existing || !previous) return 1;
+  return previous.success
+    ? runVersionOf(previous.data) + (runShape(previous.data.remix) === runShape(spec) ? 0 : 1)
+    : Number(existing.version.split('.')[0]) + 1 || 1;
+}
+
+/** A new row starts disabled and last, so a mod can test-run it before anyone sees it. */
+async function createRemixAppRow(
+  slug: string,
+  fields: { manifest: RemixManifest; version: string; contentRating: string }
+) {
+  const last = await dbWrite.appBlock.aggregate({
+    where: { status: { in: REMIX_STATUSES } },
+    _max: { featuredOrder: true },
+  });
+  await dbWrite.appBlock.create({
+    data: {
+      ...fields,
+      id: remixAppBlockRowId(slug),
+      appId: REMIX_APPS_CLIENT_ID,
+      blockId: remixBlockId(slug),
+      status: REMIX_STATUS.disabled,
+      featuredOrder: (last._max.featuredOrder ?? -1) + 1,
+    },
+  });
+}
+
+/** What a mod approves: the hash of the exact source they read. */
+export const remixSourceHash = (source: string) =>
+  createHash('sha256').update(source).digest('hex');
+
+/**
+ * Creates or replaces the author's app `u<authorId>-<name>`. Every submit, an edit of an approved
+ * app included, takes it out of menus until a mod approves the new source.
+ */
+export async function submitUserRemixApp({
+  authorId,
+  name,
+  title,
+  description,
+  icon,
+  source,
+}: RemixAppSubmitInput & { authorId: number }) {
+  await assertRemixAppsClient();
+  const slug = userRemixSlugPrefix(authorId) + name;
+  const slugError = remixAppSlugSchema.safeParse(slug).success
+    ? newBlockIdError(slug)
+    : 'Use a shorter name';
+  if (slugError) throw new TRPCError({ code: 'BAD_REQUEST', message: slugError });
+  const blockId = remixBlockId(slug);
+  // primary: decides who owns the row this write replaces.
+  const existing = await dbWrite.appBlock.findUnique({
+    where: { blockId },
+    select: remixAppRowSelect,
+  });
+  if (existing && (!REMIX_STATUSES.includes(existing.status) || !isUserRow(existing.manifest)))
+    throw new TRPCError({ code: 'CONFLICT', message: `${blockId} belongs to another app` });
+
+  const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
+  const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
+  const runVersion = nextRunVersion(existing, previous, spec);
+  const manifest: RemixManifest = {
+    kind: 'remix',
+    name: title,
+    ...(description ? { description } : {}),
+    version: `${runVersion}.0.0`,
+    targets: [{ slotId: 'image.remix' }],
+    remix: spec,
+    author: { userId: authorId },
+    review: 'submitted',
+  };
+  const fields = { manifest, version: manifest.version, contentRating: contentRatingOf(spec) };
+  if (existing)
+    await dbWrite.appBlock.update({
+      where: { blockId },
+      data: { ...fields, status: REMIX_STATUS.disabled },
+    });
+  else await createRemixAppRow(slug, fields);
+  await bumpRemixAppRegistry();
+  return { slug, version: runVersion, sha256: remixSourceHash(source) };
+}
+
+/**
+ * A mod's decision on a user app's source, refused unless `sha256` is the source stored now. An
+ * approval may add the mature engine; a rejection also takes the app out of menus.
+ */
+export async function reviewUserRemixApp({
+  slug,
+  sha256,
+  decision,
+  mature = false,
+}: {
+  slug: string;
+  sha256: string;
+  decision: 'approved' | 'rejected';
+  mature?: boolean;
+}) {
+  // primary: the approval must be of the source stored now.
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId: remixBlockId(slug) },
+    select: remixAppRowSelect,
+  });
+  const parsed =
+    row && REMIX_STATUSES.includes(row.status)
+      ? remixManifestSchema.safeParse(row.manifest)
+      : undefined;
+  if (!row || !parsed?.success || !('source' in parsed.data.remix))
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'User remix app not found' });
+  const changed = new TRPCError({
+    code: 'CONFLICT',
+    message: 'The app changed after you opened it. Reload it and review it again.',
+  });
+  const { remix } = parsed.data;
+  if (remixSourceHash(remix.source) !== sha256) throw changed;
+
+  const matureEngine = decision === 'approved' && mature ? { mature: DEFAULT_ENGINE.mature } : {};
+  const spec: RemixUserSpec = { ...remix, engine: { safe: remix.engine.safe, ...matureEngine } };
+  const runVersion = nextRunVersion(row, parsed, spec);
+  const manifest: RemixManifest = {
+    ...parsed.data,
+    version: `${runVersion}.0.0`,
+    remix: spec,
+    review: decision,
+  };
+  // Conditional on the manifest read above, so a submit that lands in between is never approved.
+  const { count } = await dbWrite.appBlock.updateMany({
+    where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
+    data: {
+      manifest,
+      version: manifest.version,
+      contentRating: contentRatingOf(spec),
+      ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
+    },
+  });
+  if (!count) throw changed;
+  await bumpRemixAppRegistry();
+  return { slug, review: decision, version: runVersion };
 }
 
 /** Read off the raw manifest, so a user row that no longer validates still counts as one. */
@@ -438,11 +569,29 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
 }
 
 export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enabled: boolean }) {
+  const blockId = remixBlockId(slug);
+  // In the update itself, so a submit between a read and this write cannot enable unreviewed code.
+  const approvedOnly = enabled && USER_REMIX_SLUG.test(slug);
   const { count } = await dbWrite.appBlock.updateMany({
-    where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
+    where: {
+      blockId,
+      status: { in: REMIX_STATUSES },
+      ...(approvedOnly ? { manifest: { path: ['review'], equals: 'approved' } } : {}),
+    },
     data: { status: enabled ? REMIX_STATUS.enabled : REMIX_STATUS.disabled },
   });
-  if (!count) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  if (!count) {
+    if (
+      approvedOnly &&
+      // primary: tells a refused enable from a missing row, right after the write.
+      (await dbWrite.appBlock.findUnique({ where: { blockId }, select: { id: true } }))
+    )
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Approve this app before enabling it',
+      });
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  }
   await bumpRemixAppRegistry();
 }
 
@@ -477,7 +626,26 @@ export async function listRemixAppsForAdmin() {
           version: row.version,
           invalid: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
         };
-      const { name, description, targets, remix } = parsed.data;
+      const { name, description, targets, remix, author, review } = parsed.data;
+      // A user app is reviewed, never edited, so it carries no editor input.
+      if (author && review && 'source' in remix)
+        return {
+          slug,
+          enabled,
+          deletable,
+          order,
+          version: parsed.data.version,
+          user: {
+            authorId: author.userId,
+            name,
+            description,
+            icon: remix.icon,
+            review,
+            mature: !!remix.engine.mature,
+            source: remix.source,
+            sha256: remixSourceHash(remix.source),
+          },
+        };
       return {
         slug,
         enabled,

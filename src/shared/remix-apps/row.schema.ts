@@ -126,16 +126,18 @@ const codeSpec = z.strictObject({
 
 export const REMIX_USER_SOURCE_MAX_BYTES = 32 * 1024;
 
+const userSource = z
+  .string()
+  .min(1)
+  .refine((source) => new TextEncoder().encode(source).length <= REMIX_USER_SOURCE_MAX_BYTES, {
+    message: `At most ${REMIX_USER_SOURCE_MAX_BYTES / 1024} KiB`,
+  });
+
 /** An app whose `run` is the author's JavaScript module, run in the sandbox, never in-process. */
 const userSpec = z.strictObject({
   icon: z.enum(REMIX_APP_ICONS),
   engine: z.strictObject({ safe: engine, mature: engine.optional() }),
-  source: z
-    .string()
-    .min(1)
-    .refine((source) => new TextEncoder().encode(source).length <= REMIX_USER_SOURCE_MAX_BYTES, {
-      message: `At most ${REMIX_USER_SOURCE_MAX_BYTES / 1024} KiB`,
-    }),
+  source: userSource,
 });
 
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
@@ -242,6 +244,17 @@ export const remixAppInputSchema = z.object({
 export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
 
 export const REMIX_REVIEW_STATES = ['submitted', 'rejected', 'approved'] as const;
+
+/** What an author submits. The server sets the engine, the author and the review state. */
+export const remixAppSubmitSchema = z.object({
+  /** The slug after `u<authorId>-`. */
+  name: z.string().regex(/^[a-z][a-z0-9-]{0,22}[a-z0-9]$/),
+  title: text(40),
+  description: z.string().trim().max(200).optional(),
+  icon: z.enum(REMIX_APP_ICONS),
+  source: userSource,
+});
+export type RemixAppSubmitInput = z.infer<typeof remixAppSubmitSchema>;
 
 /** A user app's slug starts with its author's id, so no author can write another's or a system app. */
 export const userRemixSlugPrefix = (authorId: number) => `u${authorId}-`;

@@ -120,6 +120,7 @@ const DERIVED_BASES: Record<string, string> = {
   // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
   // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
   remixAppAdminProcedure: 'moderatorProcedure',
+  remixAppBuilderProcedure: 'remixAppProcedure',
   remixAppProcedure: 'protectedProcedure',
   // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
   semanticSearchProcedure: 'publicProcedure',
@@ -132,6 +133,7 @@ const DERIVED_BASES: Record<string, string> = {
   storylineReadProcedure: 'publicProcedure',
   storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
+  userCodeReviewProcedure: 'remixAppAdminProcedure',
 };
 
 const stripComments = (s: string) =>

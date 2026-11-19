@@ -30,13 +30,23 @@ import {
   saveRemixApp,
   setRemixAppEnabled,
   deleteRemixApp,
+  submitUserRemixApp,
+  reviewUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
-import { remixAppInputSchema, remixAppSlugSchema } from '~/shared/remix-apps/row.schema';
+import {
+  remixAppInputSchema,
+  remixAppSlugSchema,
+  remixAppSubmitSchema,
+} from '~/shared/remix-apps/row.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
+const userCodeReviewProcedure = remixAppAdminProcedure.use(isFlagProtected('remixAppsUserCode'));
+const remixAppBuilderProcedure = remixAppProcedure
+  .use(isFlagProtected('remixAppsUserCode'))
+  .use(isFlagProtected('remixAppBuilder'));
 
 const imageId = z.number().int().positive();
 
@@ -93,6 +103,17 @@ const remixAppAdminRouter = router({
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
     .mutation(({ input }) => deleteRemixApp(input)),
+  /** Approves or rejects the source whose hash the mod read. */
+  review: userCodeReviewProcedure
+    .input(
+      z.object({
+        slug: remixAppSlugSchema,
+        sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        decision: z.enum(['approved', 'rejected']),
+        mature: z.boolean().optional(),
+      })
+    )
+    .mutation(({ input }) => reviewUserRemixApp(input)),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),
@@ -123,6 +144,10 @@ const remixAppAdminRouter = router({
 
 export const remixAppRouter = router({
   admin: remixAppAdminRouter,
+  /** Creates or replaces the caller's own app, which waits for a mod's review out of menus. */
+  submit: remixAppBuilderProcedure
+    .input(remixAppSubmitSchema)
+    .mutation(({ ctx, input }) => submitUserRemixApp({ ...input, authorId: ctx.user.id })),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),
