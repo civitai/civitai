@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
-import { unpack } from 'msgpackr';
+import { pack, unpack } from 'msgpackr';
 import type { NextApiRequest } from 'next';
 import { createClient, RESP_TYPES } from 'redis';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -24,9 +24,8 @@ vi.mock('~/env/other', () => ({ isDev: false, isProd: true, isTest: false, isPre
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 const { redisMock } = await import('~/__tests__/mocks/redis.mock');
-const { claimRateLimitAttempt, rateLimitBucket, readRateLimitAttempts } = await import(
-  '~/server/utils/rate-limit-bucket'
-);
+const { claimRateLimitAttempt, peekRateLimit, rateLimitBucket, readRateLimitAttempts } =
+  await import('~/server/utils/rate-limit-bucket');
 
 const RUN = randomUUID().slice(0, 8);
 const keyName = (name: string) => `rate-limit-real-${RUN}:${name}`;
@@ -102,5 +101,107 @@ describe.skipIf(!url)('rate limit claims on a real Redis', () => {
 
     expect(admitted.filter(Boolean)).toHaveLength(1);
     expect(await stored('last-slot', req)).toHaveLength(2);
+  });
+
+  it('30 distinct callers on one shared bucket with a limit of 20 admit exactly 20', async () => {
+    // One bucket for everyone, as the site-wide upload cap keys it: a fixed user id.
+    const shared = { id: -7 } as never;
+    const admitted = await Promise.all(
+      Array.from({ length: 30 }, () =>
+        claimRateLimitAttempt({
+          rules: [{ limit: 20, period: 3600 }],
+          keyName: keyName('shared'),
+          user: shared,
+          req: freshReq(),
+        })
+          .then((record) => record())
+          .then(
+            () => true,
+            () => false
+          )
+      )
+    );
+    expect(admitted.filter(Boolean)).toHaveLength(20);
+  });
+
+  it('history written by the old writer, then claimed, reads back as plain numbers', async () => {
+    const req = freshReq();
+    const bucket = rateLimitBucket(keyName('round-trip'), undefined, req);
+    const before = [Date.now() - 2000, Date.now() - 1000];
+    written.add(bucket.cacheKey);
+    await real.hSet(bucket.cacheKey, bucket.hashKey, pack(before));
+
+    expect(await call('round-trip', req, 5)).toBe(true);
+
+    const after = await readRateLimitAttempts(bucket);
+    expect(after).toHaveLength(3);
+    expect(after.slice(0, 2)).toEqual(before);
+    for (const x of after) {
+      expect(typeof x).toBe('number');
+      expect(x).toBeGreaterThan(2 ** 32);
+    }
+    const [usage] = await peekRateLimit({
+      rules: [{ limit: 5, period: 3600 }],
+      sharedKey: keyName('round-trip'),
+      user: undefined,
+      req,
+    });
+    expect(usage).toMatchObject({ used: 3, remaining: 2 });
+  });
+
+  it('a refund releases exactly one attempt, once, even with two in the same millisecond', async () => {
+    const req = freshReq();
+    const bucket = rateLimitBucket(keyName('refund'), undefined, req);
+    const ts = Date.now() - 500;
+    written.add(bucket.cacheKey);
+    await real.hSet(bucket.cacheKey, bucket.hashKey, pack([ts, ts]));
+
+    const claim = await claimRateLimitAttempt({
+      rules: [{ limit: 5, period: 3600 }],
+      keyName: keyName('refund'),
+      user: undefined,
+      req,
+    });
+    expect(await readRateLimitAttempts(bucket)).toHaveLength(3);
+    await claim.refund();
+    await claim.refund();
+
+    const left = await readRateLimitAttempts(bucket);
+    expect(left).toEqual([ts, ts]);
+  });
+
+  it('a refunded call frees its slot for the next caller', async () => {
+    const req = freshReq();
+    const claim = await claimRateLimitAttempt({
+      rules: [{ limit: 1, period: 3600 }],
+      keyName: keyName('refund-frees'),
+      user: undefined,
+      req,
+    });
+    expect(await call('refund-frees', req, 1)).toBe(false);
+    await claim.refund();
+    expect(await call('refund-frees', req, 1)).toBe(true);
+  });
+
+  it('a claim on a 5000-entry bucket stays within 5 ms median round trip', async () => {
+    const req = freshReq();
+    const bucket = rateLimitBucket(keyName('large'), undefined, req);
+    const now = Date.now();
+    written.add(bucket.cacheKey);
+    await real.hSet(
+      bucket.cacheKey,
+      bucket.hashKey,
+      pack(Array.from({ length: 5000 }, (_, i) => now - 3_600_000 + i * 100))
+    );
+    const timings: number[] = [];
+    for (let i = 0; i < 50; i++) {
+      const started = performance.now();
+      await call('large', req, 100_000);
+      timings.push(performance.now() - started);
+    }
+    timings.sort((x, y) => x - y);
+    const median = timings[25];
+    console.info(`5000-entry claim median ${median.toFixed(2)} ms`);
+    expect(median).toBeLessThanOrEqual(5);
   });
 });

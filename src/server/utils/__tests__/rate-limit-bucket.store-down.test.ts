@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import { unpack } from 'msgpackr';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 /**
  * The rate limiter when its store (the cluster cache) is unavailable.
@@ -296,6 +296,38 @@ describe('the local fallback count holds bounded memory', () => {
     vi.setSystemTime(t0 + 11_000); // past it, with no sweep due: dropped, not refreshed
     await attempt(req, undefined, tenSeconds);
     expect(__localRateLimitBucketCountForTests()).toBe(0);
+  });
+});
+
+describe('claimRateLimitAttempt when the claim script does not answer', () => {
+  it('decides on the local count within 750ms, and a refund releases the slot without hanging', async () => {
+    hGet.mockResolvedValue([]);
+    redisMock.redis.eval.mockImplementation(() => new Promise(() => undefined));
+    onTestFinished(() => {
+      redisMock.redis.eval.mockReset();
+    });
+    const req = freshReq();
+    const claimOnce = () =>
+      claimRateLimitAttempt({
+        rules: [{ limit: 1, period: 60 }],
+        keyName: 'script-hung:test',
+        user: undefined,
+        req,
+      });
+
+    const started = Date.now();
+    const first = await within(claimOnce(), 2000);
+    expect(first).not.toBe(HUNG);
+    expect(Date.now() - started).toBeLessThan(750);
+
+    // The hung claim counts locally: the next call is refused.
+    const refused = await claimOnce().catch((e: unknown) => e);
+    expect((refused as TRPCError).code).toBe('TOO_MANY_REQUESTS');
+
+    expect(await within((first as Awaited<ReturnType<typeof claimOnce>>).refund(), 2000)).not.toBe(
+      HUNG
+    );
+    await expect(within(claimOnce(), 2000)).resolves.not.toBe(HUNG);
   });
 });
 

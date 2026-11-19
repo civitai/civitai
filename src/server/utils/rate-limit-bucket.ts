@@ -16,6 +16,13 @@ import { markActiveLimit } from '~/server/utils/active-rate-limits';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { throwRateLimited } from '~/server/utils/rate-limit-error';
 import {
+  claimScriptArgs,
+  parseClaimReply,
+  RATE_LIMIT_CLAIM_SCRIPT,
+  refundScriptArgs,
+} from '~/server/utils/rate-limit-claim-script';
+import { rateLimitClaimPathCounter } from '~/server/prom/rate-limit.metrics';
+import {
   bindingRefusal,
   evaluateRateLimitWindow,
   rateLimitMetaForRefusal,
@@ -327,6 +334,118 @@ export async function peekRateLimit({
 }
 
 /**
+ * A claimed attempt. Calling it records the attempt (on the atomic path it is already stored, and
+ * this only reports usage); `refund` releases it, for a caller that counts only successes. Refund
+ * runs at most once and never throws.
+ */
+export type RateLimitClaim = (() => Promise<void>) & { refund: () => Promise<void> };
+
+const RATE_LIMIT_TTL_MS = CacheTTL.day * 1000;
+
+const noClaim = (): RateLimitClaim =>
+  Object.assign(async () => undefined, { refund: async () => undefined });
+
+function claimRecorded(
+  req: NextApiRequest,
+  rules: RateLimit[],
+  stored: number[],
+  release: () => Promise<void>
+): RateLimitClaim {
+  let released = false;
+  const record = async () => {
+    noteRateLimitUsage(req, evaluateRateLimitWindow(rules, stored, Date.now()));
+  };
+  return Object.assign(record, {
+    refund: async () => {
+      if (released) return;
+      released = true;
+      await release();
+    },
+  });
+}
+
+function removeLocalAttempt(bucket: RateLimitBucket, at: number) {
+  const entry = localAttempts.get(localKeyOf(bucket));
+  if (!entry) return;
+  const i = entry.attempts.indexOf(at);
+  if (i >= 0) entry.attempts.splice(i, 1);
+}
+
+type StoreClaim =
+  | { kind: 'admitted'; attempts?: number[] }
+  | { kind: 'refused'; attempts: number[] }
+  | { kind: 'timeout' }
+  | { kind: 'error' };
+
+/** Rejects after `ms` (no deadline when `ms <= 0`); the call itself runs on. */
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  if (ms <= 0) return p;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ClaimDeadlineError()), ms);
+  });
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer));
+}
+class ClaimDeadlineError extends Error {}
+
+/**
+ * The atomic claim (RATE_LIMIT_CLAIM_SCRIPT), under the same deadline as the read but not the
+ * cluster-cache breaker: a script fault must not open the breaker for every cache read.
+ */
+async function claimInStore(
+  bucket: RateLimitBucket,
+  rules: RateLimit[],
+  local: readonly number[],
+  now: number,
+  longestPeriodSec: number,
+  failClosed: boolean
+): Promise<StoreClaim> {
+  try {
+    const reply = await withDeadline(
+      redis.eval(RATE_LIMIT_CLAIM_SCRIPT, {
+        keys: [bucket.cacheKey],
+        arguments: claimScriptArgs({
+          field: bucket.hashKey,
+          now,
+          ttlMs: RATE_LIMIT_TTL_MS,
+          keepMs: longestPeriodSec * 1000,
+          local,
+          rules: rules.map((r) => ({ limit: r.limit, windowMs: r.period! * 1000 })),
+        }),
+      }),
+      failClosed ? failClosedReadDeadlineMs() : env.REDIS_CACHE_READ_DEADLINE_MS
+    );
+    const { admitted, attempts } = parseClaimReply(reply);
+    return admitted
+      ? { kind: 'admitted', attempts }
+      : { kind: 'refused', attempts: attempts ?? [] };
+  } catch (error) {
+    if (error instanceof ClaimDeadlineError) return { kind: 'timeout' };
+    logSysRedisFailOpen('rate-limit-claim-script-error', 'rate-limit-bucket.claimInStore', error, {
+      cacheKey: bucket.cacheKey,
+    });
+    return { kind: 'error' };
+  }
+}
+
+/** Releases the attempt stored at `at`. Never throws: a failed refund keeps the slot held. */
+async function refundInStore(bucket: RateLimitBucket, at: number) {
+  try {
+    await withDeadline(
+      redis.eval(RATE_LIMIT_CLAIM_SCRIPT, {
+        keys: [bucket.cacheKey],
+        arguments: refundScriptArgs(bucket.hashKey, at, RATE_LIMIT_TTL_MS),
+      }),
+      env.REDIS_CACHE_READ_DEADLINE_MS
+    );
+  } catch (error) {
+    logSysRedisFailOpen('rate-limit-write-degraded', 'rate-limit-bucket.refundInStore', error, {
+      cacheKey: bucket.cacheKey,
+    });
+  }
+}
+
+/**
  * One attempt against `keyName`'s rules for this caller: the body of the tRPC `rateLimit()`
  * middleware, and how a REST endpoint draws from a procedure's bucket (`keyName` = its path with
  * `:`). `rules` is a fixed list or `usageLimits(...ids)`, resolved per call from the usage-limit
@@ -348,15 +467,15 @@ export async function claimRateLimitAttempt({
   scope?: string;
   user: SessionUser | undefined;
   req: NextApiRequest;
-}): Promise<() => Promise<void>> {
+}): Promise<RateLimitClaim> {
   // Preview shares a dev DB with a few CI smoke accounts; daily quotas exhaust across PR runs (civitai#2592).
-  if (user?.isModerator || isDev || isTest || isPreview) return async () => undefined;
+  if (user?.isModerator || isDev || isTest || isPreview) return noClaim();
 
   const validLimits = isUsageLimitRef(rules)
     ? await resolveUsageLimitRules(rules.usageLimitIds, user)
     : selectRateLimitRules(rules, user);
   // Nothing applies (every entry disabled or out of scope): count nothing, and keep the history.
-  if (validLimits.length === 0) return async () => undefined;
+  if (validLimits.length === 0) return noClaim();
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const failClosed = isFailClosedRateLimitScope(scope);
@@ -369,25 +488,73 @@ export async function claimRateLimitAttempt({
   }
 
   const now = Date.now();
-  const usages = evaluateRateLimitWindow(validLimits, attempts, now);
-  const refusal = bindingRefusal(usages);
-  if (refusal) {
+  // A refusal: the same error, headers and account banner whichever read decided it.
+  const refuseWith = async (usages: RuleUsage[], at: number, storeDown: boolean) => {
+    const refusal = bindingRefusal(usages);
+    if (!refusal) return;
     const message = refusal.rule.errorMessage ?? `You're doing that too much...`;
     // A gate (limit 0) never frees a slot, so no header can describe it.
     if (refusal.rule.kind === 'product' && refusal.nextAt !== null) noteRateLimitUsage(req, usages);
     // The account banner lives in the same store; while it is unavailable, skip it rather than
     // hold the refusal on a write that cannot land.
-    else if (user && refusal.nextAt !== null && !degraded)
-      await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now });
-    const meta = rateLimitMetaForRefusal(usages, now);
+    else if (user && refusal.nextAt !== null && !storeDown)
+      await markActiveLimit({ userId: user.id, keyName, retryAt: refusal.nextAt, now: at });
+    const meta = rateLimitMetaForRefusal(usages, at);
     if (meta) throwRateLimited(meta, message);
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message });
-  }
+  };
 
-  return async () => {
+  // The read above is a pre-check: a full bucket is refused for the cost of that read.
+  const precheck = evaluateRateLimitWindow(validLimits, attempts, now);
+  if (!degraded && bindingRefusal(precheck))
+    rateLimitClaimPathCounter.inc({ path: 'precheck_refused' });
+  await refuseWith(precheck, now, degraded);
+
+  const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
+  if (!degraded) {
+    const local = localAttempts.get(localKeyOf(bucket))?.attempts ?? [];
+    const outcome = await claimInStore(bucket, validLimits, local, now, longestPeriod, failClosed);
+    if (outcome.kind === 'refused') {
+      rateLimitClaimPathCounter.inc({ path: 'script' });
+      const usages = evaluateRateLimitWindow(validLimits, outcome.attempts, now);
+      await refuseWith(usages, now, false);
+      // The script refused, so some rule is at its limit; evaluated here, one always refuses.
+      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: `You're doing that too much...` });
+    }
+    if (outcome.kind === 'admitted') {
+      rateLimitClaimPathCounter.inc({ path: 'script' });
+      const stored = outcome.attempts ?? [...attempts, now];
+      mirrorLocalAttempts(
+        bucket,
+        stored.filter((x) => x > now - longestPeriod * 1000),
+        now
+      );
+      return claimRecorded(req, validLimits, stored, () => refundInStore(bucket, now));
+    }
+    if (outcome.kind === 'timeout') {
+      rateLimitClaimPathCounter.inc({ path: 'degraded' });
+      // The script may have committed: release it if it did, then decide as an unread store does.
+      if (failClosed) {
+        void refundInStore(bucket, now);
+        throw new TRPCError({
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'This is temporarily unavailable. Please try again in a moment.',
+        });
+      }
+      // The local attempt carries the script's own `now`, so a committed claim merges in once.
+      recordLocalAttempt(bucket, now, longestPeriod);
+      return claimRecorded(req, validLimits, [...attempts, now], async () => {
+        removeLocalAttempt(bucket, now);
+        await refundInStore(bucket, now);
+      });
+    }
+    // The script errored: this call decides on the read-then-write path below.
+    rateLimitClaimPathCounter.inc({ path: 'fallback' });
+  } else rateLimitClaimPathCounter.inc({ path: 'degraded' });
+
+  const record = async () => {
     attempts.push(Date.now());
     noteRateLimitUsage(req, evaluateRateLimitWindow(validLimits, attempts, Date.now()));
-    const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     if (degraded) {
       recordLocalAttempt(bucket, attempts[attempts.length - 1], longestPeriod);
       return;
@@ -411,4 +578,6 @@ export async function claimRateLimitAttempt({
       );
     }
   };
+  // Nothing is held before `record` runs on this path, so there is nothing to release.
+  return Object.assign(record, { refund: async () => undefined });
 }
