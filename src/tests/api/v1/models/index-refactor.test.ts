@@ -284,7 +284,7 @@ describe('/api/v1/models moderator view follows the credential', () => {
     expect(mockRunModelSearch.mock.calls[0][1].user).toEqual(system);
   });
 
-  it.each(['hidden', 'followed'])(
+  it.each(['hidden', 'followed', 'favorites'])(
     "keeps the caller's id, without the moderator view, for their %s list",
     async (list) => {
       expect(await searchedAs(personalKey(MODELS_READ), { [list]: 'true' })).toEqual({

@@ -183,7 +183,7 @@ async function handler(
         // region holds the level to SFW.
         browsingLevel,
         nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
-        user: searchViewer(req, user, !!data.hidden || !!data.followed),
+        user: searchViewer(req, user, !!data.hidden || !!data.followed || !!data.favorites),
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),
       }
@@ -210,7 +210,7 @@ async function handler(
 /**
  * The viewer the search runs as. Moderator rights and the owner's view come only from a session or a
  * full-scope personal key, whatever the route's scope mode; a narrower credential searches as signed
- * out, except for the `hidden` and `followed` lists, which are read by the caller's id.
+ * out, except for the caller's own `hidden`, `followed` and `favorites` lists, read by their id.
  */
 function searchViewer(req: NextApiRequest, user: Session['user'] | undefined, ownList: boolean) {
   const credential = getRequestCredential(req);

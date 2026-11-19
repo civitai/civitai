@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { getActiveSalesSchema } from '~/server/schema/model-sale.schema';
 import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
@@ -290,7 +291,7 @@ export const modelRouter = router({
     .use(
       cacheIt({
         ttl: 60,
-        varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
+        varyBy: (ctx) => ({ isModerator: credentialViews(ctx).asModerator }),
       })
     )
     .query(getModelsPagedSimpleHandler),

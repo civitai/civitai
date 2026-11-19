@@ -772,16 +772,17 @@ export const getModelsPagedSimpleHandler = async ({
 }) => {
   const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...restInput } = input || {};
   const { take, skip } = getPagination(limit, page);
+  const isModerator = credentialViews(ctx).asModerator;
   const results = await getModels({
     input: { ...restInput, take, skip },
-    user: ctx.user,
+    user: ctx.user && { ...ctx.user, isModerator },
     select: {
       id: true,
       name: true,
       nsfw: true,
       meta: true,
       modelVersions:
-        input.needsReview && ctx.user?.isModerator
+        input.needsReview && isModerator
           ? {
               select: { id: true, name: true, meta: true },
               where: { meta: { path: ['needsReview'], equals: true } },
@@ -795,7 +796,6 @@ export const getModelsPagedSimpleHandler = async ({
   // set it returned depends on who asked, which no cache key can express.
   if (results.isPrivate && ctx.cache) ctx.cache.canCache = false;
 
-  const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,
     items: results.items.map(({ modelVersions = [], ...model }) => {

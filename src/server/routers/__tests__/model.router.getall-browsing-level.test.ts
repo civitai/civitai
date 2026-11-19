@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Importing the real router reaches `~/env/client`, which validates at module load.
 // Same pin as `model.router.edge-cache-chain.test.ts`.
@@ -151,4 +152,42 @@ describe('model.getAll moderator view', () => {
     await caller.getAll({ limit: 5 });
     expect(getModelsWithImagesAndModelVersions.mock.calls[0][0].user.isModerator).toBe(asModerator);
   });
+});
+
+describe('model.getAllPagedSimple moderator view', () => {
+  const moderator = { id: 5, showNsfw: true, browsingLevel: VIEWER_LEVEL, isModerator: true };
+  it.each([
+    ['a session', {}, false],
+    [
+      'a ModelsRead key',
+      {
+        apiKeyId: 9,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      true,
+    ],
+  ] as const)(
+    'lists only Published models for a status filter unless a moderator on %s',
+    async (_l, credential, publishedOnly) => {
+      dbMock.dbRead.model.findMany.mockResolvedValue([]);
+      dbMock.dbRead.model.count.mockResolvedValue(0 as never);
+      const caller = modelRouter.createCaller({
+        user: moderator,
+        acceptableOrigin: true,
+        tokenScope: TokenScope.Full,
+        apiKeyId: null,
+        req: { headers: {} },
+        res: { setHeader: () => undefined },
+        cache: { browserTTL: 0, edgeTTL: 0, staleWhileRevalidate: 0, canCache: true, skip: false },
+        features: { canViewNsfw: true },
+        track: { action: vi.fn(() => Promise.resolve(true)) },
+        ...credential,
+      } as never);
+      await caller.getAllPagedSimple({ limit: 5, status: ['Draft'] } as never);
+      const where = JSON.stringify(dbMock.dbRead.model.findMany.mock.calls.at(-1)?.[0]?.where);
+      expect(where.includes('{"status":"Published"}')).toBe(publishedOnly);
+    }
+  );
 });

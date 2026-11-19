@@ -19,10 +19,12 @@ export const semanticModelSearchRouter = router({
     .input(semanticModelSearchSchema)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
+      const queryOptions = await modelFeedQueryOptions(ctx);
       const result = await searchSemanticModels({
         input,
-        user: ctx.user,
-        queryOptions: await modelFeedQueryOptions(ctx),
+        // Moderator rights hold only on a session or a full-access key, as in the feed options.
+        user: queryOptions.user,
+        queryOptions,
         track: ctx.track,
         // As model.getAll: rows that depend on who asked are never cached for another viewer.
         onViewerDependent: () => (ctx.cache.canCache = false),
