@@ -450,7 +450,6 @@ describe('holds', () => {
       userId: OTHER,
       isModerator: true,
       canReviewCsam: true,
-      servableLevels: 31,
     });
     expect(download).toMatchObject({ key: `k/${dealId}/final`, removed: true });
   });
