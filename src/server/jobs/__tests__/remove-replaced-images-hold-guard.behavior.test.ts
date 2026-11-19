@@ -156,6 +156,14 @@ const SCHEMA = `
       images jsonb NOT NULL DEFAULT '[]',
       details jsonb NOT NULL DEFAULT '{}'
     );
+    -- The DELETE queues each deleted image's stored file here, in the same statement.
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
 `;
 
 const reset = (tables: string) =>
@@ -219,7 +227,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES

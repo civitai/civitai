@@ -593,6 +593,14 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
             return updated;
           });
           cancelled += closed;
+          if (closed)
+            await notifyServiceDeal({
+              dealId: hold.dealId,
+              notice: 'cancelled',
+              to: 'parties',
+              actorId: -1,
+              key: 'payment_failed',
+            });
         }
       } else {
         // Part of the price moved. Neither marking it held nor cancelling is safe.

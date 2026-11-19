@@ -148,11 +148,15 @@ async function updateDescription() {
   const proposed = readDescription();
   const model = await trpcCall('model.getById', { id }, 'GET');
   const current = (model.description ?? '').trim();
-  if (current === proposed) return console.log('The proposed description matches the live one — nothing to do.');
-  const hash = approvalHash(current, proposed);
+  const name = flags.name?.trim() || model.name;
+  const renaming = name !== model.name;
+  if (current === proposed && !renaming)
+    return console.log('The proposed description matches the live one — nothing to do.');
+  const hash = renaming ? approvalHash(current, proposed, model.name, name) : approvalHash(current, proposed);
 
   if (!writable) {
     console.log(`[dry run] description update for model ${id} ("${model.name}", ${model.status}) → ${API_URL}`);
+    if (renaming) console.log(`Rename: "${model.name}" → "${name}"`);
     console.log(`${current.length} → ${proposed.length} chars\n`);
     printDiff(current, proposed);
     return printApprovalFooter(hash);
@@ -163,7 +167,7 @@ async function updateDescription() {
   // optional field untouched — so the required fields go back at their current values.
   await trpcCall('model.upsert', {
     id,
-    name: model.name,
+    name,
     type: model.type,
     uploadType: model.uploadType,
     status: model.status,
@@ -171,6 +175,7 @@ async function updateDescription() {
   });
   const after = await trpcCall('model.getById', { id }, 'GET');
   console.log(`Updated the description of model ${id}: ${API_URL}/models/${id}`);
+  if (after.name !== name) console.log(`Note: the stored name is "${after.name}", not "${name}".`);
   if ((after.description ?? '').trim() !== proposed)
     console.log('Note: the stored HTML differs from the file — the server sanitizes and expands blurbs. Check the page.');
 }
@@ -512,7 +517,7 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
 
   whoami
   create-model        --name <n> --description-file <html> [--type Checkpoint] [--owner-id <id>] [--writable --approved <hash>]
-  update-description  --model-id <id> --description-file <html> [--writable --approved <hash>]
+  update-description  --model-id <id> --description-file <html> [--name <n>] [--writable --approved <hash>]
   transfer            --model-id <id> [--owner-id <id>] [--writable]
   evidence            [--ecosystem <key>] [--base-model <name>]      API-only or hosted weights?
   create-version      --model-id <id> --name <n> --base-model <name> --kind <api-only|hosted-weights>

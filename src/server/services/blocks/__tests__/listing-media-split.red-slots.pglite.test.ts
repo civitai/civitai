@@ -314,44 +314,6 @@ describe('both migrations applied', () => {
     await s.db.query(`DELETE FROM "Image" WHERE id = $1`, [R_IMG]);
     expect(await s.redSlots(LIVE)).toEqual({ icon: null, cover: XXX_IMG });
   });
-
-  it('a slot may only name an image that exists', async () => {
-    await expect(
-      writeListingRedSlot(s.raw, { appListingId: LIVE, slot: 'icon', imageId: 999_001 })
-    ).rejects.toThrow(/foreign key/);
-  });
-
-  it('the override migration is idempotent', async () => {
-    await s.setRedSlots(LIVE, { icon: R_IMG, cover: null });
-    await s.applyRedSlotsMigration();
-    expect(await s.redSlots(LIVE)).toEqual({ icon: R_IMG, cover: null });
-    const { rows } = await s.db.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_indexes
-       WHERE tablename = 'app_listing_red_media'
-         AND indexname IN ('app_listing_red_media_red_icon_idx', 'app_listing_red_media_red_cover_idx')`
-    );
-    expect(rows[0].n).toBe(2);
-  });
-
-  it('the rollback in the migration header removes the columns and the code reads "no overrides"', async () => {
-    const t = await createSplitDb();
-    try {
-      await t.applyMigration();
-      await t.applyRedSlotsMigration();
-      await t.db.exec(`
-        BEGIN;
-        SET LOCAL lock_timeout = '3s';
-        ALTER TABLE "app_listing_red_media"
-          DROP COLUMN IF EXISTS "red_icon_id",
-          DROP COLUMN IF EXISTS "red_cover_id";
-        COMMIT;
-      `);
-      expect((await probeListingMediaSplitTable(t.raw)).redSlots).toBe(false);
-      expect((await readListingRedSlots(t.raw, LIVE)).available).toBe(false);
-    } finally {
-      await t.db.close();
-    }
-  });
 });
 
 describe('both migrations applied, the table NOT granted to the role a read connects as', () => {

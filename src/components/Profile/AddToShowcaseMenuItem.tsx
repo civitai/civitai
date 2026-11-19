@@ -3,6 +3,7 @@ import { IconHeart } from '@tabler/icons-react';
 import { openAddToShowcaseModal } from '~/components/Dialog/triggers/add-to-showcase';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { ShowcaseSectionType } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -36,22 +37,29 @@ export function useAddToTopShowcase(entityType: Props['entityType']) {
   return { add, isPending: mutation.isPending };
 }
 
-export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
+/** The top-of-profile showcase holds models and images only; articles go in sections. */
+export const addsToTopShowcase = (entityType: ShowcaseEntityType) => entityType !== 'Article';
+
+export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = true }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { add } = useAddToTopShowcase(entityType);
 
-  const offersSections = entityType === 'Image' && features.profileShowcases && !!currentUser;
+  const offersSections = offerSections && features.profileShowcases && !!currentUser;
   const { data: user, isLoading } = trpc.userProfile.get.useQuery(
     { username: currentUser?.username ?? '' },
     { enabled: offersSections }
   );
-  const hasImageSections =
-    offersSections && !!user?.profile?.showcaseSections?.some((s) => s.type === 'Image');
+  const hasSections =
+    offersSections && !!user?.profile?.showcaseSections?.some((s) => s.type === entityType);
+
+  if (!hasSections && !addsToTopShowcase(entityType)) return null;
 
   const onClick = () => {
-    if (hasImageSections && currentUser?.username)
-      openAddToShowcaseModal({ props: { imageId: entityId, username: currentUser.username } });
+    if (hasSections && currentUser?.username)
+      openAddToShowcaseModal({
+        props: { entityType, entityId, username: currentUser.username },
+      });
     else add(entityId);
   };
 
@@ -72,4 +80,10 @@ export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
   );
 }
 
-type Props = { entityType: 'Model' | 'Image'; entityId: number };
+export type ShowcaseEntityType = ShowcaseSectionType;
+type Props = {
+  entityType: ShowcaseEntityType;
+  entityId: number;
+  /** false: only the one-click top-showcase add, no section picker. */
+  offerSections?: boolean;
+};

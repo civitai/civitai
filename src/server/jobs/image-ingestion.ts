@@ -1157,7 +1157,8 @@ export const removeBlockedImages = createJob(
         retractionDeferred.push(...ids);
         continue;
       }
-      const rows = await deleteImages(ids, true, {
+      const rows = await deleteImages(ids, {
+        actor: { system: 'image-ingestion' },
         retractPublicBlobs: true,
         onlyWhere,
         retractionGate,
@@ -1213,7 +1214,8 @@ export const removeBlockedImages = createJob(
         count: retractionDeferred.length,
       });
     if (deletedWithoutRetraction.length > 0) {
-      const rows = await deleteImages(deletedWithoutRetraction, true, {
+      const rows = await deleteImages(deletedWithoutRetraction, {
+        actor: { system: 'image-ingestion' },
         onlyWhere,
         moderatorDelete: true,
       });

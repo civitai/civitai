@@ -1309,7 +1309,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   { ecosystemId: ECO.Krea3, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  // MAI - checkpoint only (Microsoft MAI Image, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
@@ -1334,8 +1334,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
-  // MiniMax H3 Image - no training row: training is not wired yet.
+  // MiniMax H3 Image - LoRAs and creator checkpoints for generation; LORA training (AI Toolkit only)
   { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'training', modelTypes: loraOnly },
   // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
   { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 

@@ -63,6 +63,9 @@ export const serverSchema = z
       .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
+    // App Storage record core (`services/apps/app-record.ts`). OFF by default. On: the record
+    // export (`appStorage.exportMine`); off, that route is NOT_FOUND.
+    APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -630,6 +633,12 @@ export const serverSchema = z
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
+    // The app index service (apps/app-index-go): `/apps` store text search reads its `/search`
+    // when the `app-index-search` flag is on for the viewer. Unset = the store's database search.
+    APP_INDEX_URL: z.url().optional(),
+    // The fraction (0-1) of index-answered store searches that also read the database grid page,
+    // off the response path, to log how the two result sets compare. 0 = never.
+    APP_INDEX_SEARCH_COMPARE_SAMPLE: z.coerce.number().min(0).max(1).default(0.1),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt

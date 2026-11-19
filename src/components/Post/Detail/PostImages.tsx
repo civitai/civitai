@@ -53,6 +53,7 @@ export function PostImages({
   isModerator,
   texts,
   authorId,
+  linkedTextId,
 }: {
   postId: number;
   images: ImagesInfiniteModel[];
@@ -60,6 +61,8 @@ export function PostImages({
   texts?: DetailText[];
   /** The post's author: their own unrated text is not blurred for them. */
   authorId?: number;
+  /** The text a `?text=` link names: shown even past the fold, and scrolled to. */
+  linkedTextId?: number;
   isLoading?: boolean;
   collectionItems?: PostContestCollectionItem[];
   isOwner?: boolean;
@@ -89,7 +92,11 @@ export function PostImages({
     );
 
   const remainingItems = items.length - maxInitialImages;
-  const _items = showMore ? items : items.slice(0, maxInitialImages);
+  const linkedPastFold =
+    !!linkedTextId &&
+    items.findIndex((item) => item.type === 'text' && item.text.id === linkedTextId) >=
+      maxInitialImages;
+  const _items = showMore || linkedPastFold ? items : items.slice(0, maxInitialImages);
 
   return (
     <StickerPlacementBatchProvider imageIds={imageIds}>
@@ -97,7 +104,13 @@ export function PostImages({
         {_items.map((item, i) => {
           if (item.type === 'text')
             return (
-              <PostTextBlock key={item.key} text={item.text} postId={postId} userId={authorId} />
+              <PostTextBlock
+                key={item.key}
+                text={item.text}
+                postId={postId}
+                userId={authorId}
+                linked={item.text.id === linkedTextId}
+              />
             );
           const image = item.image;
           const width = image.width ?? maxWidth;

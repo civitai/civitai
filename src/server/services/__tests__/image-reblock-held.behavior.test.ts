@@ -156,7 +156,8 @@ beforeEach(async () => {
 const { handleBlockImages } = await import('~/server/services/image.service');
 const { setTosViolationHandler } = await import('~/server/controllers/image.controller');
 
-const tosBlock = async (id: number, violationType?: string) => {
+/** `replicaPHash`: what a lagging replica read returns instead of the row's hash. */
+const tosBlock = async (id: number, violationType?: string, replicaPHash?: bigint | null) => {
   const [image] = (
     await holder.db.query<{ pHash: bigint | null }>(`SELECT "pHash" FROM "Image" WHERE id = $1`, [
       id,
@@ -166,7 +167,8 @@ const tosBlock = async (id: number, violationType?: string) => {
     nsfwLevel: 32,
     userId: 7,
     postId: null,
-    pHash: BigInt(image.pHash as never),
+    pHash:
+      replicaPHash !== undefined ? replicaPHash : image.pHash == null ? null : BigInt(image.pHash),
     post: null,
   } as never);
   await setTosViolationHandler({
@@ -216,6 +218,12 @@ const deferredScope = async () =>
       `SELECT "imageId", "notifyOwner", "reportReason" FROM "ImageDeferredBlockEffect" ORDER BY "imageId"`
     )
   ).rows;
+
+const noHashLogs = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([e]) => e as { name?: string; payload?: unknown })
+    .filter((e) => e.name === 'csam-blocklist-no-hash')
+    .map((e) => e.payload);
 
 const underReviewNotices = () =>
   loggingMock.logToAxiom.mock.calls
@@ -393,5 +401,46 @@ describe('handleBlockImages over held and other images', () => {
       '204': 'TOS',
       '205': 'TOS',
     });
+    expect(noHashLogs()).toEqual([]);
+  });
+
+  it('writes the CSAM entry from the row when the replica read has no hash yet', async () => {
+    const replica = dbMock.dbRead.image.findMany.getMockImplementation()!;
+    dbMock.dbRead.image.findMany.mockImplementationOnce((async (args: never) =>
+      ((await replica(args)) as { id: number }[]).map((row) =>
+        row.id === HELD ? { ...row, pHash: null } : row
+      )) as never);
+
+    await handleBlockImages({ ids: all, include: ['phash-block'] });
+
+    expect(blocklistReasons()['201']).toBe('CSAM');
+    expect(noHashLogs()).toEqual([]);
+  });
+
+  it('a CSAM removal with no hash on the row still blocks, and logs only its id and step', async () => {
+    await holder.db.exec(`UPDATE "Image" SET "pHash" = NULL WHERE id = ${HELD}`);
+
+    await handleBlockImages({ ids: all, include: ['phash-block'] });
+
+    expect(blocklistReasons()['201']).toBeUndefined();
+    expect(noHashLogs()).toEqual([{ imageId: HELD, step: 'block' }]);
+  });
+});
+
+describe('setTosViolationHandler on a CSAM removal with no hash on the row', () => {
+  it('writes the CSAM entry from the row when the replica read has no hash yet', async () => {
+    await tosBlock(HELD, undefined, null);
+
+    expect(blocklistReasons()).toEqual({ '201': 'CSAM' });
+    expect(noHashLogs()).toEqual([]);
+  });
+
+  it('still blocks, writes no entry, and logs only its id and step', async () => {
+    await holder.db.exec(`UPDATE "Image" SET "pHash" = NULL WHERE id = ${HELD}`);
+
+    await tosBlock(HELD);
+
+    expect(blocklistReasons()).toEqual({});
+    expect(noHashLogs()).toEqual([{ imageId: HELD, step: 'block' }]);
   });
 });

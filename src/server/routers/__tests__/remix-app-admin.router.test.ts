@@ -148,6 +148,15 @@ describe('remixApp.admin', () => {
     expect(h.save).not.toHaveBeenCalled();
   });
 
+  it('refuses a user app spec, which only submit writes', async () => {
+    const { engine } = restyle.spec as { engine: unknown };
+    const spec = { icon: 'sparkles', engine, source: 'export default 1' };
+    await expect(as(moderator).save({ ...restyle, spec } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(h.save).not.toHaveBeenCalled();
+  });
+
   it('test-runs any app, disabled ones too, and passes no quote until one is confirmed', async () => {
     await as(moderator).testStart(tap());
     expect(h.start).toHaveBeenLastCalledWith(

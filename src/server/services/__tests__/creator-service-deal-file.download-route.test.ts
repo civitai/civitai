@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The download route is thin: it must send an allowed user to a signed URL, answer every refusal
  * with the same 404, and never let an edge cache keep a per-user redirect.
  */
 
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
 const service = vi.hoisted(() => ({
   resolveServiceDealFileDownload: vi.fn(),
   getServiceDealFileDownloadUrl: vi.fn(),
@@ -58,9 +65,9 @@ const response = () => {
 };
 
 let lastReq: unknown;
-const call = (fileId: unknown, user = { id: 7, isModerator: false }) => {
+const call = (fileId: unknown, user = { id: 7, isModerator: false }, host?: string) => {
   const res = response();
-  lastReq = { query: { fileId }, headers: {} };
+  lastReq = { query: { fileId }, headers: host ? { host } : {} };
   return handler(lastReq, res, user).then(() => res);
 };
 
@@ -91,6 +98,7 @@ describe('download route', () => {
       userId: 7,
       isModerator: false,
       canReviewCsam: false,
+      servableLevels: sfwBrowsingLevelsFlag,
     });
   });
 
@@ -106,6 +114,7 @@ describe('download route', () => {
       userId: 9,
       isModerator: true,
       canReviewCsam: false,
+      servableLevels: sfwBrowsingLevelsFlag,
     });
   });
 
@@ -135,4 +144,18 @@ describe('download route', () => {
       expect(service.resolveServiceDealFileDownload).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('what the domain may be sent', () => {
+  it.each([
+    ['civitai.red', allBrowsingLevelsFlag],
+    ['civitai.com', sfwBrowsingLevelsFlag],
+    [undefined, sfwBrowsingLevelsFlag],
+  ])('a request to %s may be sent the matching levels', async (host, levels) => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    await call('12', undefined, host);
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ servableLevels: levels })
+    );
+  });
 });
