@@ -355,6 +355,17 @@ const IMAGE_TOOLS = {
   8204: [42],
 };
 const toolIdsOf = (id) => IMAGE_TOOLS[id] ?? [];
+// ImageTechnique rows: imageId -> its technique ids (the `techniques` filter). An image not listed has
+// none.
+const IMAGE_TECHNIQUES = {
+  8001: [3],
+  8003: [3, 4],
+  8006: [4],
+  8007: [3],
+  8101: [3],
+  8104: [4],
+};
+const techniqueIdsOf = (id) => IMAGE_TECHNIQUES[id] ?? [];
 // Metric hashes (metrics:Image:<id>), as the watcher writes them.
 function metricsOf(id) {
   const n = id % 100;
@@ -493,6 +504,10 @@ class Trace {
     this.cold = new Set(); // "prefix:id" keys the fixture holds absent (a cache miss)
     this.coldRead = new Set(); // the cold keys the mirror read (each must be)
     this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
+    this.techniquesRead = false; // a query filtered by `techniques`: the tables then carry each image's technique rows
+    this.techniquesCandidatePosts = new Set(); // posts of every row a techniques query matches without its techniques clause
+    this.tagsRead = false; // a query filtered by `tags`: the tables then carry each image's tag rows
+    this.tagsCandidatePosts = new Set(); // posts of every row a tags query matches without its tags clause
     this.toolsRead = false; // a query filtered by `tools`: the tables then carry each image's tool rows
     this.toolsCandidatePosts = new Set(); // posts of every row a tools query matches without its tools clause
     this.baseModelsRead = false; // a query filtered by `baseModels`: the tables then carry each version's baseModel
@@ -813,6 +828,8 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
   if (baseModels.length) params.set('baseModels', baseModels.join(','));
   const tools = ints(input.tools);
   if (tools.length) params.set('tools', tools.join(','));
+  const techniques = ints(input.techniques);
+  if (techniques.length) params.set('techniques', techniques.join(','));
   if (postIds.length) params.set('postIds', [...new Set(postIds)].join(','));
   if (present(input.model3dId)) params.set('model3dIds', String(input.model3dId));
   params.set('sort', sort);
@@ -879,12 +896,16 @@ class NodeError extends Error {
 // --- getAllImagesUncaptured: the SQL (over the world), hydration and per-image transform ----------
 /** The rows Node's getAllImages SQL returns, for the clauses these inputs reach. */
 function imageSql(q) {
+  if (q.techniques?.length) T.techniquesRead = true;
+  if (q.tags?.length) T.tagsRead = true;
   if (q.tools?.length) T.toolsRead = true;
   if (q.baseModels?.length) T.baseModelsRead = true;
   const isModerator = !!q.user?.isModerator;
   const userId = q.user?.id;
   let browsingLevel = onlySelectableLevels(q.browsingLevel ?? 0);
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
+  // `without` names one more filter clause to leave out (the candidate rows below).
+  let without;
   const viaVersion = q.modelVersionId || q.modelId;
   const passes = (i, applyTools, applyBaseModels = true) => {
     const p = POSTS[i.postId];
@@ -901,7 +922,9 @@ function imageSql(q) {
     if (q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
     if (!q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
     if (q.userId && i.userId !== q.userId) return false;
-    if (q.tags?.length && !tagIdsOf(i.id).some((t) => q.tags.includes(t))) return false;
+    if (without !== 'tags' && q.tags?.length && !tagIdsOf(i.id).some((t) => q.tags.includes(t))) return false;
+    // EXISTS (… FROM "ImageTechnique" … "techniqueId" IN (techniques)): any listed technique.
+    if (without !== 'techniques' && q.techniques?.length && !techniqueIdsOf(i.id).some((t) => q.techniques.includes(t))) return false;
     if (q.postId && i.postId !== q.postId) return false;
     if (q.postIds?.length && !q.postIds.includes(i.postId)) return false;
     if (q.excludedUserIds?.length && q.excludedUserIds.includes(i.userId)) return false;
@@ -918,6 +941,13 @@ function imageSql(q) {
     return true;
   };
   let rows = Object.values(IMAGES).filter((i) => passes(i, true));
+  // As for `tools` below: every row the query would match without its techniques (or tags) clause.
+  for (const key of ['techniques', 'tags']) {
+    if (!q[key]?.length) continue;
+    without = key;
+    for (const i of Object.values(IMAGES)) if (passes(i, true)) T[`${key}CandidatePosts`].add(i.postId);
+    without = undefined;
+  }
   // Every row the same query would match WITHOUT the tools clause (before order, cursor and limit):
   // the fixture's tables must hold them, or a feed-go that dropped the clause would answer the same.
   if (q.tools?.length) for (const i of Object.values(IMAGES)) if (passes(i, false)) T.toolsCandidatePosts.add(i.postId);
@@ -1897,7 +1927,63 @@ const AS_POSTS = [
       'levels=1&excludedTags=9901&versionIds=6401&excludePoi=1&tools=42&postIds=7201&sort=reactions&limit=2': { body: { items: [8202, 8201] } },
     },
   },
+  {
+    name: 'tags-blocked-stripped-pinned-and-feed-page',
+    description: '`tags: [5161, 502]` on a version with a pinned post: the blocked 5161 is stripped, so the feed query carries tags=502 only; the pinned post (Postgres) keeps only its image carrying tag 502 (8101; 8102 and 8103 carry other tags); the hydrate of the feed’s ids drops 8105, which the feed named but which does not carry 502.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5004, modelVersionId: 6301, sort: 'Most Reactions', browsingLevel: 1, limit: 5, tags: [5161, 502] },
+    replies: {
+      'levels=1&tags=502&excludedTags=9901&versionIds=6301&excludePoi=1&sort=reactions&limit=10': { body: { items: [8104, 8105] } },
+    },
+  },
+  {
+    name: 'db-path-tags-any-of',
+    description: 'image-index-feed off: `tags: [520, 503]` keeps the images carrying either (8007 carries neither, 8002 is above the level); the lazy completion of post 7001 is filtered the same way, so 8002 is not appended. Never cached (getAllImages marks a tag filter personalized).',
+    viewer: null,
+    host: HOST.green,
+    nodeFlags: { imageIndexFeed: false },
+    goConfig: { imageIndexFeed: false },
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Newest', browsingLevel: 1, limit: 3, tags: [520, 503] },
+    replies: {},
+  },
+  {
+    name: 'tags-all-blocked',
+    description: 'Only blocked tags: every getAllImagesIndex call strips them to nothing and answers its own empty page, so the gallery is empty and the feed is never asked.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3, tags: [5161, 5351] },
+    replies: {},
+  },
+  {
+    name: 'techniques-feed-page',
+    description: '`techniques: [4, 0, 4]`: the feed query sends the positive ids as given (4,4); the hydrate keeps the images with a row for any of them and drops 8007 (technique 3 only), which the feed named.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3, techniques: [4, 0, 4] },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&techniques=4%2C4&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
+    },
+  },
+  {
+    name: 'db-path-techniques-any-of',
+    description: 'image-index-feed off: `techniques: [3]` keeps 8007, 8003 and 8001 (any listed technique); the lazy completion of post 7001 is filtered the same way, so 8002 (no technique row) is not appended.',
+    viewer: null,
+    host: HOST.green,
+    nodeFlags: { imageIndexFeed: false },
+    goConfig: { imageIndexFeed: false },
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Newest', browsingLevel: 1, limit: 2, techniques: [3] },
+    replies: {},
+  },
   // Fallbacks: shapes feed-go does not answer.
+  {
+    name: 'fallback-techniques-not-int4',
+    description: 'A `techniques` entry that is not an int4: Node binds it against an integer column, which is not reproduced.',
+    fallback: 'input-techniques',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3, techniques: [1.5] },
+  },
   {
     name: 'fallback-unparsed-cursor',
     description: 'A cursor the feed mapper cannot read: Node answers 400 (CURSOR_UNPARSED).',
@@ -2323,6 +2409,16 @@ const INFINITE = [
     replies: {},
   },
   {
+    name: 'techniques-global-feed',
+    description: 'The global feed signed out with `techniques: [3]`: sent to the feed after the POI exclusion, and the hydrate drops 8006 (technique 4 only), which the feed named.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Newest', browsingLevel: 1, limit: 3, techniques: [3] },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&techniques=3&sort=newest&limit=3': { body: { items: [8007, 8006, 8001] } },
+    },
+  },
+  {
     name: 'include-profile-pictures',
     description: '`include: [cosmetics, profilePictures]`: the creators’ profile pictures are read and sent.',
     viewer: null,
@@ -2451,6 +2547,14 @@ const INFINITE = [
 // Emission
 // ---------------------------------------------------------------------------------------------
 function dbTables({ tags = false, meta = false } = {}) {
+  // A `techniques` or `tags` fixture, as a `tools` one below: each image the feed named, each row the
+  // query would match without that clause, and (techniques) each image with a technique row. Every
+  // image carries tags, so a tags fixture has no third set.
+  if (T.techniquesRead || T.tagsRead) {
+    for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
+    for (const id of [...T.techniquesCandidatePosts, ...T.tagsCandidatePosts]) T.posts.add(id);
+    if (T.techniquesRead) for (const id of Object.keys(IMAGE_TECHNIQUES)) T.posts.add(IMAGES[id].postId);
+  }
   if (T.toolsRead) {
     // A `tools` fixture holds every image the tools clause decides on, so a row only that clause drops
     // is one feed-go must drop too: each image the feed named (the hydrate), each row every tools
@@ -2468,15 +2572,18 @@ function dbTables({ tags = false, meta = false } = {}) {
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
-    // `_tags`: the image's TagsOnImageDetails rows (the tag scope's subquery), in infinite/ only.
+    // `_tags`: the image's TagsOnImageDetails rows (the tag scope's subquery), in infinite/ and in a
+    // fixture whose query filters by `tags`.
     // `_meta`: its meta column as Postgres prints it (the image-meta lookup), in v1-images/ only.
     // `_tools`: its ImageTool tool ids (the `tools` filter), only in a fixture whose query reads them.
+    // `_techniques`: its ImageTechnique ids (the `techniques` filter), likewise.
     .map((i) =>
       mark({
         ...i,
         _resources: RESOURCES[i.id],
-        ...(tags ? { _tags: tagIdsOf(i.id) } : {}),
+        ...(tags || T.tagsRead ? { _tags: tagIdsOf(i.id) } : {}),
         ...(T.toolsRead ? { _tools: toolIdsOf(i.id) } : {}),
+        ...(T.techniquesRead ? { _techniques: techniqueIdsOf(i.id) } : {}),
         ...(meta ? { _meta: META[i.id] == null ? null : jsonbText(META[i.id]) } : {}),
       })
     );

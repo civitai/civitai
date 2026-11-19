@@ -45,7 +45,7 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 26
+	goldenMinAsPosts  = 32
 	goldenMinV1       = 36
 	goldenMinInfinite = 30
 	goldenMinModels   = 31
@@ -185,10 +185,14 @@ type goldenImage struct {
 		ModelVersionID int  `json:"modelVersionId"`
 		Detected       bool `json:"detected"`
 	} `json:"_resources"`
-	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
+	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures, and a fixture whose query
+	// filters by `tags`: the tag scope).
 	Tags []int `json:"_tags"`
 	// Tools are the image's ImageTool tool ids (only in a fixture whose query filters by `tools`).
 	Tools []int `json:"_tools"`
+	// Techniques are the image's ImageTechnique ids (only in a fixture whose query filters by
+	// `techniques`).
+	Techniques []int `json:"_techniques"`
 	// Meta is the image's `meta` jsonb as Postgres prints it (v1-images/ fixtures only: the
 	// image-meta cache's lookup); null when NULL.
 	Meta *string `json:"_meta"`
@@ -560,6 +564,7 @@ var (
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
+	goldenReTechnique = regexp.MustCompile(`it\."techniqueId" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenReTools     = regexp.MustCompile(`HAVING array_agg\(it\."toolId" ORDER BY it\."toolId"\) @> \$(\d+)::integer\[\]`)
 	goldenReBaseMdl   = regexp.MustCompile(`WHERE mv\."baseModel" = ANY\(\$(\d+)::text\[\]\)`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
@@ -644,6 +649,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
 	tags, hasTags := goldenArg(args, goldenReTags, sql)
+	techniques, hasTechniques := goldenArg(args, goldenReTechnique, sql)
 	tools, hasTools := goldenArg(args, goldenReTools, sql)
 	baseModels, hasBaseModels := goldenArg(args, goldenReBaseMdl, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
@@ -686,6 +692,16 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 				carries = carries || goldenHas(goldenInts(tags), t)
 			}
 			if !carries {
+				continue
+			}
+		}
+		if hasTechniques {
+			// EXISTS (… "techniqueId" = ANY(<techniques>)): a row for any listed technique.
+			holdsAny := false
+			for _, t := range img.Techniques {
+				holdsAny = holdsAny || goldenHas(goldenInts(techniques), t)
+			}
+			if !holdsAny {
 				continue
 			}
 		}
@@ -1164,6 +1180,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Gallery:  &feed.GalleryStore{Cache: cache, DB: db},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Feed:     &feedsvc.Client{BaseURL: feedSrv.URL, HTTP: feedSrv.Client()},
+		Blocked:  blocked,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(fx.Config.CreatorPromotions),
 			LazyPostImages:          fx.Config.LazyPostImages,

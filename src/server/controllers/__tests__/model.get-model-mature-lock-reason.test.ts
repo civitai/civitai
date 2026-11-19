@@ -5,7 +5,8 @@ import type * as CoverageSource from '~/server/services/generation/coverage-sour
 import type * as GenerationService from '~/server/services/generation/generation.service';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { autoNsfwTextHash } from '~/server/services/auto-nsfw';
 
 const { getModel } = vi.hoisted(() => ({ getModel: vi.fn() }));
@@ -81,8 +82,18 @@ beforeEach(() => {
   });
 });
 
-const read = (user?: { id: number; isModerator: boolean }, forEditor = true) =>
-  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features: {} } } as never);
+const SCOPED_KEY = {
+  apiKeyId: 1,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope: TokenScope.ModelsRead,
+};
+
+const read = (user?: { id: number; isModerator: boolean }, forEditor = true, credential = {}) =>
+  getModelHandler({
+    input: { id: 1, forEditor },
+    ctx: { user, features: {}, ...credential },
+  } as never);
 
 describe('model.getById mature lock reason', () => {
   it('gives the owner the field and category, and the payload no matched text or hash', async () => {
@@ -103,6 +114,12 @@ describe('model.getById mature lock reason', () => {
     ['a moderator', { id: 30, isModerator: true }],
   ])('gives %s no reason', async (_, user) => {
     expect((await read(user)).matureLockReason).toBeNull();
+  });
+
+  it('gives the owner on a scoped key no reason', async () => {
+    expect(
+      (await read({ id: OWNER, isModerator: false }, true, SCOPED_KEY)).matureLockReason
+    ).toBeNull();
   });
 
   it('gives the owner no reason on the public model page', async () => {

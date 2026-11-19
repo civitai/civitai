@@ -346,7 +346,7 @@ export function createServerSideProps<P>({
       ...(props ?? {}),
       adsGated,
       ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
-      session: jsonSafeSession(session),
+      session: jsonSafeSession(resolverSession),
     } as NonNullable<P>;
     attachSsrDehydratedState(pageProps, capture);
     recordPrefetchCohortGsspCpu(context.req, gsspCpuStart);

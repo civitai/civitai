@@ -34,7 +34,7 @@ import { bulkAddBlockedImages, logCsamBlocklistNoHash } from '~/server/services/
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
-import type { CsamContextText } from '~/server/services/csam-context-text';
+import type { CsamContextReview, CsamContextText } from '~/server/services/csam-context-text';
 import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
@@ -150,7 +150,12 @@ function foldGeneratedImages(stored: unknown, added: GeneratedImagesEntry[] | un
 }
 
 /** The new form's answers win, except that a real-minor depiction is never downgraded. */
-function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
+function foldDetails(
+  stored: unknown,
+  added: CsamReportFormOutput | undefined,
+  filedById: number,
+  onIdentical?: (capture: CsamContextText, reviewUpgrade?: CsamContextReview) => void
+) {
   const prior = isRecord(stored) ? stored : {};
   const next = Object.fromEntries(
     Object.entries(added ?? {}).filter(([, value]) => value !== undefined)
@@ -161,11 +166,34 @@ function foldDetails(stored: unknown, added: CsamReportFormOutput | undefined) {
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
+  const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
   const contextText = foldContextText(
     prior.contextText,
-    (next as { contextText?: CsamContextText[] }).contextText
+    (next as { contextText?: CsamContextText[] }).contextText,
+    (capture, reviewUpgrade) => {
+      identical.push({ capture, reviewUpgrade });
+      onIdentical?.(capture, reviewUpgrade);
+    }
   );
   if (contextText) folded.contextText = contextText;
+  // Internal record of a filing whose text the report already held; never part of what is sent.
+  const refiles = [
+    ...(Array.isArray(prior.identicalRefiles) ? prior.identicalRefiles : []),
+    ...identical.map(({ capture: c, reviewUpgrade }) => ({
+      filedById,
+      at: c.capturedAt,
+      item: `${c.source}:${c.id}`,
+      ...(reviewUpgrade && {
+        reviewUpgrade: {
+          byId: reviewUpgrade.byId,
+          at: reviewUpgrade.at,
+          origin: reviewUpgrade.origin,
+          change: 'reviewed flag upgraded from unreviewed',
+        },
+      }),
+    })),
+  ];
+  if (refiles.length) folded.identicalRefiles = refiles;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
   if (generatedImages) folded.generatedImages = generatedImages;
   const nextEvidence = (next as Record<string, unknown>).generatorEvidence;
@@ -226,6 +254,8 @@ export async function createCsamReport({
     images: imageIds?.map((id) => ({ id })) ?? [],
   };
 
+  // A filing's capture of text the report already holds, recorded once the fold commits.
+  const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
   // Only fold into a report of the same account AND type: internal reports belong to no account, and
   // a different type is a different report.
   const report = isInternalReport
@@ -286,17 +316,45 @@ export async function createCsamReport({
         if (locked.sendClaimId && !(locked.sendClaimedAt && locked.sendClaimedAt < cutoff))
           return fileSeparately(unsent.id);
 
+        identical.length = 0;
         return tx.csamReport.update({
           where: { id: unsent.id },
           data: {
             ...data,
             images: foldImages(locked.images, data.images),
-            details: foldDetails(locked.details, details as CsamReportFormOutput),
+            details: foldDetails(
+              locked.details,
+              details as CsamReportFormOutput,
+              reportedById,
+              (capture, reviewUpgrade) => identical.push({ capture, reviewUpgrade })
+            ),
             sendClaimId: null,
             sendClaimedAt: null,
           },
         });
       });
+
+  for (const { capture, reviewUpgrade } of identical)
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'fold-identical-text',
+      message: 'a filing captured text the report already holds; not added',
+      reportId: report.id,
+      payload: {
+        filedById: reportedById,
+        capturedAt: capture.capturedAt,
+        item: `${capture.source}:${capture.id}`,
+        outcome: reviewUpgrade
+          ? 'identical text, not added; reviewed flag upgraded from unreviewed'
+          : 'identical text, not added',
+        ...(reviewUpgrade && {
+          reviewOrigin: reviewUpgrade.origin,
+          reviewerId: reviewUpgrade.byId,
+          reviewedAt: reviewUpgrade.at,
+        }),
+      },
+    });
 
   if (writeBlocklist && imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({

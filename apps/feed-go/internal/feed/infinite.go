@@ -35,8 +35,6 @@ type InfiniteInput struct {
 	Username string
 	// PostID is a post's own media (`postId`): always the Postgres path (requiresImageDbPath).
 	PostID int
-	// Tags is the tag inclusion scope (`tags`), as sent.
-	Tags []int
 	// PrioritizedUserIDs is `prioritizedUserIds`, as sent (the model page's showcase carousel sends
 	// the model owner's id alone). Non-empty with a model scope it routes the request to Postgres
 	// (requiresImageDbPath), where getAllImages keeps only those creators' images, drops the model
@@ -145,9 +143,6 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 		if in.PostID, err = intIn(v, 0, math.MaxInt32); err != nil {
 			return nil, fallback.NewfSafe("input-invalid", "postId", "postId: %v", err)
 		}
-	}
-	if in.Tags, err = ints(m["tags"]); err != nil {
-		return nil, err
 	}
 	// z.array(z.number()): any length, negatives included (-1 is the system user).
 	if in.PrioritizedUserIDs, err = ints(m["prioritizedUserIds"]); err != nil {
@@ -561,31 +556,18 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 
 	filters := infiniteFilters(in, d.Addons.Addons(ctx), level, viewer, viewerUsername)
 	// stripBlockedTagIds: a tag scope made only of blocked tags is an empty page.
-	tags := in.Tags
-	if len(tags) > 0 {
-		if d.Blocked == nil {
-			return nil, fallback.New("blocked-tags-unconfigured")
+	tags, allBlocked, err := stripBlockedTags(ctx, d.Blocked, in.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if allBlocked {
+		// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
+		// the Postgres arm's caller stamps its source on it.
+		v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
+		if !useIndex {
+			v = append(v, superjson.Field{Key: "source", Val: "db"})
 		}
-		blocked, err := d.Blocked.IDs(ctx)
-		if err != nil {
-			return nil, err
-		}
-		kept := make([]int, 0, len(tags))
-		for _, t := range tags {
-			if !blocked[t] {
-				kept = append(kept, t)
-			}
-		}
-		if len(kept) == 0 {
-			// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
-			// the Postgres arm's caller stamps its source on it.
-			v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
-			if !useIndex {
-				v = append(v, superjson.Field{Key: "source", Val: "db"})
-			}
-			return &InfiniteAnswer{Value: v, Trivial: true}, nil
-		}
-		tags = kept
+		return &InfiniteAnswer{Value: v, Trivial: true}, nil
 	}
 	userID := in.UserID
 	if userID == 0 && in.Username != "" {
@@ -625,6 +607,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
 		Pending:        in.Pending,
+		Techniques:     in.Techniques,
 		Tools:          in.Tools,
 		BaseModels:     in.BaseModels,
 	}
@@ -664,6 +647,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		Techniques:            in.Techniques,
 		Tools:                 in.Tools,
 		BaseModels:            in.BaseModels,
 	}
