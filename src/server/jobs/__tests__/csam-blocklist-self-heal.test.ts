@@ -46,16 +46,24 @@ const {
 
 type Newest = { reason: string; disabled: boolean };
 
-/** One blocklist and Postgres copy, held in memory; every image listed and still removed. */
-/** `blocklist` holds what NEWEST_ROWS_SQL returns: only hashes that have ever had a CSAM row. */
-function world(rows: { id: number; pHash: string }[], blocklist: Record<string, Newest> = {}) {
+/**
+ * One blocklist and Postgres copy, held in memory; every image listed and still removed.
+ * `blocklist` holds what NEWEST_ROWS_SQL returns: only hashes that have ever had a CSAM row.
+ */
+const RECENT = new Date('2026-11-19T00:00:00Z');
+const PRE_COPY = new Date('2026-11-01T00:00:00Z');
+
+function world(
+  rows: { id: number; pHash: string; reportedAt?: Date }[],
+  blocklist: Record<string, Newest> = {}
+) {
   const pg = new Set<string>();
   const still = new Set(rows.map((r) => r.id));
   const added: string[][] = [];
   const copied: string[][] = [];
   const logged: HealCounts[] = [];
   const deps: HealDeps = {
-    readCandidates: async () => rows,
+    readCandidates: async () => rows.map((row) => ({ reportedAt: RECENT, ...row })),
     readSweepCount: async () => 0,
     readNewest: async (hashes) =>
       hashes.filter((h) => blocklist[h]).map((hash) => ({ hash, ...blocklist[hash] })),
@@ -95,6 +103,7 @@ describe('healCsamBlocklist', () => {
       writes: true,
       candidates: 5,
       notCsamEver: 1,
+      notCsamEverPreCopy: 0,
       csamMergedAway: 0,
       pgGap: 1,
       disabled: 1,
@@ -160,6 +169,20 @@ describe('healCsamBlocklist', () => {
     expect(counts).toMatchObject({ csamMergedAway: 1, notCsamEver: 0, healed: 0 });
   });
 
+  // Ruling: before the Postgres copies existed, a never-listed hash may be an unblocklist a merge
+  // hid, so only images first reported after COPY_ERA_START are healed from that class.
+  it('never heals a never-listed hash first reported before the copy era', async () => {
+    const w = world([
+      { id: 1, pHash: '11', reportedAt: PRE_COPY },
+      { id: 2, pHash: '11', reportedAt: RECENT },
+    ]);
+
+    const counts = await healCsamBlocklist({ writes: true }, w.deps);
+
+    expect(w.added).toEqual([]);
+    expect(counts).toMatchObject({ notCsamEver: 0, notCsamEverPreCopy: 1, healed: 0 });
+  });
+
   it('does not write an entry for a hash whose CSAM row landed after the classification', async () => {
     const w = world([{ id: 1, pHash: '11' }]);
     const classify = w.deps.readNewest;
@@ -210,7 +233,7 @@ describe('the candidate SQL, on real Postgres', () => {
     pg = new PGlite();
     await pg.exec(`
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, ingestion text, "blockedFor" text, "pHash" bigint);
-      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb);
+      CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb, "createdAt" timestamptz);
       CREATE TABLE "BlockedImage" (hash bigint PRIMARY KEY, reason text);
     `);
   });
@@ -225,15 +248,18 @@ describe('the candidate SQL, on real Postgres', () => {
         (4, 7, 'Blocked', 'moderated', 204),             -- listed, re-labelled
         (5, 7, 'Blocked', 'CSAM', 205),                  -- listed as an object
         (6, 7, 'Blocked', 'CSAM', NULL);                 -- listed, no hash yet
-      INSERT INTO "CsamReport" ("userId", images) VALUES
-        (7, '[1, 3, 4, 6, "abc", 9999999999999999999]'), (7, '[{"id": 5}]');
+      INSERT INTO "CsamReport" ("userId", images, "createdAt") VALUES
+        (7, '[1, 3, 4, 6, "abc", 9999999999999999999]', '2026-11-19'),
+        (7, '[{"id": 5}]', '2026-11-20'),
+        (7, '[5]', '2026-11-01');
     `);
   });
 
   it('reads only listed images still removed for CSAM, at full precision', async () => {
     expect((await candidates()).sort((a, b) => a.id - b.id)).toEqual([
-      { id: 1, pHash: '-4276845791567733103' },
-      { id: 5, pHash: '205' },
+      { id: 1, pHash: '-4276845791567733103', reportedAt: new Date('2026-11-19T00:00:00Z') },
+      // Its earliest report, not its latest.
+      { id: 5, pHash: '205', reportedAt: new Date('2026-11-01T00:00:00Z') },
     ]);
     expect(await query(SWEEP_COUNT_SQL)).toEqual([{ sweep: 1 }]);
   });
@@ -253,7 +279,7 @@ describe('the candidate SQL, on real Postgres', () => {
   // The block whose image had no hash yet logged csam-blocklist-no-hash and wrote no entry. Once the
   // hash is on the row, the next run must pick it up.
   it('heals a listed CSAM removal whose hash appeared after its block', async () => {
-    await pg.exec(`UPDATE "Image" SET "pHash" = NULL WHERE id = 5`);
+    await pg.exec(`UPDATE "Image" SET "pHash" = NULL WHERE id = 1`);
     const added: string[][] = [];
     const deps: HealDeps = {
       readCandidates: () => candidates(),
@@ -266,12 +292,12 @@ describe('the candidate SQL, on real Postgres', () => {
       log: () => undefined,
     };
     await healCsamBlocklist({ writes: true }, deps);
-    expect(added.flat()).not.toContain('205');
+    expect(added.flat()).not.toContain('101');
 
-    await pg.exec(`UPDATE "Image" SET "pHash" = 205 WHERE id = 5`);
+    await pg.exec(`UPDATE "Image" SET "pHash" = 101 WHERE id = 1`);
     await healCsamBlocklist({ writes: true }, deps);
 
-    expect(added.at(-1)).toContain('205');
+    expect(added.at(-1)).toContain('101');
   });
 });
 
@@ -284,7 +310,7 @@ describe('the job as scheduled, against its boundaries', () => {
     boundary.inserts = [];
     dbMock.dbRead.$queryRawUnsafe.mockImplementation((async (sql: string) =>
       sql === REPORTED_CANDIDATES_SQL
-        ? [{ id: 1, pHash: HASH }]
+        ? [{ id: 1, pHash: HASH, reportedAt: RECENT }]
         : sql === SWEEP_COUNT_SQL
         ? [{ sweep: 3 }]
         : []) as never);

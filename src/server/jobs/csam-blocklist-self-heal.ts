@@ -1,5 +1,6 @@
 import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  CSAM_REPORT_LISTINGS_SQL,
   NEWEST_BLOCKLIST_ROW_SQL,
 } from '@civitai/shared/held-media';
 import { REDACT_LOG_MARKER } from '@civitai/db';
@@ -26,8 +27,20 @@ import { createJob } from './job';
 const LISTED_IDS = `ARRAY(SELECT l.id::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$')`;
 const CSAM_BLOCKED = `ingestion = 'Blocked' AND "blockedFor" = 'CSAM' AND "pHash" IS NOT NULL`;
 
-export const REPORTED_CANDIDATES_SQL = `SELECT id, "pHash"::text AS "pHash" FROM "Image"
-  WHERE id = ANY(${LISTED_IDS}) AND ${CSAM_BLOCKED}`;
+/** With each image's earliest report, which decides whether a never-listed hash may be healed. */
+export const REPORTED_CANDIDATES_SQL = `WITH listed AS (
+  SELECT l.id::bigint AS id, min(l."createdAt") AS "reportedAt"
+  FROM (${CSAM_REPORT_LISTINGS_SQL}) l WHERE l.id ~ '^[0-9]{1,18}$' GROUP BY 1
+)
+SELECT i.id, i."pHash"::text AS "pHash", listed."reportedAt" FROM "Image" i
+JOIN listed ON i.id = listed.id
+WHERE ${CSAM_BLOCKED}`;
+
+/**
+ * Postgres copies exist for every CSAM entry written from here on. A hash reported earlier that is
+ * neither in the blocklist read nor copied may be an unblocklist a merge hid, so it is never healed.
+ */
+export const COPY_ERA_START = new Date('2026-11-18T00:00:00Z');
 export const SWEEP_COUNT_SQL = `SELECT count(*)::int AS sweep FROM "Image"
   WHERE ${CSAM_BLOCKED} AND NOT (id = ANY(${LISTED_IDS}))`;
 /** On the primary, right before a write: the ids among $1 still removed for CSAM, with their hash. */
@@ -40,12 +53,15 @@ export const PG_CSAM_AMONG_SQL = `${REDACT_LOG_MARKER} SELECT hash::text AS hash
 export const HEAL_CAP = 500;
 
 type Row = { id: number; pHash: string };
+type Candidate = Row & { reportedAt: Date };
 type Newest = { hash: string; reason: string; disabled: boolean };
 export type HealCounts = {
   writes: boolean;
   candidates: number;
   /** Never had a CSAM row: no row at all, or only rows of other reasons. Healed. */
   notCsamEver: number;
+  /** As notCsamEver, but reported before COPY_ERA_START. Counted, never written. */
+  notCsamEverPreCopy: number;
   /** Had a CSAM entry (it has a Postgres copy) that a merge replaced. Counted, never written. */
   csamMergedAway: number;
   pgGap: number;
@@ -57,7 +73,7 @@ export type HealCounts = {
 };
 
 export type HealDeps = {
-  readCandidates: () => Promise<Row[]>;
+  readCandidates: () => Promise<Candidate[]>;
   readSweepCount: () => Promise<number>;
   readNewest: (hashes: string[]) => Promise<Newest[]>;
   readPgCsam: (hashes: string[]) => Promise<string[]>;
@@ -72,7 +88,12 @@ export type HealDeps = {
 export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: HealDeps) {
   const [rows, sweep] = await Promise.all([deps.readCandidates(), deps.readSweepCount()]);
   const idsByHash = new Map<string, number[]>();
-  for (const { id, pHash } of rows) idsByHash.set(pHash, [...(idsByHash.get(pHash) ?? []), id]);
+  const firstReport = new Map<string, number>();
+  for (const { id, pHash, reportedAt } of rows) {
+    idsByHash.set(pHash, [...(idsByHash.get(pHash) ?? []), id]);
+    const at = new Date(reportedAt).getTime();
+    firstReport.set(pHash, Math.min(firstReport.get(pHash) ?? Infinity, at));
+  }
   const hashes = [...idsByHash.keys()];
   const newest = new Map(
     (hashes.length ? await deps.readNewest(hashes) : []).map((row) => [row.hash, row])
@@ -95,7 +116,11 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
   // Absent from the read but with a Postgres copy: it had a CSAM entry that a newer row replaced when
   // the table merged. Its newest row is unknown (it may be an unblocklist), so it is never written.
   const csamMergedAway = absent.filter((hash) => copied.has(hash)).length;
-  const notCsamEver = absent.filter((hash) => !copied.has(hash));
+  const neverCopied = absent.filter((hash) => !copied.has(hash));
+  const notCsamEver = neverCopied.filter(
+    (hash) => (firstReport.get(hash) ?? 0) >= COPY_ERA_START.getTime()
+  );
+  const notCsamEverPreCopy = neverCopied.length - notCsamEver.length;
 
   const queue = [
     ...notCsamEver.map((hash) => ({ hash, copyOnly: false })),
@@ -129,6 +154,7 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
     writes,
     candidates: hashes.length,
     notCsamEver: notCsamEver.length,
+    notCsamEverPreCopy,
     csamMergedAway,
     pgGap: pgGap.length,
     disabled,
@@ -168,7 +194,7 @@ async function readNewest(hashes: string[]): Promise<Newest[]> {
 }
 
 const deps: HealDeps = {
-  readCandidates: () => dbRead.$queryRawUnsafe<Row[]>(REPORTED_CANDIDATES_SQL),
+  readCandidates: () => dbRead.$queryRawUnsafe<Candidate[]>(REPORTED_CANDIDATES_SQL),
   readSweepCount: async () =>
     (await dbRead.$queryRawUnsafe<{ sweep: number }[]>(SWEEP_COUNT_SQL))[0]?.sweep ?? 0,
   readNewest,

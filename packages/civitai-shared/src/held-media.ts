@@ -152,6 +152,17 @@ export const LIVE_CSAM_SQL = `SELECT toString(hash) AS hash FROM (
   GROUP BY hash
 ) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`;
 
+/** Each image id listed on a CsamReport, as text, with that report's createdAt (a row per listing). */
+export const CSAM_REPORT_LISTINGS_SQL = `SELECT listed.id, listed."createdAt" FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id,
+      lr."createdAt"
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
+
 /** Every image id listed on any CsamReport, whatever its state, as text. */
 export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
