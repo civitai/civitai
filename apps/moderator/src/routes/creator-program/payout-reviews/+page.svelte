@@ -81,7 +81,7 @@
   <p class="mb-4 text-xs text-dark-2">
     Reviews cleared after the last settlement ({dateTime(data.lastSettlementAt)}): the next one
     pays them, so a mistaken clear can still be escalated or withheld here. Listed only when it is the
-    creator's latest review and nothing else holds them. This assumes settlement ran on time; if it
+    creator's latest review, nothing else holds them and they are not banned from the program. This assumes settlement ran on time; if it
     failed or ran late, a review cleared just before it may be listed as settled when it was not. A
     decision made while settlement is running, just after 00:00 UTC on the 15th, may not count until
     the next one.
@@ -100,7 +100,7 @@
 {/if}
 
 {#if data.hasMore}
-  <p class="mb-2 text-xs text-dark-2">Showing the first {data.items.length}.</p>
+  <p class="mb-2 text-xs text-dark-2">More match than this page lists; decide these and reload.</p>
 {/if}
 
 {#if data.items.length === 0}

@@ -17,7 +17,9 @@ vi.mock('$lib/server/db', () => ({
 const { lastSettlementAt, listPayoutReviews } = await import('../payout-reviews');
 
 const SCHEMA = `
-CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT);
+CREATE TABLE "User" (
+  id INTEGER PRIMARY KEY, username TEXT, "bannedAt" TIMESTAMP(3), onboarding INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE "CreatorProgramPayoutReview" (
   id SERIAL PRIMARY KEY, period TEXT NOT NULL, "userId" INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'open', hold BOOLEAN NOT NULL DEFAULT TRUE,
@@ -49,7 +51,7 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(
-    `INSERT INTO "User" (id, username) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')`
+    `INSERT INTO "User" (id, username) VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e'), (6, 'f'), (7, 'g'), (8, 'h')`
   );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -160,6 +162,27 @@ describe('what settlement does with each row (resolveHolds in hold.ts)', () => {
       [1, '2026-10', false, null, true],
       [5, '2026-10', false, null, true],
     ]);
+  });
+
+  it('lists a creator released by a recent clear of an older review, on their latest review', async () => {
+    // The 2026-09 escalation held them at the last settlement; clearing it now releases them.
+    await review(6, 'cleared', '2026-11-18', '2026-09');
+    await review(6, 'cleared', '2026-11-10');
+
+    const { items } = await listPayoutReviews('cleared', { now: NOW });
+
+    expect(pick(items).filter((r) => r[0] === 6)).toEqual([[6, '2026-10', false, null, true]]);
+  });
+
+  it('leaves out banned and program-banned creators, as settlement does', async () => {
+    await db.exec(`UPDATE "User" SET "bannedAt" = '2026-11-01' WHERE id = 7`);
+    await db.exec(`UPDATE "User" SET onboarding = 32 + 1 WHERE id = 8`);
+    await review(7, 'cleared', '2026-11-18');
+    await review(8, 'cleared', '2026-11-18');
+
+    const { items } = await listPayoutReviews('cleared', { now: NOW });
+
+    expect(items.map((r) => r.userId).sort()).toEqual([1]);
   });
 });
 

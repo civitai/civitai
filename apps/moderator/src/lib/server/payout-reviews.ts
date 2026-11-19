@@ -1,3 +1,4 @@
+import { OnboardingStep, hasOnboardingStep } from '$lib/onboarding';
 import { dbWrite } from './db';
 
 export const HOLDING_STATUSES = ['open', 'escalated', 'withheld'] as const;
@@ -126,74 +127,116 @@ export function settlementState(rows: SettlementRow[]) {
   return { latest, isLatest, holds, heldUserIds };
 }
 
+const reviewColumns = [
+  'r.id',
+  'r.period',
+  'r.userId',
+  'u.username',
+  'r.status',
+  'r.hold',
+  'r.signals',
+  'r.payoutCents',
+  'r.evidence',
+  'r.decisions',
+  'r.version',
+  'r.askRef',
+  'r.decidedAt',
+  'r.decidedBy',
+  'r.firstFlaggedAt',
+] as const;
+
+const reviews = () =>
+  dbWrite
+    .selectFrom('CreatorProgramPayoutReview as r')
+    .leftJoin('User as u', 'u.id', 'r.userId')
+    .select(reviewColumns);
+
+type ReviewRecord = Awaited<ReturnType<ReturnType<typeof reviews>['execute']>>[number];
+
+function toRow(row: ReviewRecord, state: ReturnType<typeof settlementState>): PayoutReviewRow {
+  const latestPeriod = state.latest.get(row.userId) ?? row.period;
+  const isLatest = latestPeriod === row.period;
+  const holdsPayout = state.holds(row);
+  return {
+    ...row,
+    evidence: summariseEvidence(row.evidence),
+    decisions: decisionHistory(row.decisions),
+    holdsPayout,
+    supersededBy: isLatest ? null : latestPeriod,
+    // A superseded row that holds nothing changes nothing at settlement when decided.
+    decidable: holdsPayout || isLatest,
+  };
+}
+
 /** Reads the primary: a decision bumps `version`, and a lagging replica would hand the next decision
  *  the old one, which the endpoint refuses. */
 export async function listPayoutReviews(
   view: PayoutReviewView,
   { now = new Date(), limit = 200 }: { now?: Date; limit?: number } = {}
 ): Promise<{ items: PayoutReviewRow[]; hasMore: boolean }> {
-  let query = dbWrite
-    .selectFrom('CreatorProgramPayoutReview as r')
-    .leftJoin('User as u', 'u.id', 'r.userId')
-    .select([
-      'r.id',
-      'r.period',
-      'r.userId',
-      'u.username',
-      'r.status',
-      'r.hold',
-      'r.signals',
-      'r.payoutCents',
-      'r.evidence',
-      'r.decisions',
-      'r.version',
-      'r.askRef',
-      'r.decidedAt',
-      'r.decidedBy',
-      'r.firstFlaggedAt',
-    ]);
-  query =
-    view === 'holding'
-      ? query
-          .where('r.status', 'in', [...HOLDING_STATUSES])
-          .orderBy('r.period', 'desc')
-          .orderBy('r.firstFlaggedAt', 'asc')
-      : query
-          .where('r.status', '=', 'cleared')
-          .where('r.decidedAt', '>', lastSettlementAt(now))
-          .orderBy('r.decidedAt', 'desc');
-  const rows = await query
-    .orderBy('r.id', 'asc')
+  if (view === 'holding') {
+    const rows = await reviews()
+      .where('r.status', 'in', [...HOLDING_STATUSES])
+      .orderBy('r.period', 'desc')
+      .orderBy('r.firstFlaggedAt', 'asc')
+      .orderBy('r.id', 'asc')
+      .limit(limit + 1)
+      .execute();
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const related = userIds.length
+      ? await dbWrite
+          .selectFrom('CreatorProgramPayoutReview')
+          .select(['userId', 'period', 'status', 'hold'])
+          .where('userId', 'in', userIds)
+          .execute()
+      : [];
+    const state = settlementState(related);
+    return {
+      items: rows.slice(0, limit).map((row) => toRow(row, state)),
+      hasMore: rows.length > limit,
+    };
+  }
+
+  // The clear that releases a creator can land on any of their reviews, but settlement pays on the
+  // latest one, so this view is per creator.
+  const recent = await dbWrite
+    .selectFrom('CreatorProgramPayoutReview')
+    .select('userId')
+    .distinct()
+    .where('status', '=', 'cleared')
+    .where('decidedAt', '>', lastSettlementAt(now))
+    .orderBy('userId')
     .limit(limit + 1)
     .execute();
+  const userIds = recent.slice(0, limit).map((r) => r.userId);
+  if (!userIds.length) return { items: [], hasMore: false };
 
-  const userIds = [...new Set(rows.map((r) => r.userId))];
-  const related = userIds.length
-    ? await dbWrite
-        .selectFrom('CreatorProgramPayoutReview')
-        .select(['userId', 'period', 'status', 'hold'])
-        .where('userId', 'in', userIds)
-        .execute()
-    : [];
-  const state = settlementState(related);
-
-  const items = rows.slice(0, limit).flatMap((row): PayoutReviewRow[] => {
-    const latestPeriod = state.latest.get(row.userId) ?? row.period;
-    const isLatest = latestPeriod === row.period;
-    const holdsPayout = state.holds(row);
-    // Only a clear the next settlement will act on belongs in this view.
-    if (view === 'cleared' && (!isLatest || state.heldUserIds.has(row.userId))) return [];
-    return [
-      {
-        ...row,
-        evidence: summariseEvidence(row.evidence),
-        decisions: decisionHistory(row.decisions),
-        holdsPayout,
-        supersededBy: isLatest ? null : latestPeriod,
-        // A superseded row that holds nothing changes nothing at settlement when decided.
-        decidable: holdsPayout || isLatest,
-      },
-    ];
-  });
-  return { items, hasMore: rows.length > limit };
+  const [rows, users] = await Promise.all([
+    reviews().where('r.userId', 'in', userIds).execute(),
+    dbWrite
+      .selectFrom('User')
+      .select(['id', 'bannedAt', 'onboarding'])
+      .where('id', 'in', userIds)
+      .execute(),
+  ]);
+  // Settlement leaves banned and program-banned creators out (`getSettlementHolds`).
+  const payable = new Set(
+    users
+      .filter(
+        (u) => !u.bannedAt && !hasOnboardingStep(u.onboarding, OnboardingStep.BannedCreatorProgram)
+      )
+      .map((u) => u.id)
+  );
+  const state = settlementState(rows);
+  const items = rows
+    .filter(
+      (row) =>
+        row.status === 'cleared' &&
+        state.isLatest(row) &&
+        !state.heldUserIds.has(row.userId) &&
+        payable.has(row.userId)
+    )
+    .map((row) => toRow(row, state))
+    .sort((a, b) => (b.decidedAt?.getTime() ?? 0) - (a.decidedAt?.getTime() ?? 0));
+  return { items, hasMore: recent.length > limit };
 }
