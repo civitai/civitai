@@ -1154,7 +1154,7 @@ export function ModelVersionUpsertForm({
                 key="description"
                 name="description"
                 label="Version changes or notes"
-                includeControls={['formatting', 'list', 'link', 'blurb']}
+                includeControls={['formatting', 'list', 'link', 'blurb', 'markdown']}
                 editorSize="xl"
               />
               {acceptsTrainedWords && (

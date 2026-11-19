@@ -1809,7 +1809,7 @@ function ModelVersionDetailsContent({
                           controlRef={controlRef}
                           styles={{ control: { display: 'none' } }}
                         >
-                          <RenderHtml html={version.description} withMentions />
+                          <RenderHtml html={version.description} withMentions allowTables />
                         </ContentClamp>
                       </Box>
                     )}
@@ -2032,7 +2032,7 @@ function ModelVersionDetailsContent({
           )}
           {model.description ? (
             <ContentClamp maxHeight={460}>
-              <RenderHtml html={model.description} withMentions />
+              <RenderHtml html={model.description} withMentions allowTables />
             </ContentClamp>
           ) : null}
         </Stack>
@@ -2056,7 +2056,7 @@ function VersionDescriptionModal({ description }: { description: string }) {
   const dialog = useDialogContext();
   return (
     <Modal {...dialog} title="About this version" size="lg" centered>
-      <RenderHtml html={description} withMentions />
+      <RenderHtml html={description} withMentions allowTables />
     </Modal>
   );
 }

@@ -124,6 +124,16 @@ beforeEach(() => {
   mutate.mockClear();
 });
 
+test('saving an existing model description keeps its table', async () => {
+  const description =
+    '<table><tbody><tr><th>Settings</th></tr><tr><td>Steps</td></tr></tbody></table>';
+  renderForm({ description });
+  await page.getByLabelText(/Name/).first().fill('Renamed model');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await vi.waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+  expect(mutate.mock.calls[0][0].description).toBe(description);
+});
+
 describe('ModelUpsertForm moderator locks', () => {
   test('ticking mature themes locks nsfw only; the poi and sfwOnly it clears stay unlocked', async () => {
     renderForm({ poi: true, sfwOnly: true });

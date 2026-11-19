@@ -182,6 +182,10 @@
     list-style-position: outside;
   }
 
+  & :where([data-type='markdown-table']) {
+    overflow-x: auto;
+  }
+
   & :where(table) {
     width: 100%;
     border-collapse: collapse;

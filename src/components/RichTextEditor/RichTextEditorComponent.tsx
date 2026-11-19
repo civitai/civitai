@@ -10,6 +10,7 @@ import type { Editor, Extensions } from '@tiptap/react';
 import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
+import dynamic from 'next/dynamic';
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { InsertEmbedControl } from '~/components/RichTextEditor/InsertEmbedControl';
@@ -39,6 +40,7 @@ import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
+import { markdownTableExtensions } from '~/shared/tiptap/markdown-table';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
@@ -50,6 +52,10 @@ import {
   SpoilerBlockControl,
   SpoilerTextControl,
 } from '~/components/RichTextEditor/InsertSpoilerControl';
+
+const InsertMarkdownControl = dynamic(() =>
+  import('./InsertMarkdownControl').then((m) => m.InsertMarkdownControl)
+);
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -164,6 +170,7 @@ export function RichTextEditor({
   // Needs the addVideo branch: only it registers the image nodes that carry `size`.
   const addImageSize = addVideo && includeControls.includes('imageSize');
   const addAlign = includeControls.includes('align');
+  const addMarkdown = includeControls.includes('markdown');
   const addSpoilers = includeControls.includes('spoiler');
   const civitaiCardPaste =
     !!useFeatureFlags().articleCivitaiCards && includeControls.includes('civitaiEmbed');
@@ -288,6 +295,7 @@ export function RichTextEditor({
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
     if (addAlign) arr.push(TextAlignExtension);
+    if (addMarkdown) arr.push(...markdownTableExtensions);
     if (addSpoilers) arr.push(SpoilerMark, SpoilerBlockNode);
     // Registered everywhere, like the timestamp node, so content holding cards survives a save.
     arr.push(CivitaiEmbedEditNode.configure({ pasteToCard: civitaiCardPaste }));
@@ -298,6 +306,7 @@ export function RichTextEditor({
     addStickers,
     addBlurbs,
     addAlign,
+    addMarkdown,
     addSpoilers,
     addList,
     addFormatting,
@@ -506,6 +515,12 @@ export function RichTextEditor({
                 </RTE.ControlsGroup>
               )}
 
+              {addMarkdown && (
+                <RTE.ControlsGroup>
+                  <InsertMarkdownControl />
+                </RTE.ControlsGroup>
+              )}
+
               {addAlign && (
                 <RTE.ControlsGroup>
                   <TextAlignControl />
@@ -635,6 +650,7 @@ type ControlType =
   | 'blurb'
   | 'imageSize'
   | 'align'
+  | 'markdown'
   | 'civitaiEmbed'
   | 'spoiler';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &

@@ -71,6 +71,25 @@
     min-height: var(--editor-min-height, 50px);
     word-break: break-word;
 
+    [data-type='markdown-table'] {
+      overflow-x: auto;
+
+      table {
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        min-width: 4em;
+        border: 1px solid var(--mantine-color-default-border);
+        padding: var(--mantine-spacing-xs);
+      }
+
+      th {
+        font-weight: 600;
+      }
+    }
+
     :global(p.is-editor-empty:first-of-type::before) {
       // color should be set inline via style prop if it depends on error
       font-size: var(--editor-font-size, 14px);
