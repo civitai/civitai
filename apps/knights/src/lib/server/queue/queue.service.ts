@@ -99,6 +99,7 @@ export type RejectReason =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -185,6 +186,7 @@ async function stageWindow(
   const eligible = () =>
     servableItems(db)
       .where('i.minRank', '=', stage)
+      .where('img.userId', 'is distinct from', userId)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(

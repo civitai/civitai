@@ -1986,3 +1986,22 @@ describe('countOpenServableKnightItems', () => {
     expect(await countOpenServableKnightItems(db, 1)).toBe(1);
   });
 });
+
+describe('a player and their own image', () => {
+  it('never serves a player an image they posted, and refuses their vote on it', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    await pg.query(`UPDATE "Image" SET "userId"=1 WHERE id=10`);
+    const mine = await item(10);
+    const other = await item(11);
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+    expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([mine, other].sort());
+
+    expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
+    expect(await verdicts(mine)).toEqual([]);
+    expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
