@@ -33,7 +33,6 @@ export function FlagRaceHomeRow({
 }: {
   event: string;
   summary: FlagSummary;
-  /** Today's flags. */
   children: ReactNode;
 }) {
   const { dismissed, dismiss, restore } = useNavBannersDismissed();

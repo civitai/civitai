@@ -21,10 +21,8 @@ import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './FlagRacePanel.module.scss';
 
-/** The race art's image id, for a smaller tile of it elsewhere. */
 export const ART_ID = '5064a196-aa66-4c07-bb2a-f3f2ccbacef1';
-const ART =
-  'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/5064a196-aa66-4c07-bb2a-f3f2ccbacef1/width=900,optimized=true/5064a196-aa66-4c07-bb2a-f3f2ccbacef1.jpeg';
+const ART = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${ART_ID}/width=900,optimized=true/${ART_ID}.jpeg`;
 const RULES_ARTICLE = '/articles/38657';
 export const HOWTO_DISMISSED_KEY = 'flag-race-howto-dismissed';
 
