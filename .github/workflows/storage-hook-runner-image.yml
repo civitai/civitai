@@ -8,7 +8,7 @@ name: Storage hook runner image
 #
 # The app's behaviour is covered by its own vitest suites (apps.yml). This job covers only what
 # the suites cannot see: the image. It runs the container with a read-only root filesystem, as
-# uid/gid 1001, with every capability dropped and a 2-CPU quota, and requires /readyz to answer
+# uid/gid 1001, with every capability dropped, a 2-CPU quota and no network, and requires /readyz to answer
 # 200 (a ready worker AND the built-in allow/deny/interrupt self-test hooks passing, so the
 # QuickJS WASM loads from the shipped node_modules), /healthz 200, the metrics port to serve the
 # runner's metrics, and the pool to size itself from the CPU quota (2 workers).
@@ -77,8 +77,13 @@ jobs:
           echo "$config" | jq '{User, ExposedPorts, Cmd, WorkingDir}'
           docker image ls storage-hook-runner:ci --format 'size: {{.Size}}'
           [ "$(echo "$config" | jq -r .User)" = "nodeapp" ]
+          # `adduser -S` without -G leaves nodeapp's primary group as alpine's default, not nodejs,
+          # so the image's own gid is not asserted: the pod pins runAsGroup 1001, and what it needs
+          # is that the shipped files belong to 1001:1001 (the COPY --chown nodeapp:nodejs).
+          docker run --rm --entrypoint id storage-hook-runner:ci
           [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -u)" = "1001" ]
-          [ "$(docker run --rm --entrypoint id storage-hook-runner:ci -g)" = "1001" ]
+          [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/dist/server.js)" = "1001:1001" ]
+          [ "$(docker run --rm --entrypoint stat storage-hook-runner:ci -c '%u:%g' /app/node_modules)" = "1001:1001" ]
           [ "$(echo "$config" | jq -c '.ExposedPorts | keys')" = '["8080/tcp","9091/tcp"]' ]
           [ "$(echo "$config" | jq -c .Cmd)" = '["node","dist/server.js"]' ]
           [ "$(echo "$config" | jq -r .WorkingDir)" = "/app" ]
@@ -97,29 +102,36 @@ jobs:
           echo "$out" | grep -q 'STORAGE_HOOK_RUNNER_SECRET must be at least 32 chars'
 
       # Run as the pod does: read-only root filesystem, uid/gid 1001, no capabilities, no
-      # privilege escalation, a 2-CPU quota, no network beyond the published ports. /readyz is
-      # 200 only once a worker is ready and the self-test hooks answer correctly.
-      - name: Serves under the deployment's security context
+      # privilege escalation, a 2-CPU quota, and NO network (--network none: the pod's policy
+      # denies all egress, and the runner must need none). The probes run inside the container
+      # over loopback with busybox wget. /readyz is 200 only once a worker is ready and the
+      # self-test hooks answer correctly.
+      - name: Serves under the deployment's security context, with no network
         run: |
           set -euo pipefail
           secret=$(openssl rand -hex 32)
           docker run -d --name shr --read-only --user 1001:1001 --cap-drop ALL \
-            --security-opt no-new-privileges --cpus 2 \
-            -e STORAGE_HOOK_RUNNER_SECRET="$secret" \
-            -p 127.0.0.1:8080:8080 -p 127.0.0.1:9091:9091 storage-hook-runner:ci
+            --security-opt no-new-privileges --cpus 2 --network none \
+            -e STORAGE_HOOK_RUNNER_SECRET="$secret" storage-hook-runner:ci
+          get() { docker exec shr wget -q -T 5 -O- "$@"; }
           ready=0
           for _ in $(seq 1 60); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/readyz || true)
-            if [ "$code" = "200" ]; then ready=1; break; fi
+            if get http://127.0.0.1:8080/readyz >/dev/null 2>&1; then ready=1; break; fi
             sleep 1
           done
           docker logs shr 2>&1 | tail -20
-          [ "$ready" = 1 ] || { echo "/readyz never answered 200 (last: $code)"; exit 1; }
-          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)" = "200" ]
-          curl -sf http://127.0.0.1:9091/metrics | grep -q '^storage_hook_runner_pool_workers'
+          docker inspect shr --format 'network={{.HostConfig.NetworkMode}} readonly={{.HostConfig.ReadonlyRootfs}} user={{.Config.User}} capdrop={{.HostConfig.CapDrop}}'
+          [ "$ready" = 1 ] || { echo "/readyz never answered 200"; exit 1; }
+          get http://127.0.0.1:8080/readyz
+          echo
+          get http://127.0.0.1:8080/healthz >/dev/null
+          get http://127.0.0.1:9091/metrics | grep -q '^storage_hook_runner_pool_workers'
           # The pool sized itself from the cgroup CPU quota (--cpus 2), not the runner's cores.
           docker logs shr 2>&1 | grep -q '(metrics 9091), 2 workers'
-          # An unsigned check is refused: the request port is not open to unauthenticated calls.
-          [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-            -d '{}' http://127.0.0.1:8080/v1/check)" = "401" ]
+          # An unsigned check is refused 401 (busybox wget exits non-zero on it and names the
+          # status).
+          out=$(docker exec shr wget -q -T 5 -O- --header 'content-type: application/json' \
+            --post-data '{}' http://127.0.0.1:8080/v1/check 2>&1 || true)
+          echo "unsigned /v1/check: $out"
+          echo "$out" | grep -q ' 401 '
           docker rm -f shr >/dev/null
