@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import '$lib/civitai-elements';
 
   let {
     children,
@@ -12,8 +13,10 @@
      wrapper so a footer stays on screen beside a long panel; the panel scrolls instead. Below lg it
      flows with the page. -->
 <div class="flex h-fit flex-col lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] {className}">
-  <aside class="min-h-0 rounded-xl border border-dark-4 bg-dark-6 p-5 lg:overflow-y-auto">
-    {@render children()}
+  <aside class="min-h-0 lg:overflow-y-auto">
+    <civitai-card padding="lg" with-border>
+      {@render children()}
+    </civitai-card>
   </aside>
   {@render footer?.()}
 </div>

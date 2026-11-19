@@ -49,6 +49,11 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
   - `onchange` receives the kit's `change` event, and the element's `value` holds the pick.
   - Checked by clicking an option inside the shadow root: the step, its summary and the dependent
     Type options all updated.
+- **Tailwind's reset vs the kit.** Tailwind's preflight (`* { margin: 0; padding: 0; border: 0 solid }`)
+  matches the elements themselves, and a page rule beats a shadow root's `:host` rule, so it wiped the
+  kit's own padding and borders (a `civitai-card` with no padding, cramped badges).
+  `kit-element-reset-exemption.ts` rewrites that `*` to `*:not(<kit and studio tags>)` in both builds,
+  with the tags read from the kit's manifest and the `studio-*` element files.
 - **a11y warnings.** Svelte's a11y checks treat every `<civitai-*>` tag as a static `<div>` and warn on
   click handlers. The elements render real controls in their shadow roots, so `svelte.config.js` filters
   those two warning codes for `<civitai-` tags only.

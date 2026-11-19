@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     IconBoltFilled,
-    IconSparkles,
     IconStarFilled,
     IconCheck,
     IconStack2,
@@ -696,9 +695,7 @@
                  the model name to "MiniMax …". -->
             {#if card.flag}
               <div class="mt-1 {dim}">
-                <civitai-badge variant="filled" size="sm">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} class="mr-0.5 inline" />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} class="mr-0.5 inline" />{/if}{card.flag}
-                </civitai-badge>
+                <civitai-badge variant="filled" size="sm">{card.flag}</civitai-badge>
               </div>
             {/if}
             {#if down}
@@ -741,15 +738,20 @@
       </div>
 
       {#if otherCards.length > 0}
-        <button
-          type="button"
+        <civitai-button
+          class="mt-2"
+          variant="subtle"
+          size="sm"
+          full-width
           onclick={() => (showAllModels = !showAllModels)}
-          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 px-3 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
+          <span slot="left">
+            {#if modelsExpanded}<IconMinus size={12} stroke={2} />{:else}<IconPlus size={12} stroke={2} />{/if}
+          </span>
           {#if modelsExpanded}
-            <IconMinus size={12} stroke={2} />Show fewer models
+            Show fewer models
           {:else}
-            <IconPlus size={12} stroke={2} />Show {otherCards.length} more model{otherCards.length ===
+            Show {otherCards.length} more model{otherCards.length ===
             1
               ? ''
               : 's'}<span class="hidden sm:inline">
@@ -759,7 +761,7 @@
                 .join(', ')}…)</span
             >
           {/if}
-        </button>
+        </civitai-button>
       {/if}
 
       <BlueFirstNote class="mt-2" />
@@ -862,21 +864,20 @@
                 </button>
                 <div class="ml-auto shrink-0">{@render priceTag(runPrice, 'text-[13px]')}</div>
                 {#if multi}
-                  <button
-                    type="button"
-                    aria-label={`Remove run ${ri + 1}`}
+                  <civitai-action-button
+                    class="shrink-0"
+                    label={`Remove run ${ri + 1}`}
                     disabled={!removalAllowed(ri)}
                     title={removalAllowed(ri)
                       ? undefined
                       : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
-                    onclick={(e) => {
+                    onclick={(e: Event) => {
                       e.stopPropagation();
                       removeRun(ri);
                     }}
-                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-dark-4 disabled:hover:text-dark-2"
                   >
-                    <IconX size={14} stroke={2} />
-                  </button>
+                    <span slot="icon"><IconX size={14} stroke={2} /></span>
+                  </civitai-action-button>
                 {/if}
               </div>
               {@render rowEnginePicker(r, ri)}
@@ -900,14 +901,15 @@
               {/if}
             </div>
           {/each}
-          <button
-            type="button"
+          <civitai-button
+            variant="outline"
+            full-width
             disabled={runs.length >= MAX_RUNS}
             onclick={addRun}
-            class="w-full rounded-md border border-dashed border-dark-4 py-2.5 text-sm font-semibold text-dark-2 transition hover:border-primary hover:text-primary disabled:opacity-40"
           >
-            + Add another model to train
-          </button>
+            <span slot="left"><IconPlus size={14} stroke={2} /></span>
+            Add another model to train
+          </civitai-button>
         </div>
       {/if}
     </div>
