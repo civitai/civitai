@@ -61,8 +61,9 @@
 </header>
 
 <p class="mb-4 text-sm text-dark-2">
-  Creator Program payouts the pre-payout review is holding. A held creator's pending cash is left
-  out of settlement on the 15th until the review is cleared. Withhold means not paid this cycle,
+  Creator Program pre-payout reviews still to decide, and withholds. A creator is held at settlement
+  on the 15th while any review of theirs is open or escalated with a hold, or while their latest
+  review is withheld; each row says whether it is holding the payout. Withhold means not paid this cycle,
   never forfeited: the creator is reviewed again next cycle. Decisions move no money here; a cleared
   creator is paid at the next settlement.
 </p>
@@ -79,9 +80,11 @@
 {#if data.view === 'cleared'}
   <p class="mb-4 text-xs text-dark-2">
     Reviews cleared after the last settlement ({dateTime(data.lastSettlementAt)}): the next one
-    pays them, so a mistaken clear can still be escalated or withheld here. This assumes settlement
-    ran on time; if it failed or ran late, a review cleared just before it may be listed as settled
-    when it was not.
+    pays them, so a mistaken clear can still be escalated or withheld here. Listed only when it is the
+    creator's latest review and nothing else holds them. This assumes settlement ran on time; if it
+    failed or ran late, a review cleared just before it may be listed as settled when it was not. A
+    decision made while settlement is running, just after 00:00 UTC on the 15th, may not count until
+    the next one.
   </p>
 {/if}
 
@@ -122,6 +125,13 @@
           <code class="text-xs text-dark-2">#{row.id}</code>
           <span class="text-sm text-dark-2">{row.period}</span>
           <Badge variant={row.status === 'withheld' ? 'destructive' : 'secondary'}>{row.status}</Badge>
+          {#if row.holdsPayout}
+            <Badge variant="outline">holding the payout</Badge>
+          {:else if row.supersededBy}
+            <Badge variant="outline">superseded by {row.supersededBy}</Badge>
+          {:else if row.status !== 'cleared'}
+            <Badge variant="outline">not holding</Badge>
+          {/if}
           <span class="text-xs text-dark-2">version {row.version}</span>
         </div>
 
@@ -152,7 +162,10 @@
               : 'none'}
           </dd>
           <dt class="text-dark-2">Two-way exchanges</dt>
-          <dd>{num(row.evidence.exchangeCount)}</dd>
+          <dd>
+            {num(row.evidence.exchangeCount)}{#if row.evidence.exchangeCount >= 10}+ (the review
+              keeps the top 10){/if}
+          </dd>
           {#if row.evidence.manual}
             <dt class="text-dark-2">Manual hold</dt>
             <dd>{row.evidence.manual.ground}: {row.evidence.manual.reason}</dd>
@@ -189,6 +202,11 @@
 
         {#if isDone}
           <p class="mt-3 text-sm text-dark-2">Decision recorded</p>
+        {:else if !row.decidable}
+          <p class="mt-3 text-xs text-dark-2">
+            Superseded by the {row.supersededBy} review, which is the one settlement reads: decide
+            that one.
+          </p>
         {:else if canDecide && choices.length}
           <form
             method="POST"

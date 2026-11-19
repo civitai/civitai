@@ -32,11 +32,17 @@ CREATE TABLE "CreatorProgramPayoutReview" (
 const NOW = new Date('2026-11-19T12:00:00Z');
 let db: PGlite;
 
-const review = (userId: number, status: string, decidedAt: string | null, period = '2026-10') =>
+const review = (
+  userId: number,
+  status: string,
+  decidedAt: string | null,
+  period = '2026-10',
+  hold = status !== 'cleared'
+) =>
   db.query(
-    `INSERT INTO "CreatorProgramPayoutReview" (period, "userId", status, "decidedAt")
-     VALUES ($1, $2, $3, $4)`,
-    [period, userId, status, decidedAt]
+    `INSERT INTO "CreatorProgramPayoutReview" (period, "userId", status, "decidedAt", hold)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [period, userId, status, decidedAt, hold]
   );
 
 beforeEach(async () => {
@@ -111,6 +117,49 @@ describe('listPayoutReviews', () => {
     const served = JSON.stringify(items);
     for (const secret of ['example.com', 'TIPALTI-777', '0xWALLET', 'GB00BANK', '12345678'])
       expect(served, secret).not.toContain(secret);
+  });
+});
+
+describe('what settlement does with each row (resolveHolds in hold.ts)', () => {
+  const pick = (items: Awaited<ReturnType<typeof listPayoutReviews>>['items']) =>
+    items
+      .map((r) => [r.userId, r.period, r.holdsPayout, r.supersededBy, r.decidable])
+      .sort((a, b) => `${a[0]}${a[1]}`.localeCompare(`${b[0]}${b[1]}`));
+
+  beforeEach(async () => {
+    // 1: an old withhold a later clear superseded. 2: withheld twice.
+    // 3: open but not holding. 4: an old held review blocks a newer clear.
+    await review(1, 'withheld', '2026-10-05', '2026-09');
+    await review(1, 'cleared', '2026-11-18');
+    await review(2, 'withheld', '2026-10-05', '2026-09');
+    await review(2, 'withheld', '2026-11-05');
+    await review(3, 'open', null, '2026-10', false);
+    await review(4, 'open', null, '2026-09');
+    await review(4, 'cleared', '2026-11-18');
+  });
+
+  it('marks only rows settlement holds on, and leaves superseded withholds read-only', async () => {
+    const { items } = await listPayoutReviews('holding', { now: NOW });
+
+    expect(pick(items)).toEqual([
+      [1, '2026-09', false, '2026-10', false],
+      [2, '2026-09', false, '2026-10', false],
+      [2, '2026-10', true, null, true],
+      [3, '2026-10', false, null, true],
+      [4, '2026-09', true, '2026-10', true],
+    ]);
+  });
+
+  it('lists as unsettled only latest clears that nothing else holds', async () => {
+    await review(5, 'cleared', '2026-11-16', '2026-09');
+    await review(5, 'cleared', '2026-11-18');
+
+    const { items } = await listPayoutReviews('cleared', { now: NOW });
+
+    expect(pick(items)).toEqual([
+      [1, '2026-10', false, null, true],
+      [5, '2026-10', false, null, true],
+    ]);
   });
 });
 

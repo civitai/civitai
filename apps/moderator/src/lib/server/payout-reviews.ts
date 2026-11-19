@@ -48,6 +48,12 @@ export type PayoutReviewRow = {
   decidedAt: Date | null;
   decidedBy: string | null;
   firstFlaggedAt: Date;
+  hold: boolean;
+  /** Whether settlement leaves this creator's pending cash out because of this row. */
+  holdsPayout: boolean;
+  /** The creator's newer period, when this row is no longer the one a withhold or clear counts on. */
+  supersededBy: string | null;
+  decidable: boolean;
 };
 
 const record = (v: unknown): Record<string, unknown> =>
@@ -101,6 +107,25 @@ export function decisionHistory(raw: unknown): PayoutReviewDecisionEntry[] {
   });
 }
 
+type SettlementRow = { userId: number; period: string; status: string; hold: boolean };
+
+/** `resolveHolds` in src/server/services/creator-program-prepayout-review/hold.ts, which settlement
+ *  reads: an open or escalated review holds in any period while `hold` is set, but a withhold or a
+ *  clear counts only on the creator's latest period. */
+export function settlementState(rows: SettlementRow[]) {
+  const latest = new Map<number, string>();
+  for (const r of rows) {
+    const seen = latest.get(r.userId);
+    if (!seen || r.period > seen) latest.set(r.userId, r.period);
+  }
+  const isLatest = (r: SettlementRow) => latest.get(r.userId) === r.period;
+  const holds = (r: SettlementRow) =>
+    (r.hold && (r.status === 'open' || r.status === 'escalated')) ||
+    (r.status === 'withheld' && isLatest(r));
+  const heldUserIds = new Set(rows.filter(holds).map((r) => r.userId));
+  return { latest, isLatest, holds, heldUserIds };
+}
+
 /** Reads the primary: a decision bumps `version`, and a lagging replica would hand the next decision
  *  the old one, which the endpoint refuses. */
 export async function listPayoutReviews(
@@ -116,6 +141,7 @@ export async function listPayoutReviews(
       'r.userId',
       'u.username',
       'r.status',
+      'r.hold',
       'r.signals',
       'r.payoutCents',
       'r.evidence',
@@ -136,17 +162,38 @@ export async function listPayoutReviews(
           .where('r.status', '=', 'cleared')
           .where('r.decidedAt', '>', lastSettlementAt(now))
           .orderBy('r.decidedAt', 'desc');
-
   const rows = await query
     .orderBy('r.id', 'asc')
     .limit(limit + 1)
     .execute();
-  return {
-    items: rows.slice(0, limit).map((row) => ({
-      ...row,
-      evidence: summariseEvidence(row.evidence),
-      decisions: decisionHistory(row.decisions),
-    })),
-    hasMore: rows.length > limit,
-  };
+
+  const userIds = [...new Set(rows.map((r) => r.userId))];
+  const related = userIds.length
+    ? await dbWrite
+        .selectFrom('CreatorProgramPayoutReview')
+        .select(['userId', 'period', 'status', 'hold'])
+        .where('userId', 'in', userIds)
+        .execute()
+    : [];
+  const state = settlementState(related);
+
+  const items = rows.slice(0, limit).flatMap((row): PayoutReviewRow[] => {
+    const latestPeriod = state.latest.get(row.userId) ?? row.period;
+    const isLatest = latestPeriod === row.period;
+    const holdsPayout = state.holds(row);
+    // Only a clear the next settlement will act on belongs in this view.
+    if (view === 'cleared' && (!isLatest || state.heldUserIds.has(row.userId))) return [];
+    return [
+      {
+        ...row,
+        evidence: summariseEvidence(row.evidence),
+        decisions: decisionHistory(row.decisions),
+        holdsPayout,
+        supersededBy: isLatest ? null : latestPeriod,
+        // A superseded row that holds nothing changes nothing at settlement when decided.
+        decidable: holdsPayout || isLatest,
+      },
+    ];
+  });
+  return { items, hasMore: rows.length > limit };
 }
