@@ -128,7 +128,7 @@ export const getPrompts = (history?: string) =>
 export async function putPrompt(
   key: string,
   content: string,
-  opts: { note?: string; baseId?: number | null } = {}
+  opts: { note?: string; baseId?: number | null; restore?: boolean } = {}
 ): Promise<{ id: number; key: string }> {
   const result = await postHarness(
     'putPrompt',
@@ -137,6 +137,7 @@ export async function putPrompt(
       content,
       ...(opts.note ? { note: opts.note } : {}),
       ...(opts.baseId !== undefined ? { baseId: opts.baseId } : {}),
+      ...(opts.restore ? { restore: true } : {}),
     },
     'Save text-scan prompt'
   );

@@ -54,7 +54,7 @@ const stale = (key: PromptKey) =>
 async function put(
   key: PromptKey,
   content: string,
-  opts: { note?: string; baseId: number | null }
+  opts: { note?: string; baseId: number | null; restore?: boolean }
 ) {
   try {
     const row = await putPrompt(key, content, opts);
@@ -121,5 +121,6 @@ export async function restorePrompt(input: z.infer<typeof restoreSchema>) {
   return put(input.key, version.content, {
     note: input.note ? `Restored #${version.id}: ${input.note}` : `Restored #${version.id}`,
     baseId: input.baseId,
+    restore: true,
   });
 }
