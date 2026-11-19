@@ -90,9 +90,11 @@ describe('retryArticleCategories', () => {
   });
 
   it('ends the run after a bounded number of pages, even if every page is full', async () => {
-    select.mockImplementation(async ({ afterId }: { afterId: number }) =>
-      Array.from({ length: 200 }, (_, i) => afterId + i + 1)
-    );
+    // Throws past the bound, so a run that ignores it fails here instead of spinning.
+    select.mockImplementation(async ({ afterId }: { afterId: number }) => {
+      if (select.mock.calls.length > 60) throw new Error('paged past the bound');
+      return Array.from({ length: 200 }, (_, i) => afterId + i + 1);
+    });
     incrBy.mockResolvedValue((MAX_CATEGORY_RETRIES + 1) as never);
     await retryArticleCategories(NOW);
     expect(select).toHaveBeenCalledTimes(50);
