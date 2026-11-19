@@ -51,7 +51,8 @@ export type CsamTextRetentionResult = {
   deleted: number;
   skipped: Record<CsamTextRetentionSkip, number>;
   /** Refused by the delete trigger: another hold `post_text_held` knows of still applies. */
-  stillHeld: number /** Deletes that raised anything else; logged by count, and the run goes on. */;
+  stillHeld: number;
+  /** Deletes that raised anything else; logged by count, and the run goes on. */
   failed: number;
 };
 
