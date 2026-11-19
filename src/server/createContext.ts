@@ -148,11 +148,12 @@ export type Context = AsyncReturnType<typeof createContext>;
 /**
  * Context shape for protected procedures, where `user` (and other base fields)
  * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject` legitimately remain
- * nullable (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
+ * nullable (session auth has no apiKeyId), and `appBlocksAuthorSubject` stays optional (contexts built
+ * outside `createContext` do not set it). Replaces `DeepNonNullable<Context>` for
  * controllers, which would otherwise strip the nullability of these fields.
  */
 export type ProtectedContext = Omit<
   DeepNonNullable<Context>,
-  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'appBlocksAuthorSubject'
 > &
-  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'>;
+  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser' | 'appBlocksAuthorSubject'>;

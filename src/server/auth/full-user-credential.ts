@@ -92,7 +92,12 @@ export function withModeratorRightsFor<T extends { id: number; isModerator?: boo
  *
  * Falls back to `ctx.user` when the context carries no subject (a context built outside
  * `createContext`) or one for another user. No signed-in user reads as no one, so a banned
- * session (`trpcViewer` moves it to `bannedUser`) gets nothing from here.
+ * session (`trpcViewer` moves it to `bannedUser`) gets nothing from here — except behind
+ * `isAuthedAllowRestricted`, which puts the banned account back on `ctx.user`. No author gate sits
+ * on such a procedure; do not add one there without refusing a banned account first.
+ *
+ * Its readers are pinned by `trpc-app-author-scoped-credential.test.ts`: add one only for the
+ * author capability.
  */
 export function appBlocksAuthorAccount<T extends { id: number }>(ctx: {
   user?: T | null;

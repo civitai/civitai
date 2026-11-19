@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
@@ -194,5 +196,43 @@ describe('appBlocksAuthorAccount', () => {
     expect(
       appBlocksAuthorAccount({ user, appBlocksAuthorSubject: { id: 2, isModerator: true } })
     ).toBe(user);
+  });
+});
+
+// The subject carries the account's moderator flag, which a scoped credential withholds from
+// `ctx.user`. Read anywhere but the author gates, it would hand moderator rights back. So the
+// readers are a closed set: this fails when one is added, and when one disappears.
+describe('who reads the author subject', () => {
+  function sourceFiles(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
+      return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [full] : [];
+    });
+  }
+  const root = path.join(process.cwd(), 'src');
+  const files = sourceFiles(root);
+  const matching = (pattern: RegExp) =>
+    files
+      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
+      .map((file) => path.relative(root, file).split(path.sep).join('/'))
+      .sort();
+
+  it('scans the source tree', () => {
+    expect(files.length).toBeGreaterThan(1000);
+  });
+
+  it('names the subject field only where it is set and resolved', () => {
+    expect(matching(/\bappBlocksAuthorSubject\b/)).toEqual([
+      'server/auth/full-user-credential.ts',
+      'server/createContext.ts',
+    ]);
+  });
+
+  it('resolves the author account only in the two author gates', () => {
+    expect(matching(/\bappBlocksAuthorAccount\(/)).toEqual([
+      'server/trpc.ts',
+      'server/trpc/app-blocks-author.middleware.ts',
+    ]);
   });
 });

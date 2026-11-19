@@ -412,7 +412,7 @@ export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Pro
   // existing author access intact while the Flipt flag is absent (dark window)
   // and regardless of how the flag's segments are later configured. The same floor
   // `appDeveloperProcedure` and the author pages apply (`isAppDeveloper`). On tRPC, pass
-  // `appBlocksAuthorAccount(ctx)`, not `ctx.user`: a moderator on a scoped credential reads as
+  // the account from `appBlocksAuthorAccount`, not `ctx.user`: a moderator on a scoped credential reads as
   // a non-moderator there, and keeps this capability.
   if (isAppDeveloper(user)) return true;
   // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
