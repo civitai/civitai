@@ -32,6 +32,12 @@
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
+ *   REGISTRY_ADAPTER_POLICY_URL    the content-policy service (apps/content-policy-go); when set,
+ *                                  each subscription's decision is compared with the service's in
+ *                                  SHADOW mode, never changed (`policy-shadow.ts`), and `/metrics`
+ *                                  is served on REGISTRY_ADAPTER_METRICS_PORT (default 7132).
+ *                                  REGISTRY_ADAPTER_POLICY_TIMEOUT_MS bounds one comparison
+ *                                  (default 250). Unset: no comparison and no metrics port
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
  * token is verified as every `/api/v1` route verifies it, and an access token the auth hub issued
@@ -58,6 +64,12 @@ import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
+import {
+  createMetricsServer,
+  createPolicyShadow,
+  createShadowMetrics,
+  policyShadowFromEnv,
+} from '~/server/registry-adapter/policy-shadow';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -100,7 +112,21 @@ function main() {
     );
   }
   const onRegion = (line: string) => console.log('registry-adapter:', line);
-  const auth = { verifyToken, resource, limiter, onRegion };
+  // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision.
+  const shadowConfig = policyShadowFromEnv(process.env);
+  let policyShadow: ReturnType<typeof createPolicyShadow> | undefined;
+  if (shadowConfig) {
+    const metrics = createShadowMetrics();
+    policyShadow = createPolicyShadow({
+      url: shadowConfig.url,
+      timeoutMs: shadowConfig.timeoutMs,
+      counter: metrics.counter,
+    });
+    createMetricsServer(metrics.registry).listen(shadowConfig.metricsPort, () =>
+      console.log(`registry-adapter: policy shadow on; /metrics on :${shadowConfig.metricsPort}`)
+    );
+  }
+  const auth = { verifyToken, resource, limiter, onRegion, policyShadow };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
