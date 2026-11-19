@@ -24,13 +24,16 @@ beforeAll(async () => {
     );
     INSERT INTO "Post" ("id", "publishedAt") VALUES (1, '2020-01-01');
     INSERT INTO "Image" ("id", "url", "nsfwLevel", "postId") VALUES
-      (1, 'key-1', 1, 1), (2, 'key-2', 4, 1), (3, 'key-3', 1, 1), (4, 'key-4', 4, 1);
+      (1, 'key-1', 1, 1), (2, 'key-2', 4, 1), (3, 'key-3', 1, 1), (4, 'key-4', 4, 1),
+      (5, 'key-5', 1, 1), (6, 'key-6', 1, 1), (7, 'key-7', 2, 1);
   `);
+  // Ids run against createdAt, rows 10 and 11 tie on createdAt, and insertion order is neither.
   await pg.query(
     `INSERT INTO "KnightsRatingGuideItem" VALUES
-       (10, $1, 3, 'ACCEPTED', '2026-01-01'), (11, $1, 1, 'ACCEPTED', '2026-01-02'),
-       (12, $1, 4, 'REVIEW', '2026-01-03')`,
-    [RATING_GUIDE_COLLECTION_ID]
+       (11, $1, 5, 'ACCEPTED', '2026-01-03'), (30, $1, 3, 'ACCEPTED', '2026-01-01'),
+       (12, $1, 4, 'REVIEW', '2026-01-01'), (10, $1, 6, 'ACCEPTED', '2026-01-03'),
+       (20, $1, 1, 'ACCEPTED', '2026-01-02'), (40, $2, 7, 'ACCEPTED', '2026-01-01')`,
+    [RATING_GUIDE_COLLECTION_ID, RATING_GUIDE_COLLECTION_ID + 1]
   );
   // The collection table itself holds something else: the guide must not read it.
   await pg.query(`INSERT INTO "CollectionItem" VALUES (20, $1, 2, 'ACCEPTED', '2026-01-01')`, [
@@ -44,6 +47,6 @@ describe('ratingExamples', () => {
     const examples = await ratingExamples(db, 0);
 
     expect(Object.keys(examples)).toEqual(['1']);
-    expect(examples[1].map((e) => e.id)).toEqual([3, 1]);
+    expect(examples[1].map((e) => e.id)).toEqual([3, 1, 6, 5]);
   });
 });
