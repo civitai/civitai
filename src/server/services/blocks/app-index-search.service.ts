@@ -35,11 +35,8 @@ import type {
   StoreGridItem,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
-import {
-  listAvailableListings,
-  listStoreListingsBySlugs,
-  type ListAvailableListingsOpts,
-} from '~/server/services/blocks/app-listing.service';
+import type { ListAvailableListingsOpts } from '~/server/services/blocks/app-listing.service';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 /** How long a store search waits for the index before serving the database path. */
 export const APP_INDEX_SEARCH_TIMEOUT_MS = 300;
@@ -56,6 +53,28 @@ const indexResponseSchema = z.object({
   next: z.string().nullable(),
 });
 
+/** The two database reads this module composes; passed in so the routing is testable alone. */
+export type StoreGridReads = {
+  listAvailableListings: (
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ) => Promise<StoreGridPage>;
+  listStoreListingsBySlugs: (
+    slugs: string[],
+    input: ListAppListingsInput,
+    opts: ListAvailableListingsOpts
+  ) => Promise<ListingCard[]>;
+};
+
+// Imported on use: the listing service is a large module the routing does not need until it reads.
+const listingService = () => import('~/server/services/blocks/app-listing.service');
+const DB_READS: StoreGridReads = {
+  listAvailableListings: async (input, opts) =>
+    (await listingService()).listAvailableListings(input, opts),
+  listStoreListingsBySlugs: async (slugs, input, opts) =>
+    (await listingService()).listStoreListingsBySlugs(slugs, input, opts),
+};
+
 class IndexUnavailable extends Error {
   constructor(readonly reason: AppIndexSearchReason) {
     super(reason);
@@ -69,11 +88,12 @@ class IndexUnavailable extends Error {
 export async function listStoreGrid(
   input: ListAppListingsInput,
   opts: ListAvailableListingsOpts,
-  { indexSearch }: { indexSearch: boolean }
+  { indexSearch }: { indexSearch: boolean },
+  reads: StoreGridReads = DB_READS
 ): Promise<StoreGridPage> {
   const query = input.query?.trim() ?? '';
-  if (!indexSearch || query === '') return listAvailableListings(input, opts);
-  return searchThroughIndex(input, query, opts);
+  if (!indexSearch || query === '') return reads.listAvailableListings(input, opts);
+  return searchThroughIndex(input, query, opts, reads);
 }
 
 /** Why a flagged request is not sent to the index, or null when it is. */
@@ -92,10 +112,11 @@ function notRoutable(
 async function searchThroughIndex(
   input: ListAppListingsInput,
   query: string,
-  opts: ListAvailableListingsOpts
+  opts: ListAvailableListingsOpts,
+  reads: StoreGridReads
 ): Promise<StoreGridPage> {
   // Started at once: it is the fallback, and the comparison's other side.
-  const dbPage = listAvailableListings(input, opts);
+  const dbPage = reads.listAvailableListings(input, opts);
   // Handled where it is awaited; this only keeps an early rejection from being reported as
   // unhandled while the index call is in flight.
   dbPage.catch(() => undefined);
@@ -110,7 +131,7 @@ async function searchThroughIndex(
   }
   let cards: ListingCard[];
   try {
-    cards = await listStoreListingsBySlugs(slugs, input, opts);
+    cards = await reads.listStoreListingsBySlugs(slugs, input, opts);
   } catch {
     return fallBack(dbPage, query, 'error');
   }
@@ -146,7 +167,8 @@ async function fetchIndexSlugs(query: string, input: ListAppListingsInput): Prom
   try {
     res = await fetch(`${base}/search?${params}`, {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(APP_INDEX_SEARCH_TIMEOUT_MS),
+      // Dropped only by the outbound-fetch-timeouts-off switch (fetch-timeout.ts).
+      signal: fetchTimeoutSignal(APP_INDEX_SEARCH_TIMEOUT_MS),
     });
   } catch (err) {
     throw new IndexUnavailable(isTimeout(err) ? 'timeout' : 'error');

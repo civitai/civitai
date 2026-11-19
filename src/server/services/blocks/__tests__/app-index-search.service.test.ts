@@ -12,17 +12,20 @@ const h = vi.hoisted(() => ({
   listStoreListingsBySlugs: vi.fn(),
   recordAppIndexSearch: vi.fn(),
 }));
-vi.mock('~/server/services/blocks/app-listing.service', () => ({
-  listAvailableListings: h.listAvailableListings,
-  listStoreListingsBySlugs: h.listStoreListingsBySlugs,
-}));
 vi.mock('~/server/prom/app-index-search.metrics', () => ({
   recordAppIndexSearch: h.recordAppIndexSearch,
 }));
 
-const { listStoreGrid, APP_INDEX_SEARCH_TIMEOUT_MS } = await import(
+const { listStoreGrid: listStoreGridWith, APP_INDEX_SEARCH_TIMEOUT_MS } = await import(
   '~/server/services/blocks/app-index-search.service'
 );
+
+// The database reads are passed in (the service's `reads` parameter), never module-mocked.
+const listStoreGrid = (...args: Parameters<typeof listStoreGridWith>) =>
+  listStoreGridWith(args[0], args[1], args[2], {
+    listAvailableListings: h.listAvailableListings,
+    listStoreListingsBySlugs: h.listStoreListingsBySlugs,
+  });
 
 const INDEX_URL = 'http://app-index.invalid/base/';
 
