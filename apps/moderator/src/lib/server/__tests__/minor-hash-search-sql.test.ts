@@ -38,8 +38,8 @@ describe('minor queue search', () => {
     const statement = await compile(() =>
       getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
     );
-    // minor_src is an unindexed CTE (~20k rows at real size): an EXISTS over it per candidate cost
-    // seconds. Pinned here because pglite results cannot see the plan.
+    // minor_src is a large unindexed CTE: an EXISTS over it per candidate cost seconds.
+    // Pinned here because pglite results cannot see the plan.
     expect(statement).toMatch(
       /searched_seeds AS MATERIALIZED \([^)]*FROM minor_src\s+WHERE "minorModelId" = \$\d+ OR "userId" = \$\d+/
     );
