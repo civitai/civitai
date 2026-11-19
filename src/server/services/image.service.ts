@@ -1,6 +1,6 @@
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
-import type { RequestCredential } from '~/server/auth/request-credential';
+import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -4838,6 +4838,23 @@ export const getIngestionResults = async ({
       },
     },
   });
+
+  const requestedCount = new Set(ids).size;
+  if (images.length < requestedCount) {
+    // Counts only: no ids and no user.
+    const { tokenScope, apiKeyType, client } = credentialLogFields(credential);
+    logToAxiom({
+      name: 'ingestion-results-filtered',
+      type: 'info',
+      payload: {
+        requestedCount,
+        filteredCount: requestedCount - images.length,
+        tokenScope,
+        apiKeyType,
+        client,
+      },
+    });
+  }
 
   const dictionary = images.reduce<
     Record<

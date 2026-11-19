@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { RequestCredential } from '~/server/auth/request-credential';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getIngestionResults } from '~/server/services/image.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -22,6 +23,7 @@ const reducedKey = {
 } as unknown as RequestCredential;
 
 beforeEach(() => {
+  loggingMock.logToAxiom.mockClear();
   // Answers the query as Postgres would for the id and owner columns it filters on.
   dbMock.dbRead.image.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] }; userId?: number };
@@ -52,5 +54,28 @@ describe('ingestion results', () => {
 
   it("leaves other users' images out for a moderator on a reduced-scope key", async () => {
     expect(await idsSeen(MODERATOR, reducedKey)).toEqual([]);
+  });
+});
+
+describe('the filtered-request log line', () => {
+  it('carries counts and the credential kind, never ids or the user', async () => {
+    await idsSeen(OWNER, reducedKey);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith({
+      name: 'ingestion-results-filtered',
+      type: 'info',
+      payload: {
+        requestedCount: 2,
+        filteredCount: 1,
+        tokenScope: Number(TokenScope.MediaRead),
+        apiKeyType: 'User',
+        client: 'personal-key',
+      },
+    });
+  });
+
+  it('is not written when every requested id is returned', async () => {
+    await idsSeen(MODERATOR);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
