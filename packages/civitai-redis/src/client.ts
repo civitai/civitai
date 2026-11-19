@@ -3652,6 +3652,12 @@ const REDIS_KEYS_UNPREFIXED = {
       Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
      */
     MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
+    /*
+      Use: category calls the retry job sent per article, capped so a call that keeps failing is not
+      billed forever. Lost on eviction, an article gets up to one more round of retries.
+      Structure: integer (INCRBY), TTL 31d, key = `text-scan:category-retries:${articleId}`.
+     */
+    CATEGORY_RETRIES: 'text-scan:category-retries',
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',

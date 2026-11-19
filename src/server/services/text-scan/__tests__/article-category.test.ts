@@ -278,6 +278,60 @@ describe('handleTextCategoryCallback', () => {
     expect(writeArgs()).toEqual([[null, 5]]);
   });
 
+  const categoryLog = (message: string) =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([arg]) => arg as Record<string, unknown>)
+      .find((arg) => arg.name === 'text-category' && arg.message === message);
+
+  it('logs what the orchestrator reported for a failed workflow, never the text', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      categoryWorkflow('', {
+        status: 'failed',
+        steps: [
+          {
+            $type: 'chatCompletion',
+            status: 'failed',
+            retries: 2,
+            input: { messages: [{ role: 'user', content: 'SECRET ARTICLE TEXT' }] },
+          },
+        ],
+      })
+    );
+    await callback('failed');
+    const log = categoryLog('workflow failed; category cleared');
+    expect(log?.payload).toMatchObject({
+      workflowStatus: 'failed',
+      stepStatus: 'failed',
+      retries: 2,
+    });
+    expect(JSON.stringify(log)).not.toContain('SECRET ARTICLE TEXT');
+  });
+
+  it('logs the finish reason and the off-list name for unusable output', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      categoryWorkflow('', {
+        steps: [
+          {
+            $type: 'chatCompletion',
+            output: {
+              choices: [
+                { message: { content: '{"category":"announcement"}' }, finishReason: 'stop' },
+              ],
+            },
+          },
+        ],
+      })
+    );
+    await callback();
+    expect(categoryLog('unusable output; category cleared')?.payload).toEqual({
+      finishReason: 'stop',
+      contentLength: 27,
+      parsed: false,
+      answer: 'announcement',
+    });
+  });
+
   it('a failing write resolves and never touches the scan record', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('column does not exist'));

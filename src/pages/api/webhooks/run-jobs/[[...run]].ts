@@ -169,6 +169,7 @@ import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-lev
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
+import { articleCategoryRetryJob } from '~/server/jobs/article-category-retry';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
@@ -358,6 +359,7 @@ export const jobs: Job[] = [
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,
+  articleCategoryRetryJob,
   articleIngestionReconcile,
   serviceOfferingIngestionReconcile,
   articleContentLinkHold,

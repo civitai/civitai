@@ -468,12 +468,18 @@ describe('story-writer counts R+ stories preconditions', () => {
 
 describe('article category backfill selection', () => {
   const db = { pg: null as unknown as PGlite };
-  const select = async (afterId: number, limit: number, includeMature = false) =>
+  const select = async (
+    afterId: number,
+    limit: number,
+    includeMature = false,
+    publishedBefore = new Date()
+  ) =>
     (
       await db.pg.query<{ id: number }>(ARTICLE_CATEGORY_BACKFILL_SQL, [
         afterId,
         limit,
         includeMature,
+        publishedBefore,
       ])
     ).rows.map((r) => r.id);
 
@@ -498,6 +504,12 @@ describe('article category backfill selection', () => {
     expect(await select(2, 2)).toEqual([3, 19]);
   });
 
+  it('selects only articles published before the given time', async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15, 19]);
+    expect(await select(0, 100, true, hoursAgo(48))).toEqual([]);
+  });
+
   it('selects R+ articles too only when asked, and never unrated ones', async () => {
     expect(await select(0, 100, true)).toEqual([1, 2, 3, 4, 15, 19]);
     expect(await select(3, 2, true)).toEqual([4, 15]);
@@ -518,7 +530,11 @@ describe('article category backfill selection', () => {
     const backfill = ARTICLE_CATEGORY_BACKFILL_SQL.split(/^WHERE$/m)[1].split('ORDER BY')[0];
     expect(
       conditions(backfill).filter(
-        (c) => !c.includes('systemCategoryId') && c !== 'a.id > $1' && !c.includes('$3')
+        (c) =>
+          !c.includes('systemCategoryId') &&
+          c !== 'a.id > $1' &&
+          !c.includes('$3') &&
+          !c.includes('$4')
       )
     ).toEqual(conditions(board).filter((c) => !c.startsWith('am.'))); // the metric join, not eligibility
   });
