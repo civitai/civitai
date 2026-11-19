@@ -1,4 +1,6 @@
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import type { RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -4811,9 +4813,20 @@ export const removeImageResource = async ({
 // }
 
 // export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
-export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
+export const getIngestionResults = async ({
+  ids,
+  user,
+  credential,
+}: {
+  ids: number[];
+  user: { id: number; isModerator?: boolean | null };
+  credential: RequestCredential;
+}) => {
+  const userId = user.id;
+  // The viewer's own images; any image only for a moderator on a session or a full-scope key.
+  const viewer = withModeratorRightsFor(user, credential);
   const images = await dbRead.image.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, ...(viewer?.isModerator ? {} : { userId }) },
     select: {
       id: true,
       ingestion: true,
