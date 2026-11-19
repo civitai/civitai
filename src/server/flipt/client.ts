@@ -458,8 +458,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // is the safe failure. Off, the hourly path does nothing at all and the nightly
   // one runs its diff as a dry run for visibility.
   METRIC_REACTION_REPAIR = 'metric-reaction-repair',
-  // Arms the nightly Hot rank snapshot into ClickHouse. Default-off; create the key disabled before
-  // the deploy that reads it, and only after the snapshot tables exist.
+  // Arms the nightly Hot rank snapshot into ClickHouse. A missing key reads as off; add the key ON
+  // only after the snapshot tables exist.
   MODEL_HOT_RANK_SNAPSHOT = 'model-hot-rank-snapshot',
   // On: the message-as-civitai, headless-post and Stripe AIR idempotency keys are claimed in the
   // Postgres `IdempotencyKey` table (still written to sysRedis too), so a sysRedis eviction cannot
