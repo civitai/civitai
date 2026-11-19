@@ -34,7 +34,7 @@ import { bulkAddBlockedImages, logCsamBlocklistNoHash } from '~/server/services/
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
-import type { CsamContextText } from '~/server/services/csam-context-text';
+import type { CsamContextReview, CsamContextText } from '~/server/services/csam-context-text';
 import { foldContextText } from '~/server/services/csam-context-text';
 
 type CsamReportImage = {
@@ -154,7 +154,7 @@ function foldDetails(
   stored: unknown,
   added: CsamReportFormOutput | undefined,
   filedById: number,
-  onIdentical?: (capture: CsamContextText) => void
+  onIdentical?: (capture: CsamContextText, reviewUpgrade?: CsamContextReview) => void
 ) {
   const prior = isRecord(stored) ? stored : {};
   const next = Object.fromEntries(
@@ -166,20 +166,32 @@ function foldDetails(
     const list = unionLists<unknown>(prior[key], next[key], (item) => item);
     if (list) folded[key] = list;
   }
-  const identical: CsamContextText[] = [];
+  const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
   const contextText = foldContextText(
     prior.contextText,
     (next as { contextText?: CsamContextText[] }).contextText,
-    (capture) => {
-      identical.push(capture);
-      onIdentical?.(capture);
+    (capture, reviewUpgrade) => {
+      identical.push({ capture, reviewUpgrade });
+      onIdentical?.(capture, reviewUpgrade);
     }
   );
   if (contextText) folded.contextText = contextText;
   // Internal record of a filing whose text the report already held; never part of what is sent.
   const refiles = [
     ...(Array.isArray(prior.identicalRefiles) ? prior.identicalRefiles : []),
-    ...identical.map((c) => ({ filedById, at: c.capturedAt, item: `${c.source}:${c.id}` })),
+    ...identical.map(({ capture: c, reviewUpgrade }) => ({
+      filedById,
+      at: c.capturedAt,
+      item: `${c.source}:${c.id}`,
+      ...(reviewUpgrade && {
+        reviewUpgrade: {
+          byId: reviewUpgrade.byId,
+          at: reviewUpgrade.at,
+          origin: reviewUpgrade.origin,
+          change: 'reviewed flag upgraded from unreviewed',
+        },
+      }),
+    })),
   ];
   if (refiles.length) folded.identicalRefiles = refiles;
   const generatedImages = foldGeneratedImages(prior.generatedImages, next.generatedImages);
@@ -243,7 +255,7 @@ export async function createCsamReport({
   };
 
   // A filing's capture of text the report already holds, recorded once the fold commits.
-  const identical: CsamContextText[] = [];
+  const identical: { capture: CsamContextText; reviewUpgrade?: CsamContextReview }[] = [];
   // Only fold into a report of the same account AND type: internal reports belong to no account, and
   // a different type is a different report.
   const report = isInternalReport
@@ -314,7 +326,7 @@ export async function createCsamReport({
               locked.details,
               details as CsamReportFormOutput,
               reportedById,
-              (c) => identical.push(c)
+              (capture, reviewUpgrade) => identical.push({ capture, reviewUpgrade })
             ),
             sendClaimId: null,
             sendClaimedAt: null,
@@ -322,7 +334,7 @@ export async function createCsamReport({
         });
       });
 
-  for (const capture of identical)
+  for (const { capture, reviewUpgrade } of identical)
     logToAxiom({
       name: 'csam-report',
       type: 'info',
@@ -333,7 +345,10 @@ export async function createCsamReport({
         filedById: reportedById,
         capturedAt: capture.capturedAt,
         item: `${capture.source}:${capture.id}`,
-        outcome: 'identical text, not added',
+        outcome: reviewUpgrade
+          ? 'identical text, not added; reviewed flag upgraded from unreviewed'
+          : 'identical text, not added',
+        ...(reviewUpgrade && { reviewOrigin: reviewUpgrade.origin }),
       },
     });
 
