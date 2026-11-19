@@ -1,0 +1,348 @@
+// Package index follows the app entity stream on a registry and keeps the store in step with it,
+// as the registry spec's model-index example does for models (civitai-registry
+// docs/examples/indexes/model-index.md, "Following the stream" and "Starting and rebuilding"):
+//
+//   - Upsert replaces the app's row, Delete removes it, Progress only moves the cursor, and each
+//     stores its cursor in the same transaction (store.Store.Apply).
+//   - Live stores its cursor; the first Live of a building generation makes it the serving one,
+//     which is when the index starts answering searches (store.Store.Live). Nothing serves before.
+//   - End is logged, and the subscription is opened again later, with the longest backoff.
+//   - A restart resumes from the stored cursor; a stored empty cursor starts over, since an
+//     earlier one would miss deletes ("Consumers" rule 1).
+//   - cursor_expired, a LayoutVersion bump, or a serving generation whose cursor is empty starts a
+//     new building generation from an empty cursor while the serving one keeps answering; the
+//     switch happens at the new one's Live.
+//   - Any other end of the stream (a dropped connection, `unavailable`, `slow_consumer`, an error
+//     this consumer does not know) reconnects with the same cursor after a bounded exponential
+//     backoff with jitter. Every reconnect waits; there is no tight loop.
+//   - An upsert whose body is unusable is treated as deleted. An event that cannot be decoded at all
+//     (no usable urn, unreadable data) is skipped and counted, advancing the cursor only when it
+//     carried one, so one bad event never wedges the stream.
+package index
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"math/rand/v2"
+	"time"
+
+	"github.com/civitai/civitai/apps/app-index-go/internal/metrics"
+	"github.com/civitai/civitai/apps/app-index-go/internal/registry"
+	"github.com/civitai/civitai/apps/app-index-go/internal/store"
+)
+
+// LayoutVersion is the shape of an index row. Bump it when what a row holds changes (a new filter
+// column, a changed tsvector): the next start builds a new generation beside the serving one.
+const LayoutVersion = 1
+
+// Events is one open subscription.
+type Events interface {
+	Next() (registry.Event, error)
+	Close() error
+}
+
+// Subscriber opens subscriptions.
+type Subscriber interface {
+	Subscribe(ctx context.Context, req registry.Request) (Events, error)
+}
+
+// ClientSubscriber is a Subscriber over the HTTP binding.
+type ClientSubscriber struct{ Client *registry.Client }
+
+// Subscribe implements Subscriber.
+func (c ClientSubscriber) Subscribe(ctx context.Context, req registry.Request) (Events, error) {
+	s, err := c.Client.Subscribe(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Backoff is a bounded exponential backoff with jitter: attempt n waits a random duration in
+// [d/2, d), d = min(Base * 2^n, Max). Never zero, so a failing registry is never polled in a loop.
+type Backoff struct {
+	Base, Max time.Duration
+	// Jitter returns a value in [0, 1); nil is math/rand.
+	Jitter func() float64
+}
+
+// Delay is how long attempt n (from 0) waits.
+func (b Backoff) Delay(attempt int) time.Duration {
+	d := b.Base
+	for i := 0; i < attempt && d < b.Max; i++ {
+		d *= 2
+	}
+	d = min(d, b.Max)
+	j := b.Jitter
+	if j == nil {
+		j = rand.Float64
+	}
+	return d/2 + time.Duration(j()*float64(d/2))
+}
+
+// Consumer follows one schema's stream into a store.
+type Consumer struct {
+	Store   store.Store
+	Sub     Subscriber
+	Schema  string
+	Layout  int
+	Log     *slog.Logger
+	Metrics *metrics.Metrics
+	Backoff Backoff
+	// Sleep waits d or until ctx ends; nil is a timer. Tests replace it to observe the delays.
+	Sleep func(ctx context.Context, d time.Duration) error
+}
+
+// maxAttempt caps the backoff exponent (the delay is capped at Backoff.Max long before).
+const maxAttempt = 30
+
+var errEnded = errors.New("registry ended the stream")
+
+// storeError marks a failure of the store, as opposed to the stream.
+type storeError struct{ err error }
+
+func (e storeError) Error() string { return "store: " + e.err.Error() }
+func (e storeError) Unwrap() error { return e.err }
+
+// Run follows the stream until ctx ends.
+func (c *Consumer) Run(ctx context.Context) error {
+	attempt := 0
+	var unlock func()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	for ctx.Err() == nil {
+		if unlock == nil {
+			u, err := c.Store.Lock(ctx)
+			if err != nil {
+				if errors.Is(err, store.ErrLocked) {
+					c.Log.Info("another consumer holds the lock; serving searches only until it is free")
+				} else if ctx.Err() == nil {
+					c.Log.Warn("consumer lock", "err", err)
+				}
+				c.wait(ctx, c.Backoff.Delay(attempt))
+				attempt = min(attempt+1, maxAttempt)
+				continue
+			}
+			unlock = u
+		}
+		gen, err := c.prepare(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			c.Log.Warn("prepare generation", "err", err)
+			c.Metrics.Reconnects.WithLabelValues("store").Inc()
+			c.wait(ctx, c.Backoff.Delay(attempt))
+			attempt = min(attempt+1, maxAttempt)
+			continue
+		}
+		live, err := c.follow(ctx, &gen)
+		if ctx.Err() != nil {
+			break
+		}
+		if live {
+			// The stream worked: the next failure starts the backoff over (still never zero).
+			attempt = 0
+		}
+		reason, longWait := c.handle(ctx, gen, err)
+		if errors.Is(err, store.ErrFenced) {
+			unlock()
+			unlock = nil
+		}
+		c.Metrics.Reconnects.WithLabelValues(reason).Inc()
+		d := c.Backoff.Delay(attempt)
+		if longWait {
+			d = c.Backoff.Delay(maxAttempt)
+		}
+		c.wait(ctx, d)
+		attempt = min(attempt+1, maxAttempt)
+	}
+	return nil
+}
+
+func (c *Consumer) wait(ctx context.Context, d time.Duration) {
+	if c.Sleep != nil {
+		_ = c.Sleep(ctx, d)
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+// handle decides what an ended stream means: the reconnect reason, and whether to wait the
+// longest backoff (End, bad_request, auth: retrying sooner would not change the answer).
+func (c *Consumer) handle(ctx context.Context, gen store.Generation, err error) (reason string, longWait bool) {
+	var se storeError
+	switch {
+	case errors.Is(err, errEnded):
+		c.Log.Warn("registry sent End; subscribing again later", "generation", gen.ID)
+		return "end", true
+	case errors.As(err, &se):
+		c.Log.Warn("store write failed; reconnecting from the stored cursor", "err", se.err, "generation", gen.ID)
+		return "store", false
+	}
+	code := registry.CodeOf(err)
+	switch code {
+	case registry.CursorExpired:
+		c.Log.Warn("cursor expired; rebuilding from an empty cursor", "generation", gen.ID, "state", gen.State)
+		if gen.State == store.StateServing {
+			if _, err := c.Store.NewBuilding(ctx, c.Schema, c.Layout); err != nil {
+				c.Log.Warn("start rebuild", "err", err)
+				return "store", false
+			}
+		} else if err := c.Store.Reset(ctx, gen.ID); err != nil {
+			c.Log.Warn("reset building generation", "err", err)
+			return "store", false
+		}
+		c.Metrics.Rebuilds.WithLabelValues("cursor_expired").Inc()
+		return "cursor_expired", false
+	case registry.SlowConsumer:
+		c.Log.Info("registry ended the stream for a slow consumer; reconnecting", "generation", gen.ID)
+		return "slow_consumer", false
+	case registry.BadRequest:
+		c.Log.Error("registry refused the request", "err", err)
+		return "bad_request", true
+	case registry.InvalidToken, registry.InsufficientScope:
+		c.Log.Error("registry refused the token", "code", string(code))
+		return "auth", true
+	default:
+		c.Log.Info("stream ended; reconnecting", "err", err, "generation", gen.ID)
+		return "unavailable", false
+	}
+}
+
+// prepare picks the generation to follow and claims it, starting one where it must.
+func (c *Consumer) prepare(ctx context.Context) (store.Generation, error) {
+	st, err := c.Store.State(ctx)
+	if err != nil {
+		return store.Generation{}, err
+	}
+	c.setServing(st.Serving)
+	fresh := func(reason string) (store.Generation, error) {
+		g, err := c.Store.NewBuilding(ctx, c.Schema, c.Layout)
+		if err != nil {
+			return store.Generation{}, err
+		}
+		c.Metrics.Rebuilds.WithLabelValues(reason).Inc()
+		c.Log.Info("building a new generation", "generation", g.ID, "reason", reason)
+		return g, nil
+	}
+	if b := st.Building; b != nil {
+		if b.Layout != c.Layout || b.Schema != c.Schema {
+			return fresh("layout")
+		}
+		if err := c.Store.Claim(ctx, b.ID); err != nil {
+			return store.Generation{}, err
+		}
+		if b.Cursor == "" {
+			// An empty cursor cannot be resumed: the snapshot starts over (crash mid-snapshot).
+			if err := c.Store.Reset(ctx, b.ID); err != nil {
+				return store.Generation{}, err
+			}
+		}
+		return *b, nil
+	}
+	if s := st.Serving; s != nil {
+		if s.Layout != c.Layout || s.Schema != c.Schema {
+			return fresh("layout")
+		}
+		if s.Cursor == "" {
+			return fresh("empty_cursor")
+		}
+		if err := c.Store.Claim(ctx, s.ID); err != nil {
+			return store.Generation{}, err
+		}
+		return *s, nil
+	}
+	return fresh("first_start")
+}
+
+func (c *Consumer) setServing(g *store.Generation) {
+	if g == nil {
+		c.Metrics.Ready.Set(0)
+		c.Metrics.Generation.Set(0)
+		return
+	}
+	c.Metrics.Ready.Set(1)
+	c.Metrics.Generation.Set(float64(g.ID))
+}
+
+// follow subscribes from gen's cursor and applies events until the stream ends. live reports
+// whether it reached Live, i.e. the subscription worked.
+func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool, err error) {
+	events, err := c.Sub.Subscribe(ctx, registry.Request{Schema: c.Schema, Cursor: gen.Cursor})
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = events.Close() }()
+	for {
+		ev, err := events.Next()
+		if err != nil {
+			return live, err
+		}
+		typ := string(ev.Type)
+		switch ev.Type {
+		case registry.Upsert:
+			ch := store.Change{Kind: store.ChangeUpsert, Cursor: ev.Cursor}
+			app, verr := store.AppFromEntity(ev.Entity.URN, ev.Entity.Rev, ev.Entity.Body)
+			if verr != nil {
+				// A body this index cannot use is treated as deleted (spec "Validity" rule 2).
+				c.Log.Warn("unusable app body; treating it as deleted", "urn", ev.Entity.URN, "reason", verr.Error())
+				ch = store.Change{Kind: store.ChangeDelete, URN: ev.Entity.URN, Cursor: ev.Cursor}
+				typ = "invalid"
+			} else {
+				ch.App = app
+			}
+			if err := c.Store.Apply(ctx, gen.ID, ch); err != nil {
+				return live, storeError{err}
+			}
+		case registry.Delete:
+			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeDelete, URN: ev.URN, Cursor: ev.Cursor}); err != nil {
+				return live, storeError{err}
+			}
+		case registry.Progress:
+			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeProgress, Cursor: ev.Cursor}); err != nil {
+				return live, storeError{err}
+			}
+		case registry.Live:
+			promoted, err := c.Store.Live(ctx, gen.ID, ev.Cursor)
+			if err != nil {
+				return live, storeError{err}
+			}
+			gen.Cursor = ev.Cursor
+			if promoted {
+				gen.State = store.StateServing
+				c.setServing(gen)
+				c.Log.Info("generation is serving", "generation", gen.ID)
+			}
+			live = true
+		case registry.Malformed:
+			// Skipped, never the end of the stream: reconnecting would replay the same event
+			// forever. Advanced past only when it carried a cursor, as a Progress would be.
+			c.Metrics.Malformed.WithLabelValues(string(ev.Of)).Inc()
+			c.Log.Warn("malformed registry event skipped", "type", string(ev.Of), "reason", ev.Reason,
+				"advanced", ev.Cursor != "", "generation", gen.ID)
+			if ev.Cursor == "" {
+				continue
+			}
+			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeProgress, Cursor: ev.Cursor}); err != nil {
+				return live, storeError{err}
+			}
+			gen.Cursor = ev.Cursor
+			continue
+		case registry.End:
+			c.Metrics.EventApplied(typ)
+			return live, errEnded
+		}
+		gen.Cursor = ev.Cursor
+		c.Metrics.EventApplied(typ)
+	}
+}
