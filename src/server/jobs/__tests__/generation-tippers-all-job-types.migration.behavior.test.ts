@@ -15,8 +15,7 @@ const MIGRATION = readFileSync(
 );
 
 // The generationTippers query as it stands in prod, byte for byte (CRLF line ends, tab indents).
-// The md5 assertion below keeps this fixture honest. It is ClickHouse SQL, so PGlite only stores
-// it: these tests pin the rewrite, not the query's results.
+// It is ClickHouse SQL, so PGlite only stores it: these tests pin the rewrite, not its results.
 const LIVE_QUERY = [
   'WITH clickhouse_data AS (',
   '\tSELECT',
@@ -73,7 +72,7 @@ describe('generation tippers all job types migration', () => {
     expect(md5(LIVE_QUERY)).toBe('ba129c01d01f9275ff0ebc65d78dae33');
   });
 
-  it('counts tips on every job type and labels the count Generations; nothing else changes', async () => {
+  it('counts tips on every job type, keeps out future-dated and garbage-tip rows, labels the count Generations', async () => {
     const after = (await boardQuery(db.pg)).split('\r\n');
     const live = LIVE_QUERY.split('\r\n');
     expect(live.filter((l) => !after.includes(l))).toEqual([
@@ -83,6 +82,8 @@ describe('generation tippers all job types migration', () => {
     ]);
     expect(after.filter((l) => !live.includes(l))).toEqual([
       '\tWHERE creatorsTip > 0',
+      '\t\tAND creatorsTip < 1000000',
+      '\t\tAND createdAt <= now()',
       "\ttoJSONString(map('generationCount', cast(generations as int))) as metrics",
     ]);
   });
@@ -99,6 +100,16 @@ describe('generation tippers all job types migration', () => {
 });
 
 describe('generation tippers all job types migration preconditions', () => {
+  it('raises when the generationTippers row is missing', async () => {
+    const pg = new PGlite();
+    try {
+      await pg.exec('CREATE TABLE "Leaderboard" (id text PRIMARY KEY, query text NOT NULL)');
+      await expect(pg.exec(MIGRATION)).rejects.toThrow(/row not found/);
+    } finally {
+      await pg.close();
+    }
+  });
+
   it('refuses to touch a query that differs from the reviewed live text', async () => {
     const pg = new PGlite();
     try {

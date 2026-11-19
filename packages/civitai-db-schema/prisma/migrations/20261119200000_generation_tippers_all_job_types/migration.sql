@@ -1,14 +1,15 @@
 -- Generation tippers ("Buzz Daddies") leaderboard: count tips on every orchestrator job type.
 -- Data row, not schema. Apply by hand; this repo does not run prisma migrate deploy.
 -- Do not apply between 23:00 and 00:01 UTC (prepare-leaderboard / deliver-leaderboard-cosmetics).
--- Standings, the board's badge cosmetics and its top-100 ranks change on the next
--- prepare-leaderboard run.
+-- Standings change on the next prepare-leaderboard run.
 --
--- The board only counted tips on TextToImageV2, TextToImage and Comfy jobs, a list nobody kept up
--- as new job types shipped, so most generation tips did not count. This drops the job type filter:
--- every job with creatorsTip > 0 counts. Its per-user count is jobs, which now include video, so
--- the metric is renamed imageCount -> generationCount (shown as "Generations"). The 30-day window,
--- the 2024-08-01 floor, LIMIT 1000 and score = floor(tips) are unchanged.
+-- The board only counted tips on TextToImageV2, TextToImage and Comfy jobs. This drops the job type
+-- filter: every job with creatorsTip > 0 counts. That list was also, by accident, what kept out
+-- orchestration.jobs' corrupt rows (far-future createdAt, garbage tips); createdAt <= now() and
+-- creatorsTip < 1000000 now do that on purpose, as creator-program-bankable.ts does. The per-user
+-- count is uniq(jobId) and now includes video, so the metrics key is renamed imageCount ->
+-- generationCount. The 30-day window, the 2024-08-01 floor, LIMIT 1000 and score = floor(tips) are
+-- unchanged.
 --
 -- Fails closed: the update runs only when the live query is byte for byte the reviewed text (md5
 -- below), and the result must hash to the reviewed fixed text. Any other text RAISEs and changes
@@ -20,7 +21,7 @@ BEGIN;
 DO $$
 DECLARE
   live_md5 constant text := 'ba129c01d01f9275ff0ebc65d78dae33';
-  fixed_md5 constant text := '77c52311ca8bbb3204cd4b8dcaaffbc2';
+  fixed_md5 constant text := 'cd7c78b54c4714c6c1a810275e616501';
   crlf constant text := chr(13) || chr(10);
   q text;
 BEGIN
@@ -41,7 +42,9 @@ BEGIN
   q := replace(q,
     chr(9) || 'WHERE jobType IN (''TextToImageV2'', ''TextToImage'', ''Comfy'')' || crlf
       || chr(9) || chr(9) || 'AND creatorsTip > 0',
-    chr(9) || 'WHERE creatorsTip > 0');
+    chr(9) || 'WHERE creatorsTip > 0' || crlf
+      || chr(9) || chr(9) || 'AND creatorsTip < 1000000' || crlf
+      || chr(9) || chr(9) || 'AND createdAt <= now()');
   q := replace(q, 'map(''imageCount'', ', 'map(''generationCount'', ');
 
   IF md5(q) <> fixed_md5 THEN
