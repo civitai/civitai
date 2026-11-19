@@ -1637,6 +1637,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
 
+  // A Private model is listed to moderators only: these lists are cached per moderator flag, not per
+  // user, so an owner exemption here would reach other viewers.
+  if (!sessionUser?.isModerator) AND.push({ availability: { not: Availability.Private } });
+
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
     AND.push({ status: ModelStatus.Published });

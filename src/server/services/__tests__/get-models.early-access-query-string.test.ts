@@ -95,3 +95,38 @@ describe('?earlyAccess=false reaches the Prisma consumer as OFF', () => {
     expect(JSON.stringify(where?.AND ?? [])).toContain('123');
   });
 });
+
+describe('getModels and Private models', () => {
+  const listingInput = () => {
+    const { cursor, ...input } = getAllModelsSchema.parse({
+      browsingLevel: 1,
+      ids: [7],
+      username: 'owner',
+    });
+    return input;
+  };
+  async function excludesPrivate(user?: { id: number; isModerator: boolean }) {
+    dbMock.dbRead.model.findMany.mockClear();
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    await getModels({
+      input: { ...listingInput(), take: 10 } as never,
+      select: { id: true },
+      user: user as never,
+    });
+    expect(dbMock.dbRead.model.findMany).toHaveBeenCalledTimes(1);
+    const { where } = dbMock.dbRead.model.findMany.mock.calls[0][0] as { where: unknown };
+    return JSON.stringify(where).includes('{"availability":{"not":"Private"}}');
+  }
+
+  it('leaves them out for a signed-out viewer and for a signed-in user, the owner included', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 3300 } as never);
+    expect(await excludesPrivate(undefined)).toBe(true);
+    expect(await excludesPrivate({ id: 4400, isModerator: false })).toBe(true);
+    expect(await excludesPrivate({ id: 3300, isModerator: false })).toBe(true);
+  });
+
+  it('lists them for a moderator', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 3300 } as never);
+    expect(await excludesPrivate({ id: 5500, isModerator: true })).toBe(false);
+  });
+});
