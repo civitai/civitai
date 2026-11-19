@@ -61,6 +61,13 @@ import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
 import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
 import { getBadgeImageUrl, splitProfileBadges } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
+import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  sectionIcons,
+  storefrontSectionId,
+  storefrontShowsServices,
+} from '~/components/CreatorShop/section-meta';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -120,6 +127,16 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
   const [mainBuzzColor] = useAvailableBuzz();
   const buzzColorConfig = useBuzzCurrencyConfig(mainBuzzColor);
+
+  // Redesign: a Services button beside Visit shop, only when the storefront shows an Active service.
+  const redesign = !!features.profileRedesign && !isMobile;
+  const hasPublicShop = !!features.creatorShop && !!user?.creatorShopEnabled;
+  const { offerings: services } = useQueryShopServices(
+    user?.id ?? 0,
+    redesign && hasPublicShop && !!features.creatorServices
+  );
+  const { shop } = useQueryCreatorShop(services.length > 0 ? user?.id : undefined);
+  const showServicesBtn = storefrontShowsServices(shop, services.length, features);
 
   const badges = useMemo(
     () =>
@@ -265,6 +282,22 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     </Button>
   );
 
+  const ServicesIcon = sectionIcons.services;
+  const servicesBtn = showServicesBtn && (
+    <Button
+      component={NextLink}
+      href={`/user/${username}/shop#${storefrontSectionId('services')}`}
+      variant="light"
+      color="yellow"
+      size={sizeOpts.button}
+      radius="xl"
+      leftSection={<ServicesIcon size={16} />}
+      style={{ fontSize: 14, fontWeight: 590, lineHeight: 1.5 }}
+    >
+      Services
+    </Button>
+  );
+
   const mutedAlert = isCurrentUser && muted && (
     <AlertWithIcon icon={<IconAlertCircle />} iconSize="sm">
       You cannot edit your profile because your account has been restricted
@@ -406,7 +439,32 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           ))}
         </Group>
       )}
-      {!isMobile && !user?.bannedAt && (
+      {redesign && !user?.bannedAt && (
+        <Stack gap="xs">
+          {isCurrentUser ? (
+            muted ? (
+              mutedAlert
+            ) : (
+              editProfileBtn
+            )
+          ) : (
+            <>
+              {followUserBtn}
+              <Group grow wrap="nowrap" gap="xs">
+                <TipBuzzBtn />
+                <ChatBtn />
+              </Group>
+            </>
+          )}
+          {shopBtn && (
+            <Group grow wrap="nowrap" gap="xs">
+              {shopBtn}
+              {servicesBtn}
+            </Group>
+          )}
+        </Stack>
+      )}
+      {!isMobile && !redesign && !user?.bannedAt && (
         <>
           <Group grow>
             {muted ? mutedAlert : editProfileBtn}
