@@ -141,10 +141,14 @@ describe('who reports a block’s errors', () => {
     expect(mounters.length).toBeGreaterThan(1);
   });
 
-  it('only the dev-tunnel host passes onBlockError: a production mount reports nothing new', () => {
+  it('only the dev-tunnel and review-preview hosts pass onBlockError: a production mount reports nothing new', () => {
     const reporting = mounters.filter((file) =>
       /\bonBlockError=/.test(fs.readFileSync(path.join(SRC, file), 'utf8'))
     );
-    expect(reporting).toEqual(['components/AppBlocks/DevTunnelBlockHost.tsx']);
+    // The review host keeps them in the review page's in-memory console (`ReviewConsole`).
+    expect([...reporting].sort()).toEqual([
+      'components/AppBlocks/DevTunnelBlockHost.tsx',
+      'components/Apps/ReviewBlockPreviewHost.tsx',
+    ]);
   });
 });

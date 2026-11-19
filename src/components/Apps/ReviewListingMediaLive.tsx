@@ -63,14 +63,29 @@ type LiveProps = Omit<
  * no reads, no pickers.
  */
 export function ReviewListingMediaLive({ listingId, approveListingId, ...props }: LiveProps) {
-  const currentUser = useCurrentUser();
-  // A separate component below, so the plain case makes no reads at all.
-  if (!listingId || !currentUser?.isModerator) return <ReviewListingMedia {...props} />;
+  // No listing, no hooks at all: a review render without one reads no session (and so needs no
+  // session provider), exactly as before this component existed.
+  if (!listingId) return <ReviewListingMedia {...props} />;
   const listingIds = [
     listingId,
     ...(approveListingId && approveListingId !== listingId ? [approveListingId] : []),
   ];
-  return <RerateableListingMedia {...props} listingId={listingId} listingIds={listingIds} />;
+  return <ModeratorListingMedia {...props} listingId={listingId} listingIds={listingIds} />;
+}
+
+/** The moderator check, in its own component so the plain case above stays hook-free. */
+function ModeratorListingMedia(
+  props: Omit<LiveProps, 'listingId' | 'approveListingId'> & {
+    listingId: string;
+    listingIds: readonly string[];
+  }
+) {
+  const currentUser = useCurrentUser();
+  if (!currentUser?.isModerator) {
+    const { listingId: _listingId, listingIds: _listingIds, ...plain } = props;
+    return <ReviewListingMedia {...plain} />;
+  }
+  return <RerateableListingMedia {...props} />;
 }
 
 function RerateableListingMedia({

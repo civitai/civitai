@@ -238,7 +238,8 @@ function mount() {
   );
 }
 
-const picker = (name: string) => page.getByRole('combobox', { name: `${name} rating` });
+const picker = (name: string) =>
+  page.getByRole('combobox', { name: `${name} rating`, exact: true });
 const value = (name: string) => (picker(name).element() as HTMLSelectElement).value;
 
 describe('ReviewListingMediaLive — the moderator re-rate picker', () => {
