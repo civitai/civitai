@@ -397,9 +397,9 @@ const isOwnServableItem = async ({
   entityId,
 }: Pick<AddToShowcaseSectionSchema, 'entityType' | 'entityId'> & { userId: number }) => {
   const select = { id: true } as const;
+  // primary: an item published moments ago is the likeliest to be added.
   switch (entityType) {
     case 'Image':
-      // primary: an image published moments ago is the likeliest to be added.
       return !!(await dbWrite.image.findFirst({
         where: {
           id: entityId,
@@ -410,7 +410,6 @@ const isOwnServableItem = async ({
         select,
       }));
     case 'Model':
-      // primary: as for images.
       return !!(await dbWrite.model.findFirst({
         where: {
           id: entityId,
@@ -426,7 +425,6 @@ const isOwnServableItem = async ({
       }));
     case 'Article':
       // Pending/Rescan pass: the section's feed shows other viewers only Scanned articles.
-      // primary: as for images.
       return !!(await dbWrite.article.findFirst({
         where: {
           id: entityId,
