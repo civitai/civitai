@@ -368,6 +368,7 @@
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
       for (const entry of body?.items ?? []) {
         if (mine !== epoch) return;
+        if (dropped.has(entry.item.live)) continue;
         if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
           download(entry, mine);
           added += 1;
@@ -543,6 +544,9 @@
   };
 
   const SETTLED_NOTICE = 'Already settled by the Order. On to the next one.';
+  // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
+  const dropped = new Set<string>();
+  const MAX_DROPPED = 200;
 
   // Items other players settled (or moved past this player's stages) leave the buffer, and the one on screen is swapped for
   // the next, so no judgment is spent on an item the server would refuse.
@@ -555,6 +559,8 @@
         .map((drop) => drop.k)
     );
     if (gone.size === 0) return;
+    for (const k of gone) dropped.add(k);
+    while (dropped.size > MAX_DROPPED) dropped.delete(dropped.values().next().value!);
     for (const key of buffer.dropLive(gone)) {
       preloaded.delete(key);
       downloading.delete(key);
@@ -562,16 +568,20 @@
     syncBuffer();
     const onScreen = view?.item;
     if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key)) return;
-    tell(SETTLED_NOTICE);
+    // A refusal note must stay until the next judgment; it outranks this one.
+    if (!sticky) tell(SETTLED_NOTICE);
+    // Without a decoded item to show, the dropped one stays up (a vote on it is refused, as before): falling back to the
+    // server's item would show one already judged, and the buffer head may not be decoded yet.
     const next = buffer.peek() ? buffer.next() : null;
-    if (next) {
-      preloaded.delete(next.item.key);
-      local = next;
-      syncBuffer();
+    if (!next) {
+      if (!local && !tracker.pending) void invalidate('app:play');
       return;
     }
-    local = null;
-    if (!tracker.pending) void invalidate('app:play');
+    preloaded.delete(next.item.key);
+    local = next;
+    syncBuffer();
+    cooling = true;
+    setTimeout(() => (cooling = false), SETTLE_MS);
   }
 
   function onStats(payload: unknown) {

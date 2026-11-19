@@ -13,6 +13,7 @@ export type ItemStage = { id: number; status: string; minRank: string };
 
 /** A settled item can have had many voters; past this many, the rest see their stats on their next page read. */
 const MAX_STATS_RECIPIENTS = 25;
+const STATS_CONCURRENCY = 3;
 
 export async function itemStages(db: Kysely<DB>, ids: number[]): Promise<ItemStage[]> {
   if (ids.length === 0) return [];
@@ -97,7 +98,12 @@ export async function announceMoves(db: Kysely<DB>, before: ItemStage[]) {
       .where('itemId', 'in', final)
       .limit(MAX_STATS_RECIPIENTS)
       .execute();
-    await Promise.all(voters.map(({ playerId }) => sendStats(db, playerId)));
+    // A few at a time: each is several reads on the pool the votes use.
+    for (let at = 0; at < voters.length; at += STATS_CONCURRENCY) {
+      await Promise.all(
+        voters.slice(at, at + STATS_CONCURRENCY).map(({ playerId }) => sendStats(db, playerId))
+      );
+    }
   } catch (error) {
     console.error('knights: could not announce moved items', { error });
   }

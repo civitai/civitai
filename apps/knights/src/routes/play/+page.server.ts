@@ -32,6 +32,7 @@ import { recordSkip, skippedFor } from '$lib/server/skips';
 import { creditLateJudgment } from '$lib/server/queue/vote-record';
 import { stagesWorkedBy } from '$lib/server/queue/ranks';
 import { announceMoves, itemStages, playDaily } from '$lib/server/live/announce';
+import { signalsEnabled } from '$lib/server/live/signals';
 import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
@@ -302,7 +303,10 @@ async function creditLate(userId: number, itemId: number, answer: string): Promi
 
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
   try {
-    const before = ref.kind === 'hidden' ? [] : await itemStages(db, [itemId]).catch(() => []);
+    const before =
+      ref.kind === 'hidden' || !(await signalsEnabled().catch(() => false))
+        ? []
+        : await itemStages(db, [itemId]).catch(() => []);
     const result =
       ref.kind === 'hidden'
         ? await answerHiddenCheck(

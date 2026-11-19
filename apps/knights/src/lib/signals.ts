@@ -56,7 +56,15 @@ export function connectSignals() {
     for (const topic of topics.keys()) invoke('subscribe', topic);
   };
   conn.onreconnected(resubscribe);
-  conn.start().then(resubscribe, () => {});
+  // A connection that failed to open, or gave up reconnecting, is forgotten so the next /play visit tries again.
+  const forget = () => {
+    if (connection === conn) {
+      connection = null;
+      bound.clear();
+    }
+  };
+  conn.onclose(forget);
+  conn.start().then(resubscribe, forget);
 }
 
 /** Subscribes to a named event; returns an unsubscribe. Safe before `connectSignals()`: it binds when the connection opens. */

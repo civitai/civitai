@@ -9,8 +9,8 @@ import { announceMoves, itemStages } from './announce';
 import { liveKey } from './live-key';
 
 const { sendTopic, sendToUser, signalsEnabled } = vi.hoisted(() => ({
-  sendTopic: vi.fn(async () => {}),
-  sendToUser: vi.fn(async () => {}),
+  sendTopic: vi.fn(async (_topic: string, _target: string, _data: unknown) => {}),
+  sendToUser: vi.fn(async (_userId: number, _target: string, _data: unknown) => {}),
   signalsEnabled: vi.fn(async () => true),
 }));
 vi.mock('./signals', () => ({ sendTopic, sendToUser, signalsEnabled }));
