@@ -50,7 +50,11 @@ import {
   type HookOp,
   type HookPass,
 } from '~/server/services/apps/doc-store-hook-pass';
-import type { DocCollection, DocRecord } from '~/server/services/apps/doc-store.types';
+import type {
+  DocCollection,
+  DocRecord,
+  DocStoreContext,
+} from '~/server/services/apps/doc-store.types';
 import { DocStoreError, REPORT_MARK } from '~/server/services/apps/doc-store.types';
 import { newUlid } from '~/server/utils/app-block-ids';
 import {
@@ -173,10 +177,20 @@ export type HookVerdict =
 
 export type HookRunnerConfig = { url: string; secret: string };
 
+/**
+ * The shared HMAC secret as both sides use it: surrounding whitespace removed, so a trailing
+ * newline from a secret file or an env editor signs and verifies the same. 🔴 The runner applies
+ * the identical rule (`normalizeRunnerSecret` in apps/storage-hook-runner/src/config.ts); a seam
+ * test in `doc-store-api.hooks.test.ts` pins the two equal.
+ */
+export function normalizeHookRunnerSecret(raw: string | undefined): string {
+  return (raw ?? '').trim();
+}
+
 /** The runner's URL and secret from the environment, or null when either is unset or blank. */
 export function hookRunnerConfig(): HookRunnerConfig | null {
   const url = (env.STORAGE_HOOK_RUNNER_URL ?? '').trim();
-  const secret = (env.STORAGE_HOOK_RUNNER_SECRET ?? '').trim();
+  const secret = normalizeHookRunnerSecret(env.STORAGE_HOOK_RUNNER_SECRET);
   if (!url || secret.length < 32) return null;
   return { url: url.replace(/\/+$/, ''), secret };
 }
@@ -431,6 +445,31 @@ function logUnavailable(access: StorageAccess, collection: string, why: string):
 }
 
 /**
+ * The stored document a hook decides on. Read as the viewer reads it, so a hook is never shown a
+ * document its viewer may not see. With content levels on, a document the levels hide from the
+ * viewer (unrated or over their level, or Blocked) reads as absent, but the store's write path is
+ * level-blind; so it is read again without the level gate, and:
+ *   - its AUTHOR (the viewer wrote it) gets it as it is: they may delete or replace their own
+ *     document whatever its rating, as on a collection with no hook, and its data is theirs;
+ *   - anyone else is refused `version_conflict` (no version disclosed) BEFORE any hook is called,
+ *     so neither the hook nor the viewer learns anything of a document the viewer may not see.
+ */
+async function readBefore(
+  ctx: DocStoreContext,
+  coll: DocCollection,
+  key: string,
+  store: Pick<DocStore, 'get'>
+): Promise<DocRecord | null> {
+  const seen = await store.get(ctx, coll, key);
+  if (seen || !ctx.levels) return seen;
+  const levelBlind: DocStoreContext = { appId: ctx.appId, ns: ctx.ns, viewerUid: ctx.viewerUid };
+  const stored = await store.get(levelBlind, coll, key);
+  if (!stored) return null;
+  if (stored.author.kind === 'user' && stored.author.isViewer) return stored;
+  throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: null });
+}
+
+/**
  * Decide one write with the collection's permission hook. Returns null for a collection with no
  * hook (and for the `report` mark, which is exempt), else the HookPass the store write needs.
  * Throws `hook_rejected` (403) when the hook refuses or fails, `hook_unavailable` (503) when it
@@ -458,7 +497,7 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
 
   const key = op === 'create' ? newUlid() : args.key;
   if (key === undefined) throw new Error('doc-store-hook: a key is required for ' + op);
-  const before = op === 'create' ? null : await args.store.get(ctx, coll, key);
+  const before = op === 'create' ? null : await readBefore(ctx, coll, key, args.store);
   const version = before?.version ?? 0;
   if (args.ifVersion !== undefined && args.ifVersion !== version) {
     throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: version });
@@ -481,7 +520,9 @@ export async function gateHook(args: HookGateArgs): Promise<HookGrant | null> {
     logUnavailable(access, coll.name, why);
     return unavailable(coll.name);
   };
-  if (await isHookRunnerOffline(ctx.appId)) throw refuse('offline', 'runner offline flag');
+  if (await isHookRunnerOffline(access.operatorFlagAppId ?? ctx.appId)) {
+    throw refuse('offline', 'runner offline flag');
+  }
   const source = await loadHookSource(hook.sha256);
   if (source === null) throw refuse('unavailable', 'hook source not found');
 

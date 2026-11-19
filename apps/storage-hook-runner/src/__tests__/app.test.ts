@@ -12,6 +12,7 @@ import {
 import { createMetrics } from '../metrics.ts';
 import type { Metrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
+import { loadConfig } from '../config.ts';
 import { SECRET, checkBody, hmac, sha256, waitFor } from '../test-support/fixtures.ts';
 
 /** `POST /v1/check` through the real Fastify app and the real worker pool. */
@@ -215,6 +216,28 @@ describe('POST /v1/check: signature and replay window', () => {
     expect(
       await metricValue('storage_hook_runner_sig_rejected_total', { reason: 'bad_signature' })
     ).toBe(before + 1);
+  });
+});
+
+describe('the secret as configured', () => {
+  it('a secret configured with a trailing newline verifies a request signed with the trimmed secret', async () => {
+    const configured = loadConfig({ STORAGE_HOOK_RUNNER_SECRET: `${SECRET}\n` }).secret;
+    const withNewline = buildApp({ secret: configured, pool, metrics });
+    await withNewline.ready();
+    try {
+      const body = JSON.stringify(checkBody(ALLOW));
+      const res = await withNewline.inject({
+        method: 'POST',
+        url: '/v1/check',
+        headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      // And it signs its answer with the trimmed secret, which the caller verifies.
+      expect(res.headers[SIG_HEADER]).toBe(hmac(SECRET, res.body));
+    } finally {
+      await withNewline.close();
+    }
   });
 });
 

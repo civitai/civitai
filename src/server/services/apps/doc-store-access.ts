@@ -89,6 +89,12 @@ export type StorageAccess = {
   tokenKind: 'app' | 'dev' | 'hub' | 'review';
   /** The token's maturity ceiling (`maxBrowsingLevel` claim): which sources' ratings it may reach. */
   maxBrowsingLevel?: number;
+  /**
+   * The app block id a per-app OPERATOR lever is evaluated for, when it is not `ctx.appId`: a
+   * review preview's `ctx.appId` is its publish request's id, so this is the request's app block
+   * id (the request's own id for a first submission, which has no app yet). Unset: `ctx.appId`.
+   */
+  operatorFlagAppId?: string;
   /** Set when this access was resolved through an import: the source app's blockId. */
   importedFrom?: string;
   /**
@@ -163,7 +169,7 @@ export async function resolveStorageAccess(
     const pr = await dependency(
       dbWrite.appBlockPublishRequest.findUnique({
         where: { id: publishRequestId },
-        select: { status: true, manifest: true },
+        select: { status: true, manifest: true, appBlockId: true },
       })
     );
     if (!pr || pr.status !== 'pending') {
@@ -179,6 +185,9 @@ export async function resolveStorageAccess(
       ...base,
       blockId: claims.blockId,
       tokenKind: 'review',
+      // The app's own id (null only for a first submission, before the app exists), so a per-app
+      // operator lever reaches its review previews too.
+      operatorFlagAppId: pr.appBlockId ?? publishRequestId,
       ctx: {
         appId: publishRequestId,
         ns: reviewNamespace(publishRequestId, viewerUid),

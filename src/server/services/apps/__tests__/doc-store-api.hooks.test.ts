@@ -126,6 +126,8 @@ import { scanSharedData } from '~/server/services/apps/shared-data-moderation';
 import {
   HOOK_RUNNER_BACKSTOP_MS,
   hookClientTimeoutMs,
+  hookRunnerConfig,
+  normalizeHookRunnerSecret,
   resetHookSourceCacheForTests,
 } from '~/server/services/apps/doc-store-hook';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
@@ -368,12 +370,19 @@ function installDb() {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Reply = { status: number; body: any; headers: Record<string, unknown> };
 
-async function mint(app: AppRow, uid: number, scopes = SCOPES): Promise<string> {
+async function mint(
+  app: AppRow,
+  uid: number,
+  scopes = SCOPES,
+  review?: { publishRequestId: string }
+): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: uid,
     blockId: app.blockId,
     appId: app.appId,
-    appBlockId: app.id,
+    // A review preview's token carries its publish request's id here.
+    appBlockId: review ? review.publishRequestId : app.id,
+    ...(review ? { reviewRunForReal: true } : {}),
     blockInstanceId: `bki_${app.id}`,
     scopes,
     ctx: {},
@@ -447,7 +456,26 @@ type Runner = {
   close(): Promise<void>;
 };
 
-type StubMode = 'ok' | 'blackhole' | '500' | 'badsig';
+/**
+ * How the stub answers. Every mode after `badsig` is SIGNED CORRECTLY and wrong in exactly one
+ * other way, so only the client's own binding and result checks can refuse it.
+ */
+type StubMode =
+  | 'ok'
+  | 'blackhole'
+  | '500'
+  | 'badsig'
+  | 'wrongreq'
+  | 'stalepast'
+  | 'stalefuture'
+  | 'skewok'
+  | 'nonjson'
+  | '4xx'
+  | 'malformedresult'
+  | 'unknowncause'
+  | 'emptyreason'
+  | 'longreason'
+  | 'allowextra';
 const stub = {
   mode: 'ok' as StubMode,
   /** Awaited before the stub answers (a write racing the hook). */
@@ -509,7 +537,45 @@ async function startStubRunner(): Promise<Runner> {
       if (!result) {
         return send(400, { ts, req: reqDigest, error: { code: 'bad_request', message: '' } });
       }
-      const body = { ts, req: reqDigest, elapsedMs: 0.2, result };
+      const body: Record<string, unknown> = { ts, req: reqDigest, elapsedMs: 0.2, result };
+      switch (stub.mode) {
+        case 'wrongreq':
+          body.req = createHash('sha256').update(`${raw} `).digest('hex');
+          break;
+        // ±62, not ±61: the client reads its clock up to a second after the stub, so 61 could
+        // land on exactly 60 (inside the window) and pass by timing.
+        case 'stalepast':
+          body.ts = ts - 62;
+          break;
+        case 'stalefuture':
+          body.ts = ts + 62;
+          break;
+        case 'skewok':
+          body.ts = ts - 55;
+          break;
+        case 'nonjson': {
+          const text = 'allow';
+          res.writeHead(200, { 'x-storage-hook-sig': hmac(RUNNER_SECRET, text) });
+          return res.end(text);
+        }
+        case '4xx':
+          return send(400, { ts, req: reqDigest, error: { code: 'bad_request', message: '' } });
+        case 'malformedresult':
+          body.result = 'allow';
+          break;
+        case 'unknowncause':
+          body.result = { allow: false, cause: 'tired' };
+          break;
+        case 'emptyreason':
+          body.result = { allow: false, cause: 'denied', reason: '   ' };
+          break;
+        case 'longreason':
+          body.result = { allow: false, cause: 'denied', reason: 'x'.repeat(201) };
+          break;
+        case 'allowextra':
+          body.result = { allow: true, also: 1 };
+          break;
+      }
       return send(200, body, stub.mode === 'badsig' ? `${RUNNER_SECRET}-wrong` : RUNNER_SECRET);
     });
   });
@@ -545,20 +611,23 @@ type RunnerModules = {
   HookPool: { start: (o: { size: number }) => Promise<RunnerPool> };
   createMetrics: () => unknown;
   BACKSTOP_MS: number;
+  normalizeRunnerSecret: (raw: string | undefined) => string;
 };
 async function importRunner(): Promise<RunnerModules> {
   const load = (file: string) => import(/* @vite-ignore */ path.join(RUNNER_SRC, file));
-  const [app, pool, metrics, limits] = await Promise.all([
+  const [app, pool, metrics, limits, config] = await Promise.all([
     load('app.ts'),
     load('pool.ts'),
     load('metrics.ts'),
     load('limits.ts'),
+    load('config.ts'),
   ]);
   return {
     buildApp: app.buildApp,
     HookPool: pool.HookPool,
     createMetrics: metrics.createMetrics,
     BACKSTOP_MS: limits.BACKSTOP_MS,
+    normalizeRunnerSecret: config.normalizeRunnerSecret,
   };
 }
 
@@ -1006,6 +1075,21 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     ['black-holed (never answers)', async () => void (stub.mode = 'blackhole')],
     ['a runner 500 (a backstop kill)', async () => void (stub.mode = '500')],
     ['a response with a bad signature', async () => void (stub.mode = 'badsig')],
+    // Signed correctly, but bound to ANOTHER request: its `req` is not this body's sha256.
+    [
+      'a response for another request (wrong req digest)',
+      async () => void (stub.mode = 'wrongreq'),
+    ],
+    // Signed correctly, `ts` just outside the ±60 s window, each way.
+    ['a stale response (ts 62 s in the past)', async () => void (stub.mode = 'stalepast')],
+    ['a stale response (ts 62 s in the future)', async () => void (stub.mode = 'stalefuture')],
+    ['a signed 200 whose body is not JSON', async () => void (stub.mode = 'nonjson')],
+    ['a signed 4xx', async () => void (stub.mode = '4xx')],
+    ['a result that is not an object', async () => void (stub.mode = 'malformedresult')],
+    ['a refusal with an unknown cause', async () => void (stub.mode = 'unknowncause')],
+    ['a deny whose reason is blank', async () => void (stub.mode = 'emptyreason')],
+    ['a deny whose reason is over 200 code points', async () => void (stub.mode = 'longreason')],
+    ['an allow carrying extra fields', async () => void (stub.mode = 'allowextra')],
     ['the runner not configured', async () => setEnv({ STORAGE_HOOK_RUNNER_URL: '' })],
   ];
 
@@ -1058,6 +1142,52 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
       expect(after.status).toBe(201);
     }
   );
+
+  // 🔴 SEAM: both sides normalise the shared secret by ONE rule, so a value that verifies on one
+  // side verifies on the other. Pinned as a relationship over the same inputs, not per side.
+  it('the caller and the runner normalise the secret identically', async () => {
+    const { normalizeRunnerSecret } = await importRunner();
+    const inputs = [
+      RUNNER_SECRET,
+      `${RUNNER_SECRET}\n`,
+      `${RUNNER_SECRET}\r\n`,
+      `  ${RUNNER_SECRET}\t`,
+      `\n${RUNNER_SECRET} `,
+      '',
+      undefined,
+    ];
+    expect(inputs.map(normalizeHookRunnerSecret)).toEqual(inputs.map(normalizeRunnerSecret));
+    expect(normalizeHookRunnerSecret(`${RUNNER_SECRET}\n`)).toBe(RUNNER_SECRET);
+  });
+
+  it('a caller secret with a trailing newline still signs and verifies: the write is decided', async () => {
+    setEnv({
+      STORAGE_HOOK_RUNNER_URL: runner.url,
+      STORAGE_HOOK_RUNNER_SECRET: `${RUNNER_SECRET}\n`,
+    });
+    expect(hookRunnerConfig()?.secret).toBe(RUNNER_SECRET);
+    const { P } = freshApps();
+    const r = await call({
+      token: await mint(P, V1),
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'newline' } },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(runner.seen).toHaveLength(1);
+  });
+
+  it('positive control: a response 55 s old (inside the ±60 s window) is accepted', async () => {
+    stub.mode = 'skewok';
+    const { P } = freshApps();
+    const r = await call({
+      token: await mint(P, V1),
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'skewed' } },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+  });
 
   it('every request to the runner is HMAC-signed over its exact body bytes', async () => {
     // A capture server: records the raw request and answers 500 (so the write is refused 503).
@@ -1185,6 +1315,49 @@ describe('the per-app runner-offline flag', () => {
     expect(no.status).toBe(403);
     expect(runner.seen).toHaveLength(2);
   });
+
+  // A review preview's `ctx.appId` is its publish request's id: the lever must still reach it, by
+  // the request's app block id (or the request's own id for a first submission, with no app).
+  it.each([
+    ['an app with an approved version', true],
+    ['a first submission (no app yet)', false],
+  ] as const)(
+    'on for the app: a REVIEW preview write is 503 without a call (%s)',
+    async (_label, hasApp) => {
+      const { P } = freshApps();
+      const publishRequestId = `pubreq_hookrev${seq}${hasApp ? 'a' : 'b'}`;
+      dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({
+        status: 'pending',
+        manifest: P_MANIFEST,
+        appBlockId: hasApp ? P.id : null,
+      } as never);
+      const token = await mint(P, V1, SCOPES, { publishRequestId });
+      const lever = hasApp ? P.id : publishRequestId;
+      // Positive control: lever off, the review write is decided by the hook and lands.
+      const ok = await call({
+        token,
+        method: 'POST',
+        path: '/cards',
+        body: { data: { title: 'r' } },
+      });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+      expect(runner.seen).toHaveLength(1);
+      h.offline = new Set([lever]);
+      h.fliptCalls = [];
+      const r = await call({
+        token,
+        method: 'POST',
+        path: '/cards',
+        body: { data: { title: 'r' } },
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(503);
+      expect(r.body.code).toBe('hook_unavailable');
+      expect(runner.seen).toHaveLength(1);
+      expect(h.fliptCalls.filter((c) => c.flag === OFFLINE_FLAG)).toEqual([
+        { flag: OFFLINE_FLAG, entityId: lever, context: undefined },
+      ]);
+    }
+  );
 
   it('a collection without a hook never consults the flag or the runner', async () => {
     const { P } = freshApps();
@@ -1489,6 +1662,104 @@ describe('publish, unpublish, unchanged writes and content levels on a hooked co
     expect(runner.seen).toHaveLength(0);
     const doc = (await call({ token: author, method: 'GET', path: `/cards/${key}` })).body;
     expect([doc.counters, doc.marks]).toEqual([{ likes: 0 }, { star: 0 }]);
+  });
+
+  /** Rate `key` Blocked (32): hidden from every reader, its own author included. */
+  async function blockDoc(key: string) {
+    const rows = await harness.raw(
+      `UPDATE appdata.doc SET level = 32, rating_status = 'rated', rated_version = version
+         WHERE coll = 'cards' AND key = $1 RETURNING version`,
+      [key]
+    );
+    expect(rows).toHaveLength(1);
+    return Number(rows[0].version);
+  }
+
+  it('content levels on: the AUTHOR of a document they cannot see deletes it through the hook, which is shown its real state', async () => {
+    h.levels = true;
+    const { P } = freshApps();
+    const author = await mint(P, V1);
+    const c = await call({
+      token: author,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'mine' } },
+    });
+    const key = c.body.key as string;
+    const version = await blockDoc(key);
+    // The setup holds: Blocked is hidden from its author too.
+    expect((await call({ token: author, method: 'GET', path: `/cards/${key}` })).status).toBe(404);
+    runner.seen.length = 0;
+    const r = await call({
+      token: author,
+      method: 'DELETE',
+      path: `/cards/${key}`,
+      query: { ifVersion: String(version) },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toEqual({ deleted: true });
+    expect(runner.seen.map((x) => [x.input.op, x.input.before, x.input.doc?.version])).toEqual([
+      ['delete', { title: 'mine' }, version],
+    ]);
+    expect(
+      await harness.raw(`SELECT 1 FROM appdata.doc WHERE coll = 'cards' AND key = $1`, [key])
+    ).toEqual([]);
+  });
+
+  it('content levels on: the AUTHOR puts their own invisible document through the hook, with its real ifVersion', async () => {
+    h.levels = true;
+    const { P } = freshApps();
+    const author = await mint(P, V1);
+    const c = await call({
+      token: author,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'mine' } },
+    });
+    const key = c.body.key as string;
+    const version = await blockDoc(key);
+    runner.seen.length = 0;
+    const r = await call({
+      token: author,
+      method: 'PUT',
+      path: `/cards/${key}`,
+      body: { data: { title: 'edited' }, ifVersion: version },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.version).toBe(version + 1);
+    expect(runner.seen.map((x) => [x.input.op, x.input.before])).toEqual([
+      ['put', { title: 'mine' }],
+    ]);
+  });
+
+  it("content levels on: a NON-author's put or delete of a document they cannot see is 409, and the hook never sees it", async () => {
+    h.levels = true;
+    const { P } = freshApps();
+    const author = await mint(P, V1);
+    const other = await mint(P, V2);
+    const c = await call({
+      token: author,
+      method: 'POST',
+      path: '/cards',
+      body: { data: { title: 'mine' } },
+    });
+    const key = c.body.key as string;
+    await blockDoc(key);
+    runner.seen.length = 0;
+    for (const [method, body] of [
+      ['PUT', { data: { title: 'theirs' } }],
+      ['DELETE', undefined],
+    ] as const) {
+      const r = await call({ token: other, method, path: `/cards/${key}`, body });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(r.body.code).toBe('version_conflict');
+    }
+    expect(runner.seen).toHaveLength(0);
+    const rows = await harness.raw(
+      `SELECT data FROM appdata.doc WHERE coll = 'cards' AND key = $1`,
+      [key]
+    );
+    expect(rows.map((r) => r.data)).toEqual([{ title: 'mine' }]);
   });
 
   it('content levels off (control): the same tally by the same viewer is decided by the hook and lands', async () => {
