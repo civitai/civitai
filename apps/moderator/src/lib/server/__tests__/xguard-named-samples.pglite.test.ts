@@ -183,7 +183,7 @@ describe('importNamedSamples', () => {
       batch,
       generated: ['1', '2', '3'],
       refused: ['4', '5', '6'].map((hash) => ({ hash, date: '2026-11-15' })),
-      blind: { seed: 20261118 },
+      blind: { seed: 4242 },
     });
     await importNamedSamples(req('a'), { query: manyClickhouse(), db });
     await importNamedSamples(req('b'), { query: manyClickhouse(), db });
