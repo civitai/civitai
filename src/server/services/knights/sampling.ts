@@ -21,7 +21,6 @@ export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
  * republished post or a rescan never queues it again.
  */
 export const KNIGHTS_SAMPLE_ENQUEUE_OPTIONS: EnqueueOptions = {
-  requirePost: true,
   requirePublished: true,
   oncePerImage: true,
 };

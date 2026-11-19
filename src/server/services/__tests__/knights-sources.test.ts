@@ -81,7 +81,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 1, priority: 1 }],
       },
       undefined,
-      { requirePost: true, requirePublished: true, oncePerImage: true }
+      { requirePublished: true, oncePerImage: true }
     );
     expect(enqueue).toHaveBeenNthCalledWith(
       2,
@@ -92,7 +92,7 @@ describe('queueScanSampleForKnights', () => {
         items: [{ imageId: 2, priority: 2 }],
       },
       undefined,
-      { requirePost: true, requirePublished: true, oncePerImage: true }
+      { requirePublished: true, oncePerImage: true }
     );
   });
 
@@ -187,7 +187,7 @@ describe('the switch read', () => {
 });
 
 describe('queueOwnerRatingForKnights', () => {
-  it('queues an owner self-rating at priority 1 only when the switch is on', async () => {
+  it('queues an owner self-rating at priority 1, on a live post only, only when the switch is on', async () => {
     await queueOwnerRatingForKnights(7);
     expect(enqueue).not.toHaveBeenCalled();
 
@@ -202,7 +202,7 @@ describe('queueOwnerRatingForKnights', () => {
         items: [{ imageId: 7, priority: 1 }],
       },
       undefined,
-      { requirePost: true, stillImagesOnly: true }
+      { requirePublished: true, stillImagesOnly: true }
     );
   });
 

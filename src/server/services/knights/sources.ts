@@ -195,7 +195,7 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
     'knights-v2-owner-rating-error',
     KNIGHTS_SOURCE_OWNER_RATING,
     { imageId, priority: 1 },
-    { requirePost: true, stillImagesOnly: true },
+    { requirePublished: true, stillImagesOnly: true },
     () => true
   );
 }

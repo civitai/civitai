@@ -2,11 +2,7 @@ import { sql, type Kysely } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  KNIGHTS_STAGE_RANKS,
-  KNIGHTS_STAGE_TTL_HOURS,
-  knightsLatestStageEnd,
-} from '@civitai/shared/new-order';
+import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 
 export type EnqueueItemInput = {
   imageId: number;
@@ -36,8 +32,7 @@ export type EnqueueRefusal =
   | 'not-servable'
   | 'not-still-image'
   | 'no-post'
-  | 'unpublished'
-  | 'publishes-after-expiry';
+  | 'unpublished';
 
 export type EnqueueOptions = {
   /**
@@ -46,16 +41,9 @@ export type EnqueueOptions = {
    */
   servableOnly?: boolean;
   /**
-   * Refuse images with no post. Owner ratings pass it: an image rarely gains a post after its
-   * scan, while drafts and scheduled posts often publish later, so those still queue. A post
-   * scheduled to publish after the item would close unvoted (`knightsLatestStageEnd`) is refused
-   * too (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still
-   * queue.
-   */
-  requirePost?: boolean;
-  /**
-   * Refuse images whose post is not live at `now`: a draft or a later date (`unpublished`). Scan
-   * sampling passes it; the publish sweep samples the post once it goes live.
+   * Refuse images with no post (`no-post`) or whose post is not live at `now`: a draft or a later
+   * date (`unpublished`). Scan sampling and owner ratings pass it; the publish sweep samples the
+   * post once it goes live.
    */
   requirePublished?: boolean;
   /**
@@ -91,7 +79,6 @@ export async function enqueueKnightsItems(
   now: Date = new Date(),
   {
     servableOnly = false,
-    requirePost = false,
     requirePublished = false,
     oncePerImage = false,
     stillImagesOnly = false,
@@ -176,19 +163,12 @@ export async function enqueueKnightsItems(
     if (image.held) return refuse('held-for-review');
     if (stillImagesOnly && !image.still) return refuse('not-still-image');
     if (servableOnly && !image.servable) return refuse('not-servable');
-    if ((requirePost || requirePublished) && !image.hasPost) return refuse('no-post');
+    if (requirePublished && !image.hasPost) return refuse('no-post');
     if (
       requirePublished &&
       (image.publishesAt === null || image.publishesAt.getTime() > now.getTime())
     )
       return refuse('unpublished');
-    if (
-      requirePost &&
-      expiresAt &&
-      image.publishesAt &&
-      image.publishesAt.getTime() > knightsLatestStageEnd(now, expiresAt).getTime()
-    )
-      return refuse('publishes-after-expiry');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;
