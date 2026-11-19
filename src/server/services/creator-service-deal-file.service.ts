@@ -618,6 +618,14 @@ export async function dropRemovedPreviewCopies({ limit = 50 } = {}) {
  * versioned bucket keeps no copy. `deleted` is false when any object may remain; `etag` is the
  * upload's, for the purge record.
  */
+async function uploadEtag(s3Key: string) {
+  const head = await getS3Client()
+    .send(new HeadObjectCommand({ Bucket: await getBucket(), Key: s3Key }))
+    .catch(() => null);
+  return head?.ETag?.replace(/"/g, '') ?? null;
+}
+
+/** `touched`: at least one object was deleted, so the file can no longer be restored as it was. */
 async function deleteFileObjects(
   file: FileObjects,
   /** Asked before each object delete; false stops, and the file counts as not deleted. */
@@ -625,10 +633,6 @@ async function deleteFileObjects(
 ) {
   const bucket = await getBucket();
   const client = getS3Client();
-  const head = await client
-    .send(new HeadObjectCommand({ Bucket: bucket, Key: file.s3Key }))
-    .catch(() => null);
-  const etag = head?.ETag?.replace(/"/g, '') ?? null;
   const imageStore = file.watermarkedKey ? await getImageUploadBackend() : null;
   // The upload last: a run stopped part-way leaves the original, and its ETag, for the next one.
   const targets = [
@@ -638,13 +642,15 @@ async function deleteFileObjects(
       : []),
     { client, bucket, key: file.s3Key },
   ];
+  let touched = false;
   for (const target of targets) {
-    if (!(await stillDeletable())) return { etag, deleted: false };
-    if (!(await deleteEveryVersion(target, file.id))) return { etag, deleted: false };
+    if (!(await stillDeletable())) return { deleted: false, touched };
+    touched = true;
+    if (!(await deleteEveryVersion(target, file.id))) return { deleted: false, touched };
   }
   // A preview deleted mid-scan: its hidden copy goes with it.
   if (file.imageId) await deleteImages([file.imageId]);
-  return { etag, deleted: true };
+  return { deleted: true, touched };
 }
 
 /**
@@ -724,8 +730,16 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
         FOR UPDATE OF f SKIP LOCKED`
     );
     if (!file) continue;
+    // The record goes first, so no object is deleted without one: a record whose file row still
+    // exists is a purge begun, and the next run finishes it. A write that fails deletes nothing.
+    const recorded = await dbWrite.$executeRaw`
+      INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
+      VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${await uploadEtag(
+      file.s3Key
+    )})
+      ON CONFLICT ("fileId") DO NOTHING`;
     // Objects before the row, outside any transaction: a delete that failed or left versions
-    // keeps the row, and writes no record, for the next run to try again.
+    // keeps the row, for the next run to try again.
     // The claim's lock is gone by now, so each delete re-reads the holds first.
     const stillDeletable = async () =>
       (
@@ -733,13 +747,16 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
           SELECT f."id" FROM "ServiceDealFile" f
           WHERE f."id" = ${file.id}::int AND ${purgeable(Prisma.sql`f`)}`
       ).length > 0;
-    const { etag, deleted } = await deleteFileObjects(file, stillDeletable);
-    if (!deleted) continue;
+    const { deleted, touched } = await deleteFileObjects(file, stillDeletable);
+    if (!deleted) {
+      // A hold that landed before any delete: nothing began, so this run's record goes.
+      if (recorded && !touched)
+        await dbWrite.$executeRaw`DELETE FROM "ServiceDealFilePurge" WHERE "fileId" = ${file.id}::int`;
+      continue;
+    }
     const done = await dbWrite.$transaction(async (tx) => {
       await tx.$executeRaw`
-        INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
-        VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
-        ON CONFLICT ("fileId") DO NOTHING`;
+        UPDATE "ServiceDealFilePurge" SET "purgedAt" = now() WHERE "fileId" = ${file.id}::int`;
       await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
       return tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
     });

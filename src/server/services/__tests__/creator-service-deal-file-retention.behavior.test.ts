@@ -617,7 +617,22 @@ describe('the purge after the sweep', () => {
     expect(await purge()).toBe(0);
     expect(s3.purgeObjectVersions).toHaveBeenCalledOnce();
     expect(await kept(finalId)).toBe(true);
-    expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
+    // An object is gone, so the record stays, pending, beside the row.
+    expect(await q(`SELECT "fileId" FROM "ServiceDealFilePurge"`)).toEqual([{ fileId: finalId }]);
+  });
+
+  it('deletes nothing when the record cannot be written', async () => {
+    await closedDeal('Cancelled', 40);
+    await sweep();
+    await q(`ALTER TABLE "ServiceDealFilePurge" RENAME TO "ServiceDealFilePurgeGone"`);
+    try {
+      await expect(purge()).rejects.toThrow();
+    } finally {
+      await q(`ALTER TABLE "ServiceDealFilePurgeGone" RENAME TO "ServiceDealFilePurge"`);
+    }
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDealFile"`)).toHaveLength(2);
   });
 
   it("deletes a zip's archive and a published preview's copy as well", async () => {
@@ -639,7 +654,7 @@ describe('the purge after the sweep', () => {
   });
 
   it.each(['k/archive', 'wm-1'])(
-    'keeps the row and writes no record when only the delete of %s fails',
+    'keeps the row and leaves its record pending when only the delete of %s fails',
     async (failing) => {
       const { dealId, finalId } = await closedDeal('Cancelled', 40);
       await q(
@@ -654,8 +669,8 @@ describe('the purge after the sweep', () => {
       await sweepAndPurge();
       expect(await kept(finalId)).toBe(true);
       expect(
-        await q(`SELECT * FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
-      ).toEqual([]);
+        await q(`SELECT "fileId" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
+      ).toEqual([{ fileId: finalId }]);
       // The upload goes last, so a failure before it leaves the original in place.
       expect(s3.purgeObjectVersions.mock.calls.map(([arg]) => arg.key)).not.toContain(
         `k/${dealId}/final`
@@ -692,7 +707,7 @@ describe('the purge after the sweep', () => {
     );
   });
 
-  it('keeps the row and writes no record when the delete fails or leaves versions', async () => {
+  it('keeps the row and its pending record when the delete fails, and finishes it next run', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
     const runs: [string, () => void][] = [
@@ -719,13 +734,20 @@ describe('the purge after the sweep', () => {
       setUp();
       expect(await purge()).toBe(0);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
-      expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
+      expect(
+        await q(`SELECT "fileId" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
+      ).toEqual([{ fileId: finalId }]);
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'object versions may remain after delete' })
       );
     }
     s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 0 });
+    s3.deleteObject.mockResolvedValue(undefined);
     expect(await purge()).toBe(2);
+    expect(await kept(finalId)).toBe(false);
+    expect(
+      await q(`SELECT "fileId" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
+    ).toEqual([{ fileId: finalId }]);
   });
 });
 
