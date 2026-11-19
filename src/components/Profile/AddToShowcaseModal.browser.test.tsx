@@ -82,14 +82,22 @@ beforeEach(() => {
   state.addToSection.mockResolvedValue({ added: true, sections: [] });
 });
 
-const renderMenuItem = (entityType: 'Image' | 'Model' = 'Image') =>
+const renderMenuItem = (
+  entityType: 'Image' | 'Model' | 'Article' = 'Image',
+  offerSections?: boolean
+) =>
   renderWithProviders(
     <Menu opened>
       <Menu.Target>
         <button>menu</button>
       </Menu.Target>
       <Menu.Dropdown>
-        <AddToShowcaseMenuItem entityType={entityType} entityId={IMAGE} />
+        <AddToShowcaseMenuItem
+          entityType={entityType}
+          entityId={IMAGE}
+          offerSections={offerSections}
+        />
+        <Menu.Item>Sibling</Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );
@@ -99,7 +107,9 @@ describe('Add to Showcase on an image', () => {
     renderMenuItem();
     await userEvent.click(page.getByRole('menuitem', { name: 'Add to Showcase' }));
 
-    expect(state.openModal).toHaveBeenCalledWith({ props: { imageId: IMAGE, username: 'fox' } });
+    expect(state.openModal).toHaveBeenCalledWith({
+      props: { entityType: 'Image', entityId: IMAGE, username: 'fox' },
+    });
     expect(state.addToTop).not.toHaveBeenCalled();
   });
 
@@ -116,6 +126,56 @@ describe('Add to Showcase on an image', () => {
       expect(state.addToTop).toHaveBeenCalledWith({ entityType: 'Image', entityId: IMAGE })
     );
     expect(state.openModal).not.toHaveBeenCalled();
+  });
+});
+
+describe('Add to Showcase on a model', () => {
+  test('with a Models section, it opens the section picker', async () => {
+    state.user = profileWith([section('m', [1], 'Model')]);
+    renderMenuItem('Model');
+    await userEvent.click(page.getByRole('menuitem', { name: 'Add to Showcase' }));
+
+    expect(state.openModal).toHaveBeenCalledWith({
+      props: { entityType: 'Model', entityId: IMAGE, username: 'fox' },
+    });
+    expect(state.addToTop).not.toHaveBeenCalled();
+  });
+
+  test('without offerSections, it adds to the top showcase even with a Models section', async () => {
+    state.user = profileWith([section('m', [1], 'Model')]);
+    renderMenuItem('Model', false);
+    await userEvent.click(page.getByRole('menuitem', { name: 'Add to Showcase' }));
+
+    await vi.waitFor(() =>
+      expect(state.addToTop).toHaveBeenCalledWith({ entityType: 'Model', entityId: IMAGE })
+    );
+    expect(state.openModal).not.toHaveBeenCalled();
+  });
+});
+
+describe('Add to Showcase on an article', () => {
+  test('with an Articles section, it opens the section picker', async () => {
+    state.user = profileWith([section('art', [1], 'Article')]);
+    renderMenuItem('Article');
+    await userEvent.click(page.getByRole('menuitem', { name: 'Add to Showcase' }));
+
+    expect(state.openModal).toHaveBeenCalledWith({
+      props: { entityType: 'Article', entityId: IMAGE, username: 'fox' },
+    });
+    expect(state.addToTop).not.toHaveBeenCalled();
+  });
+
+  // The top showcase refuses articles, so there is nothing for a one-click add to do.
+  test.each([
+    ['there is no Articles section', true, [section('a', [1]), section('m', [1], 'Model')]],
+    ['the flag is off', false, [section('art', [1], 'Article')]],
+  ])('when %s, it is not offered', async (_, flag, sections) => {
+    state.profileShowcases = flag;
+    state.user = profileWith(sections);
+    renderMenuItem('Article');
+    // The sibling proves the dropdown has mounted before the absence is read.
+    await expect.element(page.getByRole('menuitem', { name: 'Sibling' })).toBeInTheDocument();
+    expect(page.getByRole('menuitem', { name: 'Add to Showcase' }).elements()).toHaveLength(0);
   });
 });
 
@@ -147,7 +207,7 @@ describe('the section picker', () => {
   const row = (name: string | RegExp) => page.getByRole('button', { name });
 
   test('offers the top showcase and each Images section, with added and full ones disabled', async () => {
-    renderWithProviders(<AddToShowcaseModal imageId={IMAGE} username="fox" />);
+    renderWithProviders(<AddToShowcaseModal entityType="Image" entityId={IMAGE} username="fox" />);
 
     await expect.element(row(/Section open/)).toBeEnabled();
     await expect.element(row(/Section open/)).toHaveTextContent('2/32');
@@ -158,7 +218,7 @@ describe('the section picker', () => {
   });
 
   test('picking a section adds the image to it and closes', async () => {
-    renderWithProviders(<AddToShowcaseModal imageId={IMAGE} username="fox" />);
+    renderWithProviders(<AddToShowcaseModal entityType="Image" entityId={IMAGE} username="fox" />);
     await userEvent.click(row(/Section open/));
 
     expect(state.addToSection).toHaveBeenCalledWith({
@@ -171,12 +231,57 @@ describe('the section picker', () => {
 
   test('a refused add leaves the picker open', async () => {
     state.addToSection.mockRejectedValue(new Error('This section is full'));
-    renderWithProviders(<AddToShowcaseModal imageId={IMAGE} username="fox" />);
+    renderWithProviders(<AddToShowcaseModal entityType="Image" entityId={IMAGE} username="fox" />);
     await userEvent.click(row(/Section open/));
 
     // The close would follow the refusal, so wait for the refusal's notification first.
     await vi.waitFor(() => expect(state.showError).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(state.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('the section picker for a model or an article', () => {
+  beforeEach(() => {
+    state.user = profileWith([
+      section('img', []),
+      section('mod', [3], 'Model'),
+      section('art', [4], 'Article'),
+    ]);
+  });
+  const rowNames = async () => {
+    await expect.element(page.getByRole('button').first()).toBeInTheDocument();
+    return page
+      .getByRole('button')
+      .elements()
+      .map((el) => el.textContent?.replace(/\d+\/32$/, '').trim())
+      .filter(Boolean); // the modal's unlabeled close button
+  };
+
+  test('a model gets the top showcase and its Models sections only', async () => {
+    renderWithProviders(<AddToShowcaseModal entityType="Model" entityId={IMAGE} username="fox" />);
+    expect(await rowNames()).toEqual(['Showcase (top of profile)', 'Section mod']);
+
+    await userEvent.click(page.getByRole('button', { name: /Section mod/ }));
+    expect(state.addToSection).toHaveBeenCalledWith({
+      sectionId: 'mod',
+      entityType: 'Model',
+      entityId: IMAGE,
+    });
+  });
+
+  test('an article gets its Articles sections and no top showcase', async () => {
+    renderWithProviders(
+      <AddToShowcaseModal entityType="Article" entityId={IMAGE} username="fox" />
+    );
+    expect(await rowNames()).toEqual(['Section art']);
+
+    await userEvent.click(page.getByRole('button', { name: /Section art/ }));
+    expect(state.addToSection).toHaveBeenCalledWith({
+      sectionId: 'art',
+      entityType: 'Article',
+      entityId: IMAGE,
+    });
+    await vi.waitFor(() => expect(state.onClose).toHaveBeenCalled());
   });
 });

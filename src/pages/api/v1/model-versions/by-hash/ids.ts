@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { restOwnerOrModeratorViewer } from '~/server/auth/rest-viewer';
 import * as z from 'zod';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
@@ -57,12 +58,15 @@ export default PublicEndpoint(
     const hidden = await getHiddenModelVersionIds(
       matched.map((entry) => entry.modelVersion),
       async () =>
-        (
-          await getApiAuthSession(
-            { req, res },
-            { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
-          )
-        )?.user
+        restOwnerOrModeratorViewer(
+          req,
+          (
+            await getApiAuthSession(
+              { req, res },
+              { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+            )
+          )?.user
+        )
     );
     const visible = matched.filter((entry) => !hidden.has(entry.modelVersionId));
     const ids = visible.map((entry) => ({

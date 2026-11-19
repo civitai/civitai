@@ -1,4 +1,11 @@
-export const CSAM_HOLD_STATUSES = ['pending', 'removed', 'dismissed', 'all'] as const;
+export const CSAM_HOLD_STATUSES = [
+  'pending',
+  'lead-review',
+  'removed',
+  'report-not-filed',
+  'dismissed',
+  'all',
+] as const;
 export const CSAM_HOLD_SORTS = ['oldest', 'newest'] as const;
 
 export type CsamHoldStatusFilter = (typeof CSAM_HOLD_STATUSES)[number];
@@ -10,7 +17,9 @@ export const DEFAULT_CSAM_HOLD_FILTERS: CsamHoldFilters = { status: 'pending', s
 
 export const CSAM_HOLD_STATUS_LABELS: Record<CsamHoldStatusFilter, string> = {
   pending: 'Pending',
+  'lead-review': 'Lead review',
   removed: 'Removed',
+  'report-not-filed': 'Report not filed',
   dismissed: 'Dismissed',
   all: 'All',
 };

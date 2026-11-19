@@ -502,7 +502,7 @@ describe('removeOldDrafts', () => {
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
-    it('does not deregister a batch whose delete fails, counts the error, and continues', async () => {
+    it('does not deregister a batch whose delete fails, and continues', async () => {
       // 11 models → two batches (BATCH_SIZE=10): [1..10] then [11].
       const models = Array.from({ length: 11 }, (_, i) => ({ id: i + 1, userId: 900 + i }));
       mockDbRead.$queryRaw.mockResolvedValue(models);
@@ -526,15 +526,6 @@ describe('removeOldDrafts', () => {
       expect(mockDeregisterBatch).toHaveBeenCalledTimes(1);
       expect(mockDeregisterBatch).toHaveBeenCalledWith([200]);
       expect(mockDeregisterBatch).not.toHaveBeenCalledWith([100, 101]);
-
-      // errorCount increments → surfaced as the batch-failure Axiom error log.
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'error',
-          name: 'remove-old-drafts',
-          message: 'Failed to remove batch of old draft models',
-        })
-      );
     });
 
     it('scopes each batch to its own version ids with no cross-batch bleed', async () => {

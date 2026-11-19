@@ -119,12 +119,13 @@ function int64Literal(value: bigint | string): string {
 /**
  * Copies blocklist CSAM entries into "BlockedImage", the table `suspectImageSql` reads; a row of
  * another reason becomes CSAM. Never deletes: no unblock ends a live CSAM entry, and a stale row only
- * sends an image to the CSAM review tier. `null` for no hashes.
+ * sends an image to the CSAM review tier. `null` for no hashes. Starts with @civitai/db's REDACT_LOG_MARKER
+ * marker, so the slow-query log never records the hashes.
  */
 export function mirrorBlockedHashesSql(hashes: (bigint | string)[]): string | null {
   const values = [...new Set(hashes.map(int64Literal))];
   if (!values.length) return null;
-  return `INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
+  return `/* log:redact */ INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
     .map((hash) => `(${hash}, 'CSAM')`)
     .join(', ')} ON CONFLICT (hash) DO UPDATE SET reason = EXCLUDED.reason`;
 }
@@ -135,6 +136,32 @@ export function unreadableImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   return `(${image}."ingestion"::text NOT IN ('Scanned', 'Blocked'))`;
 }
+
+/**
+ * Each blocked_images hash's newest row as (reason, disabled): argMax on created_at, where on a
+ * same-second tie a live CSAM row wins. The app's CSAM-entry readers use this same tie-break
+ * (csamBlockedHashes in both apps), so everything that reads it agrees on every row.
+ */
+export const NEWEST_BLOCKLIST_ROW_SQL = `argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false))`;
+
+/** Hashes whose newest row is a live CSAM entry. */
+export const LIVE_CSAM_SQL = `SELECT toString(hash) AS hash FROM (
+  SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
+  FROM blocked_images
+  WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM')
+  GROUP BY hash
+) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`;
+
+/** Each image id listed on a CsamReport, as text, with that report's createdAt (a row per listing). */
+export const CSAM_REPORT_LISTINGS_SQL = `SELECT listed.id, listed."createdAt" FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id,
+      lr."createdAt"
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
 
 /** Every image id listed on any CsamReport, whatever its state, as text. */
 export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (

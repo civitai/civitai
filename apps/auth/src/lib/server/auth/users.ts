@@ -2,6 +2,7 @@ import { randomBytes, randomInt } from 'crypto';
 import { isSystemAccountMeta, type SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { toSessionUser } from './session';
+import { logNewAccountMethodSwitch } from './last-method';
 import type { NormalizedProfile } from './providers';
 
 // Username assignment — mirrors the main app's NextAuth `events.createUser` / `setUserName`
@@ -107,7 +108,8 @@ export async function isLinkedAccount(provider: string, providerAccountId: strin
 export async function findOrCreateUser(
   provider: string,
   profile: NormalizedProfile,
-  scope: string | null = null
+  scope: string | null = null,
+  { lastMethod }: { lastMethod?: string | null } = {}
 ): Promise<SessionUser> {
   // 1. Already-linked account.
   const linked = await db
@@ -188,6 +190,7 @@ export async function findOrCreateUser(
       })
       .execute();
     await assignUsername(userId, [profile.email, profile.name, profile.username]);
+    logNewAccountMethodSwitch(lastMethod, provider);
   }
 
   // Read back via db — read-your-writes (the user may have just been created on primary).
@@ -253,7 +256,7 @@ export class NoAccountForEmailError extends Error {
 // created (or matched) with emailVerified set. `allowCreate: false` matches an existing user only.
 export async function findOrCreateUserByEmail(
   email: string,
-  { allowCreate = true }: { allowCreate?: boolean } = {}
+  { allowCreate = true, lastMethod }: { allowCreate?: boolean; lastMethod?: string | null } = {}
 ): Promise<SessionUser> {
   const existing = await db
     .selectFrom('User')
@@ -272,6 +275,7 @@ export async function findOrCreateUserByEmail(
       .executeTakeFirstOrThrow();
     userId = created.id;
     await assignUsername(userId, [email]);
+    logNewAccountMethodSwitch(lastMethod, 'email');
   } else {
     // Mark verified if it wasn't already.
     await db

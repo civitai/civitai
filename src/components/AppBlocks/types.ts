@@ -440,6 +440,8 @@ export interface BlockInitPayload {
    * Bridge capabilities this host handles, e.g. `workflowMedia:v1`. An SDK sends
    * a capability's message only when it is listed: a host bundle loaded before
    * the capability shipped never receives a request it would leave hanging.
+   * `blockErrors:v1` is a host saying it collects the block's non-fatal errors
+   * (`BLOCK_HOST_ERROR_REPORTS`).
    */
   capabilities?: string[];
 }

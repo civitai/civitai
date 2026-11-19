@@ -41,6 +41,14 @@ const page = (requireModerator: boolean, prefetch: 'once' | 'always' = 'once') =
     },
   });
 const moderatorPage = page(true);
+const resolverUser = { current: undefined as Record<string, unknown> | undefined };
+const recordingPage = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session }) => {
+    resolverUser.current = session?.user as Record<string, unknown> | undefined;
+    return { props: { rendered: true } };
+  },
+});
 const openPage = page(false);
 const openPageAlwaysPrefetching = page(false, 'always');
 
@@ -94,7 +102,7 @@ function load(
     props?: {
       rendered?: boolean;
       trpcState?: unknown;
-      session?: { user?: { id?: number } } | null;
+      session?: { user?: Record<string, unknown> & { id?: number } } | null;
     };
     redirect?: { destination: string };
   }>;
@@ -112,6 +120,7 @@ const refusedBearers: [string, Record<string, unknown>][] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resolverUser.current = undefined;
   hubSession.current = null;
   bearerSession.mockResolvedValue(null);
 });
@@ -289,4 +298,75 @@ describe('the session a page renders with', () => {
     expect(result.props?.session?.user?.id).toBe(OTHER_USER.id);
     expect(bearerSession).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('the session a page resolver reads', () => {
+  // Every field a resolver reads besides moderator rights, so a strip that drops one shows.
+  const RICH_MODERATOR = {
+    ...MODERATOR,
+    tier: 'gold',
+    muted: false,
+    roles: ['moderator:admin'],
+    permissions: ['a-permission'],
+    showNsfw: true,
+  };
+
+  it('is a moderator for a moderator browser session', async () => {
+    hubSession.current = { user: RICH_MODERATOR };
+    await load(recordingPage);
+    expect(resolverUser.current).toEqual(RICH_MODERATOR);
+  });
+
+  it('is a moderator for a moderator personal API key holding the full scope', async () => {
+    bearerSession.mockResolvedValue({
+      ...nonOauthKey('User', TokenScope.Full),
+      user: RICH_MODERATOR,
+    });
+    await load(recordingPage, { authorization: 'Bearer personal-full' });
+    expect(resolverUser.current?.isModerator).toBe(true);
+  });
+
+  it.each(refusedBearers)(
+    'is not a moderator for a moderator presenting %s',
+    async (_l, session) => {
+      bearerSession.mockResolvedValue({ ...session, user: RICH_MODERATOR });
+      await load(recordingPage, { authorization: 'Bearer token' });
+      expect(resolverUser.current).toEqual({ ...RICH_MODERATOR, isModerator: false });
+    }
+  );
+
+  it('is not a moderator for a reduced key on a request with a seeded moderator session', async () => {
+    bearerSession.mockResolvedValue(nonOauthKey('User', REDUCED));
+    await load(recordingPage, { authorization: 'Bearer token' }, { user: MODERATOR });
+    expect(resolverUser.current).toEqual({ ...MODERATOR, isModerator: false });
+  });
+
+  it("keeps a member's own account on their reduced key, unchanged", async () => {
+    bearerSession.mockResolvedValue({ ...nonOauthKey('User', REDUCED), user: MEMBER });
+    await load(recordingPage, { authorization: 'Bearer token' });
+    expect(resolverUser.current).toEqual(MEMBER);
+  });
+});
+
+describe('the session a page sends to the browser', () => {
+  it('keeps moderator rights for a moderator browser session', async () => {
+    hubSession.current = { user: MODERATOR };
+    const result = await load(openPage);
+    expect(result.props?.session?.user).toEqual(MODERATOR);
+  });
+
+  it('keeps moderator rights for a full-scope personal key', async () => {
+    bearerSession.mockResolvedValue(nonOauthKey('User', TokenScope.Full));
+    const result = await load(openPage, { authorization: 'Bearer personal-full' });
+    expect(result.props?.session?.user).toEqual(MODERATOR);
+  });
+
+  it.each(refusedBearers)(
+    'is the same user without moderator rights for %s',
+    async (_l, session) => {
+      bearerSession.mockResolvedValue(session);
+      const result = await load(openPage, { authorization: 'Bearer token' });
+      expect(result.props?.session?.user).toEqual({ ...MODERATOR, isModerator: false });
+    }
+  );
 });

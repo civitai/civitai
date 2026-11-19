@@ -189,6 +189,9 @@ async function withinGenerationSourceBudget<T>(
   const ms = budgetMs ?? GENERATION_SOURCE_DEADLINE_MS;
   const deadline = Date.now() + ms;
   const expiry = new AbortController();
+  // A spent budget aborts now: the timer fires only after the current task, by which time the
+  // request may already have passed every check that reads the signal.
+  if (ms <= 0) expiry.abort();
   const timer = setTimeout(() => expiry.abort(), ms);
   try {
     return await run({ deadline, signal: expiry.signal });

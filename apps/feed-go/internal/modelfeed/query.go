@@ -67,6 +67,9 @@ type SQL struct {
 
 type builder struct{ args []any }
 
+// withheldViewerSlot stands for the taken-down clause's viewer until Build binds it, last.
+const withheldViewerSlot = "\x00withheld-viewer\x00"
+
 // arg binds v and returns its placeholder.
 func (b *builder) arg(v any) string {
 	b.args = append(b.args, v)
@@ -309,6 +312,15 @@ func (q *PageQuery) Build() (SQL, error) {
 
 	if !q.Archived {
 		and = append(and, `(`+p+`."mode" IS NULL OR `+p+`."mode" != 'Archived'::"ModelModifier")`)
+	}
+	// Port of modelNotWithheldSql (src/server/utils/model-withheld.ts): a taken-down model is its
+	// owner's and moderators' alone.
+	if !q.IsModerator {
+		withheld := `(` + p + `."mode" IS DISTINCT FROM 'TakenDown'::"ModelModifier"`
+		if q.ViewerID != 0 {
+			withheld += ` OR mm."userId" = ` + withheldViewerSlot
+		}
+		and = append(and, withheld+`)`)
 	}
 	if q.DisablePoi {
 		and = append(and, `(`+p+`."poi" = false OR mm."userId" = `+b.viewer(q.ViewerID)+`)`)
@@ -611,6 +623,11 @@ func (q *PageQuery) Build() (SQL, error) {
       ` + order + `
     LIMIT ` + limit + `
   `
+	}
+	// Bound last, so the clause leaves every other placeholder's number as it was. A split cursor
+	// puts the WHERE in both UNION ALL branches: one bind, every occurrence.
+	if strings.Contains(text, withheldViewerSlot) {
+		text = strings.ReplaceAll(text, withheldViewerSlot, b.arg(q.ViewerID))
 	}
 	return SQL{Text: text, Args: b.args}, nil
 }

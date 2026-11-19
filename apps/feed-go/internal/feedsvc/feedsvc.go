@@ -16,7 +16,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -71,8 +70,8 @@ type Query struct {
 	PostID int
 	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
 	UserID int
-	// Tags is the input's own `tags` inclusion list (image.getInfinite's tag scope), after
-	// enforceBlockedBrowsingTags stripped the blocked ones.
+	// Tags is the input's own `tags` inclusion list, after enforceBlockedBrowsingTags stripped the
+	// blocked ones.
 	Tags   []int
 	Sort   string
 	Period string
@@ -90,8 +89,15 @@ type Query struct {
 	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
 	HasPrioritizedUserIDs bool
 	Pending               bool
+	// Techniques is the input's `techniques` as sent; the positive ids are sent (after `tools`), in
+	// order and with repeats. Unlike `tags`, a list of only impossible ids is not refused: no
+	// `techniques` is sent.
+	Techniques []int
 	// Tools is the input's `tools` as sent; the positive ids are sent, in order and with repeats.
 	Tools []int
+	// BaseModels is the input's `baseModels` as sent; the non-empty names are sent, in order and with
+	// repeats.
+	BaseModels []string
 }
 
 // Refusal is why a Query cannot be sent to the feed. Rejected refusals are answered by Node with a
@@ -173,9 +179,34 @@ func (p *params) set(k, v string) {
 func (p *params) encode() string {
 	parts := make([]string, len(p.keys))
 	for i, k := range p.keys {
-		parts[i] = url.QueryEscape(k) + "=" + url.QueryEscape(p.vals[k])
+		parts[i] = formEncode(k) + "=" + formEncode(p.vals[k])
 	}
 	return strings.Join(parts, "&")
+}
+
+// formEncode is URLSearchParams' application/x-www-form-urlencoded byte serializer (WHATWG URL): the
+// UTF-8 bytes, ASCII alphanumerics and `*-._` kept, a space as `+`, every other byte as `%XX`. It
+// differs from url.QueryEscape only on `*` (kept here) and `~` (escaped here), which a free-text
+// value such as a base model name can hold. Go's JSON decoding already turned an invalid code point
+// into U+FFFD, as URLSearchParams does with a lone surrogate.
+func formEncode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '*', c == '-', c == '.', c == '_':
+			b.WriteByte(c)
+		case c == ' ':
+			b.WriteByte('+')
+		default:
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		}
+	}
+	return b.String()
 }
 
 // Map is mapSearchInputToFeedQuery(input, 'primary', 'website') for this service's inputs: the feed
@@ -327,9 +358,23 @@ func Map(q Query) (string, *Refusal) {
 			p.set("viewerId", strconv.Itoa(q.ViewerID))
 		}
 	}
-	// `tools` after the POI exclusion (and the unported baseModels) and before the post ids.
+	// `baseModels` after the POI exclusion: `.map(String).filter(Boolean)`, joined with `,`.
+	var baseModels []string
+	for _, b := range q.BaseModels {
+		if b != "" {
+			baseModels = append(baseModels, b)
+		}
+	}
+	if len(baseModels) > 0 {
+		p.set("baseModels", strings.Join(baseModels, ","))
+	}
+	// `tools` after baseModels and before the post ids.
 	if tools := positive(q.Tools); len(tools) > 0 {
 		p.set("tools", join(tools))
+	}
+	// `techniques` right after `tools` (and before the unported `ids`).
+	if techniques := positive(q.Techniques); len(techniques) > 0 {
+		p.set("techniques", join(techniques))
 	}
 	if len(postIDs) > 0 {
 		p.set("postIds", join(uniq(postIDs)))

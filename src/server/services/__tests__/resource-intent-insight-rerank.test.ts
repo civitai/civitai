@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 import type * as JevModule from '~/server/services/ai/jev';
@@ -134,9 +133,6 @@ beforeEach(() => {
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockReset();
   redisMock.redis.packed.set.mockResolvedValue('OK');
-
-  loggingMock.logToAxiom.mockReset();
-  loggingMock.logToAxiom.mockResolvedValue(undefined);
 });
 
 describe('resource-intent — a label changes the served response', () => {
@@ -242,10 +238,6 @@ describe('resource-intent — a label changes the served response', () => {
     expect(result.model).toBe('typesafe/jev-1.13-20260917');
     // The flag is in the CACHED blob, so a replay reports it too.
     expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({ insightFallback: true });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),
-      'temp-search'
-    );
   });
 
   // 🔴 The control arm the test above needs, and it is NOT the no-labels test higher

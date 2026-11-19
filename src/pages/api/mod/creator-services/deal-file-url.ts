@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   getServiceDealFileDownloadUrl,
   resolveServiceDealFileDownload,
@@ -33,6 +34,8 @@ export default defineModeratorEndpoint('creatorServices.dealFileUrl', {
       delivered,
       moderatorFetch: true,
       canReviewCsam: !!getFeatureFlags({ user: actor, req }).csamReports,
+      // Dispute review sees a file whatever its rating.
+      servableLevels: allBrowsingLevelsFlag,
     });
     if (!target) throw throwNotFoundError('File not found');
     const url = await getServiceDealFileDownloadUrl(target, tracker);

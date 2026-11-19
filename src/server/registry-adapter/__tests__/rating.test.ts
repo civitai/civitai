@@ -217,6 +217,9 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:7/client:a',
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: true, browsingLevel: ALL_LEVELS },
       expiresAt: null,
     };
@@ -227,6 +230,9 @@ const verifyToken = async (token: string) => {
     verified.add(token);
     return {
       subject: 'user:8/client:a',
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: first, browsingLevel: ALL_LEVELS },
       expiresAt: null,
     };
@@ -234,12 +240,24 @@ const verifyToken = async (token: string) => {
   if (token.startsWith('soon-token:')) {
     return {
       subject: 'user:5/client:a',
+      clientId: 'a',
+      scope: 0n,
+      actor: null,
       user: { showNsfw: true, browsingLevel: ALL_LEVELS },
       expiresAt: new Date(Number(token.slice('soon-token:'.length))),
     };
   }
   const t = TOKENS[token];
-  return t ? { subject: t.subject, user: t.user, expiresAt: t.expiresAt() } : null;
+  return t
+    ? {
+        subject: t.subject,
+        clientId: 'a',
+        scope: 0n,
+        actor: null,
+        user: t.user,
+        expiresAt: t.expiresAt(),
+      }
+    : null;
 };
 
 const servers: Server[] = [];

@@ -87,6 +87,10 @@ describe('finaliseOnsiteApprove', () => {
     expect(late.apiKey.deleteMany).toHaveBeenCalledWith({
       where: { clientId: 'appblk-app-a', type: { in: ['Access', 'Refresh'] } },
     });
+    // The client's block rows are locked before the re-suspend, so a concurrent suspension waits on it.
+    expect(late.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      late.appBlock.update.mock.invocationCallOrder[0]
+    );
 
     const clean = fakeTx();
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [] });

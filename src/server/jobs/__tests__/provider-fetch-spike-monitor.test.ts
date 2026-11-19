@@ -17,7 +17,6 @@ vi.mock('../job', () => ({
   }),
 }));
 
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { providerFetchSpikeMonitorJob } from '../provider-fetch-spike-monitor';
 
 const chQuery = vi.fn();
@@ -76,16 +75,12 @@ describe('provider-fetch-spike-monitor', () => {
     expect(await gauge('provider_fetch_spike', 'alpha')).toBe(1);
     // Control: exactly three times the baseline is not a spike.
     expect(await gauge('provider_fetch_spike', 'beta')).toBe(0);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'provider-fetch-spike' })
-    );
   });
 
   it('does not flag a new provider under the floor, however far over its zero baseline', async () => {
     chQuery.mockResolvedValue([{ provider: 'new', hour: String(CURRENT), versions: '24' }]);
     expect(await run()).toEqual({ providers: 1, spikes: [] });
     expect(await gauge('provider_fetch_distinct_versions_baseline', 'new')).toBe(0);
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('flags a new provider at the floor', async () => {

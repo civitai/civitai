@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
+import { upsertCollection as upsertCollectionService } from '~/server/services/collection.service';
 
 /**
  * The collections feed shows a collection's own cover only when the viewer may see it; otherwise
@@ -147,5 +148,64 @@ describe('upsertCollectionHandler', () => {
     });
     expect(result.image).toEqual({ id: 500 });
     expect(JSON.stringify(result)).not.toContain('stored-cover-url');
+  });
+});
+
+describe('collection reads on a scoped key or app token', () => {
+  const MOD = { id: 4, isModerator: true };
+  const scopedKey = {
+    apiKeyId: 9,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 9 },
+    tokenScope: 1n,
+  };
+  const appToken = {
+    apiKeyId: 9,
+    apiKeyType: 'Access',
+    subject: { type: 'oauth', id: 'c' },
+    tokenScope: 33554431n,
+  };
+  const fullKey = { ...scopedKey, tokenScope: 33554431n };
+  const CASES = [
+    ['a session', {}, true],
+    ['a full-access key', fullKey, true],
+    ['a scoped key', scopedKey, false],
+    ['an app token', appToken, false],
+  ] as const;
+  const ctxOf = (credential: object) =>
+    ({ user: MOD, features: {}, req: { headers: {} }, ...credential } as never);
+
+  it.each(CASES)('judges getById as a moderator and owner only on %s', async (_l, cred, full) => {
+    mockPermissions.mockResolvedValue({ read: true, manage: false });
+    mockGetCollectionById.mockResolvedValue({ id: 1, image: null, coverHidden: false });
+    await getCollectionByIdHandler({ input: { id: 1 }, ctx: ctxOf(cred) });
+    expect(mockPermissions).toHaveBeenCalledWith(expect.objectContaining({ isModerator: full }));
+    expect(mockGetCollectionById).toHaveBeenCalledWith({
+      input: { id: 1 },
+      viewer: full ? MOD : {},
+    });
+  });
+
+  it.each(CASES)(
+    'lists and judges feed covers as a moderator only on %s',
+    async (_l, cred, full) => {
+      mockServableCovers.mockImplementation(servableOnly([1, 2]));
+      await getAllCollectionsInfiniteHandler({ input: { limit: 10 } as never, ctx: ctxOf(cred) });
+      expect(mockGetAllCollections).toHaveBeenCalledWith(
+        expect.objectContaining({ user: { ...MOD, isModerator: full } })
+      );
+      expect(mockServableCovers).toHaveBeenCalledWith(expect.any(Array), full ? MOD : undefined);
+    }
+  );
+
+  it.each(CASES)('keeps a hidden cover through an edit on %s', async (_l, cred, full) => {
+    mockServableIds.mockResolvedValue(new Set());
+    await upsertCollectionHandler({
+      input: { id: 1, name: 'c', image: null } as never,
+      ctx: ctxOf(cred),
+    });
+    expect(vi.mocked(upsertCollectionService).mock.calls.at(-1)?.[0].coverViewer).toEqual(
+      full ? undefined : {}
+    );
   });
 });

@@ -12,7 +12,12 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 
 export const RESTORE_BATCH_SIZE = 500;
 const RESTORE_FOLLOWUP_CONCURRENCY = 2;
@@ -50,6 +55,9 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * it was actually in. The exception is a CSAM reason, current or recorded: it is kept, and the row
  * stays `Blocked`.
  *
+ * Each claim re-checks that the owner is neither deleted nor banned, so either landing mid-reversal
+ * stops it at the next pass.
+ *
  * The largest account holds ~785K images, so the reversal claims a bounded batch per pass instead
  * of returning the whole gallery to Node in one statement. The breadcrumb check lives in the claim
  * rather than in the UPDATE's own `WHERE`: a row the enum cast would reject has to be left
@@ -76,14 +84,26 @@ export async function unblockAccountDeletionImages(userId: number) {
             WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
             ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
           END,
-          "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text
+          -- A recorded owner-hidden review comes back over any flag but a current 'csam', so a forged
+          -- breadcrumb can write nothing else. Never a recorded 'csam': the block keeps that flag, so
+          -- one recorded with none left was dismissed.
+          "needsReview" = CASE
+            WHEN "needsReview" = 'csam' THEN "needsReview"
+            ELSE CASE
+              WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${OWNER_HIDDEN_REVIEWS}::text[])
+                AND "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text <> 'csam'
+              THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+              ELSE "needsReview"
+            END
+          END,
+          "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
       WHERE id IN (
         SELECT i.id
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+          AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
         LIMIT ${RESTORE_BATCH_SIZE}
       )
       RETURNING id, "postId", ingestion, "blockedFor"

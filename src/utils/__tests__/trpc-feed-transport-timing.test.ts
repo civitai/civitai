@@ -1,8 +1,12 @@
+import { observable } from '@trpc/server/observable';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FEED_TRANSPORT_SAMPLE_RATES, feedTransportTimingLink } from '~/utils/faro/feedTransport';
 import { setTrpcBatchingEnabled, trpcVanilla } from '~/utils/trpc';
 import {
+  GO_TRANSPORT_PROCEDURES,
   setFeedGoTransportEnabled,
+  setFeedGoTransportInfiniteEnabled,
   setFeedGoTransportModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 
@@ -54,6 +58,15 @@ const FEED = 'image.getImagesAsPostsInfinite';
 const FEED_INPUT = { modelId: MODEL_ID, modelVersionId: 2, limit: 50, username: USERNAME };
 const MODELS = 'model.getAll';
 const MODELS_INPUT = { sort: 'Newest', limit: 20, browsingLevel: 1, username: USERNAME };
+const INFINITE = 'image.getInfinite';
+const INFINITE_INPUT = { limit: 50, username: USERNAME };
+
+/** The sampling draw (`Math.random`, the link's default random source) for the rest of the test. */
+let randomSpy: { mockRestore: () => void } | undefined;
+const drawRandom = (value: number) => {
+  randomSpy?.mockRestore();
+  randomSpy = vi.spyOn(Math, 'random').mockReturnValue(value);
+};
 
 beforeEach(() => {
   sent = [];
@@ -62,6 +75,7 @@ beforeEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   vi.useFakeTimers({ toFake: ['performance'] });
   vi.stubGlobal(
     'fetch',
@@ -88,7 +102,10 @@ afterEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
   setFeedGoTransportModelGetAllEnabled(false);
+  setFeedGoTransportInfiniteEnabled(false);
   delete (globalThis as { window?: unknown }).window;
+  randomSpy?.mockRestore();
+  randomSpy = undefined;
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -224,6 +241,148 @@ describe('feed_transport measurement: transport tag follows the link the request
 
     await callQuery(MODELS, MODELS_INPUT);
     expect(pushes()).toHaveLength(1);
+  });
+
+  it('measures exactly these procedures at these rates, each a Go-transport procedure', () => {
+    expect([...FEED_TRANSPORT_SAMPLE_RATES].sort(([a], [b]) => a.localeCompare(b))).toEqual([
+      ['image.getImagesAsPostsInfinite', 1],
+      ['image.getInfinite', 0.1],
+      ['model.getAll', 1],
+    ]);
+    for (const p of FEED_TRANSPORT_SAMPLE_RATES.keys())
+      expect(GO_TRANSPORT_PROCEDURES.has(p)).toBe(true);
+  });
+});
+
+describe('feed_transport measurement: sampling', () => {
+  it('image.getInfinite sampled out (draw 0.5) records nothing on EITHER arm', async () => {
+    browser(true);
+    drawRandom(0.5);
+    await callQuery(INFINITE, INFINITE_INPUT); // flag off: node arm
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(INFINITE, INFINITE_INPUT); // flag on: go arm
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[1].url).toContain('/api/trpc-go/image.getInfinite?');
+    expect(pushes()).toHaveLength(0);
+
+    // Positive control: a rate-1 procedure under the same draw is measured.
+    await callQuery(MODELS, MODELS_INPUT);
+    expect(pushes()).toHaveLength(1);
+  });
+
+  it('image.getInfinite sampled in (draw 0.04) records on BOTH arms with sample_rate "0.1"', async () => {
+    browser(true);
+    drawRandom(0.04);
+    reply.elapsedMs = 61;
+    await callQuery(INFINITE, INFINITE_INPUT); // node arm
+    setFeedGoTransportInfiniteEnabled(true);
+    reply.elapsedMs = 38;
+    await callQuery(INFINITE, INFINITE_INPUT); // go arm
+
+    expect(sent[0].url).toContain('/api/trpc/image.getInfinite?');
+    expect(sent[1].url).toContain('/api/trpc-go/image.getInfinite?');
+    expect(pushes()).toEqual([
+      [
+        { type: 'feed_transport', values: { feed_transport_ms: 61 } },
+        {
+          skipDedupe: true,
+          context: {
+            procedure: 'image.getInfinite',
+            transport: 'node',
+            outcome: 'ok',
+            sample_rate: '0.1',
+          },
+        },
+      ],
+      [
+        { type: 'feed_transport', values: { feed_transport_ms: 38 } },
+        {
+          skipDedupe: true,
+          context: {
+            procedure: 'image.getInfinite',
+            transport: 'go',
+            outcome: 'ok',
+            sample_rate: '0.1',
+          },
+        },
+      ],
+    ]);
+  });
+
+  it('boundary: a draw exactly AT the rate (0.1) is sampled out; just below (0.0999) is in', async () => {
+    // `random() < rate` over [0, 1) gives a chance of exactly `rate`; `<=` would add the draw at
+    // the rate itself. Both arms.
+    browser(true);
+    drawRandom(0.1);
+    await callQuery(INFINITE, INFINITE_INPUT);
+    setFeedGoTransportInfiniteEnabled(true);
+    await callQuery(INFINITE, INFINITE_INPUT);
+    expect(sent).toHaveLength(2);
+    expect(pushes()).toHaveLength(0);
+
+    drawRandom(0.0999);
+    await callQuery(INFINITE, INFINITE_INPUT); // go arm
+    setFeedGoTransportInfiniteEnabled(false);
+    await callQuery(INFINITE, INFINITE_INPUT); // node arm
+    expect(pushes().map(([, o]) => (o as { context: Record<string, string> }).context)).toEqual([
+      { procedure: 'image.getInfinite', transport: 'go', outcome: 'ok', sample_rate: '0.1' },
+      { procedure: 'image.getInfinite', transport: 'node', outcome: 'ok', sample_rate: '0.1' },
+    ]);
+  });
+
+  it('rate-1 procedures record EVERY request whatever the draw (0.999), with no sample_rate', async () => {
+    browser(true);
+    drawRandom(0.999);
+    await callQuery(MODELS, MODELS_INPUT); // node
+    await callQuery(FEED, FEED_INPUT); // node
+    setFeedGoTransportModelGetAllEnabled(true);
+    setFeedGoTransportEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT); // go
+    await callQuery(FEED, FEED_INPUT); // go
+
+    expect(sent.map((r) => r.url.split('?')[0])).toEqual([
+      '/api/trpc/model.getAll',
+      '/api/trpc/image.getImagesAsPostsInfinite',
+      '/api/trpc-go/model.getAll',
+      '/api/trpc-go/image.getImagesAsPostsInfinite',
+    ]);
+    expect(pushes().map(([, o]) => (o as { context: Record<string, string> }).context)).toEqual([
+      { procedure: 'model.getAll', transport: 'node', outcome: 'ok' },
+      { procedure: 'image.getImagesAsPostsInfinite', transport: 'node', outcome: 'ok' },
+      { procedure: 'model.getAll', transport: 'go', outcome: 'ok' },
+      { procedure: 'image.getImagesAsPostsInfinite', transport: 'go', outcome: 'ok' },
+    ]);
+  });
+
+  it('the injected random source is drawn per request (0.07 in, 0.93 out, 0.02 in)', async () => {
+    (globalThis as { window?: unknown }).window = {};
+    const draws = [0.07, 0.93, 0.02];
+    const push = vi.fn();
+    let clock = 0;
+    const link = feedTransportTimingLink({
+      transport: 'go',
+      isAuthed: () => true,
+      random: () => draws.shift() ?? 0.5,
+      now: () => (clock += 5),
+      pushMeasurement: push,
+    })({} as never);
+    for (let i = 0; i < 3; i += 1) {
+      await new Promise<void>((resolve) => {
+        link({
+          op: { type: 'query', path: INFINITE, input: {}, id: i, context: {}, signal: null },
+          next: () =>
+            observable((o) => {
+              o.next({ result: { data: null } } as never);
+              o.complete();
+            }),
+        } as never).subscribe({ complete: () => resolve(), error: () => resolve() });
+      });
+    }
+    expect(draws).toEqual([]);
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(push.mock.calls.map(([, o]) => o.context.sample_rate)).toEqual(['0.1', '0.1']);
   });
 });
 

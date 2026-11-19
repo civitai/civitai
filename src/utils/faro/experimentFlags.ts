@@ -61,6 +61,7 @@ export const RUM_EXPERIMENT_FLAGS = [
   // Go feed transport cohorts, for `feed_transport` (~/utils/faro/feedTransport).
   { flag: 'feedGoTransport', attr: 'exp_feed_go_transport' },
   { flag: 'feedGoTransportModelGetAll', attr: 'exp_feed_go_transport_model_get_all' },
+  { flag: 'feedGoTransportInfinite', attr: 'exp_feed_go_transport_infinite' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**

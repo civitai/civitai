@@ -276,6 +276,16 @@ const untilHung = async () => {
   expect(ledger.isHung(), 'the write is hanging').toBe(true);
 };
 const outcome = (p: Promise<unknown>) => p.then(() => 'ok' as const).catch((e: unknown) => e);
+// Skips the keyed read's retry sleeps on the fake clock instead of waiting them out.
+const skipRetrySleeps = async <T>(p: Promise<T>) => {
+  let done = false;
+  void p.then(
+    () => (done = true),
+    () => (done = true)
+  );
+  while (!done) await vi.advanceTimersByTimeAsync(200);
+  return p;
+};
 
 // ─── bank deposit ──────────────────────────────────────────────────────────────
 describe('bank deposit with a client key', () => {
@@ -451,7 +461,7 @@ describe('bank deposit with a client key', () => {
 
     it('passes a short balance through as a refusal, without a resend', async () => {
       ledger.setBalance(USER, DEPOSIT - 1);
-      await expect(bank(KEY)).rejects.toThrow(/enough funds/);
+      await expect(skipRetrySleeps(bank(KEY))).rejects.toThrow(/enough funds/);
       expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
       expect(ledger.charges()).toHaveLength(0);
     });
@@ -682,7 +692,7 @@ describe('cash withdrawal with a client key', () => {
   });
 
   it('refuses a new burn for more than the cash ready, before burning', async () => {
-    const error = await outcome(withdraw(KEY, 100_001));
+    const error = await outcome(skipRetrySleeps(withdraw(KEY, 100_001)));
 
     expect(error).toMatchObject({ code: 'BAD_REQUEST' });
     expect((error as Error).message).toBe('This amount is more than your cash ready to withdraw.');
@@ -767,7 +777,7 @@ describe('cash withdrawal with a client key', () => {
 
     it('passes a short balance through as a refusal, without a resend or a row', async () => {
       ledger.setBalance(USER, WITHDRAWAL - 1);
-      await expect(withdraw(KEY)).rejects.toThrow(/enough funds/);
+      await expect(skipRetrySleeps(withdraw(KEY))).rejects.toThrow(/enough funds/);
       expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
       expect(rows).toHaveLength(0);
     });

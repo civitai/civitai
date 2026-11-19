@@ -1,3 +1,6 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
+import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
 import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -12,7 +15,11 @@ import {
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
-import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import {
+  PRIOR_BLOCKED_FOR_KEY,
+  PRIOR_INGESTION_KEY,
+  PRIOR_NEEDS_REVIEW_KEY,
+} from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
 import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
@@ -139,7 +146,10 @@ async function drainUser(
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
       // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
-      const deleted = await deleteImages(batch, undefined, { onlyWhere: Prisma.sql`NOT ${held}` });
+      const deleted = await deleteImages(batch, {
+        actor: { system: 'remove-deleted-user-images' },
+        onlyWhere: Prisma.sql`NOT ${held}`,
+      });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
     }
@@ -162,22 +172,21 @@ async function drainUser(
     )) {
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
-      deletedPosts += await dbWrite.$executeRaw`
-        WITH doomed AS (
-          SELECT p.id FROM "Post" p
-          WHERE p.id IN (${Prisma.join(batch)})
-            AND p."userId" = ${userId}
-            AND EXISTS (
-              SELECT 1 FROM "User" u
-              WHERE u.id = ${userId}
-                AND u."deletedAt" IS NOT NULL
-                AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
-            )
-            AND NOT ${held}
-            AND NOT ${postHoldsHeldTextSql(Prisma.raw('p.id'))}
-        )
-        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
-      `;
+      const deleted = await deletePostRows(kyselyOver(dbWrite), {
+        ids: batch,
+        actor: { system: 'remove-deleted-user-images' },
+        where: fromPrismaSql(Prisma.sql`
+          "userId" = ${userId}
+          AND EXISTS (
+            SELECT 1 FROM "User" u
+            WHERE u.id = ${userId}
+              AND u."deletedAt" IS NOT NULL
+              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+          )
+          AND NOT ${held}
+          AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}`),
+      });
+      deletedPosts += deleted.length;
     }
 
     // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
@@ -282,7 +291,7 @@ async function blockUserImages(
                   BlockedReason.CSAM
                 } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}
@@ -300,7 +309,7 @@ async function blockUserImages(
           ...(await dbWrite.$queryRaw<TouchedImage[]>`
             UPDATE "Image"
             SET "blockedFor" = ${BlockedReason.Moderated},
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(repoint)})
               AND "userId" = ${userId}

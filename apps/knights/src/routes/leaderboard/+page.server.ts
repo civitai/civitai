@@ -1,4 +1,4 @@
-import { db } from '$lib/server/db';
+import { db, dbRead } from '$lib/server/db';
 import { civitaiSiteUrl } from '$lib/server/site-url';
 import { imageUrl } from '$lib/server/image-url';
 import {
@@ -22,7 +22,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
   const now = new Date();
   const [status, board] = await Promise.all([
     requireMember(db, locals.user.id),
-    boardCache.get(now, () => queryBoard(db, now)),
+    // Everyone's standings, cached for a while anyway: the replica's lag does not show.
+    boardCache.get(now, () => queryBoard(dbRead, now)),
   ]);
   const view = viewBoard(board, locals.user.id);
   const shown = <T extends LeaderboardEntry>({ image, ...entry }: T) => {

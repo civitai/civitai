@@ -72,8 +72,12 @@ import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared
 // The App Blocks document store: its review-storage counters and server-fault error series are
 // published at 0, and its enabled gauge is evaluated from the store's own predicate on every
 // scrape, so an alert on it fires on a pod that has served no storage traffic.
-import { seedAppBlockDocStoreMetrics } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  seedAppBlockDocStoreMetrics,
+  seedAppBlockMediaMetrics,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instance';
+import { seedAppBlockSourceMetrics } from '~/server/prom/app-block-source.metrics';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
@@ -232,6 +236,8 @@ const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
   await seedAppBlockSharedStorageMetrics();
   seedAppBlockDocStoreMetrics();
+  seedAppBlockMediaMetrics();
+  seedAppBlockSourceMetrics();
   await refreshDocStoreEnabled();
   await seedProviderDownloadMetrics();
 
