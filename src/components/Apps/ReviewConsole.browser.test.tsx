@@ -1,136 +1,63 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publish-request.service';
-
-/**
- * The review page's CONSOLE: the app's error reports from the review preview, kept in memory for
- * the moderator's own session and shown in the Console tab, with a count on the tab and in the
- * Overview, a Copy log button, and a notice when the app's SDK is too old to send non-fatal ones.
- *
- * 🔴 THE SEAM UNDER TEST IS `ReviewBlockPreviewHost` → `PageBlockHost` → the console. The host is
- * stubbed to hand the test the `onBlockError` / `onBlockReady` props the REAL review host passes
- * it, and the test plays the SDK through them. So a review host that stopped wiring either prop
- * leaves the console empty and this file red. (That `PageBlockHost` calls them with what the
- * block posts, and advertises `blockErrors:v1` on `review-preview`, is pinned in
- * `PageBlockHostInitContractV2.browser.test.tsx`.)
- */
-
-const host = vi.hoisted(() => ({
-  onBlockError: undefined as ((raw: unknown) => void) | undefined,
-  onBlockReady: undefined as ((raw: unknown) => void) | undefined,
-}));
-
-vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
-  PageBlockHost: (props: {
-    onBlockError?: (raw: unknown) => void;
-    onBlockReady?: (raw: unknown) => void;
-  }) => {
-    host.onBlockError = props.onBlockError;
-    host.onBlockReady = props.onBlockReady;
-    return <div data-testid="page-host" />;
-  },
-}));
-
-vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'mod' }),
-}));
-
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
-}));
-
-const MINT: MintReviewBlockTokenResult = {
-  token: 'review.render-only.jwt',
-  expiresAt: '2099-01-01T00:00:00Z',
-  scopes: ['user:read:self'],
-  domain: null,
-  maxBrowsingLevel: 1,
-  blockId: 'quillwort',
-  appId: 'pending-pubreq_C',
-  appBlockId: 'pubreq_C',
-  blockInstanceId: 'page_pubreq_C',
-  appName: 'Quillwort',
-  sandbox: 'allow-scripts',
-  bootSkeleton: false,
-  runForReal: false,
-  buzzCap: null,
-};
-
-vi.mock('~/utils/trpc', async (importOriginal) => {
-  const React = await import('react');
-  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
-  return {
-    ...(await importOriginal<typeof TrpcModule>()),
-    trpc: makeTrpcProxy({
-      'blocks.mintReviewBlockToken': {
-        useMutation: () => {
-          const [data, setData] = React.useState<MintReviewBlockTokenResult | undefined>();
-          return {
-            data,
-            isPending: false,
-            isError: false,
-            mutate: () => setData(MINT),
-          };
-        },
-      },
-    }),
-  };
-});
-
-// eslint-disable-next-line import/first
-import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
-// eslint-disable-next-line import/first
 import {
   ReviewConsoleCountBadge,
   ReviewConsolePanel,
   ReviewConsoleProvider,
   ReviewConsoleSummary,
 } from '~/components/Apps/ReviewConsole';
-// eslint-disable-next-line import/first
-import { createReviewConsoleStore } from '~/components/Apps/reviewConsoleStore';
+import {
+  createReviewConsoleStore,
+  type ReviewConsoleFrame,
+} from '~/components/Apps/reviewConsoleStore';
+
+/**
+ * The review page's CONSOLE: the app's error reports from the review preview, kept in memory for
+ * the moderator's own session and shown in the Console tab, with a count on the tab and in the
+ * Overview, a Copy log button, and a notice when the app's SDK is too old to send non-fatal ones.
+ *
+ * The test plays the preview frame through the store's own frame sink — the two functions the
+ * review host hands `PageBlockHost` as `onBlockError` / `onBlockReady`. That the review host
+ * wires them is pinned in `ReviewBlockPreviewHost.browser.test.tsx`; that `PageBlockHost` calls
+ * them with what the block posts, and advertises `blockErrors:v1` on `review-preview`, in
+ * `PageBlockHostInitContractV2.browser.test.tsx`. No module is mocked here.
+ */
 
 const fetchSpy = vi.spyOn(window, 'fetch');
 
 beforeEach(() => {
-  host.onBlockError = undefined;
-  host.onBlockReady = undefined;
   fetchSpy.mockClear();
   vi.mocked(navigator.clipboard.writeText).mockClear();
 });
 
-/** The review page's arrangement, minus the tabs: the preview host and the console's three views. */
+let host: ReviewConsoleFrame;
+
+/** The review page's arrangement, minus the tabs: the console's three views. */
 async function mount() {
   const onOpen = vi.fn();
+  const store = createReviewConsoleStore();
+  host = store.openFrame();
   renderWithProviders(
-    <ReviewConsoleProvider store={createReviewConsoleStore()}>
+    <ReviewConsoleProvider store={store}>
       <div data-testid="tab-badge">
         <ReviewConsoleCountBadge />
       </div>
       <ReviewConsoleSummary onOpen={onOpen} />
-      <ReviewBlockPreviewHost
-        publishRequestId="pubreq_C"
-        slug="quillwort"
-        iframeSrc="https://quillwort.example/?mr=entry"
-      />
       <ReviewConsolePanel />
     </ReviewConsoleProvider>
   );
-  await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
-  await vi.waitFor(() => {
-    if (!host.onBlockError || !host.onBlockReady) throw new Error('host props not wired');
-  });
-  return { onOpen };
+  await expect.element(page.getByTestId('apps-review-console')).toBeInTheDocument();
+  return { onOpen, store };
 }
 
 /** The SDK's side: what `@civitai/sdk` posts, through the props the review host handed over. */
 const sdk = {
   ready: (version: string, name = 'sdk') =>
-    host.onBlockReady!({ height: 0, sdkName: name, sdkVersion: version }),
+    host.ready({ height: 0, sdkName: name, sdkVersion: version }),
   error: (message: string, extra: Record<string, unknown> = {}) =>
-    host.onBlockError!({
+    host.report({
       message,
       fatal: false,
       source: 'error',
@@ -147,7 +74,7 @@ const messages = () =>
     .map((el) => el.textContent);
 
 describe('ReviewConsole — collection in review mode', () => {
-  test('🔴 the review host hands the block’s reports to the console: time, source, message, collapsed stack', async () => {
+  test('🔴 a frame’s reports reach the console: time, source, message, collapsed stack', async () => {
     await mount();
     sdk.ready('0.29.0');
     sdk.error('Cannot read properties of undefined', {
@@ -179,7 +106,7 @@ describe('ReviewConsole — collection in review mode', () => {
     await mount();
     sdk.ready('0.29.0');
     sdk.error('a warning first', { source: 'console' });
-    host.onBlockError!({ message: 'Boot failed: missing manifest', fatal: true });
+    host.report({ message: 'Boot failed: missing manifest', fatal: true });
 
     await vi.waitFor(() => expect(entries()).toHaveLength(2));
     expect(messages()).toEqual(['Boot failed: missing manifest', 'a warning first']);
@@ -200,6 +127,24 @@ describe('ReviewConsole — collection in review mode', () => {
       return url.includes('preview-errors') || (init?.method ?? 'GET').toUpperCase() !== 'GET';
     });
     expect(sent).toEqual([]);
+  });
+});
+
+describe('ReviewConsole — two preview frames', () => {
+  test('🔴 the Overview’s and the Preview tab’s runs are told apart, once both have reported', async () => {
+    const { store } = await mount();
+    sdk.ready('0.29.0');
+    sdk.error('boom');
+    await vi.waitFor(() => expect(entries()).toHaveLength(1));
+    expect(page.getByTestId('apps-review-console-entry-frame').elements()).toHaveLength(0);
+    store.openFrame().report({ message: 'boom', fatal: false, at: Date.UTC(2026, 10, 19, 9, 31) });
+    await vi.waitFor(() => expect(entries()).toHaveLength(2));
+    expect(
+      page
+        .getByTestId('apps-review-console-entry-frame')
+        .elements()
+        .map((el) => el.textContent)
+    ).toEqual(['Preview 1', 'Preview 2']);
   });
 });
 
@@ -254,7 +199,7 @@ describe('ReviewConsole — the count badge', () => {
     sdk.ready('0.29.0');
     sdk.error('one');
     sdk.error('two');
-    host.onBlockError!({ message: 'it crashed', fatal: true });
+    host.report({ message: 'it crashed', fatal: true });
 
     await expect.element(page.getByTestId('apps-review-console-count')).toHaveTextContent('3');
     await expect
@@ -282,7 +227,7 @@ describe('ReviewConsole — Copy log', () => {
       at: Date.UTC(2026, 10, 19, 9, 31, 0),
       stack: 'TypeError: Cannot read x\n    at a (app.js:1:1)',
     });
-    host.onBlockError!({ message: 'gone', fatal: true, at: Date.UTC(2026, 10, 19, 9, 33, 0) });
+    host.report({ message: 'gone', fatal: true, at: Date.UTC(2026, 10, 19, 9, 33, 0) });
     await vi.waitFor(() => expect(entries()).toHaveLength(3));
 
     await page.getByTestId('apps-review-console-copy').click();
@@ -312,7 +257,7 @@ describe('ReviewConsole — untrusted text stays text', () => {
     const hostile =
       '<img src=x onerror="window.__reviewConsolePwned=1"><b id="review-console-injected">bold</b>';
     sdk.error(hostile, { stack: `<script>window.__reviewConsolePwned=2</script>${hostile}` });
-    host.onBlockError!({ message: hostile, fatal: true });
+    host.report({ message: hostile, fatal: true });
 
     await vi.waitFor(() => expect(entries()).toHaveLength(2));
     // The exact characters, as text…
