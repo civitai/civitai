@@ -60,6 +60,13 @@ export type BlockUploadedImageInfo = {
   url: string;
 };
 
+/**
+ * Why the image is scanned, true whether or not it is shared: `persist` runs the real scan on
+ * every upload, and `gate` holds every upload to the same SFW ceiling — neither reads `share`.
+ */
+const SCAN_COPY =
+  'Civitai scans every image you upload for an app, shared or not, so it must be safe-for-work.';
+
 type UploadStatus = 'idle' | 'uploading' | 'scanning' | 'ready' | 'error';
 
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -89,7 +96,7 @@ export default function BlockImageUploadModal({
    *  The modal tells the viewer, before they pick, that the image will be visible to the app's
    *  other viewers, and sends `share` + the block token with the persist so the server stamps
    *  the row with that app's verified id (`blockSharedUploadAppId`). Absent ⇒ a private, unstamped
-   *  upload and an unchanged dialog. */
+   *  upload, and the dialog says it is kept private. */
   share?: { blockToken: string; appName: string };
 }) {
   const dialog = useDialogContext();
@@ -236,8 +243,15 @@ export default function BlockImageUploadModal({
       <Stack gap="md">
         <Alert color="blue" variant="light" icon={<IconPhoto size={16} />}>
           <Text size="sm">
-            This image is <strong>public</strong>, so it&apos;s scanned and must be safe-for-work.
-            Upload a PNG, JPEG or WebP.
+            {/* Unshared ⇒ the server writes no `blockSharedUploadAppId`, so the app's gated read
+                never returns this row to another viewer. A shared upload says who sees it in the
+                share notice below instead. */}
+            {!share && (
+              <>
+                This image is kept <strong>private</strong>: only you can see it.{' '}
+              </>
+            )}
+            {SCAN_COPY} Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
 

@@ -4657,7 +4657,7 @@ export function PageBlockHost({
   // 'display', so this stays byte-compatible with an SDK that sends none) selects
   // the mode:
   //
-  //   • 'display' (DEFAULT — PUBLIC image, e.g. a cosmetic background): the upload
+  //   • 'display' (DEFAULT — a moderated image, e.g. a cosmetic background): the upload
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
@@ -4902,8 +4902,8 @@ export function PageBlockHost({
         return;
       }
 
-      // display (default): moderated public-image path. Shared with the app's other
-      // viewers only when the app asked (`shareWith`, above).
+      // display (default): moderated image path, private to the viewer. Shared with the
+      // app's other viewers only when the app asked (`shareWith`, above).
       let resolved: BlockUploadedImageInfo | null = null;
       let resolvedShared = false;
       dialogStore.trigger({
