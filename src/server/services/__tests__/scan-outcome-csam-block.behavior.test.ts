@@ -663,7 +663,10 @@ describe('the account-deletion grace block', () => {
     });
 
     it('reports the image blocked when the skipped row cannot be read back', async () => {
-      const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!;
+      const route = vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation() as unknown as (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => Promise<unknown>;
       vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(((
         strings: TemplateStringsArray,
         ...values: unknown[]
