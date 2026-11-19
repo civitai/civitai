@@ -64,11 +64,13 @@ import {
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
+  graceBlockedSql,
   hasBlockMarker,
   ingestionAfterScanErrorSql,
   keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
   ingestionKeptAfterVerdict,
+  withoutGraceMarkersSql,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
 import {
@@ -710,8 +712,15 @@ export async function resolveScanOutcome({
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
+  // A block outlives an account restore (its breadcrumbs go in this write); anything else leaves a
+  // grace-blocked row as it is.
+  const blocking = toUpdate.ingestion === ImageIngestionStatus.Blocked;
+  const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
+        ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END`;
+  let rowsWritten: number | undefined;
   await writeWithNsfwAxes(
-    (axesTerm) => dbWrite.$executeRaw`
+    async (axesTerm) =>
+      (rowsWritten = await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
@@ -732,16 +741,28 @@ export async function resolveScanOutcome({
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "metadata" = CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
-        ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
+      "metadata" = ${blocking ? withoutGraceMarkersSql(metadataSet) : metadataSet},
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
       )}::jsonb)${axesTerm}
-    WHERE id = ${image.id}
-  `,
+    WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}
+  `),
     axesSet,
     axesTarget
   );
+  if (!blocking && rowsWritten === 0) {
+    // Skipped as grace-blocked: the outcome is the row as it stands, so no Scanned effects run.
+    const [kept] = await dbWrite.$queryRaw<
+      { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
+    >`
+      SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = ${image.id}
+    `.catch(() => []);
+    if (kept) {
+      toUpdate.ingestion = kept.ingestion;
+      toUpdate.blockedFor = kept.blockedFor;
+      toUpdate.nsfwLevel = scanLevel = kept.nsfwLevel;
+    }
+  }
   // The side effects follow the row as written, not the verdict above: a Scanned outcome queues the
   // image for Knights review and signals its owner, though the guard kept the row CSAM-blocked. The
   // verdict has landed, so a failed read must not turn it into a scan error.

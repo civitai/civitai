@@ -15,6 +15,7 @@ import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
+import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
@@ -285,12 +286,25 @@ export const ingestionAfterVerdictSql = (verdict: string) => Prisma.sql`(CASE
 END)`;
 
 /**
- * The `ingestion` a failed scan writes: Error, except that a NotFound image stays NotFound. An Error
- * row with a locked rating counts as reviewed (`imageReviewedSql`) and the retry cron re-sends it,
- * so a failure result would republish a hidden image.
+ * The row still holds an account-deletion grace block, which `unblockAccountDeletionImages` reverts
+ * on restore. A write that would lift it leaves the row alone; a write that blocks it strips the
+ * breadcrumbs (`withoutGraceMarkersSql`) so the restore leaves that block in place.
+ */
+export const graceBlockedSql = Prisma.sql`("ingestion" = 'Blocked'::"ImageIngestionStatus"
+  AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)`;
+
+/** `metadata` without the grace-block breadcrumbs, for the SET of a block write. */
+export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
+  Prisma.sql`(${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text`;
+
+/**
+ * The `ingestion` a failed scan writes: Error, except that a NotFound image stays NotFound and a
+ * grace-blocked one stays Blocked. An Error row with a locked rating counts as reviewed
+ * (`imageReviewedSql`) and the retry cron re-sends it, so a failure result would republish a hidden
+ * image.
  */
 export const ingestionAfterScanErrorSql = () => Prisma.sql`(CASE
-  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" THEN "ingestion"
+  WHEN "ingestion" = 'NotFound'::"ImageIngestionStatus" OR ${graceBlockedSql} THEN "ingestion"
   ELSE ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
 END)`;
 
