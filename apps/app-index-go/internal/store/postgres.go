@@ -20,8 +20,8 @@ import (
 //
 // app_index_cursors is the cursor table: one row per generation, holding its subscription's cursor
 // and whether it is building, serving or retired. The partial unique index keeps at most one
-// generation building and one serving. owner fences writes to the process that claimed the
-// generation (see Postgres.Lock).
+// generation building and one serving. owner is the process that last claimed the generation;
+// writes check it (see Postgres.Lock for what that guarantees).
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS app_index_cursors (
   generation bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -110,9 +110,16 @@ func NewPostgres(ctx context.Context, pool *pgxpool.Pool) (*Postgres, error) {
 
 // Lock takes the consumer lock: only its holder follows the registry and writes, so two processes
 // (a rolling update) never interleave cursors. Searches need no lock. ErrLocked while another
-// process holds it. The lock lives on a dedicated connection; the returned func releases it. As a
-// second line, every write is fenced to the process that last claimed its generation (Claim), so
-// a holder whose lock connection silently dropped cannot write after another took over.
+// process holds it. The lock is a session advisory lock on a dedicated connection; the returned
+// func releases it.
+//
+// What the second line, Claim, guarantees: Apply, Live and Reset store the cursor only where the
+// generation's owner is this process, in the same transaction as their change, so once another
+// process has claimed a generation, every later write to it from this one fails with ErrFenced.
+// It does not stop writes that commit before the other process claims, nor NewBuilding, which is
+// not fenced. Writes committed before the claim are harmless: the new owner resumes from a cursor
+// at or before them and applies those events again, and replaying is idempotent (an upsert
+// replaces the whole row, a delete of a missing row does nothing).
 func (p *Postgres) Lock(ctx context.Context) (func(), error) {
 	conn, err := p.pool.Acquire(ctx)
 	if err != nil {

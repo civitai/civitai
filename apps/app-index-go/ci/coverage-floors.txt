@@ -10,5 +10,5 @@ total 66
 internal/api 100
 internal/config 97
 internal/index 76
-internal/registry 94
+internal/registry 98
 internal/store 51

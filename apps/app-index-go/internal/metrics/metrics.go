@@ -20,12 +20,17 @@ var ReconnectReasons = []string{"unavailable", "slow_consumer", "end", "bad_requ
 // RebuildReasons are the `reason` values of app_index_rebuilds_total.
 var RebuildReasons = []string{"first_start", "cursor_expired", "layout", "empty_cursor"}
 
+// MalformedTypes are the `type` values of app_index_malformed_events_total: the type an event that
+// could not be decoded was sent as.
+var MalformedTypes = []string{"upsert", "delete", "live", "progress"}
+
 // SearchOutcomes are the `outcome` values of app_index_search_requests_total.
 var SearchOutcomes = []string{"ok", "bad_request", "not_ready", "error"}
 
 // Metrics holds the series.
 type Metrics struct {
 	Applied    *prometheus.CounterVec
+	Malformed  *prometheus.CounterVec
 	Generation prometheus.Gauge
 	Ready      prometheus.Gauge
 	Reconnects *prometheus.CounterVec
@@ -43,6 +48,10 @@ func New(reg prometheus.Registerer) *Metrics {
 		Applied: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_index_events_applied_total",
 			Help: "Registry events applied to the index, by event type (invalid: an upsert whose body the index cannot use, applied as a delete).",
+		}, []string{"type"}),
+		Malformed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_index_malformed_events_total",
+			Help: "Registry events of a known type that could not be decoded (no usable urn, unreadable data), by the type they were sent as. Skipped; the cursor advances past one only when it carried a readable cursor.",
 		}, []string{"type"}),
 		Generation: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "app_index_generation",
@@ -81,10 +90,13 @@ func New(reg prometheus.Registerer) *Metrics {
 		}
 		return m.now().Sub(time.Unix(0, last)).Seconds()
 	})
-	reg.MustRegister(m.Applied, m.Generation, m.Ready, m.Reconnects, m.Rebuilds, m.Searches, m.SearchTime, age)
+	reg.MustRegister(m.Applied, m.Malformed, m.Generation, m.Ready, m.Reconnects, m.Rebuilds, m.Searches, m.SearchTime, age)
 	// Seed every label value, so a count that never moved reads 0 rather than an absent series.
 	for _, v := range EventTypes {
 		m.Applied.WithLabelValues(v)
+	}
+	for _, v := range MalformedTypes {
+		m.Malformed.WithLabelValues(v)
 	}
 	for _, v := range ReconnectReasons {
 		m.Reconnects.WithLabelValues(v)

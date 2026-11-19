@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -62,18 +61,13 @@ func run(log *slog.Logger) error {
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := metrics.New(reg)
 
+	// No response-header or idle timeout: a stream may be quiet for any length of time. Dead
+	// connections are found by TCP keepalive and HTTP/2 pings (registry.NewHTTPClient).
 	client := &registry.Client{
-		BaseURL:     cfg.RegistryURL,
-		Token:       cfg.RegistryToken,
-		IdleTimeout: cfg.IdleTimeout,
-		UserAgent:   "app-index-go",
-		HTTP: &http.Client{Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-			ForceAttemptHTTP2:     true,
-		}},
+		BaseURL:   cfg.RegistryURL,
+		Token:     cfg.RegistryToken,
+		UserAgent: "app-index-go",
+		HTTP:      registry.NewHTTPClient(),
 	}
 	consumer := &index.Consumer{
 		Store:   st,

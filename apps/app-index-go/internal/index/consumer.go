@@ -15,6 +15,9 @@
 //   - Any other end of the stream (a dropped connection, `unavailable`, `slow_consumer`, an error
 //     this consumer does not know) reconnects with the same cursor after a bounded exponential
 //     backoff with jitter. Every reconnect waits; there is no tight loop.
+//   - An upsert whose body is unusable is treated as deleted. An event that cannot be decoded at all
+//     (no usable urn, unreadable data) is skipped and counted, advancing the cursor only when it
+//     carried one, so one bad event never wedges the stream.
 package index
 
 import (
@@ -321,6 +324,20 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 				c.Log.Info("generation is serving", "generation", gen.ID)
 			}
 			live = true
+		case registry.Malformed:
+			// Skipped, never the end of the stream: reconnecting would replay the same event
+			// forever. Advanced past only when it carried a cursor, as a Progress would be.
+			c.Metrics.Malformed.WithLabelValues(string(ev.Of)).Inc()
+			c.Log.Warn("malformed registry event skipped", "type", string(ev.Of), "reason", ev.Reason,
+				"advanced", ev.Cursor != "", "generation", gen.ID)
+			if ev.Cursor == "" {
+				continue
+			}
+			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeProgress, Cursor: ev.Cursor}); err != nil {
+				return live, storeError{err}
+			}
+			gen.Cursor = ev.Cursor
+			continue
 		case registry.End:
 			c.Metrics.EventApplied(typ)
 			return live, errEnded

@@ -114,6 +114,19 @@ func (c *fakeConn) send(t *testing.T, event string, data any) {
 	})
 }
 
+// raw writes SSE text as is: for events no well-formed registry sends.
+func (c *fakeConn) raw(sse string) {
+	c.do(func(w http.ResponseWriter) {
+		if !c.started {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			c.started = true
+		}
+		_, _ = io.WriteString(w, sse)
+		w.(http.Flusher).Flush()
+	})
+}
+
 func appEntity(slug, name string) map[string]any {
 	return map[string]any{
 		"urn":     "urn:apps.civitai.com:app/" + slug,

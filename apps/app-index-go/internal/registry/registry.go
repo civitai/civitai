@@ -4,11 +4,18 @@
 //
 // Provenance: the event model and the SSE reader are ported from the registry-go reference
 // implementation (internal/protocol: protocol.go ParseEvent, http.go Subscribe and
-// Subscription.Next, at spec b7ded2e), trimmed to what a consumer needs. Two changes from it: lines
-// are read with a bounded buffer (a line over MaxLine ends the stream instead of growing without
-// bound), and a stream with no traffic for IdleTimeout (heartbeat comment lines count) is treated as
-// lost, which is how the spec says a consumer detects a dropped connection ("Bindings": by the
-// binding's pings, not by how long the stream has been quiet).
+// Subscription.Next, at spec b7ded2e), trimmed to what a consumer needs. Changes from it: lines are
+// read with a bounded buffer (a line over MaxLine ends the stream instead of growing without
+// bound), and an event of a known type that cannot be decoded is returned as a Malformed event
+// instead of ending the stream, so one bad event cannot wedge a consumer that would otherwise
+// reconnect to the same event forever.
+//
+// Liveness: the spec says a consumer detects a lost connection "by the binding's pings — not by
+// how long the stream has been quiet: a live stream may be silent for any length of time"
+// ("Bindings"). So nothing here times out a quiet stream or a slow response header. A dead
+// connection is detected by the transport (NewHTTPClient): TCP keepalive probes on every
+// connection, and HTTP/2 PING frames when the connection is HTTP/2. A connection the peer closes
+// or resets ends the read at once.
 package registry
 
 import (
@@ -19,23 +26,25 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
 // EventType names an SSE event of the binding.
 type EventType string
 
-// The event types of the protocol ("Subscribe").
+// The event types of the protocol ("Subscribe"), and Malformed for an event of one of those types
+// that could not be decoded.
 const (
-	Upsert   EventType = "upsert"
-	Delete   EventType = "delete"
-	Live     EventType = "live"
-	Progress EventType = "progress"
-	End      EventType = "end"
+	Upsert    EventType = "upsert"
+	Delete    EventType = "delete"
+	Live      EventType = "live"
+	Progress  EventType = "progress"
+	End       EventType = "end"
+	Malformed EventType = "malformed"
 )
 
 // Entity is one entity as its origin sent it. Fields this consumer does not read are dropped.
@@ -52,7 +61,11 @@ type Event struct {
 	Type   EventType
 	Entity Entity // upsert
 	URN    string // delete
-	Cursor string // upsert, delete, live, progress
+	Cursor string // upsert, delete, live, progress; Malformed: the cursor it carried, if readable
+	// Of is the type a Malformed event was sent as.
+	Of EventType
+	// Reason says why a Malformed event could not be decoded. It never contains the event's data.
+	Reason string
 }
 
 // Code is an error's name: the `error` field of the JSON body or of an `error` event ("Errors").
@@ -102,17 +115,48 @@ type Request struct {
 // MaxLine bounds one SSE line. The largest app entity is a few KiB.
 const MaxLine = 1 << 20
 
+// Transport liveness settings (NewHTTPClient).
+const (
+	// DialTimeout bounds establishing a connection. It is not a stream-quietness timeout.
+	DialTimeout = 10 * time.Second
+	// TCP keepalive: probe a connection idle for KeepAliveIdle, every KeepAliveInterval, and drop it
+	// after KeepAliveCount unanswered probes (about a minute for a vanished peer).
+	KeepAliveIdle     = 30 * time.Second
+	KeepAliveInterval = 10 * time.Second
+	KeepAliveCount    = 3
+	// HTTP/2: send a PING when no frame arrived for H2PingAfter, drop the connection when it is not
+	// answered within H2PingTimeout.
+	H2PingAfter   = 30 * time.Second
+	H2PingTimeout = 15 * time.Second
+)
+
+// NewHTTPClient is the client subscriptions are read with. It has no overall, response-header or
+// idle timeout (a stream may be quiet for any length of time); dead connections are found by TCP
+// keepalive and, over HTTP/2, by PING frames.
+func NewHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout: DialTimeout,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable: true, Idle: KeepAliveIdle, Interval: KeepAliveInterval, Count: KeepAliveCount,
+		},
+	}
+	return &http.Client{Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext:         dialer.DialContext,
+		TLSHandshakeTimeout: DialTimeout,
+		ForceAttemptHTTP2:   true,
+		HTTP2:               &http.HTTP2Config{SendPingTimeout: H2PingAfter, PingTimeout: H2PingTimeout},
+	}}
+}
+
 // Client opens subscriptions on one registry.
 type Client struct {
 	// BaseURL is the registry's URL; `/subscribe` is appended to its path.
 	BaseURL string
 	// Token, when set, is sent as `Authorization: Bearer` (auth extension, Consumers rule 2).
 	Token string
-	// HTTP is the client used; it must not set an overall Timeout (a stream is long-lived).
+	// HTTP is the client used (NewHTTPClient in production); nil is http.DefaultClient.
 	HTTP *http.Client
-	// IdleTimeout ends a stream that carried no bytes for this long (0: never). Registries send a
-	// heartbeat comment line on idle streams, so set it to a few heartbeat intervals.
-	IdleTimeout time.Duration
 	// UserAgent is sent when set.
 	UserAgent string
 }
@@ -123,11 +167,6 @@ type Stream struct {
 	sc     *bufio.Scanner
 	cancel context.CancelFunc
 	ended  bool
-
-	mu        sync.Mutex
-	timer     *time.Timer
-	resetIdle func()
-	idle      bool
 }
 
 // Subscribe opens `GET {BaseURL}/subscribe`. An error before the stream starts is returned as an
@@ -192,17 +231,7 @@ func (c *Client) Subscribe(ctx context.Context, req Request) (*Stream, error) {
 		_ = res.Body.Close()
 		return nil, &Error{Code: Unavailable, Message: "response is not text/event-stream"}
 	}
-	s := newStream(res.Body, cancel)
-	if c.IdleTimeout > 0 {
-		s.timer = time.AfterFunc(c.IdleTimeout, func() {
-			s.mu.Lock()
-			s.idle = true
-			s.mu.Unlock()
-			cancel()
-		})
-		s.resetIdle = func() { s.timer.Reset(c.IdleTimeout) }
-	}
-	return s, nil
+	return newStream(res.Body, cancel), nil
 }
 
 // newStream reads events from an SSE body; cancel aborts the request it belongs to.
@@ -215,22 +244,22 @@ func newStream(body io.ReadCloser, cancel context.CancelFunc) *Stream {
 // Next returns the next event. After End it returns io.EOF. A stream that closes without End is
 // Unavailable, so a finished stream is never mistaken for a dropped one, and an `error` event is
 // returned as its *Error. Events of a type this consumer does not know are skipped
-// ("Consumers" rule 4).
+// ("Consumers" rule 4); an event of a known type that cannot be decoded is returned as Malformed.
 func (s *Stream) Next() (Event, error) {
 	if s.ended {
 		return Event{}, io.EOF
 	}
-	var typ string
+	var typ, id string
+	var hasID bool
 	var data []string
 	for s.sc.Scan() {
-		s.touch()
 		line := strings.TrimSuffix(s.sc.Text(), "\r")
 		if line == "" {
-			if typ == "" && data == nil {
+			if typ == "" && data == nil && !hasID {
 				continue
 			}
-			ev, skip, err := s.dispatch(typ, data)
-			typ, data = "", nil
+			ev, skip, err := s.dispatch(typ, data, id, hasID)
+			typ, data, id, hasID = "", nil, "", false
 			if skip {
 				continue
 			}
@@ -246,13 +275,13 @@ func (s *Stream) Next() (Event, error) {
 			typ = value
 		case "data":
 			data = append(data, value)
+		case "id":
+			// The cursor again ("HTTP": an event with a cursor field carries it as the SSE id); read
+			// only when the data cannot be.
+			id, hasID = value, true
 		}
-		// `id` repeats the cursor already in `data`; `retry` is for EventSource.
 	}
 	s.ended = true
-	if s.wasIdle() {
-		return Event{}, &Error{Code: Unavailable, Message: "stream idle"}
-	}
 	if err := s.sc.Err(); errors.Is(err, bufio.ErrTooLong) {
 		return Event{}, &Error{Code: Unavailable, Message: "line too long"}
 	}
@@ -260,7 +289,7 @@ func (s *Stream) Next() (Event, error) {
 }
 
 // dispatch decodes one complete SSE event. skip is true for an event this consumer ignores.
-func (s *Stream) dispatch(typ string, data []string) (ev Event, skip bool, err error) {
+func (s *Stream) dispatch(typ string, data []string, id string, hasID bool) (ev Event, skip bool, err error) {
 	if typ == "" {
 		typ = "message"
 	}
@@ -277,74 +306,86 @@ func (s *Stream) dispatch(typ string, data []string) (ev Event, skip bool, err e
 		}
 		return Event{}, false, &Error{Code: Code(p.Error), Message: p.Message}
 	}
-	ev, err = ParseEvent(EventType(typ), payload)
-	if errors.Is(err, errUnknownEvent) {
+	ev = ParseEvent(EventType(typ), payload)
+	switch ev.Type {
+	case "":
 		return Event{}, true, nil
-	}
-	if err != nil {
-		s.ended = true
-		return Event{}, false, &Error{Code: Unavailable, Message: err.Error()}
-	}
-	if ev.Type == End {
+	case Malformed:
+		if ev.Cursor == "" && hasID && ev.Of != End {
+			ev.Cursor = id
+		}
+	case End:
 		s.ended = true
 	}
 	return ev, false, nil
 }
 
-var errUnknownEvent = errors.New("unknown event type")
-
-// ParseEvent decodes the data of an SSE event of a known type.
-func ParseEvent(typ EventType, data []byte) (Event, error) {
+// ParseEvent decodes the data of an SSE event. An event of a type this consumer does not know is
+// returned with an empty Type; one of a known type that cannot be decoded as Malformed, with the
+// cursor it carried when that much could be read.
+func ParseEvent(typ EventType, data []byte) Event {
 	switch typ {
-	case Upsert, Delete, Live, Progress, End:
+	case Upsert, Delete, Live, Progress:
+	case End:
+		return Event{Type: End} // End carries nothing a consumer reads
 	default:
-		return Event{}, fmt.Errorf("%w %q", errUnknownEvent, typ)
+		return Event{}
+	}
+	malformed := func(cursor, reason string) Event {
+		return Event{Type: Malformed, Of: typ, Cursor: cursor, Reason: reason}
 	}
 	var p struct {
 		Entity *Entity `json:"entity"`
 		URN    string  `json:"urn"`
 		Cursor string  `json:"cursor"`
 	}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &p); err != nil {
-			return Event{}, fmt.Errorf("bad %s event: %w", typ, err)
+	err := json.Unmarshal(data, &p)
+	var typeErr *json.UnmarshalTypeError
+	if err != nil && !errors.As(err, &typeErr) {
+		// Not JSON. Perhaps only the entity is unreadable: the cursor may still be.
+		var c struct {
+			Cursor string `json:"cursor"`
+		}
+		_ = json.Unmarshal(data, &c)
+		return malformed(c.Cursor, "data is not a "+string(typ)+" event")
+	}
+	if err != nil {
+		// JSON with a field of the wrong type. An upsert whose URN was still read is kept, with no
+		// body, so the consumer treats it as deleted (spec "Validity" rule 2); anything else is
+		// Malformed. So is any event whose cursor is the unreadable field: storing it as empty
+		// would mean "start over".
+		var c struct {
+			Cursor string `json:"cursor"`
+		}
+		if json.Unmarshal(data, &c) != nil {
+			return malformed("", "the cursor of the "+string(typ)+" event is not a string")
+		}
+		switch {
+		case typ == Upsert && p.Entity != nil && p.Entity.URN != "":
+			p.Entity.Body = nil
+		case typ == Delete && p.URN != "":
+		default:
+			return malformed(c.Cursor, "a field of the "+string(typ)+" event has the wrong type")
 		}
 	}
 	ev := Event{Type: typ, Cursor: p.Cursor}
 	switch typ {
 	case Upsert:
 		if p.Entity == nil || p.Entity.URN == "" {
-			return Event{}, fmt.Errorf("bad %s event: no entity urn", typ)
+			return malformed(p.Cursor, "upsert without an entity urn")
 		}
 		ev.Entity = *p.Entity
 	case Delete:
 		if p.URN == "" {
-			return Event{}, fmt.Errorf("bad %s event: no urn", typ)
+			return malformed(p.Cursor, "delete without a urn")
 		}
 		ev.URN = p.URN
-	case End:
-		ev.Cursor = ""
 	}
-	return ev, nil
-}
-
-func (s *Stream) touch() {
-	if s.resetIdle != nil {
-		s.resetIdle()
-	}
-}
-
-func (s *Stream) wasIdle() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.idle
+	return ev
 }
 
 // Close releases the connection.
 func (s *Stream) Close() error {
-	if s.timer != nil {
-		s.timer.Stop()
-	}
 	s.cancel()
 	return s.body.Close()
 }

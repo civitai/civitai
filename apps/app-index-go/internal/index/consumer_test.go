@@ -22,6 +22,7 @@ func runScenarios(t *testing.T, newStore func(t *testing.T) store.Store) {
 	t.Run("LayoutBumpRebuildsBeside", func(t *testing.T) { testLayoutBumpRebuildsBeside(t, newStore(t)) })
 	t.Run("ReconnectBackoff", func(t *testing.T) { testReconnectBackoff(t, newStore(t)) })
 	t.Run("InvalidBodyIsDeleted", func(t *testing.T) { testInvalidBodyIsDeleted(t, newStore(t)) })
+	t.Run("MalformedEventsDoNotWedgeTheStream", func(t *testing.T) { testMalformedEventsDoNotWedgeTheStream(t, newStore(t)) })
 }
 
 func TestScenariosMemory(t *testing.T) {
@@ -368,6 +369,45 @@ func TestRefusalsWaitTheLongestBackoff(t *testing.T) {
 	}
 	if h.counter(h.m.Reconnects, "bad_request") != 1 || h.counter(h.m.Reconnects, "auth") != 2 {
 		t.Fatal("refusal reasons not counted")
+	}
+}
+
+// Events that cannot be decoded are skipped and counted, never the end of the stream: a poison
+// event in the snapshot still lets it reach Live, a malformed event that carried a cursor moves the
+// cursor past it, and an upsert whose URN is known but whose entity is unusable deletes that app.
+func testMalformedEventsDoNotWedgeTheStream(t *testing.T, st store.Store) {
+	reg := newFakeRegistry(t)
+	h := newHarness(t, st, reg)
+	h.start(t, LayoutVersion)
+	c := reg.next(t)
+	c.raw("event: upsert\nid:\ndata: {\"cursor\":\"\"}\n\n")     // no entity
+	c.raw("event: upsert\nid:\ndata: {\"entity\": not json\n\n") // unreadable
+	c.upsert(t, "alpha", "Alpha", "")
+	c.upsert(t, "beta", "Beta", "")
+	c.live(t, "L1")
+	h.cursorIs(t, store.StateServing, "L1")
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Alpha", "Beta"}) {
+		t.Fatalf("after a poisoned snapshot = %v, want [Alpha Beta]", names)
+	}
+	c.raw("event: delete\nid: c2\ndata: {\"cursor\":\"c2\"}\n\n") // no urn, but a cursor
+	h.cursorIs(t, store.StateServing, "c2")
+	c.raw("event: upsert\nid: c3\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/alpha\",\"schemas\":7},\"cursor\":\"c3\"}\n\n")
+	c.upsert(t, "gamma", "Gamma", "c4")
+	h.cursorIs(t, store.StateServing, "c4")
+	if _, names := h.search(t, ""); !slices.Equal(names, []string{"Beta", "Gamma"}) {
+		t.Fatalf("after an unusable alpha = %v, want [Beta Gamma]", names)
+	}
+	if got := h.counter(h.m.Malformed, "upsert"); got != 2 {
+		t.Fatalf("malformed upserts = %v, want 2", got)
+	}
+	if got := h.counter(h.m.Malformed, "delete"); got != 1 {
+		t.Fatalf("malformed deletes = %v, want 1", got)
+	}
+	if got := h.counter(h.m.Applied, "invalid"); got != 1 {
+		t.Fatalf("invalid (deleted) upserts = %v, want 1", got)
+	}
+	if got := h.counter(h.m.Reconnects, "unavailable"); got != 0 {
+		t.Fatalf("a malformed event caused %v reconnects", got)
 	}
 }
 

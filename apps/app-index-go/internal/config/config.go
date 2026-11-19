@@ -27,9 +27,6 @@ type Config struct {
 	DBMaxConns int32
 	// Addr is the HTTP listen address (APP_INDEX_ADDR, default :8080).
 	Addr string
-	// IdleTimeout ends a stream with no traffic, heartbeats included (APP_INDEX_IDLE_TIMEOUT_MS,
-	// default 60000).
-	IdleTimeout time.Duration
 	// BackoffBase and BackoffMax bound the reconnect backoff (APP_INDEX_BACKOFF_BASE_MS default
 	// 500, APP_INDEX_BACKOFF_MAX_MS default 60000).
 	BackoffBase, BackoffMax time.Duration
@@ -77,7 +74,6 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 		err = e
 		return time.Duration(v) * time.Millisecond
 	}
-	c.IdleTimeout = ms("APP_INDEX_IDLE_TIMEOUT_MS", 60_000)
 	c.BackoffBase = ms("APP_INDEX_BACKOFF_BASE_MS", 500)
 	c.BackoffMax = ms("APP_INDEX_BACKOFF_MAX_MS", 60_000)
 	c.SearchTimeout = ms("APP_INDEX_SEARCH_TIMEOUT_MS", 2_000)

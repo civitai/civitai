@@ -36,11 +36,15 @@ no other sort and no paging. `/search` answers 503 until the index is ready.
   is empty builds a new generation from an empty cursor while the old one keeps answering; the switch
   happens in one transaction at the new one's `Live`, and the old one is dropped.
 - Any other end of the stream reconnects with the same cursor after an exponential backoff with
-  jitter (`APP_INDEX_BACKOFF_*_MS`). A stream with no bytes for `APP_INDEX_IDLE_TIMEOUT_MS`
-  (heartbeat comments count) is treated as lost.
-- An upsert whose body lacks a field the index relies on is treated as deleted.
-- Only one process follows the stream (a Postgres advisory lock); others serve searches. Writes are
-  also fenced to the process that last claimed the generation.
+  jitter (`APP_INDEX_BACKOFF_*_MS`). A quiet stream is never treated as lost (the spec: a live
+  stream may be silent for any length of time); there is no response-header or idle timeout. A dead
+  connection is detected by the transport: TCP keepalive probes, and HTTP/2 PING frames over HTTP/2.
+- An upsert whose body lacks a field the index relies on is treated as deleted. An event that
+  cannot be decoded at all is skipped and counted (`app_index_malformed_events_total`), advancing
+  the cursor only when it carried one, so it cannot wedge the stream.
+- Only one process follows the stream (a Postgres session advisory lock); others serve searches.
+  Writes to a generation also check that this process still owns it (`Postgres.Lock` says exactly
+  what that guarantees).
 
 The subscription is anonymous unless `APP_INDEX_REGISTRY_TOKEN` is set, so the registry serves it the
 audience anyone may read: SFW apps only.
@@ -49,6 +53,8 @@ audience anyone may read: SFW apps only.
 
 See `.env.example`. `APP_INDEX_REGISTRY_URL` and `APP_INDEX_DATABASE_URL` are required. The service
 creates its tables at startup (`internal/store/postgres.go`); point it at a database of its own.
+`APP_INDEX_DATABASE_URL` must be a direct (session) connection, never a transaction-mode pooler: the
+consumer lock is a session advisory lock, which such a pooler does not hold.
 
 ## Tests
 
