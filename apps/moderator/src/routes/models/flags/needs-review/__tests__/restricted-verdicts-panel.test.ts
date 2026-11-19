@@ -48,7 +48,10 @@ const STUBS: Record<string, string> = {
 <Panel {...rest} {queueEmpty} />`,
 };
 const IMPORTS: [RegExp, string][] = [
-  [/import \{ enhance \} from '\$app\/forms';/, 'const enhance = () => {};'],
+  [
+    /import \{ enhance \} from '\$app\/forms';/,
+    'const enhance = (_form, submit) => { (globalThis.__panelSubmits ??= []).push(submit); };',
+  ],
   [/import \{ invalidateAll \} from '\$app\/navigation';/, 'const invalidateAll = async () => {};'],
   [/import \{ Button \} from '[^']+';/, "import Button from './Button.js';"],
   [/import \{ ConfirmButton \} from '[^']+';/, "import ConfirmButton from './ConfirmButton.js';"],
@@ -168,6 +171,8 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     expect(list.querySelectorAll(':scope > li')).toHaveLength(61);
     const cap = /\bmax-h-\[(\d+)vh\]/.exec(list.className);
     expect(Number(cap?.[1])).toBeLessThanOrEqual(50);
+    // Below lg the queue column is 320px, so the list needs its own smaller cap there.
+    expect(list.className).toMatch(/(^|\s)max-h-\d+(\s|$)/);
     expect(list.className).toMatch(/\boverflow-y-auto\b/);
     expect(panel.querySelector('button[aria-expanded]')!.getAttribute('aria-expanded')).toBe(
       'true'
@@ -209,6 +214,42 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     control.setQueueEmpty!(true);
     flushSync();
     expect(leads()).toHaveLength(61);
+    unmount(app);
+  });
+
+  it("says a ruling failed while hidden, so the failure isn't lost", async () => {
+    const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    document.body.innerHTML = '';
+    const submits = ((globalThis as Record<string, unknown>).__panelSubmits = []) as Array<
+      () => (o: { result: unknown; update: () => Promise<void> }) => Promise<void>
+    >;
+    const app = mount(ClientPanel, {
+      target: document.body,
+      props: {
+        rows: LEADS,
+        total: LEADS.length,
+        civitaiUrl: 'https://civitai.com',
+        queueEmpty: true,
+      },
+    });
+    const alert = () =>
+      document.querySelector('section[aria-label="Scan rated NSFW"] [role="alert"]');
+    [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.trim() === 'Rule')!
+      .click();
+    flushSync();
+    expect(submits.length).toBeGreaterThan(0);
+
+    const settle = submits[0]();
+    document.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click(); // Hide mid-flight
+    flushSync();
+    expect(alert()).toBeNull();
+    await settle({
+      result: { type: 'failure', data: { error: 'Refused.' } },
+      update: async () => {},
+    });
+    flushSync();
+    expect(alert()?.textContent).toContain('A ruling failed');
     unmount(app);
   });
 });

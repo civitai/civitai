@@ -31,7 +31,7 @@
   } = $props();
 
   let expanded = $state(untrack(() => queueEmpty));
-  // Ruling the last queue item leaves only these leads to work on.
+  // A queue that comes back empty (Refresh queue, a filter, a search) leaves only these leads.
   $effect(() => {
     if (queueEmpty) expanded = true;
   });
@@ -91,7 +91,7 @@
         type="button"
         class="ml-auto shrink-0 text-xs {LINK_CLASS}"
         aria-expanded={expanded}
-        aria-controls="restricted-verdict-leads"
+        aria-controls={expanded ? 'restricted-verdict-leads' : undefined}
         onclick={() => (expanded = !expanded)}
       >
         {expanded ? 'Hide' : 'Show'}<span class="sr-only"> leads</span>
@@ -256,10 +256,11 @@
                   <input type="hidden" name="reason" value={reasons[row.modelId] ?? ''} />
                 </form>
               {/if}
-              {#if errors[row.modelId]}
-                <p class="m-0 text-xs text-red-5" role="alert">{errors[row.modelId]}</p>
-              {/if}
             </div>
+          {/if}
+          <!-- Outside the open row, so a lead closed after its ruling failed still says so. -->
+          {#if errors[row.modelId]}
+            <p class="m-0 mt-2 text-xs text-red-5" role="alert">{errors[row.modelId]}</p>
           {/if}
         </li>
       {/each}
