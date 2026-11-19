@@ -212,27 +212,36 @@ describe('who reads the author subject', () => {
   }
   const root = path.join(process.cwd(), 'src');
   const files = sourceFiles(root);
+  // Per file, the number of matches: a second read inside an allowed file fails too.
   const matching = (pattern: RegExp) =>
-    files
-      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
-      .map((file) => path.relative(root, file).split(path.sep).join('/'))
-      .sort();
+    Object.fromEntries(
+      files
+        .map((file) => [
+          path.relative(root, file).split(path.sep).join('/'),
+          readFileSync(file, 'utf8').match(pattern)?.length ?? 0,
+        ])
+        .filter(([, count]) => count)
+        .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    );
 
   it('scans the source tree', () => {
     expect(files.length).toBeGreaterThan(1000);
   });
 
   it('names the subject field only where it is set and resolved', () => {
-    expect(matching(/\bappBlocksAuthorSubject\b/)).toEqual([
-      'server/auth/full-user-credential.ts',
-      'server/createContext.ts',
-    ]);
+    expect(matching(/\bappBlocksAuthorSubject\b/g)).toEqual({
+      'server/auth/full-user-credential.ts': 2,
+      'server/createContext.ts': 5,
+    });
   });
 
+  // Generic calls included; the definition (`appBlocksAuthorAccount<T …>(`) is the one match in
+  // full-user-credential.
   it('resolves the author account only in the two author gates', () => {
-    expect(matching(/\bappBlocksAuthorAccount\(/)).toEqual([
-      'server/trpc.ts',
-      'server/trpc/app-blocks-author.middleware.ts',
-    ]);
+    expect(matching(/\bappBlocksAuthorAccount\s*(<[^>]*>)?\(/g)).toEqual({
+      'server/auth/full-user-credential.ts': 1,
+      'server/trpc.ts': 1,
+      'server/trpc/app-blocks-author.middleware.ts': 1,
+    });
   });
 });
