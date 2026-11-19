@@ -35,6 +35,8 @@ export type FixtureEntry = {
   descriptor?: boolean | Buffer;
   /** Written as the local header's compressed size in place of the real one. */
   localCompressedSize?: number;
+  /** Bytes appended to the compressed data and counted in its size, past where a deflate stream ends. */
+  compressedTail?: Buffer;
 };
 
 export type FixtureOptions = {
@@ -63,7 +65,10 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
     const data = entry.data ?? Buffer.alloc(0);
     const method = entry.method ?? 'deflate';
     const methodCode = method === 'store' ? 0 : method === 'deflate' ? 8 : method;
-    const body = methodCode === 8 ? deflateRawSync(data) : data;
+    const body = Buffer.concat([
+      methodCode === 8 ? deflateRawSync(data) : data,
+      entry.compressedTail ?? Buffer.alloc(0),
+    ]);
     const name = Buffer.from(entry.name, 'utf8');
     const localName = Buffer.from(entry.localName ?? entry.name, 'utf8');
     const flags = (entry.flags ?? 0) | (entry.descriptor ? 0x08 : 0);

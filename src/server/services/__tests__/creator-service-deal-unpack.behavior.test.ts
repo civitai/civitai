@@ -1024,10 +1024,11 @@ describe('video by any other name', () => {
       }),
       /described differently/,
     ]),
+    // A deflate stream that ends before the data the directory gives it.
     [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(4096, 3), 'deflate']], 'weights', [], {
-        'weights/data/0': { descriptor: true },
+        'weights/data/0': { descriptor: true, compressedTail: Buffer.from('PK') },
       }),
       /described differently/,
     ],
@@ -1039,6 +1040,14 @@ describe('video by any other name', () => {
       ]),
       /\.pt model/,
     ],
+    ...[tsStream(188), tsPackets(4)].map((stream) => [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', stream],
+      ]),
+      /\.pt model/,
+    ]),
     [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
@@ -1120,6 +1129,30 @@ describe('video by any other name', () => {
     ['notes.txt', threeSyncs()],
     ['song.mp3', Buffer.concat([MP3_FRAME(), spacedSyncs(100)])],
     ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3), 'deflate']])],
+    // torch.jit.save deflates its code and debug pickles, each with a data descriptor.
+    [
+      'weights.pt',
+      torchZip(
+        [
+          [
+            'code/__torch__/model.py',
+            Buffer.from('class Model(Module):\n  pass\n'.repeat(40)),
+            'deflate',
+          ],
+          [
+            'code/__torch__/model.py.debug_pkl',
+            Buffer.concat([PICKLE(), Buffer.alloc(900)]),
+            'deflate',
+          ],
+        ],
+        'weights',
+        [],
+        {
+          'weights/code/__torch__/model.py': { descriptor: true },
+          'weights/code/__torch__/model.py.debug_pkl': { descriptor: true },
+        }
+      ),
+    ],
     // Tensor bytes are opaque: a stream is looked for only where a file of one would start.
     [
       'weights.pt',

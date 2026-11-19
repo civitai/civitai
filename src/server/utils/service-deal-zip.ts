@@ -2,6 +2,7 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import pLimit from 'p-limit';
 import { PassThrough, Readable, Transform } from 'stream';
 import * as yauzl from 'yauzl';
+import { createInflateRaw } from 'zlib';
 import {
   SERVICE_ZIP_ARCHIVE_EXTENSIONS,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
@@ -477,8 +478,6 @@ export async function everyEntryHead(
           local.crc32 === entry.crc32;
         const left = sizes?.compressed === 0 && sizes.uncompressed === 0 && local.crc32 === 0;
         if (!sizes || !(stated || (deferred && left))) throw mismatch();
-        // A deflated entry ends where its stream does, which only inflating all of it would show.
-        if (deferred && entry.compressionMethod !== 0) throw mismatch();
         const dataEnd = local.fileDataStart + entry.compressedSize;
         let end = dataEnd;
         if (deferred) {
@@ -505,14 +504,17 @@ export async function everyEntryHead(
         }
         const span = { start: entry.relativeOffsetOfLocalHeader, end };
         if (entry.fileName.endsWith('/')) return span;
+        // A deflated entry that defers its sizes ends where its stream does, so all of it is
+        // inflated: the stream must end exactly where the directory says the data does.
+        const whole = deferred && entry.compressionMethod === 8;
         // The callback form: yauzl 3.4's promise form of this call opens the entry by its header again.
-        const stream = await new Promise<Readable>((resolve, reject) =>
+        const data = await new Promise<Readable>((resolve, reject) =>
           zipfile.openReadStreamLowLevel(
             local.fileDataStart,
             entry.compressedSize,
             0,
             entry.compressedSize,
-            entry.compressionMethod === 8,
+            entry.compressionMethod === 8 && !whole,
             null,
             (error, readable) =>
               error
@@ -520,16 +522,29 @@ export async function everyEntryHead(
                 : resolve(readable)
           )
         );
+        const inflate = whole ? createInflateRaw() : null;
+        const stream = inflate ? data.pipe(inflate) : data;
+        data.on('error', (error) => inflate?.destroy(error));
         const head = new SniffedHead();
+        let enough = false;
+        let inflated = 0;
         try {
-          for await (const chunk of stream as AsyncIterable<Buffer>) if (head.push(chunk)) break;
+          for await (const chunk of stream as AsyncIterable<Buffer>) {
+            if (!enough) enough = head.push(chunk);
+            if (!inflate) {
+              if (enough) break;
+            } else if ((inflated += chunk.length) > SERVICE_ZIP_MAX_ENTRY_BYTES)
+              throw new ZipRejectedError(TOO_LARGE_REFUSAL);
+          }
         } catch (error) {
           if (((error as { code?: string })?.code ?? '').startsWith('Z_'))
             throw new ZipRejectedError('The archive is damaged.');
           throw error;
         } finally {
-          stream.destroy();
+          data.destroy();
+          inflate?.destroy();
         }
+        if (inflate && inflate.bytesWritten !== entry.compressedSize) throw mismatch();
         if (!accept(entry.fileName, head.bytes())) throw new EntryNotAccepted();
         return span;
       }).catch((error) => {
