@@ -46,7 +46,8 @@ export const imageAuditContentHash = (imageId: number) => scannerContentHash(`im
  * never clean. Every scan writes at least its `nsfw_level` row.
  */
 export const SCANNER_HITS_SQL = `
-  SELECT contentHash, max(label IN ('csam', 'minor') AND triggered = 1) AS hit
+  SELECT contentHash, max(label IN ('csam', 'minor') AND triggered = 1) AS hit,
+    max(label = 'csam' AND triggered = 1) AS csamHit
   FROM scanner_label_results
   WHERE contentHash IN {hashes:Array(String)}
   GROUP BY contentHash
@@ -60,6 +61,17 @@ export function scannerVerdict(
   const row = rows.find((r) => r.contentHash === imageAuditContentHash(id));
   if (!row) return 'none';
   return Number(row.hit) === 1 || row.hit === true ? 'hit' : 'clear';
+}
+
+/** One image's CSAM verdict from `SCANNER_HITS_SQL` rows: the CSAM label alone, for media access,
+ *  where a minor label does not restrict a moderator. 'none' when the scanner has no rows for it. */
+export function scannerCsamVerdict(
+  id: number,
+  rows: readonly { contentHash: string; csamHit?: number | boolean | string }[]
+): 'hit' | 'clear' | 'none' {
+  const row = rows.find((r) => r.contentHash === imageAuditContentHash(id));
+  if (!row) return 'none';
+  return Number(row.csamHit) === 1 || row.csamHit === true ? 'hit' : 'clear';
 }
 
 export function scannerHeldIds(

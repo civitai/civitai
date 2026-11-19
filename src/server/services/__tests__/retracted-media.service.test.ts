@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -25,7 +25,9 @@ const scanner = vi.hoisted(() => ({
   verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
 }));
 const readScannerVerdict = vi.hoisted(() => vi.fn(async () => scanner.verdict));
-vi.mock('~/server/services/review-batch/review-batch.service', () => ({ readScannerVerdict }));
+vi.mock('~/server/services/review-batch/review-batch.service', () => ({
+  readScannerCsamVerdict: readScannerVerdict,
+}));
 
 type Row = {
   id: number;
@@ -93,7 +95,7 @@ beforeAll(async () => {
     CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
     CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
     CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
-    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb, "reportSentAt" timestamp);
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
   `);
@@ -193,10 +195,9 @@ describe('getRetractedMedia', () => {
     expect(readScannerVerdict).toHaveBeenCalledWith(1);
   });
 
-  it('answers an image with no scanner verdict as needing CSAM-queue access', async () => {
+  it('serves an image the scanner has no verdict for to any moderator', async () => {
     scanner.verdict = 'none';
-    expect(await getRetractedMedia(1, { csamReview: false })).toBe('needs-csam-queue');
-    expect(await getRetractedMedia(1, { csamReview: true })).toMatchObject({ url: 'key-1' });
+    await expectTiers('plain', [1]);
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
@@ -236,17 +237,16 @@ describe('getRetractedMedia', () => {
     await expectTiers('none', [18]);
   });
 
-  it('keeps a minor review flag to cleared moderators, PG included', async () => {
-    await expectTiers('suspect', [14, 15]);
+  it('serves a minor review flag to any moderator, PG included', async () => {
+    await expectTiers('plain', [14, 15]);
   });
 
-  it('keeps a minor-marked or acceptable-minor image to cleared moderators', async () => {
-    await expectTiers('suspect', [16, 17, 25]);
+  it('serves a minor-marked or acceptable-minor image to any moderator', async () => {
+    await expectTiers('plain', [16, 17, 25]);
   });
 
-  it('keeps a child-tagged image to cleared moderators, but not for a disabled tag', async () => {
-    await expectTiers('suspect', [26]);
-    await expectTiers('plain', [1]);
+  it('serves a child-tagged image to any moderator', async () => {
+    await expectTiers('plain', [26, 1]);
   });
 
   it('keeps an image whose hash is a CSAM block to cleared moderators', async () => {
@@ -257,14 +257,14 @@ describe('getRetractedMedia', () => {
     await expectTiers('suspect', [28]);
   });
 
-  it('keeps a csam or minor scan flag to cleared moderators, but not a clean flag', async () => {
-    await expectTiers('suspect', [29, 30]);
-    await expectTiers('plain', [2]);
+  it('keeps a csam scan flag to cleared moderators, but not a minor or clean one', async () => {
+    await expectTiers('suspect', [29]);
+    await expectTiers('plain', [30, 2]);
   });
 
-  it('keeps a csam or minor vote to cleared moderators, but not another reason', async () => {
-    await expectTiers('suspect', [31, 32]);
-    await expectTiers('plain', [2]);
+  it('keeps a csam vote to cleared moderators, but not a minor vote or another reason', async () => {
+    await expectTiers('suspect', [31]);
+    await expectTiers('plain', [32, 2]);
   });
 
   it('keeps an AiNotVerified image of a held or reported owner to cleared moderators', async () => {
@@ -274,5 +274,84 @@ describe('getRetractedMedia', () => {
 
   it('keeps an image listed on a report, in either list shape, to cleared moderators', async () => {
     await expectTiers('suspect', [23, 24]);
+  });
+
+  it('keeps an image of an owner banned for minor safety to cleared moderators', async () => {
+    await pg.query(
+      `INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES (990000110, 'key-990000110', 'Blocked', 'moderated', 990100110)`
+    );
+    await pg.query(
+      `INSERT INTO "User" (id, meta) VALUES (990100110, '{"banDetails": {"reasonCode": "SexualMinor"}}')`
+    );
+    try {
+      await expectTiers('suspect', [990000110]);
+      await pg.query(`UPDATE "User" SET meta = '{}' WHERE id = 990100110`);
+      await expectTiers('plain', [990000110]);
+    } finally {
+      await pg.exec(
+        `DELETE FROM "Image" WHERE id = 990000110; DELETE FROM "User" WHERE id = 990100110;`
+      );
+    }
+  });
+});
+
+describe('copies sharing bytes with a restricted image', () => {
+  // 990000101: a plain blocked image whose url another row shares. 990000103: a plain blocked image
+  // whose pHash another row has. Each test lists or holds the other row, then removes it.
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", minor, "nsfwLevel", "userId", "pHash") VALUES
+        (990000101, 'key-990000101', 'Blocked', 'moderated', false, 4, 990100101, NULL),
+        (990000102, 'key-990000101', 'Scanned', NULL, false, 4, 990100102, NULL),
+        (990000103, 'key-990000103', 'Blocked', 'moderated', false, 4, 990100103, 990990990),
+        (990000104, 'key-990000104', 'Scanned', NULL, false, 4, 990100104, 990990990);
+    `);
+  });
+  afterEach(async () => {
+    await pg.exec(`
+      DELETE FROM "CsamReport" WHERE "userId" = 990100199;
+      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000105);
+      DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
+      UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
+    `);
+  });
+
+  const report = (imageId: number) =>
+    pg.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100199, '{}', $1)`, [
+      JSON.stringify([{ id: imageId }]),
+    ]);
+  const deletedCopy = () =>
+    pg.query(
+      `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (990000105, 'key-990000101', 990100105, false)`
+    );
+
+  it('serves both images to any moderator while no copy is reported or held', async () => {
+    await expectTiers('plain', [990000101, 990000103]);
+  });
+
+  it.each([
+    ['a reported row on the same url', 990000101, () => report(990000102)],
+    ['a reported row with the same pHash', 990000103, () => report(990000104)],
+    [
+      'a reported, deleted copy on the same url',
+      990000101,
+      async () => {
+        await deletedCopy();
+        await report(990000105);
+      },
+    ],
+    [
+      'an unreported copy on the same url in review',
+      990000101,
+      () => pg.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000102`),
+    ],
+    [
+      'a held row on the same url',
+      990000101,
+      () => pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000102)`),
+    ],
+  ])('keeps an image with %s to cleared moderators', async (_label, id, mark) => {
+    await mark();
+    await expectTiers('suspect', [id]);
   });
 });

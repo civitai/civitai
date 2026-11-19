@@ -35,7 +35,6 @@ vi.mock('$lib/server/held-media', async (importOriginal) => ({
 vi.mock('$lib/server/retracted-media', () => ({
   getRetractedMedia: h.getRetractedMedia,
   recordRetractedView: h.recordRetractedView,
-  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
   retractedMediaEnabled: () => true,
 }));
 // Any read that reaches the database fails, so a route that reads anything but the mocks refuses.
