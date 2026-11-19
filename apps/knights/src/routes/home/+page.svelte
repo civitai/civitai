@@ -112,13 +112,14 @@
           <span>Fervor{data.fervorPosition ? ` · #${count(data.fervorPosition)}` : ''}</span>
         </li>
       </ul>
+    </section>
 
+    <div class="verdicts">
+      <VerdictsCard recap={data.recap} />
       {#if status.smites > 0}
         <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} heartBack={status.heartBack} />
       {/if}
-    </section>
-
-    <div class="verdicts"><VerdictsCard recap={data.recap} /></div>
+    </div>
 
     <nav class="links" aria-label="The Order">
       <div class="divider" aria-hidden="true"><span></span></div>
@@ -229,6 +230,9 @@
   }
   .verdicts {
     grid-area: verdicts;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     padding-top: 1.75rem;
   }
   .links {
