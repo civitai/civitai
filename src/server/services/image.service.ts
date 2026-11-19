@@ -1,4 +1,7 @@
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -297,7 +300,6 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
-  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -4836,9 +4838,20 @@ export const removeImageResource = async ({
 // }
 
 // export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
-export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
+export const getIngestionResults = async ({
+  ids,
+  user,
+  credential,
+}: {
+  ids: number[];
+  user: { id: number; isModerator?: boolean | null };
+  credential: RequestCredential;
+}) => {
+  const userId = user.id;
+  // The viewer's own images; any image only for a moderator on a session or a full-scope key.
+  const viewer = withModeratorRightsFor(user, credential);
   const images = await dbRead.image.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, ...(viewer?.isModerator ? {} : { userId }) },
     select: {
       id: true,
       ingestion: true,
@@ -4850,6 +4863,23 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
       },
     },
   });
+
+  const requestedCount = new Set(ids).size;
+  if (images.length < requestedCount) {
+    // Counts only: no ids and no user.
+    const { tokenScope, apiKeyType, client } = credentialLogFields(credential);
+    logToAxiom({
+      name: 'ingestion-results-filtered',
+      type: 'info',
+      payload: {
+        requestedCount,
+        filteredCount: requestedCount - images.length,
+        tokenScope,
+        apiKeyType,
+        client,
+      },
+    });
+  }
 
   const dictionary = images.reduce<
     Record<
@@ -5545,12 +5575,13 @@ export const getEntityCoverImage = async ({
   // A mature image on a restricted base model is its uploader's alone.
   const baseModelAllowed = imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null });
 
-  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
-  // (a NULL mode), so the image and post arms keep images on no model version.
-  const modelNotWithheld = Prisma.sql`(
-    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
-    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
-  )`;
+  const modelNotWithheld = modelNotWithheldSql({
+    mode: Prisma.raw('m.mode'),
+    ownerId: Prisma.raw('m."userId"'),
+    signedIn,
+    viewerId,
+    isModerator,
+  });
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.

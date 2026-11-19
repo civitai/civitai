@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
 vi.mock('$lib/server/db/db', () => {
   const select = (table: string) => {
     const qb: Record<string, unknown> = {};
+    qb.innerJoin = () => qb;
     qb.select = () => qb;
     qb.selectAll = () => qb;
     qb.where = () => qb;
