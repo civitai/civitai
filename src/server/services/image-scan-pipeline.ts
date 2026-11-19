@@ -794,7 +794,8 @@ export async function resolveScanOutcome({
     });
     return [];
   });
-  await logScanAfterReview(image, toUpdate);
+  // Not awaited: a slow replica must not hold up the outcome.
+  void logScanAfterReview(image, toUpdate);
   if (written?.blockedFor === BlockedReason.CSAM) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
     toUpdate.blockedFor = BlockedReason.CSAM;

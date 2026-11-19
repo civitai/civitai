@@ -135,6 +135,8 @@ describe('the count of what a scan newly sets after a moderator review', () => {
     loggingMock.logToAxiom.mock.calls
       .map(([line]) => line as { name: string; payload?: Record<string, unknown> })
       .filter((line) => line.name === 'scan-outcome-after-review');
+  // The line is written after the outcome resolves, off the scan's path.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   const reviewed = (yes: boolean) =>
     vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([{ reviewed: yes }] as never);
 
@@ -147,6 +149,7 @@ describe('the count of what a scan newly sets after a moderator review', () => {
   it('logs a reviewed image the scan newly marks minor, and the minor write lands', async () => {
     reviewed(true);
     await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    await settle();
     expect(lines()).toEqual([
       {
         name: 'scan-outcome-after-review',
@@ -167,12 +170,14 @@ describe('the count of what a scan newly sets after a moderator review', () => {
   it('logs nothing for an unreviewed image outside the sample', async () => {
     reviewed(false);
     await resolveScanOutcome({ image: { ...image, id: 7 }, workflowId: 'wf' });
+    await settle();
     expect(lines()).toEqual([]);
   });
 
   it('logs a sampled unreviewed image, flagged as sampled', async () => {
     reviewed(false);
     await resolveScanOutcome({ image: { ...image, id: 300 }, workflowId: 'wf' });
+    await settle();
     expect(lines()).toHaveLength(1);
     expect(lines()[0].payload).toMatchObject({ priorReview: false, sampled: true });
   });
@@ -180,8 +185,15 @@ describe('the count of what a scan newly sets after a moderator review', () => {
   it('still writes the outcome when the review lookup fails', async () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValue(new Error('replica down'));
     await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    await settle();
     expect(writtenMinor()).toBe(true);
     expect(lines()).toEqual([]);
+  });
+
+  it('does not hold the outcome for a slow review lookup', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockReturnValue(new Promise(() => undefined) as never);
+    await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
+    expect(writtenMinor()).toBe(true);
   });
 
   it('still writes the outcome when the log line throws', async () => {
