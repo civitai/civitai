@@ -34,7 +34,7 @@ vi.mock('~/server/services/account-deletion-images', async (importOriginal) => {
 });
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
 
-import { restoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-user-images';
+import { runRestoreUserImages, RESTORE_USERS_PER_RUN } from '~/server/jobs/restore-user-images';
 
 /**
  * The suite stands in a tiny in-memory Postgres and Redis for the job. The owner gate is
@@ -98,7 +98,8 @@ beforeEach(() => {
 
 type RunResult = { pending: number; finished: number; unblocked: number; reDeleted: number };
 
-const run = () => (restoreUserImages as unknown as () => Promise<RunResult>)();
+const refreshPictures = vi.fn(async (_userIds: number[]) => undefined);
+const run = (): Promise<RunResult> => runRestoreUserImages(refreshPictures);
 
 const restored = (id: number): UserRow => ({ id, deletedAt: null });
 
@@ -254,5 +255,56 @@ describe('restoreUserImages', () => {
 
     expect(mockUnblock).toHaveBeenCalledTimes(RESTORE_USERS_PER_RUN);
     expect(pendingSet).toHaveLength(5);
+  });
+
+  describe('the profile-picture refresh after an unblock', () => {
+    it('refreshes, once after the loop, every account that had images unblocked', async () => {
+      users = [restored(7), restored(8)];
+      pendingSet = ['7', '8'];
+
+      await run();
+
+      // The grace block cleared a User.image naming one of these images; the refresh restores it.
+      expect(refreshPictures).toHaveBeenCalledTimes(1);
+      expect(refreshPictures).toHaveBeenCalledWith([7, 8]);
+    });
+
+    it('also refreshes after a pass cut short by its batch ceiling', async () => {
+      users = [restored(7)];
+      pendingSet = ['7'];
+      mockUnblock.mockResolvedValueOnce({
+        unblocked: 500,
+        stillBlocked: 0,
+        skipped: 0,
+        drained: false,
+      });
+
+      await run();
+
+      expect(refreshPictures).toHaveBeenCalledWith([7]);
+    });
+
+    it('leaves out an account with nothing unblocked, one deleted again, and one whose reversal threw', async () => {
+      users = [
+        restored(7),
+        { id: 8, deletedAt: new Date('2026-07-29T00:00:00Z') },
+        restored(9),
+        restored(10),
+      ];
+      pendingSet = ['7', '8', '9', '10'];
+      mockUnblock
+        .mockResolvedValueOnce({ unblocked: 0, stillBlocked: 0, skipped: 0, drained: true })
+        .mockRejectedValueOnce(new Error('deadlock detected'));
+
+      await run();
+
+      expect(refreshPictures).toHaveBeenCalledWith([10]);
+    });
+
+    it('refreshes nothing on a run that unblocks nothing', async () => {
+      await run();
+
+      expect(refreshPictures).not.toHaveBeenCalled();
+    });
   });
 });
