@@ -24,6 +24,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
 import { FeedTagFilter } from '~/components/Image/Filters/FeedTagFilter';
+import { appliedRouteQuery } from '~/components/Image/Filters/media-filter-url';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -187,11 +188,12 @@ export function MediaFiltersDropdown({
         router.replace(
           {
             pathname: router.pathname,
-            query: removeEmpty({
-              ...router.query,
-              ...Object.fromEntries(overridden.map((key) => [key, undefined])),
-              ...(showTags ? { tags: tags?.length ? tags : undefined } : {}),
-            }),
+            query: removeEmpty(
+              appliedRouteQuery(router.query, {
+                overridden,
+                tags: showTags ? tags ?? [] : null,
+              })
+            ),
           },
           undefined,
           { shallow: true, scroll: false }
