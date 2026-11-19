@@ -338,7 +338,7 @@ describe('fold', () => {
       }
     );
 
-    it('changes nothing without a review, or with one that names no origin', () => {
+    it('changes nothing without a review, or with one that names no origin or an unknown one', () => {
       const stored = capture(7, 'same words', 8);
       const heard: (CsamContextReview | undefined)[] = [];
       expect(
@@ -349,7 +349,14 @@ describe('fold', () => {
           heard.push(up)
         )
       ).toEqual([stored]);
-      expect(heard).toEqual([undefined, undefined]);
+      expect(
+        foldContextText(
+          [stored],
+          [reviewed(capture(7, 'same words', 12), review('batched'))],
+          (_, up) => heard.push(up)
+        )
+      ).toEqual([stored]);
+      expect(heard).toEqual([undefined, undefined, undefined]);
     });
 
     it('never replaces or removes a stored review', () => {

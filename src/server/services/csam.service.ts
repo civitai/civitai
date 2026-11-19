@@ -348,7 +348,11 @@ export async function createCsamReport({
         outcome: reviewUpgrade
           ? 'identical text, not added; reviewed flag upgraded from unreviewed'
           : 'identical text, not added',
-        ...(reviewUpgrade && { reviewOrigin: reviewUpgrade.origin }),
+        ...(reviewUpgrade && {
+          reviewOrigin: reviewUpgrade.origin,
+          reviewerId: reviewUpgrade.byId,
+          reviewedAt: reviewUpgrade.at,
+        }),
       },
     });
 

@@ -280,6 +280,8 @@ describe('unsent-report lookup', () => {
         payload: expect.objectContaining({
           outcome: 'identical text, not added; reviewed flag upgraded from unreviewed',
           reviewOrigin: 'filer-read',
+          reviewerId: MOD,
+          reviewedAt: '2026-10-11T10:00:00.000Z',
         }),
       }),
     ]);
