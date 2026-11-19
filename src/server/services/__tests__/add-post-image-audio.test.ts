@@ -155,6 +155,7 @@ beforeEach(() => {
   mocks.throwOnBlockedUserContent.mockResolvedValue(undefined);
   mocks.getWorkflow.mockResolvedValue({ steps: [] });
   dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null });
+  dbMock.dbWrite.post.findFirst.mockResolvedValue({ userId: 5, collection: null });
   dbMock.dbRead.image.findFirst.mockResolvedValue(null);
   // Stop right after the create call: its arguments are what is under test.
   mocks.createImage.mockRejectedValue(new Error('stop after create'));
@@ -188,8 +189,11 @@ describe('addPostImage — audio', () => {
 
   // A scheduled post goes live by time alone, so a song added to it would skip the genre check.
   describe('on a scheduled post', () => {
-    const scheduled = (publishedAt: Date | null) =>
+    // A song's post is read on the primary, an image's on the replica.
+    const scheduled = (publishedAt: Date | null) => {
+      dbMock.dbWrite.post.findFirst.mockResolvedValue({ userId: 5, publishedAt });
       dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, publishedAt });
+    };
 
     it('refuses a song, creating nothing', async () => {
       mocks.music = true;
@@ -199,6 +203,7 @@ describe('addPostImage — audio', () => {
         message: SONG_ON_SCHEDULED_POST_MESSAGE,
       });
       expect(mocks.createImage).not.toHaveBeenCalled();
+      expect(dbMock.dbRead.post.findFirst).not.toHaveBeenCalled();
     });
 
     it('still takes an image', async () => {

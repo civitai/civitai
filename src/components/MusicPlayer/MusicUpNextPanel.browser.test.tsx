@@ -263,6 +263,10 @@ describe('the Up next panel', () => {
     // Shown only: no play, reorder or remove controls on these rows.
     await expect.element(inPanel('Play Midnight Arcade')).not.toBeInTheDocument();
 
+    await inPanel('Shuffle').click();
+    await expect.element(panel().getByText('REPEATING, SHUFFLED')).toBeInTheDocument();
+    await inPanel('Shuffle').click();
+
     await onBar('Repeat').click();
     await expect.element(panel().getByText('REPEATING')).not.toBeInTheDocument();
     await expect.element(panel().getByText('Nothing queued', { exact: false })).toBeInTheDocument();

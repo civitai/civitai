@@ -87,6 +87,8 @@ export function MusicUpNextPanel({
   const list = useMusicPlayerStore((s) => s.list);
   const listName = useMusicPlayerStore((s) => s.listName);
   const repeating = useMusicPlayerStore(useShallow(repeatingAfterUpNext));
+  // On the wrap, all but the first song are shuffled again, so this order is not the one played.
+  const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const [panel, setPanel] = useState<HTMLElement | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
   const [dropHint, setDropHint] = useState<DropHint>(null);
@@ -194,7 +196,7 @@ export function MusicUpNextPanel({
           {repeating.length > 0 ? (
             // Repeat all with Up next played out: the songs that play again. Not reorderable.
             <div className="flex flex-col gap-0.5 px-2.5 pb-2.5 pt-1.5">
-              <SectionLabel>REPEATING</SectionLabel>
+              <SectionLabel>{shuffle ? 'REPEATING, SHUFFLED' : 'REPEATING'}</SectionLabel>
               {repeating.map((track, i) => (
                 <RowContent
                   key={`${track.id}-${i}`}

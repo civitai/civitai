@@ -2033,7 +2033,9 @@ export const addPostImage = async ({
     }
   }
 
-  const post = await dbRead.post.findFirst({
+  // A song's read is on the primary: it guards the scheduled-post refusal below, and a post
+  // scheduled a moment ago may still read as a draft on the replica.
+  const post = await (props.type === MediaType.audio ? dbWrite : dbRead).post.findFirst({
     where: { id: props.postId },
     select: { userId: true, publishedAt: true },
   });
