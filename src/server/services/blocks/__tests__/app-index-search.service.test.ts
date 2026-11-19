@@ -6,6 +6,7 @@ import type {
   StoreGridItem,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { NsfwLevel } from '~/server/common/enums';
+import type { AppIndexSearchReason } from '~/server/prom/app-index-search.metrics';
 
 const h = vi.hoisted(() => ({
   listAvailableListings: vi.fn(),
@@ -74,20 +75,19 @@ beforeEach(() => {
   h.listAvailableListings.mockReset().mockResolvedValue(DB_PAGE);
   // Hydration returns the cards of the slugs it is given, in that order (the real read keeps
   // the given order: `idsInSlugOrder`).
-  const bySlug = new Map(
-    [card('alpha', 'Alpha Pixel'), card('beta', 'Beta'), card('delta', 'Delta')].map((c) => [
-      c.slug,
-      c,
-    ])
+  const bySlug = new Map<string, ListingCard>();
+  for (const c of [card('alpha', 'Alpha Pixel'), card('beta', 'Beta'), card('delta', 'Delta')]) {
+    bySlug.set(c.slug, c);
+  }
+  h.listStoreListingsBySlugs.mockReset().mockImplementation(async (slugs: string[]) =>
+    slugs.flatMap((s): ListingCard[] => {
+      const c = bySlug.get(s);
+      return c ? [c] : [];
+    })
   );
-  h.listStoreListingsBySlugs
-    .mockReset()
-    .mockImplementation(async (slugs: string[]) =>
-      slugs.flatMap((s) => (bySlug.has(s) ? [bySlug.get(s)] : []))
-    );
   h.recordAppIndexSearch.mockReset();
-  vi.spyOn(console, 'info').mockImplementation((line: string) => {
-    logLines.push(line);
+  vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
+    logLines.push(String(args[0]));
   });
   stubIndex(() =>
     Response.json({
@@ -153,7 +153,8 @@ describe('listStoreGrid', () => {
     expect(logLines[0]).not.toContain('pixel');
   });
 
-  it.each([
+  type IndexReply = () => Promise<Response> | Response;
+  it.each<[string, IndexReply, AppIndexSearchReason]>([
     ['a 500', () => new Response('{"error":"internal"}', { status: 500 }), 'error'],
     [
       'a 503 before the index is ready',
@@ -172,7 +173,7 @@ describe('listStoreGrid', () => {
       'timeout',
     ],
     ['a connection error', () => Promise.reject(new TypeError('fetch failed')), 'error'],
-  ] as const)('index answers %s: the database page, as before', async (_, reply, reason) => {
+  ])('index answers %s: the database page, as before', async (_, reply, reason) => {
     stubIndex(reply);
     const res = await listStoreGrid(INPUT, SFW_OPTS, { indexSearch: true });
     expect(res).toBe(DB_PAGE);
@@ -214,11 +215,11 @@ describe('listStoreGrid', () => {
     expect(res.search).toBe('index');
   });
 
-  it.each([
+  it.each<[string, Partial<ListAppListingsInput>, () => void, AppIndexSearchReason]>([
     ['no APP_INDEX_URL', {}, () => setEnv({ APP_INDEX_URL: undefined }), 'no_url'],
     ['a store cursor', { cursor: 'abc' }, () => undefined, 'unsupported_input'],
     ['a developer filter', { userId: 7 }, () => undefined, 'unsupported_input'],
-  ] as const)('%s: the database page', async (_, extra, setup, reason) => {
+  ])('%s: the database page', async (_, extra, setup, reason) => {
     setup();
     const res = await listStoreGrid({ ...INPUT, ...extra }, SFW_OPTS, { indexSearch: true });
     expect(res).toBe(DB_PAGE);
