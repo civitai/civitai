@@ -1,7 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type * as BaseModelConstants from '~/shared/constants/basemodel.constants';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -200,10 +199,8 @@ describe('reconcile-restricted-images', () => {
     // The parameters, not the statement text. Every assertion in an earlier draft read
     // only the static strings, so slicing the id list down to one version per chunk
     // passed the whole file while flagging a fraction of what it should.
-    // The level mask that picks the mature images is the one non-version parameter.
-    const sent = executeRaw.mock.calls.map((call) =>
-      valuesOf(call).filter((v) => v !== nsfwBrowsingLevelsFlag)
-    );
+    // The level mask that picks the mature images is the last parameter, after the versions.
+    const sent = executeRaw.mock.calls.map((call) => valuesOf(call).slice(0, -1));
     expect(sent.flat()).toEqual(versionIds);
     expect(sent.map((ids) => ids.length)).toEqual([100, 100, 50]);
   });
@@ -304,6 +301,17 @@ describe('reconcile-restricted-images search reindex', () => {
     await run();
 
     expect(thumbnailRefreshes()).toEqual([[501]]);
+  });
+
+  it('leaves the documents of a restricted image the restriction does not hide', async () => {
+    chunkImageIds = [[501]];
+    notMature = new Set([501]);
+    articlesShowing = [9];
+    executeRaw.mockResolvedValue(1);
+
+    await run();
+
+    expect(addToQueue).not.toHaveBeenCalled();
   });
 
   it('also queues the articles whose cover or banner it is', async () => {

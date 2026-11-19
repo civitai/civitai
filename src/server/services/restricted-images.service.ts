@@ -18,8 +18,8 @@ type FlagResult = {
 const IMAGES_PER_REINDEX = 500;
 
 /**
- * After images are newly restricted: queue every search document that shows them, and take the
- * mature ones, which the restriction hides, out of the image queues (cached thumbnails, rating
+ * After images are newly restricted: for the mature ones, which the restriction hides, queue every
+ * search document that shows them and take them out of the image queues (cached thumbnails, rating
  * pools), 500 images at a time. Never throws, and logs counts only: the flags are already committed.
  */
 export async function reindexRestrictedImages(
@@ -48,13 +48,14 @@ async function reindexInBatches(imageIds: number[], mature: Set<number>, source:
   // Dynamic: image.service imports this module.
   const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
   let failedBatches = 0;
-  for (const ids of chunkIds(imageIds, IMAGES_PER_REINDEX)) {
-    const hidden = ids.filter((id) => mature.has(id));
-    if (hidden.length)
-      await queueImageSearchIndexUpdate({
-        ids: hidden,
-        action: SearchIndexUpdateQueueAction.Delete,
-      }).catch(() => failedBatches++);
+  // Only the images the restriction hides change what anything serves.
+  for (const ids of chunkIds([...mature], IMAGES_PER_REINDEX)) {
+    // One retry: a later run never selects these images again.
+    const remove = () =>
+      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
+    await remove()
+      .catch(remove)
+      .catch(() => failedBatches++);
     await queueModelsForImageChildTagChanges({ minorImageIds: ids });
   }
   logToAxiom(

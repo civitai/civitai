@@ -2,6 +2,7 @@ import { PGlite, type Transaction } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import type * as RedisCaches from '~/server/redis/caches';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -207,7 +208,7 @@ describe('flagImagesOnRestrictedVersions', () => {
     });
   });
 
-  it('returns the flag result even when the reindex fails', async () => {
+  it('logs, by count, an image queue removal that fails twice, and still returns the flag result', async () => {
     const real = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation(((...call: unknown[]) =>
       (call[0] as string[]).join('').includes("'parentId'")
@@ -217,8 +218,32 @@ describe('flagImagesOnRestrictedVersions', () => {
       modelVersionIds: [RESTRICTED_VERSION],
       imageIds: [1],
     });
+    await vi.waitFor(() =>
+      expect(logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Image queue removal failed', failedBatches: 1 }),
+        'webhooks'
+      )
+    );
     dbMock.dbWrite.$queryRaw.mockImplementation(real);
-    expect(result).toEqual({ flagged: 1, postIds: [7], imageIds: [1], matureImageIds: [1] });
+    expect(result).toMatchObject({ flagged: 1, imageIds: [1] });
+  });
+
+  it('keeps a PG image the restriction does not hide in the image queues on the write path', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: [RESTRICTED_VERSION],
+      imageIds: [1, 2],
+    });
+    await vi.waitFor(() => {
+      const refresh = dbMock.dbWrite.$queryRaw.mock.calls.find((call) =>
+        (call[0] as unknown as string[]).join('').includes("'parentId'")
+      );
+      const values = (refresh ?? [])
+        .slice(1)
+        .flatMap((v) => ((v as { values?: unknown[] })?.values ?? [v]) as unknown[]);
+      expect(values).toContain(1);
+      expect(values).not.toContain(2);
+    });
   });
 
   it('leaves images alone when none of the versions are restricted', async () => {

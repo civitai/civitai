@@ -501,6 +501,9 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'flag side effects failed', modelId: MODEL_ID })
     );
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Draft' }) })
+    );
   });
 });
 
