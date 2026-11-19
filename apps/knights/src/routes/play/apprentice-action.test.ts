@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const answerApprentice = vi.hoisted(() => vi.fn());
 const acknowledgeCheckpoint = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/db', () => ({ db: {} }));
+vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 // Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
 vi.mock('$lib/server/membership', async (original) => ({
   ...(await original<typeof import('$lib/server/membership')>()),
