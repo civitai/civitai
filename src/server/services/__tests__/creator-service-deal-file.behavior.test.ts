@@ -84,10 +84,10 @@ vi.mock('~/server/services/creator-service-deal-video-preview', async (importOri
   buildWatermarkedVideoPreview: video.build,
 }));
 
-const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImageById: vi.fn() }));
+const images = vi.hoisted(() => ({ createImage: vi.fn(), deleteImages: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: images.createImage,
-  deleteImageById: images.deleteImageById,
+  deleteImages: images.deleteImages,
 }));
 
 const preview = vi.hoisted(() => ({ build: vi.fn(), scanCopy: vi.fn() }));
@@ -652,13 +652,13 @@ describe('deleting', () => {
     });
     s3.uploadImageBufferToStore.mockResolvedValue({ key: 'scan-copy-key' });
     images.createImage.mockResolvedValue({ id: 321 });
-    images.deleteImageById.mockResolvedValue(undefined);
+    images.deleteImages.mockResolvedValue([]);
     await files.startPreviewScans();
     expect((await fileRow(fileId)).imageId).toBe(321);
 
     const { s3Key } = await fileRow(fileId);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).not.toContain(s3Key);
     expect(await fileRow(fileId)).toMatchObject({
       imageId: 321,
@@ -706,9 +706,12 @@ describe('deleting', () => {
       [fileId]
     );
     const { s3Key } = await fileRow(fileId);
-    images.deleteImageById.mockResolvedValue(undefined);
+    images.deleteImages.mockResolvedValue([]);
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
+    expect(images.deleteImages).toHaveBeenCalledWith([321], {
+      updatePosts: false,
+      actor: { system: 'creator-service-deal-file' },
+    });
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
     expect(await fileRow(fileId)).toBeUndefined();
   });
@@ -1111,7 +1114,7 @@ describe('preview pipeline', () => {
 
   beforeEach(() => {
     images.createImage.mockReset();
-    images.deleteImageById.mockReset();
+    images.deleteImages.mockReset();
     preview.scanCopy.mockReset();
     s3.send.mockResolvedValue(body(Buffer.from('original bytes')));
     preview.scanCopy.mockResolvedValue({
@@ -1137,8 +1140,8 @@ describe('preview pipeline', () => {
       ]);
       return { id: row.id };
     });
-    images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-      await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+    images.deleteImages.mockImplementation(async (ids: number[]) => {
+      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
     });
   });
 
@@ -1289,12 +1292,15 @@ describe('preview pipeline', () => {
     const { imageId } = await fileRow(fileId);
 
     expect(await files.deleteScanCopies()).toBe(0);
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
 
     await verdict('Scanned');
     await files.settlePreviewScans();
     expect(await files.deleteScanCopies()).toBe(1);
-    expect(images.deleteImageById).toHaveBeenCalledWith({ id: imageId, updatePost: false });
+    expect(images.deleteImages).toHaveBeenCalledWith([imageId], {
+      updatePosts: false,
+      actor: { system: 'creator-service-deal-file' },
+    });
     expect(await fileRow(fileId)).toMatchObject({ imageId: null, scanKey: null });
     expect(await q(`SELECT 1 FROM "Image"`)).toEqual([]);
   });
@@ -1305,7 +1311,7 @@ describe('preview pipeline', () => {
     await verdict('Blocked');
     await files.settlePreviewScans();
     expect(await files.deleteScanCopies()).toBe(0);
-    expect(images.deleteImageById).not.toHaveBeenCalled();
+    expect(images.deleteImages).not.toHaveBeenCalled();
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await q(`SELECT 1 FROM "Image"`)).toHaveLength(1);
   });
@@ -1316,7 +1322,7 @@ describe('preview pipeline', () => {
     await verdict('Scanned');
     await files.settlePreviewScans();
 
-    images.deleteImageById.mockRejectedValueOnce(new Error('s3 down'));
+    images.deleteImages.mockRejectedValueOnce(new Error('s3 down'));
     expect(await files.deleteScanCopies()).toBe(0);
     expect((await fileRow(fileId)).imageId).not.toBeNull();
     expect(await files.deleteScanCopies()).toBe(1);
@@ -1673,7 +1679,7 @@ describe('video previews', () => {
 
   beforeEach(() => {
     images.createImage.mockReset();
-    images.deleteImageById.mockReset();
+    images.deleteImages.mockReset();
     video.build.mockReset();
     preview.build.mockClear();
     preview.scanCopy.mockClear();
@@ -1694,8 +1700,8 @@ describe('video previews', () => {
       ]);
       return { id: row.id };
     });
-    images.deleteImageById.mockImplementation(async ({ id }: { id: number }) => {
-      await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
+    images.deleteImages.mockImplementation(async (ids: number[]) => {
+      await q(`DELETE FROM "Image" WHERE id = ANY($1::int[])`, [ids]);
     });
   });
 
