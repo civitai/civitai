@@ -2300,13 +2300,21 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
-  // A taken-down model's search document carries no images, so a change of mode rewrites it.
   if (written && 'mode' in written) {
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
-    // Not awaited: the lookup reads every image on the model.
     const writtenMode =
       written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    // Update would not remove a taken-down model's document: the indexer only writes eligible models.
+    await modelsSearchIndex.queueUpdate([
+      {
+        id,
+        action:
+          writtenMode === ModelModifier.TakenDown
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
     if (
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
