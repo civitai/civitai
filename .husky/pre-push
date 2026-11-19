@@ -10,13 +10,16 @@ if [ "$branch" != "main" ] || [ "$username" = "Justin Maier" ] || [ "$username" 
   exit 0
 fi
 
-echo "Running typecheck for all files"
+echo "Running the root typecheck"
 
+# `-p tsconfig.json` (the root project) also skips the apps/* typecheck, since an argument narrows
+# the run; each app's release typechecks only that app (scripts/release-app.mjs).
+#
 # The exit code has to be read and re-raised. `sh` without `set -e` runs the next
 # line regardless, so an unconditional "Typecheck successful" echo became the
 # hook's own exit status — a failing typecheck printed success and the push went
 # through. Verified: `sh -c 'false; echo ok'` exits 0.
-npm run typecheck
+npm run typecheck -- -p tsconfig.json
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
