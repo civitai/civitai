@@ -24,7 +24,6 @@ const {
   purgeExpiredIdempotencyKeys,
   isUndefinedTableError,
   IdempotencyUnavailableError,
-  SYS_FALLBACK_UNTIL,
 } = await import('~/server/services/idempotency-key.service');
 
 const MIGRATION = readFileSync(
@@ -255,17 +254,12 @@ describe('flag on: Postgres decides', () => {
   });
 
   describe('a key sysRedis holds from before the flag', () => {
-    const inside = SYS_FALLBACK_UNTIL.getTime() - 1;
-    const after = SYS_FALLBACK_UNTIL.getTime();
-
-    it('answers with its result while the fallback window is open, leaving no Postgres claim', async () => {
+    it('answers with its result, leaving no Postgres claim', async () => {
       sys.set(`${HP}:7:k7`, '{"postId":53}');
 
-      const now = await claimIdempotencyKey('headless-post', '7:k7', { db });
-      const atEdge = await claimIdempotencyKey('headless-post', '7:k7', { db, now: () => inside });
+      const claim = await claimIdempotencyKey('headless-post', '7:k7', { db });
 
-      expect([now.status, now.result]).toEqual(['done', '{"postId":53}']);
-      expect([atEdge.status, atEdge.result]).toEqual(['done', '{"postId":53}']);
+      expect([claim.status, claim.result]).toEqual(['done', '{"postId":53}']);
       expect(await rows()).toEqual([]);
     });
 
@@ -285,15 +279,6 @@ describe('flag on: Postgres decides', () => {
 
       expect(claim.status).toBe('taken');
       expect(await rows()).toEqual([]);
-    });
-
-    it('is no longer consulted once the window has closed', async () => {
-      sys.set(`${HP}:7:k9`, '{"postId":54}');
-
-      const claim = await claimIdempotencyKey('headless-post', '7:k9', { db, now: () => after });
-
-      expect(claim.status).toBe('claimed');
-      expect((await rows()).map((r) => r.state)).toEqual(['pending']);
     });
 
     it('a repeat that stores again (a gallery sent on the repeat) records the result in Postgres', async () => {
@@ -320,21 +305,27 @@ describe('flag on: Postgres decides', () => {
       redisMock.sysRedis.set.mockRejectedValue(new Error('sysRedis unavailable'));
     });
 
-    it('inside the window: refuses (an older sysRedis claim cannot be ruled out) and frees the Postgres claim', async () => {
+    it('refuses (an older sysRedis claim cannot be ruled out) and frees the Postgres claim', async () => {
       await expect(claimIdempotencyKey('headless-post', '7:k11', { db })).rejects.toBeInstanceOf(
         IdempotencyUnavailableError
       );
       expect(await rows()).toEqual([]);
     });
 
-    it('after the window: Postgres alone decides', async () => {
-      const now = () => SYS_FALLBACK_UNTIL.getTime() + 24 * 60 * 60 * 1000;
+    it('a result that cannot be written to sysRedis too is reported as not stored', async () => {
+      redisMock.sysRedis.set.mockReset().mockImplementation((async (
+        key: string,
+        value: string,
+        opts?: { NX?: boolean }
+      ) => {
+        if (!opts?.NX) throw new Error('sysRedis unavailable');
+        sys.set(key, value);
+        return 'OK';
+      }) as never);
 
-      const claim = await claimIdempotencyKey('headless-post', '7:k12', { db, now });
-      await claim.store('{"postId":56}');
+      const claim = await claimIdempotencyKey('headless-post', '7:k12', { db });
 
-      expect(claim.status).toBe('claimed');
-      expect((await rows()).map((r) => r.state)).toEqual(['done']);
+      await expect(claim.store('{"postId":56}')).rejects.toThrow('sysRedis unavailable');
     });
   });
 

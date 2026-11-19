@@ -16,10 +16,11 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
  *
  * - Flag OFF (the default, and what Flipt being unreachable gives): sysRedis only, the same
  *   commands, keys, values and TTLs as before this module existed.
- * - Flag ON: Postgres decides. sysRedis is still written alongside (so turning the flag back off,
- *   or a pod that has not seen the flag yet, still sees every claim), and until
- *   `SYS_FALLBACK_UNTIL` a key Postgres has never seen is checked against sysRedis, so a key taken
- *   before the flag was turned on still counts.
+ * - Flag ON: Postgres decides, and sysRedis is still written alongside, so turning the flag back
+ *   off, or a pod that has not seen the flag yet, still sees every claim. A key Postgres has never
+ *   seen is also checked against sysRedis, whenever the flag was turned on: a key there was written
+ *   by something (eviction only removes keys), so a claim or result from before the flag, or from a
+ *   pod still without it, always counts. A sysRedis failure refuses, as the flag-off path does.
  * - Flag ON and Postgres failing (the table not applied yet included): `IdempotencyUnavailableError`,
  *   thrown before anything is claimed anywhere. Each caller refuses rather than act unguarded.
  */
@@ -52,13 +53,6 @@ const SCOPES = {
   },
 } as const;
 
-/**
- * Until this date a key Postgres has never seen is also looked up on sysRedis. It must be at least
- * one TTL after the flag is first turned on (30 days for stripe-air, 7 for headless-post, 1 for
- * message-as-civitai). If the flag is first turned on after 2027-01-02, move it.
- */
-export const SYS_FALLBACK_UNTIL = new Date('2027-02-01T00:00:00.000Z');
-
 const PENDING = 'pending';
 const UNDEFINED_TABLE = '42P01';
 
@@ -87,15 +81,15 @@ export type IdempotencyClaim = {
   release(): Promise<void>;
 };
 
-type Store = { db: Kysely<DB>; now: () => number };
-const defaults = (): Store => ({ db: kyselyWrite, now: Date.now });
+type Store = { db: Kysely<DB> };
+const defaults = (): Store => ({ db: kyselyWrite });
 
 export async function claimIdempotencyKey(
   scope: IdempotencyScope,
   key: string,
   deps: Partial<Store> = {}
 ): Promise<IdempotencyClaim> {
-  const { db, now } = { ...defaults(), ...deps };
+  const { db } = { ...defaults(), ...deps };
   const cfg = SCOPES[scope];
   const sysKey = `${cfg.sysPrefix}:${key}`;
   const sysClaimValue = cfg.marker ? '1' : PENDING;
@@ -122,14 +116,10 @@ export async function claimIdempotencyKey(
     run().catch((error) => {
       throw unavailable(scope, error);
     });
-  const inWindow = () => now() < SYS_FALLBACK_UNTIL.getTime();
   const storeBoth = async (value: string) => {
     await pg(() => upsertDone(db, scope, key, value, cfg.resultSeconds));
-    await sysRedis.set(sysKey, value, { EX: cfg.resultSeconds }).catch((error) => {
-      // sysRedis is the rollback copy; Postgres is what answers while the flag is on.
-      if (inWindow()) throw error;
-      logSysFailure(scope, 'store', error);
-    });
+    // The copy a flag-off pod (or the rollback) reads: not stored unless both are.
+    await sysRedis.set(sysKey, value, { EX: cfg.resultSeconds });
   };
 
   const fence = await pg(() => claimRow(db, scope, key, cfg.pendingSeconds));
@@ -151,10 +141,7 @@ export async function claimIdempotencyKey(
     store: storeBoth,
     release: async () => {
       await releasePg();
-      await sysRedis.del(sysKey).catch((error) => {
-        if (inWindow()) throw error;
-        logSysFailure(scope, 'release', error);
-      });
+      await sysRedis.del(sysKey);
     },
   };
 
@@ -163,15 +150,11 @@ export async function claimIdempotencyKey(
   try {
     sysFresh = await sysRedis.set(sysKey, sysClaimValue, { NX: true, EX: cfg.pendingSeconds });
   } catch (error) {
-    if (!inWindow()) {
-      logSysFailure(scope, 'claim', error);
-      return claimed;
-    }
     // Cannot tell whether sysRedis holds an older claim: refuse, as the sysRedis path would.
     await releasePg().catch(() => undefined);
     throw unavailable(scope, error);
   }
-  if (sysFresh !== null || !inWindow()) return claimed;
+  if (sysFresh !== null) return claimed;
 
   // sysRedis already held the key: a claim from before the flag, or from a pod without it.
   const answer = cfg.marker
@@ -191,7 +174,7 @@ export async function purgeExpiredIdempotencyKeys({
   for (let i = 0; i < maxBatches; i++) {
     const { numAffectedRows } = await sql`
       DELETE FROM "IdempotencyKey"
-      WHERE (scope, key) IN (
+      WHERE "expiresAt" < now() AND (scope, key) IN (
         SELECT scope, key FROM "IdempotencyKey" WHERE "expiresAt" < now() LIMIT ${batch}
       )`.execute(db);
     const n = Number(numAffectedRows ?? 0);
@@ -236,7 +219,7 @@ async function claimRow(db: Kysely<DB>, scope: string, key: string, pendingSecon
       SET state = 'pending', result = NULL,
           "createdAt" = EXCLUDED."createdAt", "expiresAt" = EXCLUDED."expiresAt"
       WHERE "IdempotencyKey"."expiresAt" < now()
-    RETURNING "createdAt"::text AS fence`.execute(db);
+    RETURNING round(extract(epoch FROM "createdAt") * 1000000)::bigint::text AS fence`.execute(db);
   return rows[0]?.fence ?? null;
 }
 
@@ -267,7 +250,7 @@ async function releaseRow(db: Kysely<DB>, scope: string, key: string, fence: str
   await sql`
     DELETE FROM "IdempotencyKey"
     WHERE scope = ${scope} AND key = ${key} AND state = 'pending'
-      AND "createdAt" = ${fence}::timestamptz`.execute(db);
+      AND round(extract(epoch FROM "createdAt") * 1000000)::bigint = ${fence}::bigint`.execute(db);
 }
 
 function unavailable(scope: IdempotencyScope, error: unknown) {
@@ -280,13 +263,4 @@ function unavailable(scope: IdempotencyScope, error: unknown) {
     payload: { scope, tableMissing },
   });
   return new IdempotencyUnavailableError(scope, tableMissing, error);
-}
-
-function logSysFailure(scope: IdempotencyScope, op: string, error: unknown) {
-  logToAxiom({
-    name: 'idempotency-key',
-    type: 'warning',
-    payload: { scope },
-    message: `sysRedis ${op} failed after the fallback window: ${(error as Error)?.message}`,
-  });
 }
