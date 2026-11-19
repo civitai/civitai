@@ -518,8 +518,8 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     await tx.$executeRaw`
       UPDATE "ServiceDealFileEntry" SET "imageId" = NULL, "scanKey" = NULL
       WHERE "fileId" = ${fileId}::int AND "scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
-    // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below depends on
-    // the file alone, so the caller can't tell a file that is kept from one that is not.
+    // Only hidden here; purgeRemovedFiles deletes what nothing keeps. The work below must depend
+    // on the file alone, never on what keeps it.
     const [file] = await tx.$queryRaw<
       { id: number; s3Key: string; watermarkedKey: string | null }[]
     >`
@@ -669,14 +669,14 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 /**
  * A removed file whose scans finished clean (or that can never be judged), with an uploader not on
  * a report, no hold on its deal, and its scan copies gone, has nothing left to keep. A removed file
- * that failed, or was never judged, stays for the moderators. `f` names the file row.
+ * whose scan failed, or is still to come, stays for the moderators. `f` names the file row.
  */
 const purgeable = (f: Prisma.Sql) => Prisma.sql`(
   ${f}."removedAt" IS NOT NULL
   -- Not before any download link signed while it was listed has expired.
   AND ${f}."removedAt" <= now() - (${SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS}::int * interval '1 second')
   -- Never judged, and never will be: an upload never completed, or a preview (whose scan skips
-  -- removed files) not in a scan. Both were deleted outright before removal was deferred.
+  -- removed files) not in a scan.
   AND (${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
     OR ${f}."status" = 'Uploading'::"ServiceDealFileStatus"
     OR (${f}."kind" = 'Preview'::"ServiceDealFileKind"

@@ -4,6 +4,7 @@ const m = vi.hoisted(() => ({
   isFlipt: vi.fn(),
   markExpiredDealFiles: vi.fn(),
   purgeRemovedFiles: vi.fn(),
+  dropRemovedPreviewCopies: vi.fn(),
 }));
 
 vi.mock('~/server/flipt/client', () => ({
@@ -16,7 +17,7 @@ vi.mock('~/server/services/creator-service-deal-file-retention', () => ({
 vi.mock('~/server/services/creator-service-deal-file.service', () => ({
   deleteScanCopies: vi.fn(),
   publishPreviews: vi.fn(),
-  dropRemovedPreviewCopies: vi.fn(),
+  dropRemovedPreviewCopies: m.dropRemovedPreviewCopies,
   purgeRemovedFiles: m.purgeRemovedFiles,
   settlePreviewScans: vi.fn(),
   startPreviewScans: vi.fn(),
@@ -48,19 +49,21 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.markExpiredDealFiles.mockResolvedValue(4);
   m.purgeRemovedFiles.mockResolvedValue(0);
+  m.dropRemovedPreviewCopies.mockResolvedValue(3);
 });
 
 describe('deal-file retention kill switch', () => {
   it('starts no retention while the flag is off', async () => {
     m.isFlipt.mockResolvedValue(false);
-    expect(await run()).toMatchObject({ retentionExpired: 0 });
+    // A removed preview's public copy goes whatever the flag says.
+    expect(await run()).toMatchObject({ retentionExpired: 0, previewCopiesDropped: 3 });
     expect(m.markExpiredDealFiles).not.toHaveBeenCalled();
     expect(m.isFlipt).toHaveBeenCalledWith('service-deal-file-retention');
   });
 
   it('marks expired deal files once the flag is on', async () => {
     m.isFlipt.mockResolvedValue(true);
-    expect(await run()).toMatchObject({ retentionExpired: 4 });
+    expect(await run()).toMatchObject({ retentionExpired: 4, previewCopiesDropped: 3 });
     expect(m.markExpiredDealFiles).toHaveBeenCalledOnce();
     // Marked this run, purged this run.
     expect(m.markExpiredDealFiles.mock.invocationCallOrder[0]).toBeLessThan(
