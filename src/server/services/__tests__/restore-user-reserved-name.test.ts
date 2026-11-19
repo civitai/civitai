@@ -130,10 +130,20 @@ describe('restoreUser and a banned account', () => {
   it('refuses, in the purge-disarm transaction, when a ban lands before the write', async () => {
     deleted(null);
     landsFirst();
+    const write = dbMock.dbWrite.user.update;
     await expect(restore('back')).rejects.toThrow(/banned, restored or deleted again meanwhile/);
     expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
-    // The guarded write and the purge disarm commit or roll back together.
-    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+    // The guarded write and the purge disarm commit or roll back together, the write first so it
+    // takes the row lock before anything else is written.
+    const batch = dbMock.dbWrite.$transaction.mock.calls[0][0] as unknown[];
+    expect(batch).toHaveLength(2);
+    expect(batch[0]).toBe(write.mock.results[0].value);
+  });
+
+  it('passes any other failure of the write through unchanged', async () => {
+    deleted(null);
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(new Error('connection reset'));
+    await expect(restore('back')).rejects.toThrow('connection reset');
   });
 
   it('refuses the model reclaim too, in the same transaction, when a ban lands first', async () => {
@@ -147,6 +157,18 @@ describe('restoreUser and a banned account', () => {
     // One batch: the guarded write, the purge disarm, the reclaim and its ownership record.
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(4);
+  });
+
+  it('reports how many models the reclaim moved, and none when there was nothing to reclaim', async () => {
+    deleted(null);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }, { id: 502 }, { id: 503 }]);
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0, { count: 2 }, 2]);
+    await expect(
+      restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
+    ).resolves.toMatchObject({ modelsRestored: 2, modelIds: [501, 502, 503] });
+
+    dbMock.dbWrite.$transaction.mockResolvedValueOnce([{ id: USER_ID }, 0]);
+    await expect(restore('back')).resolves.toMatchObject({ modelsRestored: 0, modelIds: [] });
   });
 
   it('restores an account that is not banned', async () => {
