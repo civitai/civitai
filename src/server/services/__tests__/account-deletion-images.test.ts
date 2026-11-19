@@ -66,6 +66,8 @@ let images: ImageRow[] = [];
 let queue: QueueRow[] = [];
 /** Rows handed back per reversal pass, terminating empty pass included. */
 let claimedPerPass: number[] = [];
+/** Accounts deleted again: the reversal must not claim their rows. */
+let deletedUsers = new Set<number>();
 
 function splitTopLevel(body: string) {
   const parts: string[] = [];
@@ -101,12 +103,33 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
   if (caseExpr) {
     const [, cond, then, otherwise] = caseExpr;
     const condKeys = takeKeys(cond, keys);
-    const holds = cond.split(/\s+OR\s+/).some((clause) => {
+    // Every conjunct is evaluated (none short-circuits), so each consumes its own parameters.
+    const conjunct = (clause: string) => {
+      const anyOf = clause.match(/^([\s\S]+?)\s*=\s*ANY\(\?::text\[\]\)$/);
+      if (anyOf) {
+        const operandKeys = takeKeys(anyOf[1], condKeys);
+        const allowed = condKeys.shift() as unknown as string[];
+        return allowed.includes(evalValue(anyOf[1].trim(), operandKeys, row) as string);
+      }
+      const isLiteral = clause.match(/^([\s\S]+?)\s*=\s*'(\w+)'$/);
+      if (isLiteral)
+        return (
+          evalValue(isLiteral[1].trim(), takeKeys(isLiteral[1], condKeys), row) === isLiteral[2]
+        );
+      const notLiteral = clause.match(/^([\s\S]+?)\s*<>\s*'(\w+)'$/);
+      if (notLiteral) {
+        const value = evalValue(notLiteral[1].trim(), takeKeys(notLiteral[1], condKeys), row);
+        return value !== null && value !== notLiteral[2];
+      }
       const [operand, compared] = clause.split(/\s*=\s*\?\s*$/);
       if (compared !== '') throw new Error(`unhandled CASE condition: ${clause}`);
       const operandKeys = takeKeys(operand, condKeys);
       return evalValue(operand.trim(), operandKeys, row) === condKeys.shift();
-    });
+    };
+    const holds = cond
+      .split(/\s+OR\s+/)
+      .map((clause) => clause.split(/\s+AND\s+/).map(conjunct))
+      .some((results) => results.every(Boolean));
     const thenKeys = takeKeys(then, keys);
     const elseKeys = takeKeys(otherwise, keys);
     return holds ? evalValue(then, thenKeys, row) : evalValue(otherwise, elseKeys, row);
@@ -122,6 +145,7 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
   }
   if (expr === '"blockedFor"') return row.blockedFor;
   if (expr === '"needsReview"') return row.needsReview ?? null;
+  if (expr === 'NULL') return null;
   if (expr === `'Blocked'::"ImageIngestionStatus"`) return 'Blocked';
   throw new Error(`unhandled assignment: ${expr}`);
 }
@@ -157,17 +181,24 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
 
   // Every predicate is applied, and one this does not recognise is rejected rather than assumed,
   // so a reversal that widens its scope cannot pass by relying on the harness to narrow it back.
-  const predicates = where.split(/\s+AND\s+/).map((clause) => {
-    const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
-    if (/^\s*i\."userId" = \?/.test(clause)) return (row: ImageRow) => row.userId === args[0];
-    if (/^\s*i\.ingestion = 'Blocked'/.test(clause))
-      return (row: ImageRow) => row.ingestion === 'Blocked';
-    if (/^\s*i\."metadata"->>\?::text IS NOT NULL/.test(clause))
-      return (row: ImageRow) => row.metadata[args[0] as string] != null;
-    if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
-      return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
-    throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
-  });
+  const NOT_REDELETED =
+    /EXISTS \(SELECT 1 FROM "User" u WHERE u\.id = i\."userId" AND u\."deletedAt" IS NULL\)/;
+  const predicates = where
+    .replace(NOT_REDELETED, '__not_redeleted__')
+    .split(/\s+AND\s+/)
+    .map((clause) => {
+      if (clause.trim() === '__not_redeleted__')
+        return (row: ImageRow) => !deletedUsers.has(row.userId);
+      const args = params.splice(0, (clause.match(/\?/g) ?? []).length);
+      if (/^\s*i\."userId" = \?/.test(clause)) return (row: ImageRow) => row.userId === args[0];
+      if (/^\s*i\.ingestion = 'Blocked'/.test(clause))
+        return (row: ImageRow) => row.ingestion === 'Blocked';
+      if (/^\s*i\."metadata"->>\?::text IS NOT NULL/.test(clause))
+        return (row: ImageRow) => row.metadata[args[0] as string] != null;
+      if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
+        return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
+      throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
+    });
 
   const limit = params.shift() as number;
   const claimed = images.filter((row) => predicates.every((holds) => holds(row))).slice(0, limit);
@@ -245,6 +276,7 @@ beforeEach(() => {
   images = [];
   queue = [];
   claimedPerPass = [];
+  deletedUsers = new Set();
   mockSysRedis.sAdd.mockResolvedValue(1);
 
   mockDbWrite.$queryRaw.mockImplementation(
@@ -401,21 +433,74 @@ describe('unblockAccountDeletionImages', () => {
     await unblockAccountDeletionImages(7);
 
     // Visible again, but back in the review queue it was held in.
-    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: 'minor', metadata: {} });
-    expect(images[1]).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam', metadata: {} });
+    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: 'minor' });
+    expect(images[1]).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
+    expect(images.map((image) => image.metadata)).toEqual([{}, {}]);
   });
 
-  it('keeps a review flag set during the grace window over the recorded one', async () => {
+  it('puts back only an owner-hidden review, whatever else the breadcrumb says', async () => {
     images = [
       hidden(1, 'Scanned', {
-        needsReview: 'poi',
+        needsReview: null,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'not-a-review' },
+      }),
+      // Not owner-hidden: dropped through a restore, as before this breadcrumb existed.
+      hidden(2, 'Scanned', {
+        needsReview: null,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'poi' },
+      }),
+      hidden(3, 'Scanned', {
+        needsReview: null,
         metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' },
+      }),
+      // The grace block keeps 'csam' on the row; none left means a moderator dismissed it.
+      hidden(4, 'Scanned', {
+        needsReview: null,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'csam' },
       }),
     ];
 
     await unblockAccountDeletionImages(7);
 
-    expect(images[0].needsReview).toBe('poi');
+    expect(images.map((image) => [image.id, image.needsReview, image.metadata])).toEqual([
+      [1, null, {}],
+      [2, null, {}],
+      [3, 'minor', {}],
+      [4, null, {}],
+    ]);
+  });
+
+  it('puts a recorded minor hold back over any flag set since, except csam', async () => {
+    const recordedMinor = { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' };
+    images = [
+      hidden(1, 'Scanned', { needsReview: 'appeal', metadata: { ...recordedMinor } }),
+      hidden(2, 'Scanned', { needsReview: 'poi', metadata: { ...recordedMinor } }),
+      hidden(3, 'Scanned', { needsReview: 'csam', metadata: { ...recordedMinor } }),
+      // No hold recorded: a flag set since is kept.
+      hidden(4, 'Scanned', {
+        needsReview: 'poi',
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'tag' },
+      }),
+    ];
+
+    await unblockAccountDeletionImages(7);
+
+    expect(images.map((image) => [image.id, image.needsReview])).toEqual([
+      [1, 'minor'],
+      [2, 'minor'],
+      [3, 'csam'],
+      [4, 'poi'],
+    ]);
+  });
+
+  it('leaves the rows of an account deleted again while it runs', async () => {
+    images = [hidden(1, 'Scanned')];
+    deletedUsers.add(7);
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(result.unblocked).toBe(0);
   });
 
   it('leaves the review flag alone on a row blocked before the flag was recorded', async () => {
@@ -423,7 +508,8 @@ describe('unblockAccountDeletionImages', () => {
 
     await unblockAccountDeletionImages(7);
 
-    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: null, metadata: {} });
+    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: null });
+    expect(images[0].metadata).toEqual({});
   });
 
   it('resets the blocked nsfwLevel only for images that came back visible', async () => {

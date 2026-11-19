@@ -79,7 +79,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int NOT NULL REFERENCES "User"(id),
@@ -516,6 +516,43 @@ const restore = async () => {
     'the restore did not revert the untouched grace block'
   ).toMatchObject(RESTORED);
 };
+
+describe('a restore and the recorded review flag, on the real statement', () => {
+  it('puts back a recorded minor hold over any flag set since but csam, and nothing else', async () => {
+    const crumbs = (review: string) =>
+      `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": "${review}"}'`;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('minor')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      needsReview: string | null;
+      ingestion: string;
+    }>(`SELECT id, "needsReview", ingestion FROM "Image" WHERE id BETWEEN 81 AND 87 ORDER BY id`);
+    // Control: every row was restored, so the review flags below are the restore's doing.
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(7).fill('Scanned'));
+    expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
+      [81, 'minor'],
+      // A recorded minor hold beats a flag set since; a current csam one is kept.
+      [82, 'minor'],
+      [83, null],
+      [84, null],
+      [85, null],
+      [86, 'minor'],
+      [87, 'csam'],
+    ]);
+  });
+});
 
 describe('the account-deletion grace block', () => {
   beforeEach(async () => {

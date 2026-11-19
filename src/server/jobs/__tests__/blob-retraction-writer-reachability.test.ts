@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason } from '~/server/common/enums';
-import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { PRIOR_INGESTION_KEY, PRIOR_NEEDS_REVIEW_KEY } from '~/server/utils/image-removal-mode';
 
 /**
  * 🔴 REACHABILITY GUARD for blob retraction.
@@ -839,13 +839,17 @@ describe('who can reach blob retraction, driven through the real block writers',
     it(`clears the account-deletion breadcrumb (${label}) when a moderator blocks`, async () => {
       store.images.push(
         image(12, TAKEDOWN_USER, {
-          metadata: { [PRIOR_INGESTION_KEY]: marker, keepMe: 1 },
+          metadata: { [PRIOR_INGESTION_KEY]: marker, [PRIOR_NEEDS_REVIEW_KEY]: 'minor', keepMe: 1 },
         })
       );
 
       await handleBlockImages({ ids: [12], moderatorId: MOD_ID });
 
       const meta = store.images.find((i) => i.id === 12)!.metadata;
+      expect(
+        meta && PRIOR_NEEDS_REVIEW_KEY in meta,
+        'the review breadcrumb outlived the block'
+      ).toBe(false);
       expect(
         meta && PRIOR_INGESTION_KEY in meta,
         'a later account restore would read this breadcrumb and un-block moderated content'

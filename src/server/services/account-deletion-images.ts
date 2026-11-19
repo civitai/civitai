@@ -12,6 +12,7 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
@@ -80,9 +81,20 @@ export async function unblockAccountDeletionImages(userId: number) {
             WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
             ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
           END,
-          -- A review the block cleared comes back; one set since is kept. No key (a row blocked
-          -- before it was recorded): left as it is.
-          "needsReview" = COALESCE("needsReview", "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text),
+          -- A held review the block cleared comes back and wins over any flag set since, except a
+          -- 'csam' one: the minor review then decides. Only an owner-hidden value is put back, so a
+          -- forged breadcrumb cannot write any other; not 'csam', which the grace block keeps on the
+          -- row, so a recorded 'csam' with none left means a moderator dismissed it. No key (a row
+          -- blocked before it was recorded): the flag is left as it is.
+          "needsReview" = CASE
+            WHEN "needsReview" = 'csam' THEN "needsReview"
+            ELSE CASE
+              WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${OWNER_HIDDEN_REVIEWS}::text[])
+                AND "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text <> 'csam'
+              THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+              ELSE "needsReview"
+            END
+          END,
           "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
       WHERE id IN (
         SELECT i.id
@@ -90,6 +102,7 @@ export async function unblockAccountDeletionImages(userId: number) {
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+          AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = i."userId" AND u."deletedAt" IS NULL)
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
         LIMIT ${RESTORE_BATCH_SIZE}
       )
