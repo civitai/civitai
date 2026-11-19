@@ -25,8 +25,7 @@
     rows: RestrictedVerdictRow[];
     total: number;
     civitaiUrl: string;
-    /** Opens the panel. Otherwise it stays one line, since it sits in the queue column's
-     *  fixed-height header above the queue list. */
+    /** Opens the panel; it starts collapsed to its heading otherwise. */
     queueEmpty?: boolean;
   } = $props();
 

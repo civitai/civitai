@@ -76,7 +76,6 @@ mkdirSync(cache, { recursive: true });
 const work = mkdtempSync(path.join(cache, 'restricted-verdicts-panel-'));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-/** Compiles for the server (rendered to a string) or the client (mounted, so the toggle can be clicked). */
 function emit(name: string, source: string, generate: 'server' | 'client') {
   const dir = path.join(work, generate);
   mkdirSync(dir, { recursive: true });
