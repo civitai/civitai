@@ -1,7 +1,5 @@
 <script lang="ts">
-  import type { KnightsRuleGuide } from '@civitai/shared/new-order';
-
-  let { rules }: { rules: KnightsRuleGuide } = $props();
+  import { QUESTION_RULES as rules } from './question-rules';
 </script>
 
 <div class="question-rules" id="question-rules">
@@ -10,13 +8,10 @@
   {#each rules.sets as set, i (i)}
     <section class="set" aria-label={set.title}>
       <h4 class="title">{set.title}</h4>
-      {#if set.points.length}
-        <ul class="points">
-          {#each set.points as point, p (p)}<li>{point}</li>{/each}
-        </ul>
-      {/if}
-      <!-- A notes-only set reads at the size of the points so it does not look like a footnote. -->
-      {#if set.notes}<p class="notes" class:lead={!set.points.length}>{set.notes}</p>{/if}
+      <ul class="points">
+        {#each set.points as point, p (p)}<li>{point}</li>{/each}
+      </ul>
+      {#if set.notes}<p class="notes">{set.notes}</p>{/if}
     </section>
   {/each}
 </div>
@@ -67,15 +62,9 @@
   .notes {
     font-size: 14px;
   }
-  .notes.lead {
-    color: var(--io-parchment);
-    font-size: 18px;
-    line-height: 1.35;
-  }
 
   @media (max-width: 40rem) {
-    .points,
-    .notes.lead {
+    .points {
       font-size: 17px;
       line-height: 1.3;
     }

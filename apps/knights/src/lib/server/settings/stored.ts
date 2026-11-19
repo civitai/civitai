@@ -1,15 +1,8 @@
-import {
-  readKnightsSourcesConfig,
-  type KnightsGameSettings,
-  type KnightsRuleGuide,
-} from '@civitai/shared/new-order';
+import { readKnightsSourcesConfig, type KnightsGameSettings } from '@civitai/shared/new-order';
 import { REDIS_TIMEOUT_MS, within } from '../redis-timeout';
 
 /** What moderators saved on the Config page. A field that is absent leaves its reader on the environment. */
-export type StoredSettings = KnightsGameSettings & {
-  yesNoShare?: number;
-  ruleGuide?: KnightsRuleGuide;
-};
+export type StoredSettings = KnightsGameSettings & { yesNoShare?: number };
 
 export type StoredSettingsSourceOptions = {
   /** The raw `system:knights-v2-sources` value. */
@@ -39,14 +32,8 @@ export function createStoredSettingsSource({
 
   async function refresh(): Promise<StoredSettings> {
     try {
-      const { yesNoShare, game, ruleGuide } = readKnightsSourcesConfig(
-        await within(read(), timeoutMs)
-      ).config;
-      held = {
-        ...game,
-        ...(yesNoShare === undefined ? {} : { yesNoShare }),
-        ...(ruleGuide === undefined ? {} : { ruleGuide }),
-      };
+      const { yesNoShare, game } = readKnightsSourcesConfig(await within(read(), timeoutMs)).config;
+      held = { ...game, ...(yesNoShare === undefined ? {} : { yesNoShare }) };
     } catch (error) {
       console.error('knights: could not read the saved game settings', { error });
     }

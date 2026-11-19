@@ -7,12 +7,11 @@ import { rulesFacts } from '$lib/server/rules';
 import { ratingExamples, withExamples } from '$lib/server/rating-examples';
 import { consented } from '$lib/server/membership';
 import { fervorSum } from '$lib/server/leaderboard-view';
-import { storedSettings } from '$lib/server/settings/runtime';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const days = new Map(ladderRows().map((row) => [row.rank, row.minDaysPlayed]));
-  const [status, badges, player, examples, settings] = await Promise.all([
+  const [status, badges, player, examples] = await Promise.all([
     getPlayerStatusOrNew(db, locals.user.id),
     rankBadgeUrls(db),
     db
@@ -21,7 +20,6 @@ export const load: PageServerLoad = async ({ locals }) => {
       .where('userId', '=', locals.user.id)
       .executeTakeFirst(),
     ratingExamples(db),
-    storedSettings(),
   ]);
   // The examples include R, X and XXX images: only a player who accepted the mature content warning sees them.
   const showExamples = player !== undefined && (await consented(locals.user.id));
@@ -34,7 +32,6 @@ export const load: PageServerLoad = async ({ locals }) => {
       return minDaysPlayed ? { ...rank, minDaysPlayed } : rank;
     }),
     facts: { ...facts, ratingGuide: withExamples(facts.ratingGuide, showExamples ? examples : {}) },
-    ruleGuide: settings.ruleGuide ?? null,
     fervorExample: { correct: 100, accuracyPercent: 80, sum: fervorSum(100, 125) },
     badges: badges.large,
     swornIn: player?.startAt.toISOString() ?? null,

@@ -2,7 +2,6 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { ComponentProps } from 'svelte';
-  import type { KnightsRuleGuide } from '@civitai/shared/new-order';
   import QuestionRules from '$lib/QuestionRules.svelte';
   import RatingGuide from '$lib/RatingGuide.svelte';
   import { modal } from '$lib/modal';
@@ -10,7 +9,6 @@
 
   let {
     guide,
-    rules,
     scrollToRules = false,
     first,
     message,
@@ -18,7 +16,6 @@
     submit,
   }: {
     guide: ComponentProps<typeof RatingGuide>['guide'];
-    rules: KnightsRuleGuide | null;
     scrollToRules?: boolean;
     /** The first-visit guide says so; a reopened one does not. */
     first: boolean;
@@ -56,10 +53,8 @@
       <p class="intro">What each level means. Rate what the image shows, not what you would like to see.</p>
       <div class="rule" aria-hidden="true"><span class="gem"></span></div>
       <RatingGuide {guide} />
-      {#if rules}
-        <div class="rule" aria-hidden="true"><span class="gem"></span></div>
-        <div use:scrollOnOpen={scrollToRules}><QuestionRules {rules} /></div>
-      {/if}
+      <div class="rule" aria-hidden="true"><span class="gem"></span></div>
+      <div use:scrollOnOpen={scrollToRules}><QuestionRules /></div>
     </div>
     <form class="footer" method="POST" action="?/dismissGuide" use:enhance={submit} bind:this={form}>
       {#if message}
