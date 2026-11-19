@@ -6,7 +6,7 @@ import {
   reviewConsoleFrameLabel,
   orderReviewConsoleEntries,
   parseBlockReadySdk,
-  REVIEW_CONSOLE_MIN_SDK,
+  REVIEW_CONSOLE_MIN_SDKS,
   sdkForwardsReviewErrors,
 } from '~/components/Apps/reviewConsoleStore';
 import {
@@ -21,11 +21,10 @@ import { reviewConsoleSdkNotice } from '~/components/Apps/reviewConsoleStore';
  */
 
 describe('the SDK cut-off', () => {
-  test('🔴 is @civitai/sdk 0.29.0, the first release that forwards to a review preview', () => {
-    expect(REVIEW_CONSOLE_MIN_SDK).toEqual({
-      name: 'sdk',
-      packageName: '@civitai/sdk',
-      version: '0.29.0',
+  test('🔴 is each package’s first release that forwards to a review preview', () => {
+    expect(REVIEW_CONSOLE_MIN_SDKS).toEqual({
+      sdk: { packageName: '@civitai/sdk', version: '0.29.0' },
+      'blocks-react': { packageName: '@civitai/blocks-react', version: '0.85.0' },
     });
   });
 
@@ -41,7 +40,15 @@ describe('the SDK cut-off', () => {
     ['sdk', '0.29.0-beta.1', false],
     ['sdk', 'latest', false],
     ['sdk', null, false],
-    ['blocks-react', '0.99.0', false],
+    ['blocks-react', '0.85.0', true],
+    ['blocks-react', '0.85.1', true],
+    ['blocks-react', '1.0.0', true],
+    ['blocks-react', '0.84.0', false],
+    ['blocks-react', '0.85.0-next.1', false],
+    // Each package against its OWN cut-off, never the other's.
+    ['blocks-react', '0.29.0', false],
+    ['sdk', '0.85.0', true],
+    ['some-other-sdk', '9.9.9', false],
     [null, '0.29.0', false],
   ] as const)('%s %s → %s', (name, version, expected) => {
     expect(sdkForwardsReviewErrors({ name, version })).toBe(expected);
@@ -67,14 +74,18 @@ describe('the SDK notice, pinned whole', () => {
       "This app's SDK (@civitai/sdk 0.28.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
     );
     expect(reviewConsoleSdkNotice({ name: null, version: null })).toBe(
-      "This app's SDK (an SDK that does not name itself) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0."
+      "This app's SDK (an SDK that does not name itself) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/sdk 0.29.0 or @civitai/blocks-react 0.85.0."
     );
   });
 
-  test('🔴 @civitai/blocks-react is not called too old: it forwards none at any version', () => {
+  test('🔴 @civitai/blocks-react below ITS cut-off is too old, and is told its own version', () => {
     expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.84.0' })).toBe(
-      'This app uses @civitai/blocks-react 0.84.0, which does not report other errors, so only fatal crashes show here. Apps on @civitai/sdk 0.29.0 or later report every error.'
+      "This app's SDK (@civitai/blocks-react 0.84.0) is too old to report other errors, so only fatal crashes show here. Apps report every error from @civitai/blocks-react 0.85.0."
     );
+  });
+
+  test('🔴 @civitai/blocks-react at its cut-off gets no notice', () => {
+    expect(reviewConsoleSdkNotice({ name: 'blocks-react', version: '0.85.0' })).toBeNull();
   });
 
   test('no notice at or above the cut-off, nor before BLOCK_READY', () => {
