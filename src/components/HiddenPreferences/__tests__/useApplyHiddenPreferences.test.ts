@@ -254,12 +254,39 @@ describe("filterPreferences — 'images' branch drops every hidden dimension (la
 
   // [label, the-image-that-must-drop, filter opts]. Each pairs the dirty image with
   // a clean sibling (id 1) and asserts the clean one survives while the dirty drops.
-  const cases: Array<[string, ReturnType<typeof makeImage>, RunImagesOpts, keyof ReturnType<typeof runImages>['hidden']]> = [
+  const cases: Array<
+    [
+      string,
+      ReturnType<typeof makeImage>,
+      RunImagesOpts,
+      keyof ReturnType<typeof runImages>['hidden']
+    ]
+  > = [
     ['browsing-level mismatch', makeImage({ id: 2, nsfwLevel: 2 }), {}, 'browsingLevel'],
-    ['hidden image id', makeImage({ id: 3 }), { hiddenPreferences: prefsWith({ images: [3] }) }, 'images'],
-    ['hidden user', makeImage({ id: 4, userId: 555 }), { hiddenPreferences: prefsWith({ users: [555] }) }, 'users'],
-    ['hidden tag', makeImage({ id: 5, tagIds: [88] }), { hiddenPreferences: prefsWith({ tags: [88] }) }, 'tags'],
-    ['system hidden tag', makeImage({ id: 6, tagIds: [77] }), { hiddenPreferences: prefsWith({ systemTags: [77] }) }, 'tags'],
+    [
+      'hidden image id',
+      makeImage({ id: 3 }),
+      { hiddenPreferences: prefsWith({ images: [3] }) },
+      'images',
+    ],
+    [
+      'hidden user',
+      makeImage({ id: 4, userId: 555 }),
+      { hiddenPreferences: prefsWith({ users: [555] }) },
+      'users',
+    ],
+    [
+      'hidden tag',
+      makeImage({ id: 5, tagIds: [88] }),
+      { hiddenPreferences: prefsWith({ tags: [88] }) },
+      'tags',
+    ],
+    [
+      'system hidden tag',
+      makeImage({ id: 6, tagIds: [77] }),
+      { hiddenPreferences: prefsWith({ systemTags: [77] }) },
+      'tags',
+    ],
     ['poi (disablePoi)', makeImage({ id: 7, poi: true }), { poiDisabled: true }, 'poi'],
     ['minor (disableMinor)', makeImage({ id: 8, minor: true }), { minorDisabled: true }, 'minor'],
   ];
@@ -410,5 +437,49 @@ describe("filterPreferences — 'comics' gates on ALL aggregate bits within the 
     );
     expect(items.map((c) => c.id)).toEqual([1]);
     expect(hidden.browsingLevel).toBe(1);
+  });
+});
+
+describe('filterPreferences — collection covers', () => {
+  const collection = (
+    images: { id: number; nsfwLevel: number }[],
+    image?: { id: number; nsfwLevel: number }
+  ) => ({
+    id: 1,
+    userId: 2,
+    nsfwLevel: 1,
+    image: image ?? null,
+    images,
+    srcs: ['a', 'b'],
+  });
+  const run = (data: unknown[]) =>
+    filterPreferences({
+      type: 'collections',
+      data: data as never,
+      hiddenPreferences: emptyPrefs(),
+      browsingLevel: BROWSING_LEVEL,
+      currentUser: null as never,
+      canViewNsfw: true,
+    }).items as { images: { id: number }[]; srcs?: string[] }[];
+
+  it('drops the unrated srcs with an image above the viewer level', () => {
+    const [hit] = run([
+      collection([
+        { id: 10, nsfwLevel: 1 },
+        { id: 11, nsfwLevel: 2 },
+      ]),
+    ]);
+    expect(hit.images.map((i) => i.id)).toEqual([10]);
+    expect(hit.srcs).toEqual([]);
+  });
+
+  it('drops them when only the cover is above the viewer level', () => {
+    const [hit] = run([collection([{ id: 10, nsfwLevel: 1 }], { id: 12, nsfwLevel: 2 })]);
+    expect(hit.srcs).toEqual([]);
+  });
+
+  it('keeps them when every image is within the viewer level (control)', () => {
+    const [hit] = run([collection([{ id: 10, nsfwLevel: 1 }])]);
+    expect(hit.srcs).toEqual(['a', 'b']);
   });
 });

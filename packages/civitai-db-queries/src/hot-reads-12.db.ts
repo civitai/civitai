@@ -50,6 +50,7 @@ function usersWithCosmeticsQuery(db: Kysely<DB>) {
         'ProfilePicture.ingestion as profilePictureIngestion',
         'ProfilePicture.needsReview as profilePictureNeedsReview',
         'ProfilePicture.modelRestricted as profilePictureModelRestricted',
+        'ProfilePicture.blockedFor as profilePictureBlockedFor',
         'ProfilePicture.type as profilePictureType',
         'ProfilePicture.width as profilePictureWidth',
         'ProfilePicture.height as profilePictureHeight',

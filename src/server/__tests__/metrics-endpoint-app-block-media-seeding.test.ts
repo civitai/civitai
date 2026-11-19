@@ -64,4 +64,20 @@ describe('/api/metrics publishes the host-media safety counters at 0', () => {
       new RegExp(`^${name}\\{[^}]*\\b${label}="${value}"[^}]*\\} 0$`, 'm')
     );
   });
+
+  // The helper prefixes civitai_app_, so these names carry app_ twice.
+  it.each([
+    ['civitai_app_app_block_host_source_total', 'reason', 'host-orchestrator-source'],
+    ['civitai_app_app_block_host_source_total', 'reason', 'host-unparsable'],
+    ['civitai_app_app_block_source_accepted_total', 'class', 'cdn'],
+    ['civitai_app_app_block_source_accepted_total', 'class', 'key'],
+    ['civitai_app_app_block_source_accepted_total', 'class', 'orchestrator'],
+    ['civitai_app_app_block_source_accepted_total', 'class', 'external'],
+  ])('%s{entry="appBlocksPassThrough",%s="%s"} is exposed at 0', async (name, label, value) => {
+    const line = new RegExp(
+      `^${name}\\{(?=[^}]*\\bentry="appBlocksPassThrough")(?=[^}]*\\b${label}="${value}")[^}]*\\} 0$`,
+      'm'
+    );
+    expect(await scrape()).toMatch(line);
+  });
 });

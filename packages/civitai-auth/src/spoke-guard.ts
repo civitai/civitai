@@ -12,6 +12,7 @@ import {
   rollSlot,
   sessionCookieMode,
   type CookieRead,
+  type CookieSlot,
 } from './cookies';
 import { hubBaseUrl } from './hub';
 import { spokeAuthorizeUrl, spokeSessionCookies } from './spoke-signin';
@@ -59,6 +60,8 @@ export interface SpokeGuardConfig {
   updateAgeSeconds?: number;
   sessionTokenClient?: Pick<SessionTokenClient, 'refresh'>;
   onRollFailed?: (reason: RefreshFailure) => void;
+  /** Called with the cookie slot an authenticated request's session was read from. */
+  onSessionSlot?: (slot: CookieSlot) => void;
 }
 
 export interface SpokeGuardCheckOptions {
@@ -154,6 +157,11 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     const resolved = await sessions.resolveSessionUser(read.value);
     if (!resolved.user) return signIn(returnUrl, navigation, resolved.reason);
     const { user } = resolved;
+    try {
+      config.onSessionSlot?.(read.slot);
+    } catch {
+      // Observability only: a failing callback never changes the decision.
+    }
     if (config.require && !config.require(user)) return { status: 'forbidden', user };
 
     const mode = sessionCookieMode(null);

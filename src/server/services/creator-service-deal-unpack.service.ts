@@ -20,7 +20,13 @@ import {
   openZip,
   readEntry,
   s3ZipSource,
+  id3TagLength,
+  listZipPaths,
+  MAX_ID3_TAGS,
+  everyEntryHead,
+  isMediaName,
   sniffEntry,
+  SNIFF_BYTES,
   ZipRejectedError,
   type OpenedZip,
   type ZipEntry,
@@ -254,20 +260,119 @@ async function unpackZip(file: ClaimedFinal, shouldStop: () => boolean) {
   }
 }
 
+const isZipStart = (head: Buffer) => head.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 3, 4]));
+const isPickle = (head: Buffer) => head[0] === 0x80 && head[1] >= 2 && head[1] <= 5;
+
+/** What each model format begins with. Anything else under a model name is not that model. */
+const MODEL_FORMATS: Record<string, (head: Buffer) => boolean> = {
+  // An 8-byte little-endian header length, then the JSON header.
+  safetensors: (head) =>
+    head.length >= 9 && head.readBigUInt64LE(0) < BigInt(100 * 1024 * 1024) && head[8] === 0x7b,
+  gguf: (head) => head.subarray(0, 4).toString('latin1') === 'GGUF',
+  // A protobuf ModelProto opens with field 1 (ir_version) as a varint.
+  onnx: (head) => head[0] === 0x08,
+  // A torch checkpoint is a zip in torch's layout, or a pickle from before it.
+  pt: (head) => isZipStart(head) || isPickle(head),
+  pth: (head) => isZipStart(head) || isPickle(head),
+  ckpt: (head) => isZipStart(head) || isPickle(head),
+  bin: (head) => isZipStart(head) || isPickle(head),
+};
+
+/** What each audio format begins with, past any ID3v2 tags (already read past by `readHead`). */
+const AUDIO_FORMATS: Record<string, (head: Buffer) => boolean> = {
+  mp3: (head) => head[0] === 0xff && (head[1] & 0xe0) === 0xe0,
+  // RF64 and BW64 are the 64-bit-size forms broadcast tools write for long recordings.
+  wav: (head) =>
+    ['RIFF', 'RF64', 'BW64'].includes(head.subarray(0, 4).toString('latin1')) &&
+    head.subarray(8, 12).toString('latin1') === 'WAVE',
+  flac: (head) => head.subarray(0, 4).toString('latin1') === 'fLaC',
+  ogg: (head) => head.subarray(0, 4).toString('latin1') === 'OggS',
+};
+
+/** Entries torch.save and torch.jit.save write, all under one root folder. */
+const TORCH_ENTRY =
+  /^[^/]+\/(data\.pkl|constants\.pkl|attributes\.pkl|version|byteorder|\.format_version|\.storage_alignment|serialization_id|\.data\/(serialization_id|version)|(data|constants)\/\d+|code\/__torch__(\/.+)?\.(py|pkl|py\.debug_pkl)|extra\/.+)$/;
+const TORCH_MAX_ENTRIES = 50_000;
+/** Tensor storage: torch.save's data/N and torch.jit.save's constants/N. */
+const TORCH_TENSOR = /^[^/]+\/(data|constants)\/\d+$/;
+/** An icon's header, which tensor bytes (a zero then a one) can start with. */
+const ICON_LIKE = Buffer.from([0, 0, 1, 0]);
+
+async function isTorchArchive(file: ClaimedFinal) {
+  const source = s3ZipSource(getS3Client(), await getBucket(), file.s3Key, file.size);
+  const paths = await listZipPaths(source, TORCH_MAX_ENTRIES);
+  const roots = new Set(paths.map((path) => path.split('/')[0]));
+  if (
+    roots.size !== 1 ||
+    !paths.some((path) => /^[^/]+\/data\.pkl$/.test(path)) ||
+    !paths.every((path) => path.endsWith('/') || TORCH_ENTRY.test(path))
+  )
+    return false;
+  // Unzipped, every entry is a file of its own, and the archive is delivered without its images
+  // being scanned: none may be a picture, a video or an archive. Tensor bytes are opaque, so a
+  // stream is looked for only where a file of one would start, and only the image formats a
+  // viewer opens are refused.
+  return everyEntryHead(source, TORCH_MAX_ENTRIES, (path, head) => {
+    if (isMediaName(path)) return false;
+    const tensor = TORCH_TENSOR.test(path);
+    const kind = sniffEntry(head, { tsAnywhere: !tensor });
+    return (
+      kind === 'other' ||
+      (tensor && kind === 'unscannable' && head.subarray(0, 4).equals(ICON_LIKE))
+    );
+  });
+}
+
+/** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
+async function readHead(file: ClaimedFinal) {
+  let offset = 0;
+  for (let tags = 0; ; tags++) {
+    if (offset >= file.size) return Buffer.alloc(0);
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: await getBucket(),
+        Key: file.s3Key,
+        Range: `bytes=${offset}-${offset + SNIFF_BYTES - 1}`,
+      })
+    );
+    if (!response.Body) throw new Error('Empty object body');
+    const head = Buffer.from(await response.Body.transformToByteArray());
+    const tag = tags < MAX_ID3_TAGS ? id3TagLength(head) : 0;
+    if (!tag) return head;
+    offset += tag;
+  }
+}
+
+/** Counted by claimed type, so false refusals show up after release. */
+const notItsFormat = (kind: 'model' | 'audio', extension: string) => {
+  logUnpack('final is not its claimed format', { payload: { kind, extension } }, 'warning').catch(
+    () => null
+  );
+  return new ZipRejectedError(`This file doesn't look like a .${extension} ${kind} file.`);
+};
+
 const isModelName = (name: string) =>
   (SERVICE_ZIP_MODEL_EXTENSIONS as readonly string[]).includes(fileExtension(name));
 
 /**
- * A Final that is not an archive, an image or a model file is judged by its first bytes, not its
- * name: an image or a video called notes.txt is still one. Returns whether it is an image.
+ * A Final that is not an archive is judged by its first bytes past any ID3 tags, not its name: an
+ * image or a video called notes.txt is still one. A Final named as a model or audio file must also
+ * begin like that format, and a zip under a model name must be in torch's layout. Returns whether
+ * it is an image.
  */
 async function isImageByContent(file: ClaimedFinal) {
-  const response = await getS3Client().send(
-    new GetObjectCommand({ Bucket: await getBucket(), Key: file.s3Key, Range: 'bytes=0-15' })
-  );
-  if (!response.Body) throw new Error('Empty object body');
-  const kind = sniffEntry(Buffer.from(await response.Body.transformToByteArray()));
+  const head = await readHead(file);
+  const kind = sniffEntry(head);
   if (kind === 'video') throw new ZipRejectedError('Video cannot be delivered yet.');
+  const extension = fileExtension(file.fileName);
+  if (isModelName(file.fileName)) {
+    const format = MODEL_FORMATS[extension];
+    if (!format?.(head) || (isZipStart(head) && !(await isTorchArchive(file))))
+      throw notItsFormat('model', extension);
+    return false;
+  }
+  const audio = AUDIO_FORMATS[extension];
+  if (audio && !audio(head)) throw notItsFormat('audio', extension);
   if (kind === 'archive')
     throw new ZipRejectedError('Archives must be delivered as a .zip, not renamed.');
   if (kind === 'unscannable')
@@ -315,7 +420,7 @@ export async function unpackFinals({
       }
     } else if (isImageName(file.fileName)) {
       await unpackImage(file);
-    } else if (!isModelName(file.fileName) && (await isImageByContent(file))) {
+    } else if (await isImageByContent(file)) {
       await unpackImage(file);
     }
     await markUnpacked(file.id, extension !== 'zip');

@@ -18,8 +18,9 @@ import {
   minorContentRestrictedSql,
 } from '~/server/utils/minor-content-gate.sql';
 import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 
-export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview };
+export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
@@ -61,22 +62,6 @@ export const hasPermanentScanFailure = (scanJobs: unknown) => {
     )
   );
 };
-
-/**
- * Whether an image carries a block. A scan error or a rescan request moves `ingestion` off
- * Blocked but leaves the block reason and the Blocked level, so any one of the three counts.
- */
-export function hasBlockMarker(image: {
-  ingestion: ImageIngestionStatus | string;
-  nsfwLevel: number;
-  blockedFor: string | null;
-}) {
-  return (
-    image.ingestion === ImageIngestionStatus.Blocked ||
-    image.nsfwLevel === NsfwLevel.Blocked ||
-    image.blockedFor != null
-  );
-}
 
 /** SQL twin of `hasBlockMarker`: the two encodings of one rule move together. */
 export const hasBlockMarkerSql = (alias = 'i') => {

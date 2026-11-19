@@ -2,6 +2,15 @@ import { TRPCError } from '@trpc/server';
 import { env as clientEnv } from '~/env/client';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import type {
+  APP_BLOCK_ACCEPTED_SOURCE_CLASSES,
+  APP_BLOCK_HOST_SOURCE_REASONS,
+} from '~/server/prom/app-block-source.metrics';
+import {
+  APP_BLOCK_ENTRY_LIST,
+  appBlockHostSourceCounter,
+  appBlockSourceAcceptedCounter,
+} from '~/server/prom/app-block-source.metrics';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import { externalHostBucket, recordExternalHost } from '~/server/services/generation-input-hosts';
 import { logToAxiom } from '~/server/logging/client';
@@ -236,20 +245,6 @@ export type GenerationInputUrlClass =
   | 'external'
   | 'invalid';
 
-/** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
-const APP_BLOCK_ENTRY_LIST = [
-  'appBlocks',
-  'appBlocksStep',
-  'appBlocksPassThrough',
-  'appBlocksWorkflow',
-  'appBlocksInlineComfy',
-  /**
-   * Not a generation: `blocks.persistGenerationSource` asking whether the private source it just
-   * wrote is usable yet, so its pending polls count apart from real refusals.
-   */
-  'appBlocksSourcePersist',
-] as const;
-
 /** An App Blocks entry: every call through one names its app (`AppBlockLog.appBlockId`). */
 export type AppBlockGenerationInputEntryPoint = (typeof APP_BLOCK_ENTRY_LIST)[number];
 
@@ -359,21 +354,11 @@ const refusalCounter = registerCounterWithLabels({
   labelNames: ['entry', 'class', 'caller', 'mode'] as const,
 });
 
-/**
- * Orchestrator sources on App Blocks entries, counted only: nothing is refused on this count.
- * `host-orchestrator-source` is a consumer-blob path; `host-unparsable` is any other orchestrator
- * path, such as a job output.
- */
-const appBlockHostSourceCounter = registerCounterWithLabels({
-  name: 'app_block_host_source_total',
-  help: 'Orchestrator-hosted generation sources on App Blocks entries, by entry point and reason.',
-  labelNames: ['entry', 'reason'] as const,
-});
-
 /** An App Blocks source check runs on the estimate and again on the submit of the same run. */
 export type GenerationInputPhase = 'estimate' | 'submit';
 
-type AppBlockHostSourceReason = 'host-orchestrator-source' | 'host-unparsable';
+type AppBlockHostSourceReason = (typeof APP_BLOCK_HOST_SOURCE_REASONS)[number];
+type AppBlockAcceptedSourceClass = (typeof APP_BLOCK_ACCEPTED_SOURCE_CLASSES)[number];
 
 const CONSUMER_BLOB_PATH = /\/v\d+\/consumer\/blobs\/[^/]+$/i;
 
@@ -957,9 +942,12 @@ export async function assertGenerationInputsUsable({
   let refuseOrchestrator: boolean | undefined;
   // Recorded only once the whole call passes, so a refused call counts nothing.
   const hostSources: AppBlockHostSourceReason[] = [];
+  const accepted: AppBlockAcceptedSourceClass[] = [];
   for (const url of given) {
     if (opaqueInput && KEY_LIKE.test(url.trim())) {
       externalKeys.add(canonicalKey(url.trim()));
+      // A bare key, including one read out of text.
+      accepted.push('key');
       continue;
     }
     let cls = classifyGenerationInputUrl(url);
@@ -984,10 +972,12 @@ export async function assertGenerationInputsUsable({
         // `appBlocks` gates inside its step builder; its router counts with countAppBlockHostSources.
         if (entry !== 'appBlocks') hostSources.push(appBlockHostSourceReason(url));
       }
+      accepted.push(cls);
       continue;
     }
     if (cls === 'key') {
       keys.add(url);
+      accepted.push(cls);
       continue;
     }
     if (cls === 'cdn') {
@@ -995,6 +985,7 @@ export async function assertGenerationInputsUsable({
       if (!found.length) throw refuse(cls);
       found.forEach((key) => keys.add(key));
       keyedUrls.push(url);
+      accepted.push(cls);
       continue;
     }
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
@@ -1022,6 +1013,7 @@ export async function assertGenerationInputsUsable({
       refusalCounter.inc({ entry, class: cls, caller, mode: 'log' });
       // A proxy or wrapper url may carry one of our image keys.
       keysIn(url).forEach((key) => externalKeys.add(key));
+      accepted.push(cls);
       continue;
     }
     throw refuse(cls, pageLink);
@@ -1052,6 +1044,8 @@ export async function assertGenerationInputsUsable({
       appBlock: appBlockKeys,
     });
     if (hostSources.length) recordAppBlockHostSources(entry, hostSources, appBlockLog);
+    if (appBlock)
+      for (const cls of accepted) appBlockSourceAcceptedCounter.inc({ entry, class: cls });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'BAD_REQUEST')
       refusalCounter.inc({ entry, class: 'key', caller, mode: 'refuse' });

@@ -1500,8 +1500,11 @@ function withStoredModeratorMetadata(
 
 export const upsertCollection = async ({
   input,
+  coverViewer,
 }: {
   input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
+  coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
   const {
     userId,
@@ -1590,7 +1593,7 @@ export const upsertCollection = async ({
               imageId: currentCollection.image.id,
             },
           ],
-          { id: userId, isModerator },
+          coverViewer ?? { id: userId, isModerator },
           dbWrite
         )
       ).has(currentCollection.id);
