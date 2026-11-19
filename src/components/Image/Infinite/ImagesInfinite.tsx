@@ -68,15 +68,12 @@ function songCardHeight(args: { width: number; height: number }, feedWidth: numb
   return coverHeight + SONG_CARD_TEXT_HEIGHT;
 }
 
-/**
- * Renders `children` once its width is known: the masonry lays out again only when its data or
- * columns change, so a width read after its first layout would never reach the item heights.
- */
+/** Renders `children` with the feed's width, 0 until it is measured (before paint on the client). */
 function FeedWidth({ children }: { children: (width: number) => ReactNode }) {
   const [width, setWidth] = useState(0);
   const ref = useResizeObserver<HTMLDivElement>((entry) => setWidth(entry.contentRect.width));
   useIsomorphicLayoutEffect(() => setWidth(ref.current?.clientWidth ?? 0), []);
-  return <div ref={ref}>{width > 0 && children(width)}</div>;
+  return <div ref={ref}>{children(width)}</div>;
 }
 // Stable, so a feed without the music flag reads no covers and re-renders nothing for them.
 const NO_IMAGES: ImageGetInfinite = [];
@@ -387,6 +384,10 @@ function ImagesFeed({
         customCard: !!MasonryItem,
       })}
       hasMore={hasNextPage && !isRetrying}
+      // A single column's songs are sized at its drawn width, which the masonry does not track.
+      singleColumnRelayoutKey={
+        feedWidth > 0 && images.some(isSongCard) ? Math.round(feedWidth) : undefined
+      }
     />
   );
 

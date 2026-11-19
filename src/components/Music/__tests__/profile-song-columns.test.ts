@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { profileSongColumnWidth } from '~/components/Music/song-card.constants';
+import {
+  PROFILE_SONG_SIDE_PADDING,
+  profileSongColumnWidth,
+} from '~/components/Music/song-card.constants';
 
 const across = (width: number) => {
   const column = profileSongColumnWidth(width);
@@ -8,8 +11,11 @@ const across = (width: number) => {
 
 describe('the profile Music tab columns', () => {
   test('four across at 1440, filling the body edge to edge (Pencil `CaAoU`)', () => {
-    // 1440 minus the 320 sidebar, the layout's 12px sides and the tab's own 12px sides.
-    expect(across(1072)).toEqual({ column: 256, count: 4 });
+    // The sidebar is 320 wide; the profile body has `px-3` sides and the tab its own padding.
+    expect(across(1440 - 320 - 2 * 12 - 2 * PROFILE_SONG_SIDE_PADDING)).toEqual({
+      column: 256,
+      count: 4,
+    });
   });
 
   test('still four across when a scrollbar takes some of the width', () => {

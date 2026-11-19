@@ -24,6 +24,7 @@ import { songTextDimmed } from '~/components/Music/song-styles';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -94,6 +95,10 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
   const tabRef = useResizeObserver<HTMLDivElement>((entry) => {
     if (isAudio) setTabWidth(entry.contentRect.width);
   });
+  // Before paint, so the first layout is not drawn at the minimum column width.
+  useIsomorphicLayoutEffect(() => {
+    if (isAudio) setTabWidth(tabRef.current?.clientWidth ?? 0);
+  }, [isAudio]);
 
   // currently not showing any content if the username is undefined
   if (!profileUsername) return <NotFound />;

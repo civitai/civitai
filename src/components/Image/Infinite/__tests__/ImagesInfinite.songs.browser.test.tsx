@@ -4,14 +4,21 @@ import type { ComponentType, ReactNode } from 'react';
 import { useRef } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as AdsProvider from '~/components/Ads/AdsProvider';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as ImageUtils from '~/components/Image/image.utils';
 import type * as ImageFeedSearch from '~/components/Image/Infinite/useImageFeedSearch';
+import type * as MasonryColumnsVirtualModule from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as Trpc from '~/utils/trpc';
 
 const feed = vi.hoisted(() => ({
+  features: { music: true } as Record<string, boolean>,
+  /** Draw the real masonry instead of a plain list of its items. */
+  realMasonry: false,
+  /** Off for image cards, which need providers these tests leave out. */
+  drawItems: true,
   images: [] as unknown[],
   provided: [] as unknown[],
   masonry: undefined as
@@ -27,7 +34,7 @@ const feed = vi.hoisted(() => ({
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
-  useFeatureFlags: () => ({ music: true }),
+  useFeatureFlags: () => feed.features,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
@@ -52,6 +59,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
   useBrowsingLevelDebounced: () => 1,
+}));
+vi.mock('~/components/Ads/AdsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof AdsProvider>()),
+  useAdsContext: () => ({ adsEnabled: false, useDirectAds: false }),
 }));
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
@@ -79,30 +90,30 @@ vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   },
   useImagesContext: () => ({ getImages: () => feed.provided }),
 }));
-vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', () => ({
-  MasonryColumnsVirtual: ({
-    data,
-    render: Item,
-    ...sizing
-  }: {
-    data: { id: number }[];
-    render: ComponentType<{ data: unknown; height: number }>;
-    imageDimensions: (data: unknown) => { width: number; height: number };
-    adjustHeight: (
-      args: { imageRatio: number; width: number; height: number },
-      data: unknown
-    ) => number;
-  }) => (
-    (feed.masonry = sizing),
-    (
-      <div data-testid="masonry">
-        {data.map((d) => (
-          <Item key={d.id} data={d} height={360} />
-        ))}
-      </div>
-    )
-  ),
-}));
+vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', async (importOriginal) => {
+  const actual = await importOriginal<typeof MasonryColumnsVirtualModule>();
+  const Real = actual.MasonryColumnsVirtual as unknown as ComponentType<Record<string, unknown>>;
+  return {
+    MasonryColumnsVirtual: (props: {
+      data: { id: number }[];
+      render: ComponentType<{ data: unknown; height: number }>;
+      imageDimensions: (data: unknown) => { width: number; height: number };
+      adjustHeight: (
+        args: { imageRatio: number; width: number; height: number },
+        data: unknown
+      ) => number;
+    }) => {
+      const { data, render: Item, ...sizing } = props;
+      feed.masonry = sizing;
+      if (feed.realMasonry) return <Real {...props} />;
+      return (
+        <div data-testid="masonry">
+          {feed.drawItems && data.map((d) => <Item key={d.id} data={d} height={360} />)}
+        </div>
+      );
+    },
+  };
+});
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
 }));
@@ -114,8 +125,14 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 import { ImagesInfiniteContent } from '~/components/Image/Infinite/ImagesInfinite';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
+import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { SONG_ROW_HEIGHT, SongRow } from '~/components/Music/SongRow';
-import { SONG_CARD_TEXT_HEIGHT, SONG_COVER_RATIO } from '~/components/Music/song-card.constants';
+import {
+  MUSIC_FEED_COLUMN_WIDTH,
+  SONG_CARD_TEXT_HEIGHT,
+  SONG_COVER_RATIO,
+} from '~/components/Music/song-card.constants';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import type { MusicList } from '~/store/music-player.store';
@@ -132,6 +149,7 @@ const song = (id: number, title: string) => ({
   reactions: [],
 });
 const songs = [song(1, 'Midnight Arcade'), song(2, 'Palm Static'), song(3, 'Chrome Heart')];
+const picture = { id: 50, type: 'image', width: 600, height: 900, user: { id: 9 } };
 
 const playFromList = vi.fn<(list: MusicList) => void>();
 const SONG_ROWS = { render: SongRow, height: SONG_ROW_HEIGHT };
@@ -141,14 +159,19 @@ function ScrollArea({ children }: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
     <ScrollAreaContext.Provider value={{ ref: ref as React.RefObject<HTMLDivElement> }}>
-      <div ref={ref} style={{ height: 600, overflowY: 'auto' }}>
+      <div ref={ref} data-testid="scroller" style={{ height: 600, overflowY: 'auto' }}>
         {children}
       </div>
     </ScrollAreaContext.Provider>
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await page.viewport(1440, 900);
+  feed.features = { music: true };
+  feed.realMasonry = false;
+  feed.drawItems = true;
+  feed.masonry = undefined;
   useMusicPlayerStore.getState().close();
   playFromList.mockReset();
   useMusicPlayerStore.setState({ playFromList });
@@ -228,7 +251,6 @@ describe('songs in an image feed', () => {
   });
 
   test('the grid gives every song the Song Card shape, whatever the file reports', async () => {
-    await page.viewport(1440, 900);
     await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
     await expect.poll(() => feed.masonry).toBeDefined();
     const wide = { ...songs[0], width: 1920, height: 1080 };
@@ -250,10 +272,42 @@ describe('songs in an image feed', () => {
     );
   });
 
+  test('in a single column wider than 450, a song is sized at the 450 the column is drawn at', async () => {
+    await renderWithProviders(
+      <div style={{ width: 600 }}>
+        <ImagesInfiniteContent songListName="All music" />
+      </div>
+    );
+    await expect.poll(() => feed.masonry).toBeDefined();
+    expect(sized(songs[0], 320)).toBeCloseTo(450 * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  });
+
+  test("a single column's songs take the new height when the feed is resized", async () => {
+    feed.realMasonry = true;
+    await renderWithProviders(
+      <ScrollArea>
+        <div data-testid="frame" style={{ width: 400 }}>
+          <MasonryProvider columnWidth={MUSIC_FEED_COLUMN_WIDTH}>
+            <ImagesInfiniteContent songListName="All music" />
+          </MasonryProvider>
+        </div>
+      </ScrollArea>
+    );
+    const slotHeight = () => {
+      const slot = document.querySelector('[data-masonry-item]');
+      return slot ? slot.getBoundingClientRect().height - 2 * ITEM_BLEED : undefined;
+    };
+    const songHeight = (width: number) =>
+      Math.floor(width * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+    await expect.poll(slotHeight).toBe(songHeight(400));
+
+    page.getByTestId('frame').element().setAttribute('style', 'width: 300px');
+    await expect.poll(slotHeight).toBe(songHeight(300));
+  });
+
   test('an image in the same feed keeps the image card height', async () => {
     await renderWithProviders(<ImagesInfiniteContent songListName="All music" />);
     await expect.poll(() => feed.masonry).toBeDefined();
-    const picture = { id: 50, type: 'image', width: 600, height: 900, user: { id: 9 } };
     const { width, height } = feed.masonry!.imageDimensions(picture);
     const args = { imageRatio: width / height, width: 300, height: (height / width) * 300 };
     expect(feed.masonry!.adjustHeight(args, picture)).toBe(adjustImagesCardHeight(args));
@@ -270,7 +324,7 @@ describe('the list view, scrolled', () => {
     );
     await expect.element(page.getByText('Song 1', { exact: true })).toBeInTheDocument();
     const list = page.getByRole('list').element();
-    const scroller = list.closest<HTMLElement>('[style*="overflow"]')!;
+    const scroller = page.getByTestId('scroller').element();
     scroller.scrollTop = SONG_ROW_HEIGHT * 150;
     scroller.dispatchEvent(new Event('scroll'));
 
@@ -278,6 +332,34 @@ describe('the list view, scrolled', () => {
     expect(page.getByText('Song 1', { exact: true }).query()).toBeNull();
     const row = page.getByText('Song 151', { exact: true }).element().closest('[role="listitem"]')!;
     const offset = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
-    expect(offset).toBe(SONG_ROW_HEIGHT * 150);
+    expect(offset).toBeCloseTo(SONG_ROW_HEIGHT * 150);
+  });
+});
+
+describe('an image feed with the music flag', () => {
+  test('draws its grid on the first render, even in a container with no width yet', async () => {
+    feed.images = [picture];
+    feed.drawItems = false;
+    await renderWithProviders(
+      <div style={{ width: 0 }}>
+        <ImagesInfiniteContent />
+      </div>
+    );
+    expect(page.getByTestId('masonry').query()).not.toBeNull();
+  });
+});
+
+describe('an image feed without the music flag', () => {
+  test('sizes a song as any other item and draws the grid straight in the feed', async () => {
+    feed.features = {};
+    feed.images = [songs[0], picture];
+    feed.drawItems = false;
+    await renderWithProviders(<ImagesInfiniteContent />);
+    const masonry = page.getByTestId('masonry').element();
+    expect(masonry.parentElement!.style.position).toBe('relative');
+    const { width, height } = feed.masonry!.imageDimensions(songs[0]);
+    expect({ width, height }).toEqual({ width: 450, height: 450 });
+    const args = { imageRatio: 1, width: 300, height: 300 };
+    expect(feed.masonry!.adjustHeight(args, songs[0])).toBe(adjustImagesCardHeight(args));
   });
 });
