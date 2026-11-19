@@ -12,8 +12,7 @@ export type RevokedAppTokens = { clientId: string; userIds: number[] };
  * Locks every `app_blocks` row of the block's OAuth client, in id order, until the transaction ends.
  * A writer that suspends a block takes it before the flip, so two suspensions of one client's blocks
  * run one after the other and the second counts the first as suspended; the id order keeps them from
- * deadlocking. The auth hub's app-token mint (apps/auth `lockAppBlockSuspended`) reads the same rows
- * FOR SHARE in id order, so it waits on this lock too.
+ * deadlocking. A reader that locks the same rows FOR SHARE in id order waits on it too.
  */
 export async function lockAppBlockClientRows(
   tx: Prisma.TransactionClient,
