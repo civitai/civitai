@@ -1,5 +1,4 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,13 +10,10 @@ vi.mock('~/server/services/image.service', () => ({ deleteImages: mockDeleteImag
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import type { RawBuilder } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import {
-  imageDeletes,
-  queuedImageDeleteCondition,
-  queuedImageDeleteGuard,
-} from '~/server/jobs/image-deletes';
+import { imageDeletes, queuedImageDeleteCondition } from '~/server/jobs/image-deletes';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -143,8 +139,8 @@ describe('image-deletes', () => {
   });
 });
 
-// The guard itself, against the real hold migration.
-describe('queuedImageDeleteGuard', () => {
+// The condition itself, against the real hold migration.
+describe('queuedImageDeleteCondition', () => {
   const MARKED = 71; // a hold marker
   const SECONDARY = 72; // the secondary user on someone else's pending report
   const REVIEWED = 73; // an image awaiting CSAM review
@@ -166,6 +162,7 @@ describe('queuedImageDeleteGuard', () => {
         images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
       );
     `);
+    await hold.exec(imageUseTablesSql);
     await hold.exec(
       readFileSync(
         path.resolve(
@@ -184,15 +181,17 @@ describe('queuedImageDeleteGuard', () => {
   });
   afterAll(() => hold.close());
 
-  /** Whether the guard lets a delete take an image of `ownerId`'s. */
+  /** Whether the job's delete may take this image of `ownerId`'s. */
   const deletable = async (ownerId: number) => {
     const id = ownerId + 1000;
     await hold.query(`INSERT INTO "Image" (id, "userId") VALUES ($1, $2) ON CONFLICT DO NOTHING`, [
       id,
       ownerId,
     ]);
-    const guard = Prisma.sql`SELECT id FROM "Image" WHERE id = ${id} AND ${queuedImageDeleteGuard()}`;
-    return (await hold.query(guard.text, guard.values as unknown[])).rows.length > 0;
+    const { rows } = await sql`
+      SELECT id FROM "Image" WHERE id = ${id} AND ${queuedImageDeleteCondition(false)}
+    `.execute(pgliteKysely(() => hold));
+    return rows.length > 0;
   };
 
   it.each([
@@ -207,5 +206,12 @@ describe('queuedImageDeleteGuard', () => {
 
   it('lets the image of an owner with no hold go', async () => {
     expect(await deletable(FREE)).toBe(true);
+  });
+
+  it('keeps an image linked again since it was queued', async () => {
+    await hold.exec(`INSERT INTO "Article" ("coverId") VALUES (${FREE + 1000})`);
+
+    expect(await deletable(FREE)).toBe(false);
+    await hold.exec(`TRUNCATE "Article"`);
   });
 });

@@ -54,12 +54,12 @@ export const imageStorageDeletes = createJob(
     // to pile up and read as overdue. A non-prod app on production's database leaves them for
     // production's run.
     if (!env.DATABASE_IS_PROD) {
-      await removeRows(rows.map((row) => row.id));
+      await removeRows(rows);
       return { dropped: rows.length };
     }
     if (!isProd) return { wouldDelete: rows.length };
 
-    const done: number[] = [];
+    const done: QueueRow[] = [];
     const failedIds: number[] = [];
     const malformed: number[] = [];
     let deleted = 0;
@@ -75,7 +75,7 @@ export const imageStorageDeletes = createJob(
           // No key means nothing to delete and nothing to retry with.
           if (!payload.success) {
             malformed.push(id);
-            done.push(id);
+            done.push({ id, data });
             return;
           }
           const { url, allVersions, keepShopArtwork, attempted } = payload.data;
@@ -95,7 +95,7 @@ export const imageStorageDeletes = createJob(
           }
           if (outcome === 'deleted') deleted++;
           else skipped++;
-          done.push(id);
+          done.push({ id, data });
         })
       );
     }
@@ -131,12 +131,20 @@ export const imageStorageDeletes = createJob(
   { lockExpiration: LOCK_SECONDS }
 );
 
-async function removeRows(ids: number[]) {
-  if (!ids.length) return;
+/**
+ * Removes each row only as this run read it: one a delete re-queued since (a changed key, or an
+ * upgrade to every version) stays for the next run.
+ */
+async function removeRows(rows: QueueRow[]) {
+  if (!rows.length) return;
+  const ids = rows.map((row) => row.id);
+  const data = rows.map((row) => (row.data == null ? null : JSON.stringify(row.data)));
   await dbWrite.$executeRaw`
-    DELETE FROM "JobQueue"
-    WHERE type = ${JobQueueType.ImageStorageDelete}::"JobQueueType"
-      AND "entityType" = ${EntityType.Image}::"EntityType"
-      AND "entityId" = ANY(${ids}::integer[])
+    DELETE FROM "JobQueue" q
+    USING unnest(${ids}::integer[], ${data}::text[]) AS r(id, data)
+    WHERE q.type = ${JobQueueType.ImageStorageDelete}::"JobQueueType"
+      AND q."entityType" = ${EntityType.Image}::"EntityType"
+      AND q."entityId" = r.id
+      AND q.data IS NOT DISTINCT FROM r.data::jsonb
   `;
 }

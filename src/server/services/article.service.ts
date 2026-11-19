@@ -2029,8 +2029,6 @@ export const deleteArticleById = async ({
     // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
-    // The orphans are worked out where the connections go, so an image counts as one only once
-    // nothing else uses it, and queued there for `image-deletes`.
     const deleted = await dbWrite.$transaction(async (tx) => {
       const shown = await tx.article.findUnique({
         where: { id },

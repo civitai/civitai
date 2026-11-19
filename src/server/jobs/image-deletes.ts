@@ -18,7 +18,7 @@ type QueueRow = { id: number; moderatorDelete: boolean; attempted: boolean };
  * What the DELETE re-checks: an owner under a hold, or with a safety report on file, keeps every
  * image, since the review needs them. Only valid on a statement over an unaliased "Image".
  */
-export const queuedImageDeleteGuard = () => Prisma.sql`
+const queuedImageDeleteGuard = () => Prisma.sql`
   NOT ${ownerHeldSql(Prisma.raw('"Image"."userId"'))}
   AND NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = "Image"."userId")
 `;

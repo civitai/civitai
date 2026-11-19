@@ -98,6 +98,26 @@ describe('image-storage-deletes against Postgres', () => {
     ]);
   });
 
+  it('keeps a row a delete upgraded to every version while this run deleted its key', async () => {
+    mockDeleteImageFromS3.mockImplementation(async ({ id, url }: { id: number; url: string }) => {
+      if (id === DELETED_ID)
+        await db.exec(
+          `UPDATE "JobQueue" SET data = '{"url": "key-deleted", "allVersions": true}'
+           WHERE "entityId" = ${DELETED_ID} AND type = 'ImageStorageDelete'`
+        );
+      return OUTCOMES[url];
+    });
+
+    await runJob();
+
+    expect(
+      (await queueRows()).filter((row) => row.type === 'ImageStorageDelete').map((row) => row.data)
+    ).toEqual([
+      { url: 'key-deleted', allVersions: true },
+      { url: 'key-failed', attempted: true },
+    ]);
+  });
+
   it('retries a failed key without purging again, and keeps it while it still fails', async () => {
     await runJob();
     mockDeleteImageFromS3.mockClear();

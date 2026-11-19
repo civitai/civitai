@@ -332,9 +332,6 @@ async function deleteArticle(id: number, moderatorId: number): Promise<void> {
       .execute()
   ).map((c) => c.imageId);
 
-  // The orphans are worked out in the transaction that removes the article's connections, so an
-  // image counts as one only once nothing else uses it, and queued there for the main app's
-  // `image-deletes` job.
   await dbWrite.transaction().execute(async (trx) => {
     const article = await trx
       .selectFrom('Article')
