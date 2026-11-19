@@ -5,6 +5,7 @@ import type { AddressInfo } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 
 // The `pnpm dev` feed-go launcher's pieces (plain .mjs, run by node, never bundled), imported by
 // path as the dev-server tests do.
@@ -82,20 +83,41 @@ describe('platform/arch → release asset', () => {
     }
     expect(wf).toContain('sha256sum feed-go-v* > SHA256SUMS');
   });
+  // A published version's binary must never change under a developer who pinned it (the launcher
+  // re-verifies against SHA256SUMS, so a swapped asset + sums pair would be trusted), and a pull
+  // request must never get a token that can publish. Read structurally, so a reformat stays green.
   it('the release is create-only, and only the non-PR publish job can write', () => {
-    const wf = readFileSync(join(REPO, '.github/workflows/feed-go-release.yml'), 'utf8');
+    type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
+    type Job = { if?: string; permissions?: Record<string, string>; steps?: Step[] };
+    const wf = parse(readFileSync(join(REPO, '.github/workflows/feed-go-release.yml'), 'utf8')) as {
+      permissions?: Record<string, string>;
+      jobs: Record<string, Job>;
+    };
+    expect(wf.permissions?.contents).not.toBe('write');
+    const writers = Object.entries(wf.jobs)
+      .filter(([, j]) => j.permissions?.contents === 'write')
+      .map(([name]) => name);
+    expect(writers).toEqual(['publish']);
+    expect(wf.jobs.publish.if).toContain("github.event_name != 'pull_request'");
+
+    const runs = Object.values(wf.jobs).flatMap((j) => (j.steps ?? []).map((s) => s.run ?? ''));
     // No path that replaces or adds assets to an existing release.
-    expect(wf).not.toMatch(/--clobber|gh release upload|gh release edit|gh release delete/);
-    expect(wf).toContain('gh release create "$TAG"');
-    // An existing release fails the job before create.
-    expect(wf).toMatch(/if gh release view "\$TAG"[^\n]*\n[^\n]*::error::[^\n]*\n\s*exit 1/);
-    // Exactly one `contents: write`, in the publish job, which never runs on a pull_request.
-    expect(wf.match(/contents: write/g)).toHaveLength(1);
-    const publish = wf.slice(wf.indexOf('\n  publish:'));
-    expect(publish).toContain('contents: write');
-    expect(publish).toContain("github.event_name != 'pull_request'");
-    expect(wf.slice(0, wf.indexOf('\n  publish:'))).not.toContain('contents: write');
-    expect(wf).toContain('persist-credentials: false');
+    for (const r of runs) {
+      expect(r).not.toMatch(/--clobber|gh release (upload|edit|delete)/);
+    }
+    // The create step refuses an existing release before it creates one.
+    const create = runs.find((r) => r.includes('gh release create'));
+    expect(create).toBeDefined();
+    const view = create!.indexOf('gh release view');
+    expect(view).toBeGreaterThan(-1);
+    expect(view).toBeLessThan(create!.indexOf('gh release create'));
+    expect(create!.slice(view, create!.indexOf('gh release create'))).toMatch(/exit 1/);
+    // No checkout keeps the job's token in .git/config.
+    const checkouts = Object.values(wf.jobs)
+      .flatMap((j) => j.steps ?? [])
+      .filter((st) => st.uses?.startsWith('actions/checkout'));
+    expect(checkouts.length).toBeGreaterThan(0);
+    for (const st of checkouts) expect(st.with?.['persist-credentials']).toBe(false);
   });
 });
 
@@ -418,6 +440,9 @@ describe('what a run gives Next (planLaunch)', () => {
       FEED_GO_LOCAL_URL: PROXY,
     });
   });
+  // If Next started first it would take the port, isPortFree would then always say "taken", and
+  // feed-go would silently never start for anyone. planLaunch covers the decision; this pins that
+  // the launcher asks before it spawns Next.
   it('the launcher checks the port before it starts Next (seam: launcher.mjs order)', () => {
     const src = readFileSync(join(REPO, 'scripts/dev-feed-go/launcher.mjs'), 'utf8');
     const probe = src.indexOf('await isPortFree(port)');
@@ -477,7 +502,11 @@ describe('feed-go health monitoring', () => {
   it('never healthy within 60 s: gives up once, reports no change, stops polling', async () => {
     const h = monitorHarness([]);
     await h.m.start();
-    while (await h.step());
+    // Bounded: a monitor that never gives up would otherwise spin here on resolved promises with a
+    // fake clock, where vitest's timeout never fires. 60 polls of 1 s reach the 60 s window.
+    let polls = 0;
+    while (polls < 200 && (await h.step())) polls++;
+    expect(polls).toBeLessThan(200);
     expect(h.gaveUp()).toBe(1);
     expect(h.changes).toEqual([]);
     expect(h.m.healthy).toBe(false);
