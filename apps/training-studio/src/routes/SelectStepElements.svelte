@@ -1,0 +1,994 @@
+<script lang="ts">
+  import {
+    IconBoltFilled,
+    IconStarFilled,
+    IconCheck,
+    IconStack2,
+    IconMinus,
+    IconPlus,
+    IconX,
+    IconArrowRight,
+    IconSearch,
+  } from '@tabler/icons-svelte';
+  import { onMount, untrack } from 'svelte';
+  import '$lib/civitai-elements';
+  import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
+  import { serviceStatus } from '$lib/service-status.svelte';
+  import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
+  import { autoLabelAvailable, pickModel } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
+  import {
+    KOHYA_FLAG_KEY,
+    MEDIA_OPTIONS,
+    cardsForMedia,
+    visibleVersions,
+    editCards,
+    loraTypeById,
+    releasedLabel,
+    typesForMedia,
+    type LabelType,
+    type Media,
+    type ModelCard,
+  } from '$lib/data/trainingModels';
+  import {
+    MAX_RUNS,
+    cardFromPrice,
+    isCustom,
+    isValidAir,
+    labelModeForCard,
+    labelNoun,
+    newRun,
+    nextRunId,
+    recommendedCardFor,
+    blockedSelectionMessage,
+    cardUnavailability,
+    versionStatusKey,
+    runCard,
+    cardSupportsKohya,
+    kohyaSeedCard,
+    runEngine,
+    runSupportsKohya,
+    withEngine,
+    runFromPrice,
+    runVersion,
+    runVersionLabel,
+    selectionFromTotal,
+    sweepLabelMode,
+    versionOptions,
+    type Run,
+    type Selection,
+  } from './trainingFlow';
+
+  let {
+    onContinue,
+    prices,
+    enabledModelFlags = [],
+    initial = null,
+    startInEdit = false,
+    flowLabelMode = 'tag',
+    datasetLabeled = false,
+  }: {
+    onContinue: (sel: Selection) => void;
+    prices: Record<string, number>;
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`). Cards whose gate isn't in
+     *  this set are hidden from every offer surface below. */
+    enabledModelFlags?: string[];
+    /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
+     *  remount doesn't lose the chosen model(s). */
+    initial?: Selection | null;
+    /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
+    startInEdit?: boolean;
+    flowLabelMode?: LabelType;
+    datasetLabeled?: boolean;
+  } = $props();
+
+  // Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  const enabledFlags = $derived(new Set(enabledModelFlags));
+  const kohyaEnabled = $derived(enabledFlags.has(KOHYA_FLAG_KEY));
+
+  // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
+  // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
+  function price(cardType: string): number | null {
+    return focused.cardType === cardType ? runFromPrice(prices, focused) : cardFromPrice(prices, cardType, enabledFlags);
+  }
+
+  // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
+  // intentional one-time capture — the flow remounts this step, so a fresh mount re-seeds from the latest.
+  let media = $state<Media>(untrack(() => initial?.media ?? 'image'));
+  let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
+  let runs = $state<Run[]>(
+    untrack(() =>
+      initial
+        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
+        ? initial.runs.map((run) =>
+            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
+          )
+        : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
+    )
+  );
+  let focus = $state(0);
+  // The last Engine pick, kept apart from the runs: Kohya is image-only, so a trip through Video drops
+  // it from the run, and returning to Image should bring it back.
+  let kohyaPicked = untrack(() => runs.some((r) => runEngine(r) === 'kohya'));
+  let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
+  // Until the user touches the base model it tracks the type's recommendation; after that a type
+  // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
+  // Character→Style click is how a tester started (and paid for) a run on a model they never chose.
+  let userPickedModel = $state(untrack(() => initial?.userPickedModel ?? false));
+  // "Image edit" is its own section beside the media: edit LoRAs train on before/after pairs through a
+  // different Data step, so their models are never mixed into the Image list. The selection still says
+  // media 'image'; the section is read back from the run's card.
+  const EDIT_SECTION = 'image-edit';
+  let editSection = $state(untrack(() => !!initial && runCard(initial.runs[0]!).pairs === true));
+  const visibleEditCards = $derived(editCards(enabledFlags));
+  const sections = $derived([
+    ...MEDIA_OPTIONS.slice(0, 1),
+    ...(visibleEditCards.length ? [{ id: EDIT_SECTION, name: 'Image edit' }] : []),
+    ...MEDIA_OPTIONS.slice(1),
+  ]);
+  const activeSection = $derived(editSection ? EDIT_SECTION : media);
+
+  const types = $derived(typesForMedia(media));
+  const type = $derived(
+    editSection ? loraTypeById('edit') : (types.find((t) => t.id === loraType) ?? types[0]!)
+  );
+  const multi = $derived(runs.length > 1);
+  const primary = $derived(runs[0]!);
+  const focused = $derived(runs[focus] ?? primary);
+  const selectedCard = $derived(runCard(focused));
+  // Like the tiles, the Engine choice applies to the highlighted run.
+  const kohyaCards = $derived(
+    editSection ? [] : cardsForMedia(media, enabledFlags).filter(cardSupportsKohya)
+  );
+  const showEngine = $derived(kohyaEnabled && kohyaCards.length > 0);
+  const kohyaMode = $derived(showEngine && runEngine(focused) === 'kohya');
+  const recommendedType = $derived(type.recommended[media]);
+  // Undefined when the type has no recommendation for this media, when the recommended model is gated
+  // off for this user, or when Kohya is on and can't train it — the banner then simply doesn't show.
+  const recommendedCard = $derived(
+    recommendedType && !editSection
+      ? cardsForMedia(media, enabledFlags).find(
+          (c) => c.type === recommendedType && (!kohyaMode || cardSupportsKohya(c))
+        )
+      : undefined
+  );
+  // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
+  // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
+  // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
+  const FEATURED: Partial<Record<Media, string[]>> = {
+    image: ['zimage', 'mossimage', 'flux3klein', 'anima', 'krea2'],
+    video: ['minimaxh3', 'wan', 'ltx'],
+  };
+  const featuredCards = $derived.by(() => {
+    if (editSection) return visibleEditCards;
+    if (kohyaMode) return kohyaCards;
+    const cards = cardsForMedia(media, enabledFlags);
+    const featured = FEATURED[media];
+    if (!featured) return cards;
+    return featured
+      .map((t) => cards.find((c) => c.type === t))
+      .filter((c): c is (typeof cards)[number] => c !== undefined);
+  });
+  const otherCards = $derived.by(() => {
+    if (editSection || kohyaMode) return [];
+    const featured = FEATURED[media];
+    if (!featured) return [];
+    const featuredSet = new Set(featured);
+    return cardsForMedia(media, enabledFlags).filter((c) => !featuredSet.has(c.type));
+  });
+  let showAllModels = $state(false);
+  // Keep the tail open when the chosen model lives there, so the selection is never hidden.
+  const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
+  const modelsExpanded = $derived(showAllModels || selectedInOthers);
+  const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
+  const previousCard = $derived(initial ? runCard(initial.runs[0]!) : null);
+  // The mode the Data step will open on for these runs; the flow computes it the same way on Continue.
+  const labelMode = $derived(
+    sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) ??
+      labelModeForCard(previousCard, runCard(primary), flowLabelMode, datasetLabeled)
+  );
+  /** Whether `card` could take run `index`'s place with the other runs staying: the whole selection must
+   *  still share a dataset shape and label mode. */
+  function sweepAllows(card: ModelCard, index: number): boolean {
+    const cards = runs.map((r, i) => (i === index ? card : runCard(r)));
+    return sweepLabelMode(cards, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
+  const primaryPairs = $derived(runCard(primary).pairs === true);
+  /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
+  function sweepLockReason(card: ModelCard): string {
+    if (!!card.pairs !== primaryPairs)
+      return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
+    if (focus === 0)
+      return `Making ${card.name} the first run would change the dataset's tags/captions format, which your other runs can't use. One dataset can't mix — remove them to switch.`;
+    return `${card.name} can't train on ${labelMode === 'tag' ? 'tags' : 'captions'} like your other run. One dataset can't mix — remove the other run to switch.`;
+  }
+  // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
+  const total = $derived(selectionFromTotal(prices, runs));
+  const keptOverRecommendation = $derived(
+    !multi && userPickedModel && !!recommendedCard && recommendedCard.type !== primary.cardType
+  );
+
+  function pickSection(id: string) {
+    if (id !== EDIT_SECTION) return pickMedia(id as Media);
+    if (editSection || !visibleEditCards[0]) return;
+    editSection = true;
+    media = 'image';
+    loraType = 'edit';
+    runs = [newRun(visibleEditCards[0], enabledFlags)];
+    userPickedModel = false;
+    focus = 0;
+    sweepOpen = false;
+  }
+
+  // The flow reads its hand-off after this step mounts, so the prop can turn on late.
+  $effect(() => {
+    if (startInEdit && !initial) untrack(() => pickSection(EDIT_SECTION));
+  });
+
+  function pickMedia(m: Media) {
+    if (m === media && !editSection) return;
+    editSection = false;
+    media = m;
+    // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
+    // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
+    // So does the engine, when the new media has a Kohya model.
+    const next = typesForMedia(m);
+    const t = next.find((o) => o.id === loraType) ?? next[0]!;
+    loraType = t.id;
+    const kohyaCard =
+      kohyaEnabled && kohyaPicked ? kohyaSeedCard(t.id, m, enabledFlags, serviceStatus.value) : undefined;
+    runs = [
+      kohyaCard
+        ? withEngine(newRun(kohyaCard, enabledFlags, serviceStatus.value), 'kohya', enabledFlags)
+        : newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags),
+    ];
+    userPickedModel = false;
+    focus = 0;
+    sweepOpen = false;
+  }
+
+  function pickType(id: string) {
+    loraType = id;
+    if (runs.length === 1 && !userPickedModel && runEngine(primary) !== 'kohya') {
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags), enabledFlags)];
+      focus = 0;
+    }
+  }
+
+  // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
+  onMount(() => void serviceStatus.refresh());
+  const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+  // Defensive: not reachable today, but keep it — without it Continue would fall back to a mode some run can't take.
+  const sweepBroken = $derived(
+    multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
+  );
+
+  /** Whether a version chip's model is down (Custom has no catalog version: never). */
+  function versionDown(card: ModelCard, key: string) {
+    const v = card.versions.find((x) => x.key === key);
+    return v ? modelUnavailability(serviceStatus.value, versionStatusKey(v)) : null;
+  }
+
+  function cardLabel(
+    card: ModelCard,
+    cardPrice: number | null,
+    versionCount: number,
+    down: { reason: string | null } | null,
+    locked: boolean
+  ): string {
+    return [
+      `${card.name}. ${card.description}`,
+      cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.',
+      card.flag ? `${card.flag}.` : '',
+      versionCount > 1 ? `${versionCount} versions.` : '',
+      down ? `${UNAVAILABLE_LABEL}.` : '',
+      down?.reason ?? '',
+      locked ? `Unavailable. ${sweepLockReason(card)}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  function pickBase(card: ModelCard) {
+    if (multi && !sweepAllows(card, focus)) return; // dataset-shape lock
+    if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
+    runs = runs.map((r, i) => {
+      if (i !== focus) return r;
+      const run = { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id };
+      return kohyaMode ? withEngine(run, 'kohya', enabledFlags) : run;
+    });
+    userPickedModel = true;
+  }
+
+  function useRecommended() {
+    if (!recommendedCard) return;
+    runs = [newRun(recommendedCard, enabledFlags)];
+    focus = 0;
+    userPickedModel = false;
+  }
+
+  function openSweep() {
+    sweepOpen = true;
+    if (runs.length === 1) addRun();
+  }
+
+  /** The first Kohya model the highlighted run can move to: one the sweep's dataset allows, not down. */
+  const kohyaFallbackCard = $derived(
+    kohyaCards.find(
+      (c) =>
+        (!multi || sweepAllows(c, focus)) &&
+        !cardUnavailability(c, enabledFlags, serviceStatus.value)
+    )
+  );
+  const kohyaBlockedReason = $derived(
+    runSupportsKohya(focused) || kohyaFallbackCard
+      ? null
+      : 'No Kohya model is available for this run right now.'
+  );
+
+  /** Kohya on a model it can't train moves the run to the first Kohya model it can join. */
+  function pickEngine(engine: string, index = focus) {
+    if (engine === 'kohya' && !runSupportsKohya(runs[index]!)) {
+      const card = kohyaFallbackCard;
+      if (!card) return;
+      kohyaPicked = true;
+      runs = runs.map((r, i) =>
+        i === index
+          ? withEngine(
+              { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id },
+              'kohya',
+              enabledFlags
+            )
+          : r
+      );
+      return;
+    }
+    kohyaPicked = engine === 'kohya';
+    runs = runs.map((run, i) =>
+      i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
+    );
+  }
+
+  function pickVersion(runIndex: number, versionKey: string) {
+    runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
+    userPickedModel = true;
+  }
+  function setCustomAir(runIndex: number, value: string) {
+    // A hand-edited AIR is no longer the picked model — drop its name.
+    runs = runs.map((r, i) =>
+      i === runIndex ? { ...r, customAir: value, customName: undefined } : r
+    );
+    userPickedModel = true;
+    pickErrorRunId = null;
+  }
+  // A Custom run needs a valid pasted AIR before it can continue.
+  const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
+  const continueToData = () => onContinue({ media, loraType, runs, userPickedModel });
+
+  // The host's model picker (the embed's resource-select modal); absent standalone — the paste
+  // input then stands alone. Resolved at use time, like every other capability accessor.
+  let pickingRunId = $state<number | null>(null);
+  let pickErrorRunId = $state<number | null>(null);
+
+  async function browseModel(run: Run) {
+    const pick = pickModel();
+    if (!pick || pickingRunId !== null) return;
+    pickingRunId = run.id;
+    pickErrorRunId = null;
+    const airAtStart = run.customAir;
+    try {
+      const picked = await pick({ ecosystem: runVersion(run).ecosystem });
+      // Keyed by run id (a sweep row can be removed while the picker is open), and only onto an
+      // untouched input — a hand-edit during the pick beats a late resolution.
+      if (picked)
+        runs = runs.map((r) =>
+          r.id === run.id && r.customAir === airAtStart
+            ? { ...r, customAir: picked.air, customName: picked.name }
+            : r
+        );
+    } catch {
+      pickErrorRunId = run.id;
+    } finally {
+      pickingRunId = null;
+    }
+  }
+
+  function addRun() {
+    if (runs.length >= MAX_RUNS) return;
+    const src = runs[focus] ?? runs[0]!;
+    runs = [...runs, { ...src, id: nextRunId() }];
+    focus = runs.length - 1;
+  }
+
+  /** Removing run 1 makes the next run the lead, which can re-pick the dataset's mode and strand the rest. */
+  function removalAllowed(i: number): boolean {
+    const rest = runs.filter((_, k) => k !== i).map(runCard);
+    return rest.length === 0 || sweepLabelMode(rest, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
+
+  function removeRun(i: number) {
+    if (runs.length <= 1 || !removalAllowed(i)) return;
+    runs = runs.filter((_, k) => k !== i);
+    // Keep focus on the same run: removing one before it shifts every later run down a slot.
+    if (i < focus) focus -= 1;
+    if (focus >= runs.length) focus = runs.length - 1;
+    if (runs.length === 1) sweepOpen = false;
+  }
+
+  // Radiogroup arrow-key nav (media/type/base model): Tab enters at the checked radio (roving tabindex on
+  // the buttons), arrows move focus AND selection to the next/prev ENABLED option. Reads the DOM so it
+  // skips disabled (label-locked) tiles without index bookkeeping.
+  function radioKeydown(e: KeyboardEvent) {
+    const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+    const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+    if (!fwd && !back) return;
+    e.preventDefault();
+    const radios = [
+      ...(e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ].filter((r) => !r.disabled);
+    if (radios.length === 0) return;
+    let i = radios.findIndex((r) => r === document.activeElement);
+    if (i === -1) i = radios.findIndex((r) => r.getAttribute('aria-checked') === 'true');
+    if (i === -1) i = 0;
+    const target = radios[fwd ? (i + 1) % radios.length : (i - 1 + radios.length) % radios.length];
+    target.focus();
+    target.click();
+  }
+</script>
+
+
+
+{#snippet rowEnginePicker(run: Run, index: number)}
+  {#if kohyaEnabled && runSupportsKohya(run)}
+    <studio-chip-group
+      class="mt-2.5"
+      aria-label={`Run ${index + 1} training engine`}
+      data={[
+        { value: 'ai-toolkit', label: 'AI Toolkit' },
+        { value: 'kohya', label: 'Kohya' },
+      ]}
+      value={runEngine(run)}
+      onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value, index)}
+    ></studio-chip-group>
+  {/if}
+{/snippet}
+
+{#snippet customIncompleteNote()}
+  {#if blockedMessage}
+    <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+  {:else if customIncomplete}
+    <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">
+      Paste a Civitai model AIR for the custom base to continue.
+    </p>
+  {/if}
+{/snippet}
+
+<!-- A "from" price with a bolt, or a muted em-dash when there's no quote — used by the run summaries. -->
+{#snippet priceTag(amount: number | null, size: string)}
+  {#if amount != null}
+    <span class="whitespace-nowrap font-mono {size} text-buzz"
+      >from <IconBoltFilled size={12} stroke={2} class="mb-px inline" />{amount.toLocaleString()}</span
+    >
+  {:else}
+    <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
+  {/if}
+{/snippet}
+
+<!-- The "Starting at" total, shared by the summary aside and the mobile sticky bar. -->
+{#snippet totalTag(size: string, iconSize: number)}
+  {#if total != null}
+    <span class="whitespace-nowrap font-mono {size} font-bold text-buzz"
+      ><IconBoltFilled size={iconSize} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}</span
+    >
+  {:else}
+    <span class="font-mono {size} font-bold text-dark-2">—</span>
+  {/if}
+{/snippet}
+
+{#snippet continueButton(placement: string)}
+  <civitai-button
+    class={placement}
+    size="lg"
+    disabled={customIncomplete || !!blockedMessage || sweepBroken}
+    onclick={continueToData}
+  >
+    Continue to data<span slot="right"><IconArrowRight size={15} stroke={2} /></span>
+  </civitai-button>
+{/snippet}
+
+<!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
+     when it offers one (the embed's resource-select modal). -->
+{#snippet customAirInput(run: Run, runIndex: number)}
+  <div class="mt-2.5">
+    <div class="flex items-end gap-2">
+      <civitai-text-input
+        class="min-w-0 flex-1"
+        label="Civitai model AIR"
+        value={run.customAir ?? ''}
+        placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
+        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+      ></civitai-text-input>
+      {#if pickModel()}
+        <civitai-button
+          variant="outline"
+          size="sm"
+          disabled={pickingRunId !== null}
+          onclick={() => browseModel(run)}
+        >
+          <span slot="left"><IconSearch size={13} stroke={2} /></span>
+          {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
+        </civitai-button>
+      {/if}
+    </div>
+    <p class="mt-1 text-xs leading-snug text-dark-2">
+      {#if run.customAir && !isValidAir(run.customAir)}
+        <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
+      {:else if pickErrorRunId === run.id}
+        <span class="text-buzz">Couldn't open the model browser — paste the AIR instead.</span>
+      {:else if run.customName}
+        Training on <span class="font-semibold text-dark-0">{run.customName}</span>
+      {:else if pickModel()}
+        Browse for a Civitai model to train on, or paste its AIR from the model's page.
+      {:else}
+        Paste the AIR of a Civitai model to train on (copy it from the model's page).
+      {/if}
+    </p>
+  </div>
+{/snippet}
+
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+  <div class="flex min-w-0 flex-col gap-6">
+    <div>
+      <h2 class="m-0 text-xl font-semibold text-white">What do you want to train?</h2>
+      <p class="mt-1 text-sm text-dark-2">
+        Pick what you're making — we'll recommend a base model and tune the settings later.
+      </p>
+      {#if startInEdit && !initial && visibleEditCards.length === 0}
+        <p class="mt-2 text-sm text-red-400">
+          That training's before/after pairs need an Image edit model, which isn't available to you
+          yet — so they weren't added.
+        </p>
+      {/if}
+    </div>
+
+    <!-- Media + Type gate everything below (media always resets the model; type does until the user
+         picks one), so they stay labeled rows rather than a dropdown. -->
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div id="media-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
+          Media
+        </div>
+        <studio-chip-group
+          class="flex-1"
+          aria-label="Media"
+          data={sections.map((m) => ({ value: m.id, label: m.name }))}
+          value={activeSection}
+          onchange={(e: Event) => pickSection((e.currentTarget as StudioChipGroup).value)}
+        ></studio-chip-group>
+      </div>
+
+      {#if editSection}
+        <p class="m-0 rounded-md border border-dark-4 bg-dark-6 px-3.5 py-2.5 text-sm text-dark-2">
+          <span class="font-semibold text-dark-0">Teach an edit, not a subject.</span> You'll give it
+          before/after image pairs, each with the instruction that turns one into the other — like
+          "turn the person 90°" or "put the logo on the shirt".
+        </p>
+      {:else}
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div id="type-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
+          Type
+        </div>
+        <studio-chip-group
+          class="flex-1"
+          aria-label="Type"
+          data={types.map((t) => ({ value: t.id, label: t.name }))}
+          value={loraType}
+          onchange={(e: Event) => pickType((e.currentTarget as StudioChipGroup).value)}
+        ></studio-chip-group>
+      </div>
+      {/if}
+
+      {#if showEngine}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div id="engine-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
+            Engine
+          </div>
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <studio-chip-group
+              aria-label="Engine"
+              data={[
+                { value: 'ai-toolkit', label: 'AI Toolkit' },
+                {
+                  value: 'kohya',
+                  label: 'Kohya',
+                  disabled: !kohyaMode && !!kohyaBlockedReason,
+                  title: kohyaMode ? undefined : kohyaBlockedReason ?? undefined,
+                },
+              ]}
+              value={kohyaMode ? 'kohya' : 'ai-toolkit'}
+              onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value)}
+            ></studio-chip-group>
+            <span class="font-mono text-xs text-dark-2">
+              Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
+            </span>
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    <div>
+      <div class="mb-1 flex items-baseline justify-between gap-2">
+        <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
+        <div class="font-mono text-xs text-dark-2">
+          {primaryPairs
+            ? 'before/after pairs + instructions'
+            : labelMode === 'tag'
+              ? `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with tags`
+              : `${autoLabelAvailable() ? 'auto-labeled' : 'labeled'} with captions`}
+        </div>
+      </div>
+      {#if recommendedCard}
+        <p class="mb-3 text-[12.5px] leading-snug text-dark-1">
+          <IconStarFilled size={12} class="mr-0.5 inline text-buzz" />
+          We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
+          {type.name.toLowerCase()}
+          {media} LoRA —
+          {#if keptOverRecommendation}
+            keeping your pick, <span class="font-semibold text-white">{selectedCard.name}</span>.
+            <button
+              type="button"
+              onclick={useRecommended}
+              class="font-semibold text-primary underline-offset-2 hover:underline"
+            >
+              Use {recommendedCard.name} instead
+            </button>
+          {:else}
+            or pick any below.
+          {/if}
+        </p>
+      {/if}
+
+      <div
+        class="grid grid-cols-2 gap-2 sm:grid-cols-3"
+        role="radiogroup"
+        aria-label="Base model"
+        tabindex="-1"
+        onkeydown={radioKeydown}
+      >
+        {#each visibleCards as card (card.type)}
+          {@const selected = card.type === focused.cardType}
+          {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
+          {@const locked = multi && !selected && !sweepAllows(card, focus)}
+          {@const disabled = locked || (!!down && !selected)}
+          {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
+          {@const cardPrice = price(card.type)}
+          {@const versionCount = visibleVersions(card, enabledFlags).length}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabindex={selected ? 0 : -1}
+            {disabled}
+            onclick={() => pickBase(card)}
+            aria-label={cardLabel(card, cardPrice, versionCount, down, locked)}
+            title={locked ? sweepLockReason(card) : down ? (down.reason ?? UNAVAILABLE_LABEL) : undefined}
+            class="group relative flex flex-col rounded-md border p-3 text-left transition
+              {selected
+              ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40'
+              : 'border-dark-4 bg-dark-6 hover:border-dark-3 hover:bg-dark-5'}
+              {locked ? 'cursor-not-allowed opacity-40 grayscale' : ''}
+              {down && !selected && !locked ? 'cursor-not-allowed' : ''}"
+          >
+            <!-- A down card dims everything but its status, which stays readable. -->
+            <div class="flex items-center gap-2 {dim}">
+              <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
+                {card.name}
+              </div>
+              {#if selected}
+                <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+                  <IconCheck size={11} stroke={3} />
+                </span>
+              {/if}
+            </div>
+            <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
+                 the model name to "MiniMax …". -->
+            {#if card.flag}
+              <div class="mt-1 {dim}">
+                <civitai-badge variant="filled" size="sm">{card.flag}</civitai-badge>
+              </div>
+            {/if}
+            {#if down}
+              <div class="mt-1 text-xs leading-snug">
+                <div class="font-semibold text-buzz">{UNAVAILABLE_LABEL}</div>
+                {#if down.reason}<div class="line-clamp-2 text-dark-2">{down.reason}</div>{/if}
+              </div>
+            {/if}
+            <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
+                 and letting the height follow the text made the price rows sit at different heights. -->
+            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2 {dim}">
+              {card.description}
+            </div>
+            <div class="mt-auto flex items-center gap-2 pt-2 {dim}">
+              {#if cardPrice != null}
+                <span
+                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
+                >
+                  from <IconBoltFilled size={11} stroke={2} class="mx-px inline" />{cardPrice.toLocaleString()}
+                </span>
+              {:else}
+                <span class="font-mono text-xs text-dark-2">—</span>
+              {/if}
+              {#if releasedLabel(card.released)}
+                <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
+              {/if}
+              {#if versionCount > 1}
+                <span
+                  aria-hidden="true"
+                  title={`${versionCount} versions`}
+                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
+                >
+                  <IconStack2 size={10} stroke={2} />
+                  {versionCount}
+                </span>
+              {/if}
+            </div>
+          </button>
+        {/each}
+      </div>
+
+      {#if otherCards.length > 0}
+        <civitai-button
+          class="mt-2"
+          variant="subtle"
+          size="sm"
+          full-width
+          onclick={() => (showAllModels = !showAllModels)}
+        >
+          <span slot="left">
+            {#if modelsExpanded}<IconMinus size={12} stroke={2} />{:else}<IconPlus size={12} stroke={2} />{/if}
+          </span>
+          {#if modelsExpanded}
+            Show fewer models
+          {:else}
+            Show {otherCards.length} more model{otherCards.length ===
+            1
+              ? ''
+              : 's'}<span class="hidden sm:inline">
+              ({otherCards
+                .slice(0, 3)
+                .map((c) => c.name)
+                .join(', ')}…)</span
+            >
+          {/if}
+        </civitai-button>
+      {/if}
+
+      <BlueFirstNote class="mt-2" />
+
+      <!-- version choice for the single selected model, inline (no disclosure) -->
+      {#if !multi}
+        {@const card = selectedCard}
+        {@const runPrice = runFromPrice(prices, primary)}
+        {@const versions = versionOptions(card, enabledFlags, runEngine(primary))}
+        <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
+          <div class="flex items-center gap-3">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-bold text-dark-0">
+                {card.name}
+                {runVersionLabel(primary)}
+              </div>
+              <div class="font-mono text-xs text-dark-2">
+                {labelNoun(card)}{isCustom(primary) ? ' · custom' : ''}{runEngine(primary) === 'kohya' ? ' · Kohya' : ''}
+              </div>
+            </div>
+            <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
+          </div>
+          {#if versions.length > 1}
+            <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
+            <studio-chip-group
+              class="mt-1.5"
+              aria-label={`${card.name} version`}
+              data={versions.map((v) => {
+                const down = !!versionDown(card, v.key);
+                return {
+                  value: v.key,
+                  label: v.label,
+                  disabled: down && primary.versionKey !== v.key,
+                  title: down ? UNAVAILABLE_LABEL : undefined,
+                };
+              })}
+              value={primary.versionKey}
+              onchange={(e: Event) => pickVersion(0, (e.currentTarget as StudioChipGroup).value)}
+            ></studio-chip-group>
+          {/if}
+          {#if isCustom(primary)}
+            {@render customAirInput(primary, 0)}
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <!-- multi-run sweep (advanced): train several models / versions at once -->
+    <div class="rounded-xl border border-dark-4 bg-dark-6/40">
+      {#if !sweepOpen && !multi}
+        <button
+          type="button"
+          onclick={openSweep}
+          class="flex w-full flex-col items-start gap-0.5 px-3.5 py-2.5 text-left transition hover:bg-dark-6 sm:flex-row sm:items-center sm:justify-between sm:gap-2"
+        >
+          <span class="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold text-dark-1">
+            <IconPlus size={14} stroke={2} />Train an additional model
+          </span>
+          <span class="font-mono text-xs text-dark-2">same dataset · another model or settings</span>
+        </button>
+      {:else}
+        <div class="flex flex-col gap-2.5 p-3.5">
+          <div class="font-mono text-xs uppercase tracking-wider text-dark-2">
+            Training runs <span class="lowercase text-dark-2">· {runs.length} models · pick a tile above to change the highlighted run</span>
+          </div>
+          {#each runs as r, ri (r.id)}
+            {@const card = runCard(r)}
+            {@const focusedRow = ri === focus}
+            {@const runPrice = runFromPrice(prices, r)}
+            <!-- Whole-card pointer target: anywhere on the row focuses the run (inner controls keep
+                 their own behavior and bubble here, which also focuses — intended; the remove X is
+                 the exception, since its run is gone and removeRun already re-aims focus). Keyboard
+                 focus stays on the title button below, the semantic control — so no role/tabindex
+                 here. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              onclick={() => (focus = ri)}
+              class="cursor-pointer rounded-md border p-3 transition
+                {focusedRow
+                ? 'border-primary ring-2 ring-primary/30'
+                : 'border-dark-4 bg-dark-6 hover:border-dark-3'}"
+            >
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  aria-pressed={focusedRow}
+                  onclick={() => (focus = ri)}
+                  class="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-bold text-dark-0">
+                      Run {ri + 1} · {card.name}
+                      {runVersionLabel(r)}
+                    </div>
+                    <div class="font-mono text-xs text-dark-2">
+                      {labelNoun(card)}{isCustom(r) ? ' · custom' : ''}{runEngine(r) === 'kohya' ? ' · Kohya' : ''}{focusedRow ? ' · editing' : ''}
+                    </div>
+                  </div>
+                </button>
+                <div class="ml-auto shrink-0">{@render priceTag(runPrice, 'text-[13px]')}</div>
+                {#if multi}
+                  <civitai-action-button
+                    class="shrink-0"
+                    label={`Remove run ${ri + 1}`}
+                    disabled={!removalAllowed(ri)}
+                    title={removalAllowed(ri)
+                      ? undefined
+                      : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
+                    onclick={(e: Event) => {
+                      e.stopPropagation();
+                      removeRun(ri);
+                    }}
+                  >
+                    <span slot="icon"><IconX size={14} stroke={2} /></span>
+                  </civitai-action-button>
+                {/if}
+              </div>
+              {@render rowEnginePicker(r, ri)}
+              <studio-chip-group
+                class="mt-2.5"
+                aria-label={`Run ${ri + 1} version`}
+                data={versionOptions(card, enabledFlags, runEngine(r)).map((v) => {
+                  const down = !!versionDown(card, v.key);
+                  return {
+                    value: v.key,
+                    label: v.label,
+                    disabled: down && r.versionKey !== v.key,
+                    title: down ? UNAVAILABLE_LABEL : undefined,
+                  };
+                })}
+                value={r.versionKey}
+                onchange={(e: Event) => pickVersion(ri, (e.currentTarget as StudioChipGroup).value)}
+              ></studio-chip-group>
+              {#if isCustom(r)}
+                {@render customAirInput(r, ri)}
+              {/if}
+            </div>
+          {/each}
+          <civitai-button
+            variant="outline"
+            full-width
+            disabled={runs.length >= MAX_RUNS}
+            onclick={addRun}
+          >
+            <span slot="left"><IconPlus size={14} stroke={2} /></span>
+            Add another model to train
+          </civitai-button>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- summary -->
+  <StickySummary>
+    <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
+    <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+      <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">
+        {editSection ? 'Image edit' : media}
+      </span>
+    </div>
+    <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+      <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
+    </div>
+    {#each runs as r, ri (r.id)}
+      <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+        <span class="shrink-0 text-dark-2">{multi ? `Run ${ri + 1}` : 'Base model'}</span>
+        <span class="truncate text-right font-semibold text-dark-0" title={isCustom(r) ? r.customAir : undefined}>
+          {runCard(r).name}
+          {runVersionLabel(r)}
+        </span>
+      </div>
+    {/each}
+    <div class="flex justify-between gap-2.5 py-2 text-sm">
+      <span class="text-dark-2">{primaryPairs ? 'Dataset' : 'Labeling'}</span>
+      <span class="font-semibold text-dark-0">
+        {primaryPairs ? 'Edit pairs' : labelMode === 'tag' ? 'Tags' : 'Captions'}
+      </span>
+    </div>
+    <div class="flex items-baseline justify-between border-t border-dark-4 pt-2">
+      <span class="text-sm font-semibold text-white">Starting at</span>
+      {@render totalTag('text-2xl', 20)}
+    </div>
+    <div class="mt-1 text-right font-mono text-xs text-dark-2">
+      price depends on data and settings
+    </div>
+    <!-- Below lg the summary sits under the whole form, so the action lives in the sticky bar instead. -->
+    <div class="hidden lg:block">
+      {@render continueButton('mt-4 w-full')}
+      {@render customIncompleteNote()}
+    </div>
+    {#snippet footer()}
+      <p
+        class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--color-buzz)"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-3 w-3 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+        Nothing is saved until you start training
+      </p>
+    {/snippet}
+  </StickySummary>
+
+  <div
+    class="sticky bottom-3 z-20 rounded-xl border border-dark-4 bg-dark-6 p-3 shadow-lg lg:hidden"
+  >
+    <div class="flex items-center gap-3">
+      <!-- No quote: drop the price and let the button take the row rather than show a bare dash. -->
+      {#if total != null}
+        <div class="min-w-0 flex-1 leading-tight">
+          <div class="font-mono text-xs text-dark-2">Starting at</div>
+          {@render totalTag('text-lg', 16)}
+        </div>
+      {/if}
+      {@render continueButton(total != null ? 'shrink-0' : 'w-full')}
+    </div>
+    {@render customIncompleteNote()}
+  </div>
+</div>

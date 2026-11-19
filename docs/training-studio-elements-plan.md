@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress. Slice 0 (this plan + the Select-step spike) is on `feat/training-studio-elements`.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step is redesigned (#9552).
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -103,5 +103,16 @@ the embed as well as the standalone app.
 4. Run detail and My trainings (loss graph as the first Studio-owned element, epoch media cards).
 5. Studio-owned popover, then drop the remaining `@civitai/ui` imports from the Studio.
 
-No flag: each slice is a visual change to existing controls with the same behaviour, so a slice is
-reverted by reverting its PR.
+### The flag
+
+The whole redesign ships dark behind one Flipt flag, `training-studio-elements-ui`
+(`ELEMENTS_UI_FLAG_KEY`), and is opened to testers before anyone else (Luis, 2026-11-19). It has the same
+fail-closed semantics as the Studio's other gates: moderators only until the flag exists in Flipt, then
+its segments decide. The standalone shell evaluates it in `/new`'s load (it is in `hostFlagKeys()`); the
+main-app embed answers it through the `trainingStudioElementsUi` feature (`studioModelFlagFeatures`).
+
+Each redesigned screen is a separate copy, and the flag picks one, so the old screen stays exactly as
+it was: `SelectStep.svelte` (old) beside `SelectStepElements.svelte` (new), chosen in `TrainingFlow`.
+Shared components read the flag through `$lib/elements-ui` (`StickySummary` renders either panel).
+While both copies exist, a fix to a redesigned screen goes into both. The cleanup slice deletes the old
+copies, the context and the flag.

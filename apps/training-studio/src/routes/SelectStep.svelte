@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     IconBoltFilled,
+    IconSparkles,
     IconStarFilled,
     IconCheck,
     IconStack2,
@@ -11,13 +12,13 @@
     IconSearch,
   } from '@tabler/icons-svelte';
   import { onMount, untrack } from 'svelte';
-  import '$lib/civitai-elements';
-  import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
   import { autoLabelAvailable, pickModel } from '$lib/host';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
     KOHYA_FLAG_KEY,
     MEDIA_OPTIONS,
@@ -32,6 +33,7 @@
     type ModelCard,
   } from '$lib/data/trainingModels';
   import {
+    CUSTOM_VERSION_KEY,
     MAX_RUNS,
     cardFromPrice,
     isCustom,
@@ -441,16 +443,24 @@
 
 {#snippet rowEnginePicker(run: Run, index: number)}
   {#if kohyaEnabled && runSupportsKohya(run)}
-    <studio-chip-group
-      class="mt-2.5"
+    <div
+      class="mt-2.5 flex gap-2"
+      role="radiogroup"
+      tabindex="-1"
       aria-label={`Run ${index + 1} training engine`}
-      data={[
-        { value: 'ai-toolkit', label: 'AI Toolkit' },
-        { value: 'kohya', label: 'Kohya' },
-      ]}
-      value={runEngine(run)}
-      onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value, index)}
-    ></studio-chip-group>
+      onkeydown={radioKeydown}
+    >
+      {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
+        <Button
+          variant={runEngine(run) === engine.value ? 'default' : 'outline'}
+          size="sm"
+          role="radio"
+          aria-checked={runEngine(run) === engine.value}
+          tabindex={runEngine(run) === engine.value ? 0 : -1}
+          onclick={() => pickEngine(engine.value, index)}
+        >{engine.label}</Button>
+      {/each}
+    </div>
   {/if}
 {/snippet}
 
@@ -487,38 +497,44 @@
 {/snippet}
 
 {#snippet continueButton(placement: string)}
-  <civitai-button
-    class={placement}
-    size="lg"
+  <Button
+    class="h-11 {placement}"
     disabled={customIncomplete || !!blockedMessage || sweepBroken}
     onclick={continueToData}
   >
-    Continue to data<span slot="right"><IconArrowRight size={15} stroke={2} /></span>
-  </civitai-button>
+    Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+  </Button>
 {/snippet}
 
 <!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
      when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
   <div class="mt-2.5">
-    <div class="flex items-end gap-2">
-      <civitai-text-input
-        class="min-w-0 flex-1"
-        label="Civitai model AIR"
+    <label
+      for={`custom-air-${run.id}`}
+      class="font-mono text-xs uppercase tracking-wider text-dark-2"
+    >
+      Civitai model AIR
+    </label>
+    <div class="mt-1 flex items-center gap-2">
+      <Input
+        id={`custom-air-${run.id}`}
         value={run.customAir ?? ''}
+        oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
         placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-        oninput={(e: Event) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
-      ></civitai-text-input>
+        class="min-w-0 flex-1 font-mono text-xs"
+      />
       {#if pickModel()}
-        <civitai-button
+        <Button
           variant="outline"
           size="sm"
+          class="shrink-0"
           disabled={pickingRunId !== null}
           onclick={() => browseModel(run)}
         >
-          <span slot="left"><IconSearch size={13} stroke={2} /></span>
+          <IconSearch size={13} stroke={2} class="mr-1 inline" />
           {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
-        </civitai-button>
+        </Button>
       {/if}
     </div>
     <p class="mt-1 text-xs leading-snug text-dark-2">
@@ -553,19 +569,39 @@
     </div>
 
     <!-- Media + Type gate everything below (media always resets the model; type does until the user
-         picks one), so they stay labeled rows rather than a dropdown. -->
+         picks one), so they stay full labeled rows rather than a dropdown or a quiet segmented strip
+         that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="media-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Media
         </div>
-        <studio-chip-group
-          class="flex-1"
-          aria-label="Media"
-          data={sections.map((m) => ({ value: m.id, label: m.name }))}
-          value={activeSection}
-          onchange={(e: Event) => pickSection((e.currentTarget as StudioChipGroup).value)}
-        ></studio-chip-group>
+        <div
+          class="flex min-w-0 flex-1 flex-wrap gap-2"
+          role="radiogroup"
+          aria-labelledby="media-group-label"
+          tabindex="-1"
+          onkeydown={radioKeydown}
+        >
+          {#each sections as m (m.id)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={m.id === activeSection}
+              tabindex={m.id === activeSection ? 0 : -1}
+              onclick={() => pickSection(m.id)}
+              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
+                {m.id === activeSection
+                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+            >
+              {#if m.id === activeSection}
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+              {/if}
+              {m.name}
+            </button>
+          {/each}
+        </div>
       </div>
 
       {#if editSection}
@@ -579,13 +615,32 @@
         <div id="type-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Type
         </div>
-        <studio-chip-group
-          class="flex-1"
-          aria-label="Type"
-          data={types.map((t) => ({ value: t.id, label: t.name }))}
-          value={loraType}
-          onchange={(e: Event) => pickType((e.currentTarget as StudioChipGroup).value)}
-        ></studio-chip-group>
+        <div
+          class="flex min-w-0 flex-1 flex-wrap gap-2"
+          role="radiogroup"
+          aria-labelledby="type-group-label"
+          tabindex="-1"
+          onkeydown={radioKeydown}
+        >
+          {#each types as t (t.id)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={t.id === loraType}
+              tabindex={t.id === loraType ? 0 : -1}
+              onclick={() => pickType(t.id)}
+              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
+                {t.id === loraType
+                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+            >
+              {#if t.id === loraType}
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+              {/if}
+              {t.name}
+            </button>
+          {/each}
+        </div>
       </div>
       {/if}
 
@@ -595,20 +650,36 @@
             Engine
           </div>
           <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <studio-chip-group
-              aria-label="Engine"
-              data={[
-                { value: 'ai-toolkit', label: 'AI Toolkit' },
-                {
-                  value: 'kohya',
-                  label: 'Kohya',
-                  disabled: !kohyaMode && !!kohyaBlockedReason,
-                  title: kohyaMode ? undefined : kohyaBlockedReason ?? undefined,
-                },
-              ]}
-              value={kohyaMode ? 'kohya' : 'ai-toolkit'}
-              onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value)}
-            ></studio-chip-group>
+            <div
+              class="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-labelledby="engine-group-label"
+              tabindex="-1"
+              onkeydown={radioKeydown}
+            >
+              {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
+                {@const checked = kohyaMode === (engine.value === 'kohya')}
+                {@const blocked = engine.value === 'kohya' && !checked ? kohyaBlockedReason : null}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabindex={checked ? 0 : -1}
+                  disabled={!!blocked}
+                  title={blocked ?? undefined}
+                  onclick={() => pickEngine(engine.value)}
+                  class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40
+                    {checked
+                    ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                    : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+                >
+                  {#if checked}
+                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+                  {/if}
+                  {engine.label}
+                </button>
+              {/each}
+            </div>
             <span class="font-mono text-xs text-dark-2">
               Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
             </span>
@@ -695,7 +766,9 @@
                  the model name to "MiniMax …". -->
             {#if card.flag}
               <div class="mt-1 {dim}">
-                <civitai-badge variant="filled" size="sm">{card.flag}</civitai-badge>
+                <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{:else if card.flag === 'new'}<IconSparkles size={10} stroke={2.5} />{/if}{card.flag}
+                </span>
               </div>
             {/if}
             {#if down}
@@ -738,20 +811,15 @@
       </div>
 
       {#if otherCards.length > 0}
-        <civitai-button
-          class="mt-2"
-          variant="subtle"
-          size="sm"
-          full-width
+        <button
+          type="button"
           onclick={() => (showAllModels = !showAllModels)}
+          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 px-3 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
-          <span slot="left">
-            {#if modelsExpanded}<IconMinus size={12} stroke={2} />{:else}<IconPlus size={12} stroke={2} />{/if}
-          </span>
           {#if modelsExpanded}
-            Show fewer models
+            <IconMinus size={12} stroke={2} />Show fewer models
           {:else}
-            Show {otherCards.length} more model{otherCards.length ===
+            <IconPlus size={12} stroke={2} />Show {otherCards.length} more model{otherCards.length ===
             1
               ? ''
               : 's'}<span class="hidden sm:inline">
@@ -761,7 +829,7 @@
                 .join(', ')}…)</span
             >
           {/if}
-        </civitai-button>
+        </button>
       {/if}
 
       <BlueFirstNote class="mt-2" />
@@ -786,21 +854,31 @@
           </div>
           {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
-            <studio-chip-group
-              class="mt-1.5"
+            <div
+              class="mt-1.5 flex flex-wrap gap-2"
+              role="radiogroup"
               aria-label={`${card.name} version`}
-              data={versions.map((v) => {
-                const down = !!versionDown(card, v.key);
-                return {
-                  value: v.key,
-                  label: v.label,
-                  disabled: down && primary.versionKey !== v.key,
-                  title: down ? UNAVAILABLE_LABEL : undefined,
-                };
-              })}
-              value={primary.versionKey}
-              onchange={(e: Event) => pickVersion(0, (e.currentTarget as StudioChipGroup).value)}
-            ></studio-chip-group>
+            >
+              {#each versions as v (v.key)}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={primary.versionKey === v.key}
+                  disabled={!!versionDown(card, v.key) && primary.versionKey !== v.key}
+                  title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
+                  onclick={() => pickVersion(0, v.key)}
+                  class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
+                    {primary.versionKey === v.key
+                    ? 'border-primary bg-primary/10'
+                    : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
+                    {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                  </div>
+                </button>
+              {/each}
+            </div>
           {/if}
           {#if isCustom(primary)}
             {@render customAirInput(primary, 0)}
@@ -864,52 +942,58 @@
                 </button>
                 <div class="ml-auto shrink-0">{@render priceTag(runPrice, 'text-[13px]')}</div>
                 {#if multi}
-                  <civitai-action-button
-                    class="shrink-0"
-                    label={`Remove run ${ri + 1}`}
+                  <button
+                    type="button"
+                    aria-label={`Remove run ${ri + 1}`}
                     disabled={!removalAllowed(ri)}
                     title={removalAllowed(ri)
                       ? undefined
                       : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
-                    onclick={(e: Event) => {
+                    onclick={(e) => {
                       e.stopPropagation();
                       removeRun(ri);
                     }}
+                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-dark-4 disabled:hover:text-dark-2"
                   >
-                    <span slot="icon"><IconX size={14} stroke={2} /></span>
-                  </civitai-action-button>
+                    <IconX size={14} stroke={2} />
+                  </button>
                 {/if}
               </div>
               {@render rowEnginePicker(r, ri)}
-              <studio-chip-group
-                class="mt-2.5"
-                aria-label={`Run ${ri + 1} version`}
-                data={versionOptions(card, enabledFlags, runEngine(r)).map((v) => {
-                  const down = !!versionDown(card, v.key);
-                  return {
-                    value: v.key,
-                    label: v.label,
-                    disabled: down && r.versionKey !== v.key,
-                    title: down ? UNAVAILABLE_LABEL : undefined,
-                  };
-                })}
-                value={r.versionKey}
-                onchange={(e: Event) => pickVersion(ri, (e.currentTarget as StudioChipGroup).value)}
-              ></studio-chip-group>
+              <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
+                {#each versionOptions(card, enabledFlags, runEngine(r)) as v (v.key)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={r.versionKey === v.key}
+                    disabled={!!versionDown(card, v.key) && r.versionKey !== v.key}
+                    title={versionDown(card, v.key) ? UNAVAILABLE_LABEL : undefined}
+                    onclick={() => pickVersion(ri, v.key)}
+                    class="rounded border px-3 py-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-40
+                      {r.versionKey === v.key
+                      ? 'border-primary bg-primary/10'
+                      : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
+                      {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                    </div>
+                  </button>
+                {/each}
+              </div>
               {#if isCustom(r)}
                 {@render customAirInput(r, ri)}
               {/if}
             </div>
           {/each}
-          <civitai-button
-            variant="outline"
-            full-width
+          <button
+            type="button"
             disabled={runs.length >= MAX_RUNS}
             onclick={addRun}
+            class="w-full rounded-md border border-dashed border-dark-4 py-2.5 text-sm font-semibold text-dark-2 transition hover:border-primary hover:text-primary disabled:opacity-40"
           >
-            <span slot="left"><IconPlus size={14} stroke={2} /></span>
-            Add another model to train
-          </civitai-button>
+            + Add another model to train
+          </button>
         </div>
       {/if}
     </div>

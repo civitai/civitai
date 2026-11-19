@@ -412,6 +412,8 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
   // Training Studio's Manage tags find-and-replace row.
   trainingStudioTagFindReplace: {
     availability: ['mod'],
