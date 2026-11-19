@@ -243,7 +243,7 @@ func TestWritePackedResults(t *testing.T) {
 	want := []map[string]any{
 		{"msg": "cache write", "cache": "tag-ids", "key": "k:1", "id": 1.0, "result": "written"},
 		{"msg": "cache write", "cache": "tag-ids", "key": "k:2", "id": 2.0, "result": "nx_lost"},
-		{"msg": "cache write", "cache": "tag-ids", "key": "k:3", "id": 3.0, "result": "error"},
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:3", "id": 3.0, "result": "error", "err": "testkit: redis is down"},
 		{"msg": "cache write", "cache": "version-images", "key": "k:4", "id": 4.0, "result": "written"},
 	}
 	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
@@ -265,6 +265,117 @@ func TestWritePackedResults(t *testing.T) {
 	if got := lines2.lines(t); !reflect.DeepEqual(got, []map[string]any{{"msg": "cache write", "cache": "official-models",
 		"key": officialKey, "result": "written"}}) {
 		t.Fatalf("official models lines %v", got)
+	}
+}
+
+// The write-back pipeline runs detached from the request: a request context cancelled before the
+// pipeline executes (a sibling lookup failed and the page falls back, the client left, the budget ran
+// out) still writes the entries already computed, SET NX and overwrite alike, each counted and logged
+// written. Regression: on the request's context every write failed with context.Canceled and was
+// counted error. Fails on: writePacked pipelining on ctx instead of a detached context.
+func TestWritePackedLandsAfterRequestCancelled(t *testing.T) {
+	r := testkit.NewRedis()
+	obs := &observed{}
+	lines := &writeLines{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteLog: lines.log(100, nil)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.writePacked(ctx, []packedWrite{
+		{cache: MissTagIDs, id: 11, key: "k:11", val: []byte("v11"), ttl: time.Hour},
+		{cache: MissVersionImages, id: 12, key: "k:12", val: []byte("v12"), ttl: time.Hour, overwrite: true},
+	})
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/written": 1, "version-images/written": 1}) {
+		t.Fatalf("observed %v, want both written", o)
+	}
+	for k, want := range map[string]string{"k:11": "v11", "k:12": "v12"} {
+		if b, ok := r.String(k); !ok || string(b) != want {
+			t.Fatalf("%s holds %q (present %v), want %q", k, b, ok, want)
+		}
+	}
+	want := []map[string]any{
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:11", "id": 11.0, "result": "written"},
+		{"msg": "cache write", "cache": "version-images", "key": "k:12", "id": 12.0, "result": "written"},
+	}
+	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines\n got %v\nwant %v", got, want)
+	}
+}
+
+// The detached write is still bounded: a store slower than WriteTimeout fails the write, counted
+// error, its line carrying the error's text; nothing is written, and writePacked returns at the
+// bound rather than at the store's (here, an hour's) delay. Fails on: an unbounded detached context
+// (the test hangs), the bound not applied to the pipeline, or the error text missing from the line.
+func TestWritePackedDetachedTimeout(t *testing.T) {
+	r := testkit.NewRedis()
+	r.Delay = time.Hour
+	obs := &observed{}
+	lines := &writeLines{}
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{ObserveWrite: obs.observe, WriteLog: lines.log(100, nil),
+		WriteTimeout: 30 * time.Millisecond}}
+	start := time.Now()
+	s.writePacked(context.Background(), []packedWrite{{cache: MissTagIDs, id: 21, key: "k:21", val: []byte("v21"), ttl: time.Hour}})
+	if el := time.Since(start); el > 10*time.Second {
+		t.Fatalf("writePacked took %v, want about the 30ms bound", el)
+	}
+	if o := obs.get(); !reflect.DeepEqual(o, map[string]int{"tag-ids/error": 1}) {
+		t.Fatalf("observed %v, want 1 error", o)
+	}
+	if _, ok := r.String("k:21"); ok {
+		t.Fatal("k:21 written past the bound")
+	}
+	want := []map[string]any{
+		{"msg": "cache write", "cache": "tag-ids", "key": "k:21", "id": 21.0, "result": "error", "err": "context deadline exceeded"},
+	}
+	if got := lines.lines(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines\n got %v\nwant %v", got, want)
+	}
+}
+
+// The revalidation locks taken are released after the writes even when the request has ended:
+// releaseLocks runs detached, as writePacked does. Fails on: the DEL pipelined on the cancelled
+// request context (the lock then lingers to its expiry, and other revalidations serve stale).
+func TestReleaseLocksAfterRequestCancelled(t *testing.T) {
+	r := testkit.NewRedis()
+	r.SetString("lock:31", []byte("1"))
+	s := &Sources{Packed: &PackedReader{Redis: r}, Compute: &MissCompute{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.releaseLocks(ctx, []string{"lock:31"})
+	if _, ok := r.String("lock:31"); ok {
+		t.Fatal("lock:31 still held after release on a cancelled request")
+	}
+}
+
+// The detached write's default bound is 1 s (cacheWriteTimeout), with or without a computation;
+// WriteTimeout replaces it. Invariant guard on the constant: fails if the default bound is dropped
+// (no deadline) or changed.
+func TestWriteContextBound(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name string
+		c    *MissCompute
+		want time.Duration
+	}{
+		{"nil", nil, time.Second},
+		{"zero", &MissCompute{}, time.Second},
+		{"custom", &MissCompute{WriteTimeout: 5 * time.Second}, 5 * time.Second},
+	}
+	for _, tc := range cases {
+		before := time.Now()
+		ctx, done := tc.c.writeContext(parent)
+		dl, ok := ctx.Deadline()
+		err := ctx.Err()
+		done()
+		if !ok {
+			t.Fatalf("%s: no deadline", tc.name)
+		}
+		if err != nil {
+			t.Fatalf("%s: write context already ended (%v): the parent's cancellation leaked in", tc.name, err)
+		}
+		if d := dl.Sub(before); d < tc.want || d > tc.want+time.Second {
+			t.Fatalf("%s: deadline %v after start, want %v", tc.name, d, tc.want)
+		}
 	}
 }
 

@@ -70,6 +70,9 @@ type MissCompute struct {
 	ObserveWrite func(cache, result string, n int)
 	// WriteLog logs each cache write, rate-limited (FEED_GO_CACHE_WRITE_LOG_PER_MIN); nil logs none.
 	WriteLog *WriteLog
+	// WriteTimeout bounds one write-back round trip, run detached from the request (writeContext);
+	// 0 is cacheWriteTimeout. Tests shorten it.
+	WriteTimeout time.Duration
 	// FrameNegative mirrors the `frame-cache-negative` flag (FEED_GO_FRAME_CACHE_NEGATIVE): whether the
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,
 	// as Node does while the flag is off. It is one flag for every entity's frame cache, so it
@@ -619,11 +622,14 @@ func (s *Sources) revalidateStale(ctx context.Context, spec lookupSpec, got map[
 
 // releaseLocks deletes the revalidation locks taken, best effort, after the writes (Node deletes
 // them after its write; a failed delete leaves the lock to its 10 s expiry). A failed lookup leaves
-// them to expire, as Node's does.
+// them to expire, as Node's does. Like the writes it follows, it runs detached from the request
+// (writeContext): a request that ended after its writes still releases its locks.
 func (s *Sources) releaseLocks(ctx context.Context, locks []string) {
 	if len(locks) == 0 {
 		return
 	}
+	ctx, cancel := s.Compute.writeContext(ctx)
+	defer cancel()
 	// One DEL per key: the locks of different ids live in different cluster slots.
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for _, k := range locks {
@@ -652,24 +658,28 @@ func (s *Sources) fillModelEvents(ctx context.Context, models []int, got map[int
 }
 
 // writePacked sends writes in one pipeline, best effort: Node swallows a failed cache write too (the
-// lookup has already answered). Each write is counted and logged with its result (recordWrite).
+// lookup has already answered). The pipeline runs detached from the request, under its own bound
+// (writeContext), so a request that ends first does not cancel entries already computed. Each write
+// is counted and logged with its result (recordWrite), an error with its text.
 func (s *Sources) writePacked(ctx context.Context, writes []packedWrite) {
 	if len(writes) == 0 || s.Packed.Redis == nil {
 		return
 	}
+	wctx, cancel := s.Compute.writeContext(ctx)
+	defer cancel()
 	cmds := make([]redis.Cmder, len(writes))
-	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+	_, _ = s.Packed.Redis.Pipelined(wctx, func(p redis.Pipeliner) error {
 		for i, w := range writes {
 			if w.overwrite {
-				cmds[i] = p.Set(ctx, w.key, w.val, w.ttl)
+				cmds[i] = p.Set(wctx, w.key, w.val, w.ttl)
 				continue
 			}
-			cmds[i] = p.SetNX(ctx, w.key, w.val, w.ttl)
+			cmds[i] = p.SetNX(wctx, w.key, w.val, w.ttl)
 		}
 		return nil
 	})
 	for i, w := range writes {
-		s.Compute.recordWrite(ctx, w.cache, w.key, w.id, packedWriteResult(cmds[i]))
+		s.Compute.recordWrite(ctx, w.cache, w.key, w.id, packedWriteResult(cmds[i]), cmds[i].Err())
 	}
 }
 

@@ -103,16 +103,39 @@ func (c *MissCompute) writes(cache string) bool {
 	return c != nil && c.WriteBack[cache]
 }
 
-// recordWrite counts one cache write (ObserveWrite) and logs it (WriteLog). id 0 is a key with no
-// per-id suffix (the official models). A nil computation records nothing.
-func (c *MissCompute) recordWrite(ctx context.Context, cache, key string, id int, result string) {
+// recordWrite counts one cache write (ObserveWrite) and logs it (WriteLog), with err, the command's
+// error, on an error line. id 0 is a key with no per-id suffix (the official models). A nil
+// computation records nothing.
+func (c *MissCompute) recordWrite(ctx context.Context, cache, key string, id int, result string, err error) {
 	if c == nil {
 		return
 	}
 	if c.ObserveWrite != nil {
 		c.ObserveWrite(cache, result, 1)
 	}
-	c.WriteLog.write(ctx, cache, key, id, result)
+	c.WriteLog.writeErr(ctx, cache, key, id, result, err)
+}
+
+// cacheWriteTimeout bounds one write-back round trip (the entries' SETs, the revalidation locks'
+// release), which runs detached from the request (writeContext). A healthy pipeline answers in
+// milliseconds, so the bound only bites on a sick store; it is the default system-store read bound
+// (REDIS_SYS_READ_TIMEOUT_MS, 1000 ms), below go-redis's default 3 s read timeout, so it also caps how
+// long a page that already failed (and falls back) waits on its writes. The writes run inline on the
+// computing goroutine, so a request handler still returns only after them, and a draining shutdown
+// waits for them like any other in-flight work.
+const cacheWriteTimeout = time.Second
+
+// writeContext is the context of a write-back round trip: ctx's values (its span, so the write stays
+// in the request's trace) without its cancellation or deadline, bounded by the computation's
+// WriteTimeout (0: cacheWriteTimeout). The writes come after the lookup has answered, so a request
+// that ends meanwhile (a sibling lookup failed and the page falls back, the client left, the budget
+// ran out) no longer cancels entries already computed; they still land at most the bound later.
+func (c *MissCompute) writeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := cacheWriteTimeout
+	if c != nil && c.WriteTimeout > 0 {
+		d = c.WriteTimeout
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), d)
 }
 
 // WriteLog writes one `cache write` line per cache write (written, nx_lost or error), so the keys a
@@ -173,6 +196,13 @@ func (l *WriteLog) allow(k writeLogKey) (bool, int) {
 
 // write logs one cache write, within the limit. A nil log, or PerMinute <= 0, writes nothing.
 func (l *WriteLog) write(ctx context.Context, cache, key string, id int, result string) {
+	l.writeErr(ctx, cache, key, id, result, nil)
+}
+
+// writeErr is write, an error line also carrying err's text (`err`), so a failed write can be told
+// apart (a timeout, a refused connection, a cluster redirect) from the log alone. The text is the
+// store client's error, never the value.
+func (l *WriteLog) writeErr(ctx context.Context, cache, key string, id int, result string, err error) {
 	if l == nil || l.Log == nil || l.PerMinute <= 0 {
 		return
 	}
@@ -185,6 +215,9 @@ func (l *WriteLog) write(ctx context.Context, cache, key string, id int, result 
 		attrs = append(attrs, "id", id)
 	}
 	attrs = append(attrs, "result", result)
+	if result == WriteError && err != nil {
+		attrs = append(attrs, "err", err.Error())
+	}
 	if suppressed > 0 {
 		attrs = append(attrs, "suppressed", suppressed)
 	}
