@@ -32,6 +32,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsLazy: vi.fn(({ user }: { user?: unknown }) => flagsFor(user)),
   getFeatureFlags: vi.fn(({ user }: { user?: unknown }) => flagsFor(user)),
+  getFeatureFlagsAsync: vi.fn(async ({ user }: { user?: unknown }) => flagsFor(user)),
 }));
 vi.mock('~/server/routers', async () => {
   const { publicProcedure, protectedProcedure, restrictedAccountAppealProcedure, router } =
@@ -51,7 +52,9 @@ vi.mock('~/server/routers', async () => {
 const { createContext } = await import('~/server/createContext');
 const { createCallerFactory } = await import('~/server/trpc');
 const { appRouter } = await import('~/server/routers');
-const { getServerProxySSGHelpers } = await import('~/server/utils/server-side-helpers');
+const { getServerProxySSGHelpers, createServerSideProps } = await import(
+  '~/server/utils/server-side-helpers'
+);
 const { createPlannerCaller } = await import('~/server/utils/planner-endpoint');
 
 const call = createCallerFactory(appRouter as never) as unknown as (ctx: unknown) => {
@@ -204,5 +207,25 @@ describe('a moderator on a scoped API key', () => {
     };
     await expect(plannerFor(scopedKey).moderates()).resolves.toBe(false);
     await expect(plannerFor().moderates()).resolves.toBe(true);
+  });
+
+  it("evaluates a page's flags for that user; a session keeps moderator-only ones", async () => {
+    const page = createServerSideProps({
+      useSession: true,
+      useSSG: true,
+      resolver: async ({ features }) => ({ props: { adminTags: !!features?.adminTags } }),
+    });
+    const visit = async (context?: Record<string, unknown>) => {
+      state.session = { user: MOD };
+      const { req, res } = request(context);
+      Object.assign(req, { url: '/models', session: { user: MOD } });
+      if (context) req.headers.authorization = 'Bearer key';
+      const result = (await page({ req, res, query: {}, resolvedUrl: '/models' } as never)) as {
+        props?: { adminTags?: boolean };
+      };
+      return result.props?.adminTags;
+    };
+    expect(await visit(scopedKey)).toBe(false);
+    expect(await visit()).toBe(true);
   });
 });

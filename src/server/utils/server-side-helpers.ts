@@ -281,10 +281,11 @@ export function createServerSideProps<P>({
     const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
       BOT_CACHE_REQ_KEY
     ];
+    const viewer = withModeratorRightsFor(session?.user, getRequestCredential(context.req));
     const features = await getFeatureFlagsAsync(
       botCacheCandidate
-        ? { user: session?.user, host: context.req.headers.host, req: undefined }
-        : { user: session?.user, req: context.req }
+        ? { user: viewer, host: context.req.headers.host, req: undefined }
+        : { user: viewer, req: context.req }
     );
     // This response is private, so it is where the viewer's shell rollout is read: the route cookie
     // follows the flag, and only a request carrying it is ever considered for the shell.
