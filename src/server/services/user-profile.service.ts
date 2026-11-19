@@ -134,8 +134,7 @@ export const getUserWithProfile = async ({
   }
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
-    // The Prisma read's picture passed the servable-profile-picture extension, block markers
-    // included; the Kysely read's carries its `blockedFor` beside it.
+    // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
     const { user, pictureBlockedFor } = viaKysely
       ? await readUserWithProfileAndPictureGateViaKysely(kyselyWrite, { id, username })
       : {

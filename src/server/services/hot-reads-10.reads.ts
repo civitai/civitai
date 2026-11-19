@@ -3,6 +3,7 @@ import {
   fallbackUserImage,
   servableProfilePicture,
 } from '~/server/services/profile-picture.servable';
+import { heldPictureOf } from '~/server/services/user-creator.reads';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getCollectionByIdRow } from '@civitai/db-queries/hot-reads-10';
@@ -108,13 +109,7 @@ export async function readCollectionByIdViaKysely(
       id: row.ownerId,
       username: row.ownerUsername,
       deletedAt: row.ownerDeletedAt,
-      image: fallbackUserImage(row.ownerImage, {
-        url: row.profilePictureUrl,
-        needsReview: row.profilePictureNeedsReview,
-        ingestion: row.profilePictureIngestion,
-        nsfwLevel: row.profilePictureNsfwLevel,
-        blockedFor: row.profilePictureBlockedFor,
-      }),
+      image: fallbackUserImage(row.ownerImage, heldPictureOf(row)),
       // One payload for every viewer: no owner exception.
       profilePicture: servableProfilePicture(
         row.profilePictureId !== null
