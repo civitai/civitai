@@ -61,6 +61,8 @@ let images: ImageRow[] = [];
 let queue: QueueRow[] = [];
 /** Rows handed back per reversal pass, terminating empty pass included. */
 let claimedPerPass: number[] = [];
+/** The owner is neither deleted nor banned. */
+let ownerLive = true;
 
 function splitTopLevel(body: string) {
   const parts: string[] = [];
@@ -156,6 +158,12 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
       return (row: ImageRow) => row.metadata[args[0] as string] != null;
     if (/^\s*i\."metadata"->>\?::text IN /.test(clause) && ENUM_RANGE.test(clause))
       return (row: ImageRow) => INGESTION_STATUSES.includes(row.metadata[args[0] as string]);
+    if (
+      /^\s*\(SELECT COALESCE\(u\."deletedAt", u\."bannedAt"\) IS NULL FROM "User" u WHERE u\.id = \?\)\s*$/.test(
+        clause
+      )
+    )
+      return (row: ImageRow) => row.userId === args[0] && ownerLive;
     throw new Error(`unrecognized reversal predicate: ${clause.trim()}`);
   });
 
@@ -235,6 +243,7 @@ beforeEach(() => {
   images = [];
   queue = [];
   claimedPerPass = [];
+  ownerLive = true;
   mockSysRedis.sAdd.mockResolvedValue(1);
 
   mockDbWrite.$queryRaw.mockImplementation(
@@ -445,6 +454,19 @@ describe('unblockAccountDeletionImages', () => {
     expect(images.every((row) => row.ingestion === 'Scanned')).toBe(true);
     for (const [ids] of mockResetNsfwLevel.mock.calls as unknown as number[][][])
       expect(ids.length).toBeLessThanOrEqual(RESTORE_BATCH_SIZE);
+  });
+
+  it('stops at the next pass once the owner is banned or deleted again', async () => {
+    images = Array.from({ length: RESTORE_BATCH_SIZE + 3 }, (_, i) => hidden(i + 1, 'Scanned'));
+    mockResetNsfwLevel.mockImplementationOnce(async () => {
+      ownerLive = false;
+    });
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(claimedPerPass).toEqual([RESTORE_BATCH_SIZE, 0]);
+    expect(result.unblocked).toBe(RESTORE_BATCH_SIZE);
+    expect(images.filter((row) => row.ingestion === 'Blocked')).toHaveLength(3);
   });
 
   it('skips a row whose breadcrumb is not a real ingestion status and restores the rest', async () => {
