@@ -22,8 +22,9 @@ export const ARCHIVE_SCAN_PAGE_SIZE = 500;
  * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
  * exactly the row set a single unpaged query with the same filter would have returned.
  *
- * ⚠️ PRECONDITION: paging is only cheap where an index serves the caller's filter. Each caller's
- * comment says how its table meets that.
+ * ⚠️ PRECONDITION: paging is only cheap where an index serves the caller's filter. For the
+ * user-content readers, see `userContentReaders`; for the base bundle, see its writer in
+ * csam.service-new.ts.
  *
  * Lazy: the first query is not issued until the generator is first pulled from. Callers depend on
  * that.
@@ -61,8 +62,11 @@ type Reader = (db: Db, userId: number, pageSize?: number) => AsyncIterable<unkno
  * names the hold decisions that cleared it in `blankedReasons`. A clear from the moderator endpoint
  * leaves no database record, so an empty list does not prove the profile was never cleared.
  *
- * Each table's owner filter is served by an owner index in the database, some of which the Prisma
- * schema does not declare, except `PostText`, `Question` and `Answer`, which are small.
+ * Index posture, read off the database rather than the Prisma schema: `Post`, `Article` and
+ * `BountyEntry` have `userId` indexes the schema does not declare; `Collection` and `ChatMember`
+ * have declared `userId` btree indexes, `Bounty` and `ResourceReview` hash indexes;
+ * `ServiceOffering` has `(sellerId, status)`. `PostText`, `Question` and `Answer` have none and
+ * are small. `ChatMessage` is paged per chat; see `chatMessages`. All reads use the read pool.
  */
 export const userContentReaders: { name: string; rows: Reader }[] = [
   {
