@@ -63,7 +63,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   ImageGuard2.BlurToggle = function BlurToggle() {
     return <span data-testid="rating">PG</span>;
   };
-  return { ImageGuard2 };
+  const ImageGuardContent = ({ children }: any) => <>{children(true)}</>;
+  return { ImageGuard2, ImageGuardContent };
 });
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -142,14 +143,14 @@ describe('a song on the post page', () => {
     expect(player().playing).toBe(false);
   });
 
-  test('a song in the middle of the post: Up next is the songs after it', async () => {
+  test('a song in the middle of the post: Up next is the songs after it, then the earlier ones', async () => {
     await renderWithProviders(
       <PostImages postId={100} postTitle="Night Drive" images={post as any} />
     );
     await page.getByRole('button', { name: 'Play Untitled song' }).click();
     expect(player().current?.id).toBe(3);
     expect(player().listName).toBe('Night Drive');
-    expect(ids(player().list)).toEqual([4]);
+    expect(ids(player().list)).toEqual([4, 1]);
   });
 
   test('a post with one song leaves Up next empty', async () => {
@@ -177,6 +178,8 @@ describe('a song on the post page', () => {
     expect(items('Play now')).toHaveLength(3);
     (items('Play now')[2] as HTMLElement).click();
     expect(player().current?.id).toBe(4);
+    // A post's songs wrap, so every one is already in Up next; clear it to see the queue actions.
+    player().clearUpNext();
 
     (items('Add to up next')[0] as HTMLElement).click();
     (items('Play next')[1] as HTMLElement).click();

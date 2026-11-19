@@ -10,6 +10,7 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as ImageDetailProviderModule from '~/components/Image/Detail/ImageDetailProvider';
+import { mergeDetailItems } from '~/components/Image/Detail/detail-items';
 import type * as HatTurfDetailControlsModule from '~/components/HatTurf/detail/HatTurfDetailControls';
 import type * as HatTurfDetailProviderModule from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import type * as ImageDetailCarouselModule from '~/components/Image/DetailV2/ImageDetailCarousel';
@@ -66,6 +67,11 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
   ...(await importOriginal<typeof ImageDetailProviderModule>()),
   useImageDetailContext: () => ({
     images: state.images ?? [state.image],
+    items: mergeDetailItems(
+      (state.images ?? [state.image]) as { id: number; postId: number }[],
+      undefined
+    ),
+    navigateTo: () => undefined,
     index: state.index,
     active: false,
     close: () => undefined,
@@ -419,7 +425,9 @@ describe('the song stage beside the open sidebar', () => {
     [1280, 900],
   ])
     for (const withLyrics of [false, true])
-      test(`fits left of the sidebar at ${width}px ${withLyrics ? 'with lyrics' : 'without lyrics'}`, async () => {
+      test(`fits left of the sidebar at ${width}px ${
+        withLyrics ? 'with lyrics' : 'without lyrics'
+      }`, async () => {
         await page.viewport(width, height);
         state.realCarousel = true;
         state.lyrics = withLyrics ? LYRICS : [];
@@ -431,7 +439,11 @@ describe('the song stage beside the open sidebar', () => {
         const stage = page.getByTestId('song-detail-stage').nth(1);
         await expect.element(stage).toBeInTheDocument();
         await expect
-          .element(withLyrics ? stage.getByTestId('song-lyrics') : stage.getByText('No lyrics on this one.'))
+          .element(
+            withLyrics
+              ? stage.getByTestId('song-lyrics')
+              : stage.getByText('No lyrics on this one.')
+          )
           .toBeVisible();
         const sheet = page.getByTestId('image-detail-sheet').element().getBoundingClientRect();
         expect(sheet.width).toBe(450);
@@ -440,7 +452,9 @@ describe('the song stage beside the open sidebar', () => {
         // sidebar, and nothing in it past its right edge.
         const box = stage.element().getBoundingClientRect();
         const contentRight = Math.max(
-          ...[...stage.element().querySelectorAll('*')].map((el) => el.getBoundingClientRect().right)
+          ...[...stage.element().querySelectorAll('*')].map(
+            (el) => el.getBoundingClientRect().right
+          )
         );
         expect({ stage: box.width, overflow: Math.max(0, contentRight - box.right) }).toEqual({
           stage: sheet.left,
@@ -490,7 +504,9 @@ describe('the detail view over the site with the player bar open', () => {
                 </PageModal>
               </ContainerProvider>
             </div>
-            {withBar && <div data-music-player-bar="" className="shrink-0" style={{ height: BAR }} />}
+            {withBar && (
+              <div data-music-player-bar="" className="shrink-0" style={{ height: BAR }} />
+            )}
           </div>
         </MantineProvider>
       </QueryClientProvider>
@@ -498,7 +514,9 @@ describe('the detail view over the site with the player bar open', () => {
   }
 
   for (const withBar of [true, false])
-    test(`ends ${withBar ? 'above the bar' : 'at the window’s bottom'}, its last card reachable`, async () => {
+    test(`ends ${
+      withBar ? 'above the bar' : 'at the window’s bottom'
+    }, its last card reachable`, async () => {
       await page.viewport(1860, 1080);
       await renderUnderBar(withBar);
       await expect.element(page.getByTestId('song-more-from')).toBeInTheDocument();

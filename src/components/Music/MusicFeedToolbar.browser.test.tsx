@@ -26,12 +26,12 @@ vi.mock('~/components/Music/MusicLandingSections', () => ({
   RecentlyPlayedSection: () => null,
   RisingSection: () => null,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/components/Filters/useSortAvailability', () => ({
   useSortAvailability: () => ({ isModerator: false, canViewNsfw: false, showNsfw: false }),
 }));
 
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { MusicFeedPage } from '~/components/Music/MusicFeedPage';
 import { FiltersProvider } from '~/providers/FiltersProvider';
@@ -45,11 +45,13 @@ beforeEach(() => {
 test('at phone width the toolbar keeps its three controls on one row, inside the page', async () => {
   await page.viewport(390, 844);
   await renderWithProviders(
-    <ContainerProvider containerName="main">
-      <FiltersProvider>
-        <MusicFeedPage />
-      </FiltersProvider>
-    </ContainerProvider>
+    <SignedOutSessionProvider>
+      <ContainerProvider containerName="main">
+        <FiltersProvider>
+          <MusicFeedPage />
+        </FiltersProvider>
+      </ContainerProvider>
+    </SignedOutSessionProvider>
   );
   const toggle = page.getByRole('radiogroup', { name: 'View' });
   await expect.element(toggle).toBeVisible();
