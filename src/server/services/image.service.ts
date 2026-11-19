@@ -4216,10 +4216,7 @@ export const getImageMetricsObjectDirect = async (
   }
 };
 
-/**
- * Song play counts by id, through the image metric reader; an id the reader could not answer is
- * left out. A separate read so `image.getInfinite`'s stats stay as they are.
- */
+/** Play counts by song id, for the songs the viewer can open; an id the reader could not answer is left out. */
 export async function getSongPlayCounts({
   ids,
   features,

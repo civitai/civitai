@@ -2,21 +2,24 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
 /**
- * The ids of the songs with the most plays today and the 6 days before, most first, ties newest
- * first; one list for every viewer and genre. Owners' and moderators' plays count. Ids only: the
- * client reads them through the image feed, which applies visibility and the viewer's hidden
- * users and tags.
+ * Song ids by plays in the last week, most first, ties newest first; one cached list for every
+ * viewer and genre, narrowed per request to the songs the viewer may open. Owners' and
+ * moderators' plays count. Ids only: the client reads them through the image feed, which also
+ * applies the viewer's hidden users and tags.
  */
 export async function getRisingSongIds({
   features,
+  user,
 }: {
   features: { music?: boolean };
+  user?: { id: number; isModerator?: boolean | null };
 }): Promise<number[]> {
   if (!features.music) return [];
-  return fetchThroughCache(
+  const ids = await fetchThroughCache(
     REDIS_KEYS.CACHES.RISING_SONGS as RedisKeyTemplateCache,
     async () => {
       if (!clickhouse) return [];
@@ -35,4 +38,11 @@ export async function getRisingSongIds({
     },
     { ttl: CacheTTL.md }
   );
+  if (!ids.length) return [];
+  const visible = await getImageIdsVisibleToViewer({
+    ids,
+    userId: user?.id,
+    isModerator: user?.isModerator ?? undefined,
+  });
+  return ids.filter((id) => visible.has(id));
 }
