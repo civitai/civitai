@@ -72,16 +72,16 @@ export const MIGRATION_DOC_RATING_ID_DOWN = path.resolve(
  */
 export const MIGRATION_RECORD_ID_UP = path.resolve(
   __dirname,
-  '../migrations/20261118120000_appdata_doc_record_id.sql'
+  '../migrations/20261119120000_appdata_doc_record_id.sql'
 );
 export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
   __dirname,
-  '../migrations/20261118120200_appdata_doc_record_id_unique.sql'
+  '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
 );
 /** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
 export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
   __dirname,
-  '../migrations/20261118120100_appdata_doc_record_id_backfill.sql'
+  '../migrations/20261119120100_appdata_doc_record_id_backfill.sql'
 );
 
 export type Row = Record<string, unknown>;

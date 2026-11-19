@@ -15,7 +15,7 @@
 --   given the default `gen_random_uuid()`, which applies to rows inserted from then on only (an
 --   ALTER COLUMN … SET DEFAULT never touches existing rows). So new rows get an id with no code
 --   change, and existing rows keep NULL until the backfill
---   (`20261118120100_appdata_doc_record_id_backfill.sql`) fills them. `gen_random_uuid()` is in
+--   (`20261119120100_appdata_doc_record_id_backfill.sql`) fills them. `gen_random_uuid()` is in
 --   core Postgres from 13 on; on an older server it needs `pgcrypto`, and this fails without it.
 --
 -- Same lock discipline as `20261106130000_appdata_doc_schema_major.sql`: each ALTER needs a brief
@@ -23,10 +23,10 @@
 --   it times out, re-run. The existing grants and row-level policies cover the new column.
 --
 -- ROLLOUT ORDER: this, then the backfill, then the unique index
---   (`20261118120200_appdata_doc_record_id_unique.sql`). Safe before or after any code ships.
+--   (`20261119120200_appdata_doc_record_id_unique.sql`). Safe before or after any code ships.
 --
 -- IDEMPOTENT: IF NOT EXISTS, and setting the same default again is a no-op. ROLLBACK: the
---   sibling `20261118120000_appdata_doc_record_id.down.sql`.
+--   sibling `20261119120000_appdata_doc_record_id.down.sql`.
 
 BEGIN;
 SET LOCAL lock_timeout = '1s';

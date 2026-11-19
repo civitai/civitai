@@ -1,5 +1,5 @@
 -- App Blocks document store: BACKFILL of `appdata.doc.record_id` for rows written before
--- `20261118120000_appdata_doc_record_id.sql` gave the column its default. A data script, not a
+-- `20261119120000_appdata_doc_record_id.sql` gave the column its default. A data script, not a
 -- schema migration. MANUAL-APPLY.
 --
 -- TARGET DATABASE: the App Blocks datastore, the same one

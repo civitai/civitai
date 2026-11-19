@@ -5,10 +5,10 @@
 --   database). Apply it by hand (psql) as the role that owns the `appdata` tables, once per
 --   environment. Nothing applies this automatically.
 --
--- WHAT IT ADDS: uniqueness of `record_id` (`20261118120000_appdata_doc_record_id.sql`), the id
+-- WHAT IT ADDS: uniqueness of `record_id` (`20261119120000_appdata_doc_record_id.sql`), the id
 --   in a private record's URN, so one id can never name two documents. NULLs (rows the backfill
 --   has not reached) do not conflict. Apply after the backfill
---   (`20261118120100_appdata_doc_record_id_backfill.sql`); it is also correct before it.
+--   (`20261119120100_appdata_doc_record_id_backfill.sql`); it is also correct before it.
 --
 -- CONCURRENTLY, so writes are not blocked while it builds; that also means it cannot run inside a
 --   transaction block (no BEGIN/COMMIT here), which is why it is a file of its own. If a build is

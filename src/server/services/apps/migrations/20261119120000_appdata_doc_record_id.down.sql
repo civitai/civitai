@@ -1,5 +1,5 @@
--- Rollback of `20261118120000_appdata_doc_record_id.sql` (and of the unique index
--- `20261118120200_appdata_doc_record_id_unique.sql`): drops the index, then the `record_id`
+-- Rollback of `20261119120000_appdata_doc_record_id.sql` (and of the unique index
+-- `20261119120200_appdata_doc_record_id_unique.sql`): drops the index, then the `record_id`
 -- column of `appdata.doc` and every id in it. No document body is touched. Every private record
 -- URN built from these ids stops resolving, so roll back only before any is published.
 --

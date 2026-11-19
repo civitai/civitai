@@ -476,16 +476,16 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The content-level columns on doc, and their rollback (DDL only).
     'server/services/apps/migrations/20261116120000_appdata_doc_levels.down.sql',
     'server/services/apps/migrations/20261116120000_appdata_doc_levels.sql',
-    // The rater's rating id, its sequence and lookup policy, their rollback, and the lookup index;
-    // the record_id column on doc and its rollback (DDL only), its batched backfill (a data script
-    // run by hand), and its unique index (DDL only).
+    // The rater's rating id, its sequence and lookup policy, their rollback, and the lookup index.
     'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.down.sql',
     'server/services/apps/migrations/20261118120000_appdata_doc_rating_id.sql',
-    'server/services/apps/migrations/20261118120000_appdata_doc_record_id.down.sql',
-    'server/services/apps/migrations/20261118120000_appdata_doc_record_id.sql',
     'server/services/apps/migrations/20261118120100_appdata_doc_rating_id_idx.sql',
-    'server/services/apps/migrations/20261118120100_appdata_doc_record_id_backfill.sql',
-    'server/services/apps/migrations/20261118120200_appdata_doc_record_id_unique.sql',
+    // The record_id column on doc and its rollback (DDL only), its batched backfill (a data
+    // script run by hand), and its unique index (DDL only).
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.down.sql',
+    'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
+    'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
+    'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
