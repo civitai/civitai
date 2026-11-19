@@ -336,6 +336,28 @@ describe('mod/text-scan', () => {
       expect(runTextScanHarnessAction).not.toHaveBeenCalled();
     });
 
+    describe('a lab restore (restore: true)', () => {
+      const restore = (content: string) =>
+        call({ action: 'putPrompt', key: INTENT, content, note: 'n', restore: true });
+
+      it('refuses a revoked version even to a holder', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await restore('BAD')).status).toBe(403);
+        expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+      });
+
+      it('restores an unrevoked version for a holder', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await restore('V111')).status).toBe(200);
+        expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+      });
+
+      it('still lets a holder save revoked text as new text', async () => {
+        as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+        expect((await put('BAD')).status).toBe(200);
+      });
+    });
+
     it("ignores a revoking note by a non-holder's restore", async () => {
       dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
         ...rows,

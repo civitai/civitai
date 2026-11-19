@@ -69,7 +69,7 @@ const deleteImages = (ids: number[]) => deleteModeratorImages(ids, MODERATOR);
 const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER, "image" TEXT);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,

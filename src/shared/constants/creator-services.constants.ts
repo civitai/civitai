@@ -222,7 +222,7 @@ export const SERVICE_ZIP_MAX_RATIO = 100;
 export const SERVICE_ZIP_RATIO_FLOOR_BYTES = 1024 * 1024;
 /** Image extensions inside a final. Anything else is judged by content, not by its name. */
 export const SERVICE_ZIP_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'] as const;
-/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one is not content-sniffed. */
+/** Weights files. Refused inside a zip (deliver each as its own Final); a top-level one must be that format. */
 export const SERVICE_ZIP_MODEL_EXTENSIONS = [
   'safetensors',
   'ckpt',

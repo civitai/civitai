@@ -1,3 +1,4 @@
+import { crc32 } from 'zlib';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -285,6 +286,65 @@ async function final(dealId: number, fileName: string, content: Buffer) {
   bucket.objects.set(row.s3Key, content);
   return fileId;
 }
+
+/** Four packets of `size` bytes, each opening with the sync byte. */
+const tsStream = (size: number) =>
+  Buffer.concat(
+    [0, 1, 2, 3].map(() => Buffer.concat([Buffer.from([0x47]), Buffer.alloc(size - 1)]))
+  );
+/** An ID3v2.4 tag with a `body`-byte body (its size syncsafe, 7 bits a byte), and a footer if asked. */
+const id3Tag = (body: number, footer = false) =>
+  Buffer.concat([
+    Buffer.from('ID3', 'latin1'),
+    Buffer.from([
+      4,
+      0,
+      footer ? 0x10 : 0,
+      (body >> 21) & 0x7f,
+      (body >> 14) & 0x7f,
+      (body >> 7) & 0x7f,
+      body & 0x7f,
+    ]),
+    Buffer.alloc(body),
+    footer ? Buffer.concat([Buffer.from('3DI', 'latin1'), Buffer.alloc(7)]) : Buffer.alloc(0),
+  ]);
+const MP3_FRAME = () => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(600)]);
+/** A data descriptor with its signature, carrying the checksum and sizes given. */
+const descriptor = (crc: number, compressed: number, uncompressed: number) => {
+  const bytes = Buffer.alloc(16);
+  bytes.writeUInt32LE(0x08074b50, 0);
+  bytes.writeUInt32LE(crc >>> 0, 4);
+  bytes.writeUInt32LE(compressed, 8);
+  bytes.writeUInt32LE(uncompressed, 12);
+  return bytes;
+};
+const PICKLE = () => Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00, 0x2e]);
+type TorchEntry = [path: string, data: Buffer, method?: 'store' | 'deflate'];
+/**
+ * A checkpoint in torch's zip layout under `root`, plus `entries` under the root and `others` at
+ * the paths given, stored with a data descriptor as torch writes them unless an entry says
+ * otherwise. `overrides` sets header fields of the entry at a path.
+ */
+const torchZip = (
+  entries: TorchEntry[],
+  root = 'weights',
+  others: TorchEntry[] = [],
+  overrides: Record<string, Partial<FixtureEntry>> = {}
+) =>
+  buildZip(
+    [
+      [`${root}/data.pkl`, PICKLE()] as TorchEntry,
+      [`${root}/version`, Buffer.from('3\n')] as TorchEntry,
+      ...entries.map(([path, data, method]): TorchEntry => [`${root}/${path}`, data, method]),
+      ...others,
+    ].map(([name, data, method]) => ({
+      name,
+      data,
+      method: method ?? 'store',
+      descriptor: method !== 'deflate',
+      ...overrides[name],
+    }))
+  );
 
 const zipFinal = (dealId: number, items: FixtureEntry[]) =>
   final(dealId, 'result.zip', buildZip(items));
@@ -605,6 +665,16 @@ describe('what stops an archive', () => {
       /^Video can't be delivered inside a \.zip/,
     ],
     [
+      'a transport stream behind an ID3 tag',
+      () => [{ name: 'song.mp3', data: Buffer.concat([id3Tag(4000), tsStream(188)]) }],
+      /Video/,
+    ],
+    [
+      'an image behind an ID3 tag',
+      () => [{ name: 'a.dat', data: Buffer.concat([id3Tag(20), IMAGE_A]) }],
+      /not the image/,
+    ],
+    [
       `${SERVICE_ZIP_MAX_ENTRIES + 1} entries`,
       () => bigEntries(SERVICE_ZIP_MAX_ENTRIES + 1),
       /too many/,
@@ -689,7 +759,8 @@ describe('judging a file by what it is', () => {
   const serveHeads = () =>
     s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
       const whole = bucket.objects.get(command.input.Key)!;
-      return body(command.input.Range ? whole.subarray(0, 16) : whole);
+      const range = /^bytes=(\d+)-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(Number(range[1]), Number(range[2]) + 1) : whole);
     });
 
   it.each([
@@ -720,19 +791,465 @@ describe('judging a file by what it is', () => {
     expect(await entries(fileId)).toEqual([]);
   });
 
-  it('leaves plain documents without entries, and does not sniff a model file', async () => {
+  it('leaves plain documents without entries, and takes a model file that is a zip', async () => {
     const dealId = await accepted();
     const doc = await final(dealId, 'brief.txt', Buffer.from('just some words in a text file'));
     serveHeads();
     expect(await unpack.unpackFinals()).toBe(1);
     expect(await entries(doc)).toEqual([]);
     expect((await fileRow(doc)).unpackedAt).not.toBeNull();
-    // A model file may begin with any bytes, so it is not sniffed.
-    const model = await final(dealId, 'm.pt', PK);
-    s3.send.mockClear();
+    // A checkpoint saved by torch is a zip in torch's layout; it is taken without being unpacked.
+    const torch = buildZip([
+      { name: 'weights/data.pkl', data: Buffer.from([0x80, 0x02, 0x7d, 0x2e]) },
+      { name: 'weights/data/0', data: Buffer.alloc(64) },
+      { name: 'weights/version', data: Buffer.from('3\n') },
+    ]);
+    const model = await final(dealId, 'm.pt', torch);
     expect(await unpack.unpackFinals()).toBe(1);
-    expect(s3.send).not.toHaveBeenCalled();
-    expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending' });
+    expect(await fileRow(model)).toMatchObject({ scanStatus: 'Pending', failReason: null });
+    expect(await entries(model)).toEqual([]);
+  });
+});
+
+describe('video by any other name', () => {
+  const serveHeads = () =>
+    s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
+      const whole = bucket.objects.get(command.input.Key)!;
+      const range = /^bytes=(\d+)-(\d+)$/.exec(command.input.Range ?? '');
+      return body(range ? whole.subarray(Number(range[1]), Number(range[2]) + 1) : whole);
+    });
+  /** One Ogg page opening (beginning-of-stream) a stream whose first packet is `packet`. */
+  const oggPage = (packet: Buffer, beginning = true) =>
+    Buffer.concat([
+      Buffer.from('OggS', 'latin1'),
+      Buffer.from([0, beginning ? 0x02 : 0]),
+      Buffer.alloc(20),
+      Buffer.from([1, packet.length]),
+      packet,
+    ]);
+  const vorbis = oggPage(Buffer.concat([Buffer.from('\x01vorbis', 'latin1'), Buffer.alloc(22)]));
+  const theora = oggPage(Buffer.concat([Buffer.from('\x80theora', 'latin1'), Buffer.alloc(34)]));
+  const comments = oggPage(Buffer.alloc(40), false);
+  const tsPackets = (prefix = 0) =>
+    Buffer.concat(
+      [0, 1, 2, 3].map(() =>
+        Buffer.concat([Buffer.alloc(prefix), Buffer.from([0x47]), Buffer.alloc(187)])
+      )
+    );
+  const VIDEOS: [string, Buffer][] = [
+    ['an mp4', MP4_BYTES()],
+    ['a webm', Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(40)])],
+    ['an avi', Buffer.concat([Buffer.from('RIFF\0\0\0\0AVI ', 'latin1'), Buffer.alloc(40)])],
+    ['an Ogg Theora', Buffer.concat([theora, comments])],
+    ['an Ogg with sound then Theora', Buffer.concat([vorbis, theora, comments])],
+    ['an MPEG-TS stream', tsPackets()],
+    ['an M2TS stream', tsPackets(4)],
+    [
+      'an MPEG-TS stream after 37 bytes of junk',
+      Buffer.concat([Buffer.alloc(37, 0x11), tsPackets()]),
+    ],
+    ['an MPEG-TS stream of 204-byte packets', tsStream(204)],
+    ['an MPEG-TS stream behind an ID3 tag', Buffer.concat([id3Tag(300), tsPackets()])],
+    [
+      'an MPEG-TS stream behind ID3 tags longer than one read',
+      Buffer.concat([id3Tag(100_000), id3Tag(10), tsPackets()]),
+    ],
+    ['nine ID3 tags', Buffer.concat([...Array(9).fill(id3Tag(10)), MP3_FRAME()])],
+  ];
+  const refused = async (name: string, content: Buffer) => {
+    const dealId = await accepted();
+    const fileId = await final(dealId, name, content);
+    serveHeads();
+    expect(await unpack.unpackFinals()).toBe(1);
+    return fileRow(fileId);
+  };
+
+  it.each(
+    [
+      'weights.safetensors',
+      'weights.ckpt',
+      'weights.pt',
+      'weights.pth',
+      'weights.gguf',
+      'weights.onnx',
+    ].flatMap((name) => VIDEOS.map(([kind, content]) => [name, kind, content] as const))
+  )('refuses %s holding %s', async (name, _kind, content) => {
+    expect(await refused(name, content)).toMatchObject({
+      scanStatus: 'Failed',
+      failReason: expect.stringMatching(/[Vv]ideo/),
+    });
+  });
+
+  it.each([
+    ['clip.ogg', Buffer.concat([theora, comments])],
+    ['song.mp3', tsPackets()],
+    ['song.mp3', Buffer.concat([id3Tag(300), tsPackets()])],
+    ['notes.txt', Buffer.concat([id3Tag(300), tsPackets()])],
+    // The second stream opens 4 KiB in, past what one small read would see.
+    ['song.ogg', Buffer.concat([vorbis, ...Array(100).fill(comments), theora])],
+  ])('refuses %s, which is video', async (name, content) => {
+    expect((await refused(name, content)).failReason).toMatch(/[Vv]ideo/);
+  });
+
+  const ogg = (...pages: Buffer[]) => Buffer.concat(pages);
+  it.each<[string, Buffer, RegExp]>([
+    ['weights.pt', buildZip([{ name: 'clip.mp4', data: MP4_BYTES() }]), /\.pt model/],
+    [
+      'weights.pt',
+      Buffer.concat([Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]), Buffer.alloc(600)]),
+      /\.pt model/,
+    ],
+    [
+      'weights.safetensors',
+      Buffer.concat([
+        Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11]),
+        Buffer.alloc(600),
+      ]),
+      /\.safetensors model/,
+    ],
+    [
+      'weights.gguf',
+      Buffer.concat([Buffer.from([0, 0, 0, 1, 0x67]), Buffer.alloc(600)]),
+      /\.gguf model/,
+    ],
+    [
+      'weights.onnx',
+      Buffer.concat([
+        Buffer.from([0, 0, 0, 0x20]),
+        Buffer.from('moov', 'latin1'),
+        Buffer.alloc(600),
+      ]),
+      /\.onnx model/,
+    ],
+    [
+      'song.mp3',
+      Buffer.concat([Buffer.from([0x30, 0x26, 0xb2, 0x75]), Buffer.alloc(600)]),
+      /\.mp3 audio/,
+    ],
+    ['song.ogg', ogg(vorbis, comments, theora), /[Vv]ideo/],
+    ['song.ogg', ogg(vorbis, Buffer.from([0]), theora), /[Vv]ideo/],
+    ['song.mp3', Buffer.concat([id3Tag(300), Buffer.alloc(600)]), /\.mp3 audio/],
+    ['weights.pt', torchZip([['clip.mp4', MP4_BYTES()]]), /\.pt model/],
+    ['weights.pt', torchZip([], 'a', [['b/data.pkl', PICKLE()]]), /\.pt model/],
+    ['weights.pt', torchZip([['.data/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
+    ['weights.pt', torchZip([['code/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
+    ['weights.pt', torchZip([['data/0', MP4_BYTES()]]), /\.pt model/],
+    ['weights.pt', torchZip([['data/0', MP4_BYTES(), 'deflate']]), /\.pt model/],
+    [
+      'weights.pth',
+      // Past the first KiB, so only reading the entry finds it.
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['extra/notes', tsStream(188)],
+      ]),
+      /\.pth model/,
+    ],
+    [
+      'weights.ckpt',
+      torchZip([['data/1', Buffer.concat([id3Tag(20), MP4_BYTES()])]]),
+      /\.ckpt model/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(64)]], 'weights', [], {
+        'weights/data/0': { localName: 'weights/clip.mp4' },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localMethod: 8 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localFlags: 0x800 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': {
+          localExtra: Buffer.concat([
+            Buffer.from([0x75, 0x70, 5, 0, 1, 0, 0, 0, 0]),
+            Buffer.from('x'),
+          ]),
+        },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': {
+          centralExtra: Buffer.concat([
+            Buffer.from([0x75, 0x70, 5, 0, 1, 0, 0, 0, 0]),
+            Buffer.from('x'),
+          ]),
+        },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { after: MP4_BYTES() },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/version': { after: MP4_BYTES() },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/version': { after: Buffer.alloc(16) },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { descriptor: false, localCompressedSize: 10 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localCompressedSize: 10 },
+      }),
+      /described differently/,
+    ],
+    ...[
+      descriptor(0, 4096, 4096),
+      descriptor(crc32(Buffer.alloc(4096, 3)), 10, 4096),
+      descriptor(crc32(Buffer.alloc(4096, 3)), 4096, 10),
+    ].map((wrong): [string, Buffer, RegExp] => [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { descriptor: wrong },
+      }),
+      /described differently/,
+    ]),
+    // Inflated in full, so held to the limits an unpacked archive's entries are.
+    [
+      'weights.pt',
+      torchZip(
+        [['code/__torch__/big.py', Buffer.alloc(8 * 1024 * 1024), 'deflate']],
+        'weights',
+        [],
+        { 'weights/code/__torch__/big.py': { descriptor: true } }
+      ),
+      /compressed beyond/,
+    ],
+    // Delivered without its images scanned, so it may hold none.
+    ...[
+      ['extra/cover.png', PNG_BYTES()],
+      ['extra/cover', JPEG_BYTES()],
+      ['extra/scan.tif', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['data/1', PNG_BYTES()],
+      ['data/1', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['extra/cover.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')],
+      ['extra/cover.jxl', Buffer.from([0xff, 0x0a, 0, 0, 0, 0])],
+      ['extra/clip.mp4', Buffer.alloc(64)],
+      ['extra/x', Buffer.concat([Buffer.from('II*\0', 'latin1'), Buffer.alloc(40)])],
+      ['extra/x', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(40)])],
+    ].map(([path, bytes]): [string, Buffer, RegExp] => [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        [path as string, bytes as Buffer],
+      ]),
+      /\.pt model/,
+    ]),
+    // A deflate stream that ends before the data the directory gives it.
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3), 'deflate']], 'weights', [], {
+        'weights/data/0': { descriptor: true, compressedTail: Buffer.from('PK') },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['extra/notes', Buffer.concat([Buffer.alloc(100, 3), tsStream(188)])],
+      ]),
+      /\.pt model/,
+    ],
+    ...[tsStream(188), tsPackets(4)].map((stream): [string, Buffer, RegExp] => [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', stream],
+      ]),
+      /\.pt model/,
+    ]),
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { flags: 1 },
+      }),
+      /Password/,
+    ],
+  ])('refuses %s that is not that format', async (name, content, reason) => {
+    expect((await refused(name, content)).failReason).toMatch(reason);
+  });
+
+  it('counts each refusal by the type it claimed, and nothing else', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await refused('weights.gguf', Buffer.alloc(600, 1));
+    const calls = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { message?: string }).message === 'final is not its claimed format'
+    );
+    expect(calls).toEqual([
+      [expect.objectContaining({ payload: { kind: 'model', extension: 'gguf' } })],
+    ]);
+    expect(JSON.stringify(calls)).not.toMatch(/fileId|dealId|weights/);
+  });
+
+  it('refuses a picture named as a model file', async () => {
+    expect((await refused('weights.safetensors', PNG_BYTES())).failReason).toBe(
+      "This file doesn't look like a .safetensors model file."
+    );
+  });
+
+  const safetensors = () => {
+    const header = Buffer.from('{"w":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}', 'latin1');
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64LE(BigInt(header.length));
+    return Buffer.concat([size, header, Buffer.alloc(600)]);
+  };
+  const gguf = () =>
+    Buffer.concat([Buffer.from('GGUF', 'latin1'), Buffer.from([3, 0, 0, 0]), Buffer.alloc(600)]);
+  /** A safetensors file whose 64 KiB header length starts like an icon (00 00 01 00). */
+  const iconLike = () => {
+    const size = Buffer.alloc(8);
+    size.writeBigUInt64LE(BigInt(65536));
+    return Buffer.concat([size, Buffer.from('{"w":{}}', 'latin1'), Buffer.alloc(600)]);
+  };
+  /** Sync bytes at the first two packet starts only: not a transport stream. */
+  const twoSyncs = () => {
+    const bytes = Buffer.alloc(600, 0x11);
+    bytes[0] = 0x47;
+    bytes[188] = 0x47;
+    return bytes;
+  };
+  /** Three packets of a transport stream: one short of what is taken as one. */
+  const threeSyncs = () =>
+    Buffer.concat([tsStream(188).subarray(0, 3 * 188), Buffer.alloc(600, 0x11)]);
+  /** Sync bytes every `gap` bytes, a spacing no transport stream uses. */
+  const spacedSyncs = (gap: number) => {
+    const bytes = Buffer.alloc(1200, 0x11);
+    for (let at = 0; at < bytes.length; at += gap) bytes[at] = 0x47;
+    return bytes;
+  };
+  it.each([
+    ['weights.safetensors', iconLike()],
+    ['notes.txt', twoSyncs()],
+    ['weights.safetensors', safetensors()],
+    ['weights.gguf', gguf()],
+    ['weights.pt', Buffer.concat([Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00]), Buffer.alloc(600)])],
+    [
+      'weights.onnx',
+      Buffer.concat([
+        Buffer.from([0x08, 0x07, 0x12, 0x07]),
+        Buffer.from('pytorch'),
+        Buffer.alloc(600),
+      ]),
+    ],
+    ['song.mp3', MP3_FRAME()],
+    ['song.mp3', Buffer.concat([id3Tag(300), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([id3Tag(100_000), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([id3Tag(300, true), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([...Array(8).fill(id3Tag(10)), MP3_FRAME()])],
+    ['notes.txt', threeSyncs()],
+    ['song.mp3', Buffer.concat([MP3_FRAME(), spacedSyncs(100)])],
+    ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3), 'deflate']])],
+    // torch.jit.save deflates its code and debug pickles, each with a data descriptor.
+    [
+      'weights.pt',
+      torchZip(
+        [
+          [
+            'code/__torch__/model.py',
+            Buffer.from('class Model(Module):\n  pass\n'.repeat(40)),
+            'deflate',
+          ],
+          [
+            'code/__torch__/model.py.debug_pkl',
+            Buffer.concat([PICKLE(), Buffer.alloc(900)]),
+            'deflate',
+          ],
+        ],
+        'weights',
+        [],
+        {
+          'weights/code/__torch__/model.py': { descriptor: true },
+          'weights/code/__torch__/model.py.debug_pkl': { descriptor: true },
+        }
+      ),
+    ],
+    // Tensor bytes are opaque: a stream is looked for only where a file of one would start.
+    [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(4096)])],
+      ]),
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['constants.pkl', PICKLE()],
+        ['constants/0', Buffer.concat([Buffer.from([0, 0, 1, 0]), Buffer.alloc(4096)])],
+      ]),
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['data/0', Buffer.alloc(4096, 3)],
+        ['data/1', Buffer.concat([Buffer.alloc(100, 3), tsStream(188)])],
+      ]),
+    ],
+    ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
+    ['song.wav', Buffer.concat([Buffer.from('RF64\0\0\0\0WAVEds64', 'latin1'), Buffer.alloc(600)])],
+    ['song.flac', Buffer.concat([Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
+    ['song.flac', Buffer.concat([id3Tag(300), Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],
+    ['weights.ckpt', Buffer.concat([PICKLE(), Buffer.alloc(600)])],
+    ['weights.pth', Buffer.concat([PICKLE(), Buffer.alloc(600)])],
+    ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3)]])],
+    [
+      'weights.ckpt',
+      torchZip([
+        ['data/0', Buffer.alloc(64, 3)],
+        ['.data/serialization_id', Buffer.from('1')],
+      ]),
+    ],
+    [
+      'weights.pt',
+      torchZip([
+        ['constants.pkl', PICKLE()],
+        ['attributes.pkl', PICKLE()],
+        ['code/__torch__/model.py', Buffer.from('class Model(Module):\n  pass\n')],
+        ['code/__torch__/model.py.debug_pkl', PICKLE()],
+        ['.data/version', Buffer.from('3\n')],
+        ['extra/notes.txt', Buffer.from('trained on 4 GPUs')],
+      ]),
+    ],
+    ['song.ogg', Buffer.concat([vorbis, comments])],
+  ])('takes %s as it is', async (name, content) => {
+    expect(await refused(name, content)).toMatchObject({ scanStatus: 'Pending', failReason: null });
   });
 });
 
@@ -1754,7 +2271,10 @@ describe('the finals malware scan', () => {
   });
 
   it('scans every Final, a model file included', async () => {
-    await delivered('weights.safetensors', Buffer.from('not really weights'));
+    await delivered(
+      'weights.safetensors',
+      Buffer.concat([Buffer.from([8, 0, 0, 0, 0, 0, 0, 0]), Buffer.from('{"w":{}}', 'latin1')])
+    );
     expect(orchestrator.submitWorkflow).toHaveBeenCalledTimes(1);
   });
 

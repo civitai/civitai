@@ -84,6 +84,7 @@ export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
 export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3Image = ['minimaxh3image'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
@@ -123,6 +124,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsIdeogram4,
   ...trainingDetailsBaseModelsMossImage,
   ...trainingDetailsBaseModelsFlux3Klein,
+  ...trainingDetailsBaseModelsMiniMaxH3Image,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,

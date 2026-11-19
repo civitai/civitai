@@ -2319,6 +2319,9 @@ model Image {
   @@index([userId, postId])
   @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
+  // Also INCLUDE (id, "hideMeta"), which Prisma cannot express: it lives in migration
+  // 20271119051500 and will not round-trip here. The auth session producer relies on it.
+  @@index([url], map: "Image_url_covered_idx")
 }
 
 model ImageTagForReview {

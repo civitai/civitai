@@ -366,6 +366,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag or queue a model whose weights match a real-person model. DEFAULT-OFF, and separate so
   // either can be thrown without the other.
   POI_HASH_AUTO_FLAG = 'poi-hash-auto-flag',
+  // Lets the hourly CSAM blocklist self-heal write. DEFAULT-OFF: while off (or Flipt is
+  // unreachable) each run logs its counts and writes nothing.
+  CSAM_BLOCKLIST_SELF_HEAL = 'csam-blocklist-self-heal',
   // Kill switch for unpublishing (at scan) and refusing to publish a model whose primary file is a
   // byte-identical copy of another creator's published one. DEFAULT-OFF: while off, matches are only
   // logged to Axiom (name 'duplicate-model-hash', message 'would-block') so the volume can be sized.
@@ -699,15 +702,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
-  // Hides civitai.com version text that has no passing verdict. Read only through
-  // `getComVersionTextHideMode`, where a flag that cannot be evaluated counts as ON.
-  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before this code
-  // serves traffic.
-  COM_FACE_VERSION_TEXT_HIDE = 'com-face-version-text-hide',
-  // On: the com-face-version-text jobs (rating every minute, sweep hourly) run. Off, unknown or
-  // not evaluated: both do nothing. Read only through `comVersionTextJobsEnabled`.
-  // 🔴 BOOLEAN ONLY, global.
-  COM_FACE_VERSION_TEXT_JOBS = 'com-face-version-text-jobs',
   // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
   // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
   // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are

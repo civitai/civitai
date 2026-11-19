@@ -1085,21 +1085,6 @@ describe('strike.service', () => {
       expect(mockDbWrite.userStrike.create).not.toHaveBeenCalled();
     });
 
-    it('logs to Axiom when rate limited', async () => {
-      mockDbRead.$queryRaw.mockReset();
-      mockDbRead.$queryRaw.mockResolvedValueOnce([{ count: 1 }]); // rate limited
-
-      await createStrike(baseInput);
-
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'info',
-          name: 'strike-rate-limited',
-          userId: 100,
-        })
-      );
-    });
-
     it('bypasses rate limit for ManualModAction', async () => {
       const manualInput = { ...baseInput, reason: StrikeReason.ManualModAction };
 

@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ch = vi.hoisted(() => ({
   inserts: [] as { table: string; values: unknown[] }[],
+  /** Each insert's `clickhouse_settings`, in insert order. */
+  insertSettings: [] as unknown[],
   queries: [] as string[],
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
@@ -75,9 +77,18 @@ vi.mock('$lib/server/clickhouse', () => ({
       }
       return { json: async () => ch.csamHashes.map((hash) => ({ hash })) };
     },
-    insert: async ({ table, values }: { table: string; values: unknown[] }) => {
+    insert: async ({
+      table,
+      values,
+      clickhouse_settings,
+    }: {
+      table: string;
+      values: unknown[];
+      clickhouse_settings?: unknown;
+    }) => {
       if (ch.insertFails) throw new Error(`Cannot parse input: ${JSON.stringify(values)}`);
       ch.inserts.push({ table, values });
+      ch.insertSettings.push(clickhouse_settings);
     },
   }),
 }));
@@ -92,6 +103,7 @@ const tosImage = (pHash: string) => ({ pHash, needsReview: null, blockedFor: 'mo
 
 beforeEach(() => {
   ch.inserts = [];
+  ch.insertSettings = [];
   ch.queries = [];
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
@@ -254,5 +266,17 @@ describe('a hash with a CSAM entry keeps it', () => {
     await addImagesToBlocklist([{ ...tosImage(OTHER), csam: true }, tosImage(OTHER)]);
 
     expect(ch.inserts.map((i) => i.values)).toEqual([[{ hash: OTHER, reason: 'CSAM' }]]);
+  });
+
+  it('a CSAM row is inserted synchronously and a TOS row keeps the async default', async () => {
+    ch.csamHashes = [];
+
+    await addImagesToBlocklist([{ ...tosImage(CSAM_HASH), csam: true }, tosImage(OTHER)]);
+
+    expect(ch.inserts.map((i) => (i.values[0] as { reason: string }).reason)).toEqual([
+      'CSAM',
+      expect.not.stringMatching(/^CSAM$/),
+    ]);
+    expect(ch.insertSettings).toEqual([{ async_insert: 0 }, undefined]);
   });
 });

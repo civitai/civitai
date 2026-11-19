@@ -416,6 +416,8 @@ export async function blockImage({
     const state = await tx
       .selectFrom('Image')
       .select([
+        // Read here, not off the replica read above, which may not have the scan's hash yet.
+        pHashText,
         HELD_IMAGE.as('held'),
         sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
@@ -444,12 +446,13 @@ export async function blockImage({
         .execute();
     return { updated: !!updated, state };
   });
+  const blockRow = { ...img, pHash: state?.pHash ?? null };
   if (!updated) {
     // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
     // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
     // A TOS entry is best-effort, with no retry to honour.
     if (state?.removedForCsam)
-      await writeBlockBlocklistEntry(img, { imageId, actorUserId: userId, csam: true }).catch(
+      await writeBlockBlocklistEntry(blockRow, { imageId, actorUserId: userId, csam: true }).catch(
         (e: unknown) => {
           if (e instanceof CsamBlocklistWriteError) e.skipped = true;
           throw e;
@@ -465,8 +468,8 @@ export async function blockImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
-  // `img` is the pre-block row (read above, before the update).
-  await applyBlockSideEffects(img, {
+  // The pre-block row (read above, before the update), with the hash read under the block.
+  await applyBlockSideEffects(blockRow, {
     imageId,
     actorUserId: userId,
     ip,

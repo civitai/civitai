@@ -35,12 +35,11 @@ import { unionDeserialize } from '~/shared/utils/trpc-union-transformer';
  *      for a single query, `JSON.stringify({ result: { data: <transformer output> } })`, with the
  *      transformer's write (`responseWriteSerialize`).
  *
- * What it leaves out, each of which the tRPC arm pays and this one does not (that difference is
- * what the benchmark measures): Next's router and request handling, tRPC's request parsing and
- * middleware chain, the per-procedure metrics and slow log (`recordProcedureDuration`), the
- * database-unavailable mapping, the client-version check (web clients only), the heavy-route
- * bulkhead (neutralised on the pool this procedure runs on), the serialize span and log, the
- * feed-go shadow capture, and the per-caller rate-limit headers.
+ * By design it skips what the tRPC arm pays around the procedure, and that gap is what the benchmark
+ * measures: Next's request handling, tRPC's request parsing and middleware chain, and the work
+ * `src/pages/api/trpc/[trpc].ts` wraps the route in (request logging and instrumentation, and the
+ * feed-go shadow capture and go-first probe when their flags are on). Bench the Next arm with feed-go
+ * shadowing off, or that capture's CPU is booked as tRPC cost.
  *
  * Deliberately narrower than the route:
  *   - an API credential (an `Authorization` header or `?token=`) is refused with 400: tRPC would
@@ -97,13 +96,11 @@ export async function serveImagesAsPostsStandalone(
     if (req.method !== 'GET')
       return send(res, 405, { error: { code: 'METHOD_NOT_SUPPORTED', message: 'GET only' } });
 
-    // 1. Next's apiResolver: the query (URL query + the dynamic route segment), then the cookies.
     const apiReq = req as NextApiRequest;
     const apiRes = res as unknown as NextApiResponse;
     apiReq.query = { ...parseQueryString(url.search.slice(1)), trpc: STANDALONE_PROCEDURE };
     apiReq.cookies = getCookieParser(req.headers)();
 
-    // 2. The route's API policy.
     if (applyApiRequestPolicy(apiReq, apiRes)) return;
 
     if (req.headers.authorization || apiReq.query.token !== undefined)
@@ -115,11 +112,8 @@ export async function serveImagesAsPostsStandalone(
         })
       );
 
-    // 3. The route's context.
     const ctx = await createContext({ req: apiReq, res: apiRes });
 
-    // 4. isAcceptableOrigin, then applyDomainFeature (in place on the raw input, as there: a
-    //    missing input clamps a throwaway object and the schema then reads `undefined`).
     if (!ctx.acceptableOrigin)
       return sendError(
         res,
@@ -129,11 +123,12 @@ export async function serveImagesAsPostsStandalone(
         })
       );
     const rawInput = readRawInput(apiReq.query);
+    // applyDomainFeature clamps the raw input in place, as the middleware does: a missing input
+    // clamps a throwaway object and the schema then reads `undefined`.
     const maxAllowed = requestDomainBrowsingLevelCap(ctx);
     if (maxAllowed !== undefined)
       clampRequestBrowsingLevels((rawInput ?? {}) as RequestBrowsingLevels, maxAllowed);
 
-    // 5. The input schema, then the procedure's handler.
     let input;
     try {
       input = await getInfiniteImagesSchema.parseAsync(rawInput);
@@ -147,8 +142,7 @@ export async function serveImagesAsPostsStandalone(
     }
     const data = await getImagesAsPostsInfiniteHandler({ input, ctx });
 
-    // 6. responseMeta's cache headers (after the handler: a procedure may change `ctx.cache`),
-    //    then the single-query body.
+    // Cache headers after the handler, as responseMeta does: a procedure may change `ctx.cache`.
     const { headers, edgeCached } = buildTrpcCacheHeaders({
       cache: ctx.cache,
       type: 'query',
