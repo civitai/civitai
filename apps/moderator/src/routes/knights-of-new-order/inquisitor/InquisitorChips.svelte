@@ -12,6 +12,9 @@
 </script>
 
 <MetaChip>{detailed ? 'Currently ' : ''}{getBrowsingLevelLabel(row.currentLevel)}</MetaChip>
+{#if row.escalatedFromLevel !== null && row.escalatedFromLevel !== row.currentLevel}
+  <MetaChip>Was {getBrowsingLevelLabel(row.escalatedFromLevel)} when escalated</MetaChip>
+{/if}
 {#if row.hasBlockMarker}
   <MetaChip tone="red">Blocked{detailed && row.blockedFor ? ` (${row.blockedFor})` : ''}</MetaChip>
 {/if}

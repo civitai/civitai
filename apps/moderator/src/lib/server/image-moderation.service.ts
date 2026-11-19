@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { dbRead, dbWrite } from './db';
 import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { insertModActivityBatch, recordModActivity } from './mod-activity';
@@ -34,7 +35,7 @@ import {
   setAsideCounts,
   setAsideState,
 } from './csam-queue-set-aside';
-import type { Kysely, Transaction } from 'kysely';
+import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -70,6 +71,21 @@ const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("need
 const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+
+/** `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review a grace
+ *  block recorded, when lifting does not settle it, else none. The main app's `reviewKeptWhenLiftedSql`. */
+const reviewKeptWhenLifted = sql<string | null>`(CASE
+  WHEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${[
+  ...REVIEWS_KEPT_WHEN_LIFTED,
+]}::text[])
+  THEN "metadata"->>${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+END)`;
+
+/** The grace-block breadcrumbs off `metadata`; a non-object value is left as it is. */
+const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
+  sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
+    THEN (${metadata}) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text - ${ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY}::text
+    ELSE ${metadata} END)`;
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
@@ -198,16 +214,18 @@ export async function acceptImage({
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
-  const metadataExpr =
+  // The account-deletion breadcrumbs come off too: a lifted row is not the deletion's to put back.
+  const metadataExpr = withoutGraceMarkers(
     nr === 'remixSource'
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-      : sql`"metadata" - 'ruleId' - 'ruleReason'`;
+      : sql`"metadata" - 'ruleId' - 'ruleReason'`
+  );
 
   // Refused in the statement itself, not off the replica read above.
   const updated = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
+      needsReview: reviewKeptWhenLifted,
       blockedFor: null,
       ingestion: 'Scanned',
       metadata: metadataExpr,
@@ -830,7 +848,14 @@ export async function resolveImageAppeal({
   if (status === 'Approved') {
     const { numUpdatedRows } = await dbWrite
       .updateTable('Image')
-      .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
+      // On a row an account deletion blocked, the approval settles the appeal but not a review the
+      // deletion recorded, which comes back.
+      .set({
+        needsReview: reviewKeptWhenLifted,
+        blockedFor: null,
+        ingestion: 'Scanned',
+        metadata: withoutGraceMarkers(sql`"metadata"`),
+      })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)

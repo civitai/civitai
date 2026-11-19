@@ -32,7 +32,7 @@ A rating item that leaves its stage without agreement (a split at the stage maxi
 - The item becomes `Resolved` with `reason = 'no-consensus-rerate'`, `resolvedFromLevel` the image's level, and the latest counted voter who gave the level as the write-back's actor. Every vote on it, at any stage, becomes `inconclusive`: no gold and no correct-answer XP, only the XP each vote earned when cast. Judgment history shows the player's own answer and no resolved level.
 - It is written back like any settled rating (below), so a moderator lock, a block or a moved level reroutes it the same way: a moderator's level grades the votes against it, a block or a moved level sends it to the Inquisitors with its votes pending again.
 
-A rating item never reaches the Inquisitors as `no-consensus` any more; another choice question still does. Each re-rate counts as `knights_escalations_total{reason="no-consensus-rerate"}`. The items already waiting as `no-consensus` before this rule are settled by hand with `apps/knights/scripts/backfill-no-consensus-rerate/` (`dry-run.sql`, then `apply.sql`), which leaves each one as this rule would.
+A rating item never reaches the Inquisitors as `no-consensus` any more; another choice question still does. Each re-rate counts as `knights_escalations_total{reason="no-consensus-rerate"}`.
 
 ## Items Knights can never serve
 
@@ -46,7 +46,7 @@ The main app refuses to queue the second kind in the first place (`publishes-aft
 
 ## An open item a moderator has since ruled on
 
-When a moderator locks an image's level after its item was queued, the tick closes the open item instead of letting players keep judging it (`closeModeratorRuledItems`, before `settleFinalItems`). The rule is the one the write-back applies to a settled item (`moderatorRuling` in `resolution.ts`): a lock other than Knights' own (`KNIGHTS_VOTE_NSFW_LEVEL_REASON`) at a level. The item becomes `Closed`, `reason = 'moderator-ruled'`, `resolvedValue` = the moderator's level, and its votes are graded and paid against that level through the write-back's own path (`reroute`). It acts only on an item still `Open` under its row lock, so an item a vote, the escalation or the Inquisitors moved first is left alone; `Resolved`, `Closed` and `Inquisitor` items are never regraded. A blocked image, or a lock without a level, is left to the other paths. The tick response carries `moderatorRuled` (items closed); an item that fails is retried next tick and counted as `knights_tick_item_failures_total{step="moderator_ruled"}`.
+When a moderator locks an image's level after its item was queued, the tick closes the open item instead of letting players keep judging it (`closeModeratorRuledItems`, before `settleFinalItems`). The rule is the one the write-back applies to a settled item (`moderatorRuling` in `resolution.ts`): a lock other than Knights' own (`KNIGHTS_VOTE_NSFW_LEVEL_REASON`) at a level. The item becomes `Closed`, `reason = 'moderator-ruled'`, `resolvedValue` = the moderator's level, and its votes are graded and paid against that level through the write-back's own path (`reroute`). It acts on an item that is still `Open` or waiting on the Inquisitors (`Inquisitor`) under its row lock, so a moderator's ruling in another queue or tool also clears the Inquisitor queue, except a Blocked consensus, which always waits for a moderator; an item a vote moved to `Resolved`, one already `Closed`, and one a moderator has claimed on the Inquisitor page (`Ruling`) are left alone. When an item goes to the Inquisitors, `meta.escalatedFromLevel` records the image's level at that moment (what a pushed-down consensus was measured from), and the Inquisitor card shows it when the level has since moved. A blocked image, or a lock without a level, is left to the other paths. The tick response carries `moderatorRuled` (items closed); an item that fails is retried next tick and counted as `knights_tick_item_failures_total{step="moderator_ruled"}`.
 
 ## Rating write-back to the main app
 
@@ -65,8 +65,8 @@ null and `resolvedFromLevel` set; `POST /api/jobs/tick` retries every due one (a
   never retried. Blocked or moved: Inquisitor, votes pending again. Moderator-locked: `Closed` with votes graded against the
   moderator's current level (as v1 does when a moderator finalizes), or Inquisitor (`moderator-locked`) when that level
   is unknown. Gone: `Closed`, votes inconclusive. `reason` says which.
-- An `Open` item whose image a moderator locks at a level before it settles is closed the same way by the tick
-  (`closeModeratorRuledItems`, `moderatorRuled` in the tick response), only while the item is still `Open` under its row lock.
+- An `Open` or `Inquisitor` item whose image a moderator locks at a level before it settles is closed the same way by the
+  tick (`closeModeratorRuledItems`, `moderatorRuled` in the tick response), only while it is still in one of those statuses under its row lock.
 - Once a vote commits, a failure settling it is logged and the player still gets the accepted answer; the item stays
   `Resolved` and the job retries it.
 

@@ -208,7 +208,7 @@ export async function searchSemanticImages({
     // An upload is never served, so no visibility check refuses it: refuse a level the viewer
     // (already capped to the domain) may not see here.
     if (!Flags.intersects(browsingLevel, uploadAnchor.nsfwLevel))
-      return audit.done(emptyPage(), browsingLevel);
+      return audit.done(emptyPage(), browsingLevel, 'refused_upload_level');
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
   }
