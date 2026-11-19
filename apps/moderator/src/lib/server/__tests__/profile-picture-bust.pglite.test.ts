@@ -176,13 +176,10 @@ describe('moderator writes to an image that is a profile picture', () => {
     });
   });
 
-  it('blockImage clears a User.image naming the blocked picture, marks it, and evicts the basic user', async () => {
+  it('blockImage clears a User.image naming the blocked picture and evicts the basic user', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
 
-    expect(await ownerRow()).toEqual({
-      image: null,
-      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-    });
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
     expect(bustedKeys()).toContain(`${REDIS_KEYS.CACHES.BASIC_USERS}:${AVATAR_OWNER}`);
     expect(del.mock.calls.flat()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
     expect(syncSearchIndexBulk).toHaveBeenCalledWith({
@@ -201,58 +198,13 @@ describe('moderator writes to an image that is a profile picture', () => {
     });
   });
 
-  it('acceptImage after a block puts User.image back from the picture', async () => {
+  it('🔴 acceptImage after a block leaves User.image empty: the picture serves the avatar', async () => {
     await blockImage({ imageId: AVATAR_ID, userId: 1 });
     await acceptImage({ imageId: AVATAR_ID, userId: 1 });
 
-    expect(await ownerRow()).toEqual({ image: 'avatar-key', meta: {} });
-  });
-
-  it('a partly lifted block keeps User.image empty and the marker in place', async () => {
-    await blockImage({ imageId: AVATAR_ID, userId: 1 });
-    await db.query(
-      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = 'tos' WHERE id = $1`,
-      [AVATAR_ID]
-    );
-    await bustProfilePictures({ imageIds: [AVATAR_ID] });
-
-    expect(await ownerRow()).toEqual({
-      image: null,
-      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-    });
-  });
-
-  it('never restores a picture under a csam or minor hold', async () => {
-    for (const review of ['csam', 'minor']) {
-      await db.query(
-        `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = NULL, "needsReview" = $2 WHERE id = $1`,
-        [AVATAR_ID, review]
-      );
-      await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
-        AVATAR_OWNER,
-        JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
-      ]);
-      await bustProfilePictures({ imageIds: [AVATAR_ID] });
-
-      expect(await ownerRow()).toEqual({
-        image: null,
-        meta: { heldImageCleared: { pictureId: AVATAR_ID } },
-      });
-    }
-  });
-
-  it("restores nothing for a write to an image that is not the user's picture", async () => {
-    await db.query(
-      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id IN ($1, $2)`,
-      [AVATAR_ID, OTHER_IMAGE_ID]
-    );
-    await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
-      AVATAR_OWNER,
-      JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
-    ]);
-    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
-
-    expect((await ownerRow()).image).toBeNull();
+    expect(await ownerRow()).toEqual({ image: null, meta: {} });
+    // The picture's cache entry is evicted again, so the accepted picture is read afresh.
+    expect(bustedKeys()).toContain(avatarKey);
   });
 
   it('updateImageNsfwLevel evicts it', async () => {

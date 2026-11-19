@@ -26,13 +26,24 @@ export const userImageNamesPicture = (alias: string, user = 'u') =>
 const heldOrBlockedText = (alias: string) =>
   `(${alias}."needsReview" = ANY($2::text[]) OR ${blockMarkerText(alias)})`;
 
+/** An upload key: a uuid, matched on text already lowercased. */
+export const UPLOAD_KEY_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/** `column` lowercased, an encoded dash read as one. */
+const normalisedKeyText = (column: string) => `replace(lower(${column}), '%2d', '-')`;
+
 /**
- * The first upload key in `User.image` (`User` aliased `user`), lowercased, an encoded dash read as one.
- * Fewer forms than the main app's `keysIn`: the column holds a bare key or a CDN url around one, since
- * the profile save refuses any new key and only the restore writes one (a picture's bare url).
+ * Whether the text column `column` holds an upload key, in the forms this rule reads: any case, and a
+ * dash written as %2d. Fewer forms than the main app's `keysIn`, which also decodes other
+ * percent-escapes and splits; the profile save refuses every form `keysIn` finds. The one definition
+ * the `User.image` key count, its clean-up and its constraint use.
  */
+export const holdsUploadKeyText = (column: string) =>
+  `(${normalisedKeyText(column)} ~ '${UPLOAD_KEY_PATTERN}')`;
+
+/** The first upload key in `User.image` (`User` aliased `user`), in the forms `holdsUploadKeyText` reads. */
 const userImageKeyText = (user: string) =>
-  `(regexp_match(replace(lower(${user}.image), '%2d', '-'), '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'))[1]`;
+  `(regexp_match(${normalisedKeyText(`${user}.image`)}, '${UPLOAD_KEY_PATTERN}'))[1]`;
 
 /**
  * Whether `Image` aliased `alias` is one of the user's own images stored under the key `User.image`
@@ -42,8 +53,6 @@ export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
   `(${alias}."userId" = ${user}.id AND ${alias}.url IN (${userImageKeyText(
     user
   )}, upper(${userImageKeyText(user)})))`;
-
-const heldImageMarker = `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`;
 
 /** The main app's `hasBlockMarkerSql` over `Image` aliased `alias`: Blocked ingestion, the Blocked level, or a block reason. */
 export const blockMarkerText = (alias: string) =>
@@ -64,15 +73,7 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
       AND ${heldOrBlockedText('other')}
       AND NOT EXISTS (SELECT 1 FROM held WHERE held.id = u.id AND held."namesPicture")
   ), cleared AS (
-    UPDATE "User" u
-    SET image = NULL,
-      meta = CASE
-        WHEN u.meta IS NULL OR jsonb_typeof(u.meta) = 'null' THEN ${heldImageMarker}
-        WHEN jsonb_typeof(u.meta) = 'object' THEN u.meta || ${heldImageMarker}
-        -- A JSON scalar (the system-account marker can be a string) keeps its value and takes no marker.
-        ELSE u.meta
-      END
-    FROM held WHERE u.id = held.id AND held."namesPicture"
+    UPDATE "User" u SET image = NULL FROM held WHERE u.id = held.id AND held."namesPicture"
     RETURNING u.id
   ), "namedCleared" AS (
     UPDATE "User" u SET image = NULL FROM named WHERE u.id = named.id RETURNING u.id
@@ -82,11 +83,9 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
 
 /**
  * Of `userIds`, those whose profile picture is under an owner-hidden hold or carries a block marker.
- * For each of them whose `User.image` names that picture, clears `User.image` in the same statement
- * and marks it with `meta.heldImageCleared = { pictureId }` (no value: the value is the held key),
- * which the main app's `restoreClearedUserImages` reads once the picture is servable again.
- * Also clears a `User.image` naming another of the user's own images that is held or blocked, with no
- * marker: it is not the profile picture, so nothing puts it back. Returns both sets of users. Plain
+ * For each of them whose `User.image` names that picture, clears `User.image` in the same statement.
+ * Also clears a `User.image` naming another of the user's own images that is held or blocked. Nothing
+ * puts either back: a servable picture is served through `profilePicture`. Returns both sets of users. Plain
  * SQL text, so the main app runs it on Prisma and the moderator app on Kysely (`clearHeldUserImages`).
  */
 export const clearHeldUserImagesStatement = (userIds: number[]) => ({
@@ -179,73 +178,81 @@ export const servablePictureSql = (
   return sql<boolean>`(${sql.join(fragments, sql.raw(''))})`;
 };
 
-const MARKED = `jsonb_typeof(u.meta) = 'object' AND u.meta ? 'heldImageCleared'`;
-// Compared as text, so a marker whose pictureId is not a number never fails the statement.
-const MARKER_IS_CURRENT = `u.meta->'heldImageCleared'->>'pictureId' = u."profilePictureId"::text`;
+const queuedImageText = (alias: string) =>
+  `EXISTS (SELECT 1 FROM "JobQueue" jq WHERE jq."entityType" = 'Image' AND jq."entityId" = ${alias}.id)`;
 
-const RESTORE_CLEARED_USER_IMAGES_SQL = `
-  WITH picture AS (
-    SELECT u.id AS "userId", i.id AS "pictureId", i.url
+/**
+ * The user's own image a `User.image` key names that can become their profile picture: servable as a
+ * picture and with no queued job (a queued delete would reap it after the move).
+ */
+const movableImageText = `(
+  SELECT i.id FROM "Image" i
+  WHERE ${ownImageNamedByUserImage('i')} AND ${servablePictureText} AND NOT ${queuedImageText('i')}
+  ORDER BY i.id LIMIT 1
+)`;
+
+const USER_IMAGE_KEY_PLAN_SQL = `
+  SELECT u.id,
+    u."profilePictureId" IS NOT NULL AS "hasPicture",
+    ${movableImageText} AS "movableImageId",
+    EXISTS (
+      SELECT 1 FROM "Image" i WHERE ${ownImageNamedByUserImage('i')} AND ${queuedImageText('i')}
+    ) AS "keyImageQueued"
+  FROM "User" u
+  WHERE u.id > 0 AND u.image IS NOT NULL AND ${holdsUploadKeyText('u.image')}
+  ORDER BY u.id
+  LIMIT $1
+`;
+
+export type UserImageKeyPlanRow = {
+  id: number;
+  hasPicture: boolean;
+  movableImageId: number | null;
+  keyImageQueued: boolean;
+};
+
+/**
+ * The users whose `User.image` holds an upload key (`holdsUploadKeyText`), at most `limit`, each with
+ * whether they have a profile picture and which own image the key could become their picture.
+ */
+export const userImageKeyPlanStatement = (limit: number) => ({
+  sql: USER_IMAGE_KEY_PLAN_SQL,
+  parameters: [limit, ...servablePictureParameters] as unknown[],
+});
+
+const CLEAR_USER_IMAGE_KEYS_SQL = `
+  WITH target AS (
+    SELECT u.id, u.image, u."profilePictureId"
     FROM "User" u
-    JOIN "Image" i ON i.id = u."profilePictureId" AND i."userId" = u.id
-    WHERE u.id = ANY($1::int[])
-      AND ${MARKED}
-      AND ${MARKER_IS_CURRENT}
-      AND u.image IS NULL
-      AND ${servablePictureText}
-      -- Another of the user's rows stored under the same key, held or blocked, keeps it withheld.
-      AND NOT EXISTS (
-        SELECT 1 FROM "Image" twin
-        WHERE twin."userId" = u.id AND twin.url = i.url AND twin.id <> i.id
-          AND ${heldOrBlockedText('twin')}
-      )
-    FOR SHARE OF i
+    WHERE u.id = ANY($1::int[]) AND u.image IS NOT NULL AND ${holdsUploadKeyText('u.image')}
+    FOR UPDATE
   )
   UPDATE "User" u
-  SET image = picture.url, meta = u.meta - 'heldImageCleared'
-  FROM picture
-  WHERE u.id = picture."userId" AND u.image IS NULL AND u."profilePictureId" = picture."pictureId"
-  RETURNING u.id
+  SET image = NULL,
+    "profilePictureId" = CASE
+      WHEN u."profilePictureId" IS NULL THEN ${movableImageText}
+      ELSE u."profilePictureId"
+    END
+  FROM target t
+  WHERE u.id = t.id
+  RETURNING u.id, t.image AS "previousImage", t."profilePictureId" AS "previousPictureId",
+    u."profilePictureId" AS "pictureId"
 `;
 
-const DROP_STALE_HELD_IMAGE_MARKERS_SQL = `
-  UPDATE "User" u
-  SET meta = u.meta - 'heldImageCleared'
-  WHERE u.id = ANY($1::int[])
-    AND ${MARKED}
-    AND (u.image IS NOT NULL OR u."profilePictureId" IS NULL OR NOT ${MARKER_IS_CURRENT})
-  RETURNING u.id
-`;
+export type ClearedUserImageKeyRow = {
+  id: number;
+  previousImage: string;
+  previousPictureId: number | null;
+  pictureId: number | null;
+};
 
 /**
- * For those of `userIds` whose `User.image` the clear emptied, puts it back from the profile
- * picture's own url once the picture is servable again (`servablePictureText`), is still the user's,
- * and `User.image` is still empty. A marker whose picture is not servable yet is kept, so a later lift
- * still restores. The value is rebuilt, never stored. A write that replaces `meta` whole drops the
- * marker, and then nothing is restored: the avatar stays empty, not wrong. The picture row is locked
- * for the statement, so a hold or block landing meanwhile waits and its own clear then sees the
- * restored value. Returns the ids restored.
+ * Of `userIds`, empties each `User.image` that holds an upload key, in one statement. A user with no
+ * profile picture whose key names an own image `movableImageText` accepts gets that image as their
+ * picture instead of losing the avatar. Returns the previous values, the only copy of them.
  */
-export const restoreClearedUserImagesStatement = (userIds: number[]) => ({
-  sql: RESTORE_CLEARED_USER_IMAGES_SQL,
-  parameters: [userIdsParameter(userIds), ...servablePictureParameters],
+export const clearUserImageKeysStatement = (userIds: number[]) => ({
+  sql: CLEAR_USER_IMAGE_KEYS_SQL,
+  parameters: [userIdsParameter(userIds), ...servablePictureParameters] as unknown[],
   empty: !userIdsParameter(userIds).length,
 });
-
-/**
- * Drops `meta.heldImageCleared` where it can no longer apply: the user has another picture or none,
- * or has set `User.image` since. A marker whose picture is not servable yet is kept.
- */
-export const dropStaleHeldImageMarkersStatement = (userIds: number[]) => ({
-  sql: DROP_STALE_HELD_IMAGE_MARKERS_SQL,
-  parameters: [userIdsParameter(userIds)],
-  empty: !userIdsParameter(userIds).length,
-});
-
-/** `restoreClearedUserImagesStatement` on a Kysely client. */
-export const restoreClearedUserImages = (db: Kysely<DB>, userIds: number[]) =>
-  run(db, restoreClearedUserImagesStatement(userIds));
-
-/** `dropStaleHeldImageMarkersStatement` on a Kysely client. */
-export const dropStaleHeldImageMarkers = (db: Kysely<DB>, userIds: number[]) =>
-  run(db, dropStaleHeldImageMarkersStatement(userIds));
