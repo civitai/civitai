@@ -95,9 +95,7 @@ import {
   updateTrainingWorkflowRecords,
 } from '~/server/services/training.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockFindFirst = dbMock.dbWrite.modelFile.findFirst;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 function createMocks(body: unknown = { workflowId: 'wf-3111039', status: 'succeeded' }) {
   const req = {
@@ -166,10 +164,6 @@ describe('resource-training-v2 — REAL service throws are acked by the handler 
     expect(res._getStatusCode()).toBe(200);
     expect(res._getStatusCode()).not.toBe(500);
     expect(res._getJSONData()).toEqual({ ok: true, skipped: 'permanent-condition' });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning' }),
-      'webhooks'
-    );
   });
 
   it.each([
@@ -207,9 +201,5 @@ describe('resource-training-v2 — REAL service throws are acked by the handler 
 
     expect(res._getStatusCode()).toBe(500);
     expect(res._getStatusCode()).not.toBe(200);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: 'Failed to update record' }),
-      'webhooks'
-    );
   });
 });

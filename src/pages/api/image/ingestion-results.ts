@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { getIngestionResults } from '~/server/services/image.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -11,7 +12,7 @@ const schema = z.object({
 export default AuthedEndpoint(
   async function handler(req, res, user) {
     const { ids } = schema.parse(req.query);
-    const data = await getIngestionResults({ ids, userId: user.id });
+    const data = await getIngestionResults({ ids, user, credential: getRequestCredential(req) });
     res.status(200).json(data);
   },
   ['GET'],

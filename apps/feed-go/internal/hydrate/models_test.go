@@ -428,7 +428,7 @@ func computedModelSources(f *modelFixture, c *MissCompute) (*Sources, *testkit.R
 	if c.Now == nil {
 		c.Now = func() time.Time { return pageNow }
 	}
-	if c.WriteBack && c.Primary == nil {
+	if c.WriteBack.Any() && c.Primary == nil {
 		c.Primary = s.Replica
 	}
 	s.Compute = c
@@ -448,7 +448,7 @@ func TestModelPageComputesFrameMiss(t *testing.T) {
 			f.frames[5001] = [][]any{{int64(303), int64(5001), `{"lights": 2}`, nil}}
 			f.put(t, KeyCosmetics, 303, map[string]any{"id": 303, "name": "Frame3", "type": "ContentDecoration", "data": map[string]any{"url": "f3"}, "source": "Purchase"})
 			obs := &observed{}
-			s, r := computedModelSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			p, err := s.ModelPage(context.Background(), modelPageRequest())
 			if err != nil {
 				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
@@ -485,7 +485,7 @@ func TestModelFrameMarkersFollowFrameNegative(t *testing.T) {
 	for _, negative := range []bool{false, true} {
 		f := fullModelFixture(t) // 5001's frame is a notFound marker
 		f.frames[5001] = [][]any{{int64(302), int64(5001), nil, nil}}
-		s, _ := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: negative})
+		s, _ := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: negative})
 		p, err := s.ModelPage(context.Background(), modelPageRequest())
 		if err != nil {
 			t.Fatal(err)
@@ -513,7 +513,7 @@ func TestModelFrameLookupFailureFallsBack(t *testing.T) {
 	f.del(KeyModelFrames, 5001)
 	f.failFrames = true
 	obs := &observed{}
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	_, err := s.ModelPage(context.Background(), modelPageRequest())
 	if got := fallback.Reason(err); got != "model-frame-miss-failed" {
 		t.Fatalf("err %v (%q), want model-frame-miss-failed", err, got)
@@ -531,7 +531,7 @@ func TestModelPageUnderPresence(t *testing.T) {
 	f := fullModelFixture(t)
 	f.del(KeyModelFrames, 5001)
 	f.del(KeyModelFrames, 5002)
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
 	p, err := s.ModelPage(WithPresence(context.Background(), rec), modelPageRequest())
 	if err != nil {
@@ -640,7 +640,7 @@ func TestVersionImagesComputesMiss(t *testing.T) {
 		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
 			f := showcaseFixture(t)
 			obs := &observed{}
-			s, r := computedModelSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			got, err := s.VersionImages(context.Background(), []int{6001, 6002, 6003})
 			if err != nil {
 				t.Fatalf("VersionImages: %v (%q)", err, fallback.Reason(err))
@@ -689,7 +689,7 @@ func TestVersionImagesLagFlagReadsPrimary(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := showcaseFixture(t)
-			s, r := computedModelSources(f, &MissCompute{WriteBack: c.writeBack, FrameNegative: true})
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeSet(c.writeBack), FrameNegative: true})
 			if c.writeBack {
 				s.Compute.Primary = &testkit.DB{Routes: []testkit.Route{f.showcaseRoute("primary")}}
 			}
@@ -715,7 +715,7 @@ func TestVersionImagesStaleRevalidated(t *testing.T) {
 	t.Run("lock taken", func(t *testing.T) {
 		f := showcaseFixture(t)
 		f.entries[pageNS+missKey(KeyVersionImages, 6003)] = stale
-		s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+		s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 		got, err := s.VersionImages(context.Background(), []int{6003})
 		if err != nil {
 			t.Fatal(err)
@@ -733,7 +733,7 @@ func TestVersionImagesStaleRevalidated(t *testing.T) {
 		f.entries[pageNS+missKey(KeyVersionImages, 6003)] = stale
 		f.entries[lock] = []byte("1")
 		f.put(t, KeyTagIDs, 8399, map[string]any{"tags": []any{}})
-		s, _ := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+		s, _ := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 		got, err := s.VersionImages(context.Background(), []int{6003})
 		if err != nil {
 			t.Fatal(err)
@@ -750,7 +750,7 @@ func TestVersionImagesLookupFailureFallsBack(t *testing.T) {
 	f := showcaseFixture(t)
 	f.failShowcases = true
 	obs := &observed{}
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	_, err := s.VersionImages(context.Background(), []int{6001, 6002})
 	if got := fallback.Reason(err); got != "model-images-miss-failed" {
 		t.Fatalf("err %v (%q), want model-images-miss-failed", err, got)
@@ -768,7 +768,7 @@ func TestVersionImagesLookupFailureFallsBack(t *testing.T) {
 func TestVersionImagesUnderPresenceLooksUpOnTheReplica(t *testing.T) {
 	f := showcaseFixture(t)
 	obs := &observed{}
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	s.Compute.Primary = &testkit.DB{Routes: []testkit.Route{f.showcaseRoute("primary")}}
 	r.SetString(pageNS+"lag-helper:modelVersion:6001", []byte("true"))
 	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
@@ -853,7 +853,7 @@ func TestModelPageComputesDecorationMiss(t *testing.T) {
 		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
 			f := decorationMissFixture(t)
 			obs := &observed{}
-			s, r := computedModelSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			p, err := s.ModelPage(context.Background(), modelPageRequest())
 			if err != nil {
 				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
@@ -890,7 +890,7 @@ func TestModelDecorationLookupFailureFallsBack(t *testing.T) {
 	f := decorationMissFixture(t)
 	f.failEvents = true
 	obs := &observed{}
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	_, err := s.ModelPage(context.Background(), modelPageRequest())
 	if got := fallback.Reason(err); got != "model-decoration-miss-failed" {
 		t.Fatalf("err %v (%q), want model-decoration-miss-failed", err, got)
@@ -905,7 +905,7 @@ func TestModelDecorationLookupFailureFallsBack(t *testing.T) {
 // answered as no entry: no decoration query, no write.
 func TestModelPageDecorationsUnderPresence(t *testing.T) {
 	f := decorationMissFixture(t)
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true})
 	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
 	p, err := s.ModelPage(WithPresence(context.Background(), rec), modelPageRequest())
 	if err != nil {

@@ -142,8 +142,8 @@ beforeEach(async () => {
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'00000001-0000-4000-8000-000000000000',10,100),(2,'00000002-0000-4000-8000-000000000000',10,100),(3,'00000003-0000-4000-8000-000000000000',11,101),
       (900,'f0000900-0000-4000-8000-000000000000',12,102),(901,'f0000901-0000-4000-8000-000000000000',12,102);
+    TRUNCATE ${REF_TABLES.map((t) => `"${t}"`).join(', ')};
   `);
-  for (const table of REF_TABLES) await db.exec(`TRUNCATE "${table}"`);
 });
 
 const query: Deps['query'] = async <T>(sql: Prisma.Sql) => {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+import { IMAGE_REVIEW_PRECEDENCE } from '@civitai/shared/image-review-types';
 
 // feed-go (Go) and the event engine cannot import @civitai/shared, so their copies of the owner-hidden
 // review list are pinned to it here.
@@ -13,6 +14,10 @@ const sqlLists = (source: string) =>
   [...source.matchAll(/"needsReview" NOT IN \(([^)]*)\)/g)].map((match) =>
     sorted(match[1].split(',').map((value) => value.trim().replace(/^'|'$/g, '')))
   );
+
+it('every owner-hidden review is a review type the account restore can put back or keep', () => {
+  expect(IMAGE_REVIEW_PRECEDENCE).toEqual(expect.arrayContaining(OWNER_HIDDEN_REVIEWS));
+});
 
 describe('copies of the owner-hidden review list', () => {
   it.each([

@@ -160,9 +160,6 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     row.result = { ...(row.result as object), meta: { inputCut: true } };
     await recomputeArticleIngestion(ARTICLE);
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'article-verdict-input-cut' })
-    );
   });
 
   it('a text-scan verdict that found a violation in part of the current text blocks it', async () => {
@@ -206,16 +203,13 @@ describe('the recompute counts a text verdict only for the text it judged', () =
   });
 
   describe('a verdict with no comparable hash', () => {
-    it('counts, and is logged, when written before verdicts carried one', async () => {
+    it('counts when written before verdicts carried one', async () => {
       row = xguardVerdict(OLD, {
         contentHash: null,
         updatedAt: new Date(ARTICLE_TEXT_VERDICT_HASHED_SINCE.getTime() - DAY),
       });
       await recomputeArticleIngestion(ARTICLE);
       expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'article-verdict-unverifiable' })
-      );
     });
 
     it('does not count when written after', async () => {

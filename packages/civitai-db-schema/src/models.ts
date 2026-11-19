@@ -7228,6 +7228,15 @@ export interface ServiceDealEvent {
   createdAt: Date;
 }
 
+export interface ServiceDealFilePurge {
+  id: number;
+  fileId: number;
+  dealId: number;
+  size: number;
+  etag: string | null;
+  purgedAt: Date;
+}
+
 export interface ServiceDealFile {
   id: number;
   dealId: number;
@@ -7256,6 +7265,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  scannedEtag: string | null;
+  scannedVersionId: string | null;
   attestedAt: Date | null;
   removedAt: Date | null;
   createdAt: Date;

@@ -1,9 +1,18 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { credentialLogFields, type RequestCredential } from '~/server/auth/request-credential';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
-import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
+import {
+  BlocklistStoreError,
+  blocklistCall,
+  canCheckBlockedImageHash,
+  getIsImageBlocked,
+} from '~/server/services/blocked-image-hash';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -14,7 +23,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
-import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { mirrorBlockedHashesSql, NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -292,7 +301,6 @@ import {
   ImageIngestionStatus,
   JobQueueType,
   MediaType,
-  ModelModifier,
   NewOrderRankType,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -301,7 +309,7 @@ import {
   ImageScanFailureClass,
 } from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
-import { purgeObjectVersions } from '~/utils/s3-purge-versions';
+import { purgeObjectVersions } from '@civitai/storage/s3-purge-versions';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
@@ -1331,8 +1339,20 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 export async function writeModeratorBlock(
   ids: number[],
   deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
-): Promise<{ held: Set<number>; underReview: Set<number>; removedForCsam: Set<number> }> {
-  if (!ids.length) return { held: new Set(), underReview: new Set(), removedForCsam: new Set() };
+): Promise<{
+  held: Set<number>;
+  underReview: Set<number>;
+  removedForCsam: Set<number>;
+  /** "pHash" per id, read here rather than off a replica that may not have the scan's hash yet. */
+  pHashes: Map<number, bigint | null>;
+}> {
+  if (!ids.length)
+    return {
+      held: new Set(),
+      underReview: new Set(),
+      removedForCsam: new Set(),
+      pHashes: new Map(),
+    };
   return dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
@@ -1350,10 +1370,16 @@ export async function writeModeratorBlock(
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const rows = await tx.$queryRaw<
-      { id: number; held: boolean; removedForCsam: boolean; underReview: boolean }[]
+      {
+        id: number;
+        held: boolean;
+        removedForCsam: boolean;
+        underReview: boolean;
+        pHash: bigint | null;
+      }[]
     >`
       SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
-        "needsReview" = 'csam' AS "underReview"
+        "needsReview" = 'csam' AS "underReview", "pHash"
       FROM "Image" WHERE id = ANY(${ids}::int[])
     `;
     const deferIds = rows.filter((r) => r.held && !r.removedForCsam).map((r) => r.id);
@@ -1377,6 +1403,7 @@ export async function writeModeratorBlock(
       held: idsWhere('held'),
       underReview: idsWhere('underReview'),
       removedForCsam: idsWhere('removedForCsam'),
+      pHashes: new Map(rows.map((r) => [r.id, r.pHash])),
     };
   });
 }
@@ -1414,13 +1441,14 @@ export async function handleBlockImages({
     let held = new Set<number>();
     let underReview = new Set<number>();
     let removedForCsam = new Set<number>();
+    let pHashes = new Map<number, bigint | null>();
     await Promise.all([
       writeModeratorBlock(
         ids,
         include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
       )
         .then((written) => {
-          ({ held, underReview, removedForCsam } = written);
+          ({ held, underReview, removedForCsam, pHashes } = written);
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
@@ -1444,9 +1472,14 @@ export async function handleBlockImages({
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
+      logCsamBlocklistNoHash(
+        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+        'block'
+      );
       await bulkAddBlockedImages({
         data: images
-          .map(({ id, pHash, blockedFor }) => {
+          .map(({ id, blockedFor }) => {
+            const pHash = pHashes.get(id);
             if (!pHash) return null;
             return {
               hash: pHash,
@@ -2297,6 +2330,7 @@ const getAllImagesUncaptured = async (
     hidden,
     followed,
     fromPlatform,
+    requiringMeta,
     user,
     pending,
     publishedOnly,
@@ -2939,10 +2973,15 @@ const getAllImagesUncaptured = async (
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
-    if (browsingLevel)
-      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
-    AND.push(imageReviewedSql());
+    // A metadata-blocked image reads Blocked for ingestion and level, which these gates drop. Its
+    // rating is gone, so only red, which shows every level, lists it.
+    if (!requiringMeta || domain !== 'red') {
+      if (browsingLevel)
+        AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+      AND.push(imageReviewedSql());
+    }
   }
+  if (requiringMeta) AND.push(Prisma.sql`i."blockedFor" = ${BlockedReason.AiNotVerified}`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -4193,7 +4232,7 @@ export const getImage = async ({
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
-      u.image as "userImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "userImage",
       u."deletedAt",
       u."profilePictureId",
       COALESCE(p."availability", 'Public') "availability",
@@ -4806,9 +4845,20 @@ export const removeImageResource = async ({
 // }
 
 // export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
-export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
+export const getIngestionResults = async ({
+  ids,
+  user,
+  credential,
+}: {
+  ids: number[];
+  user: { id: number; isModerator?: boolean | null };
+  credential: RequestCredential;
+}) => {
+  const userId = user.id;
+  // The viewer's own images; any image only for a moderator on a session or a full-scope key.
+  const viewer = withModeratorRightsFor(user, credential);
   const images = await dbRead.image.findMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, ...(viewer?.isModerator ? {} : { userId }) },
     select: {
       id: true,
       ingestion: true,
@@ -4820,6 +4870,23 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
       },
     },
   });
+
+  const requestedCount = new Set(ids).size;
+  if (images.length < requestedCount) {
+    // Counts only: no ids and no user.
+    const { tokenScope, apiKeyType, client } = credentialLogFields(credential);
+    logToAxiom({
+      name: 'ingestion-results-filtered',
+      type: 'info',
+      payload: {
+        requestedCount,
+        filteredCount: requestedCount - images.length,
+        tokenScope,
+        apiKeyType,
+        client,
+      },
+    });
+  }
 
   const dictionary = images.reduce<
     Record<
@@ -5515,12 +5582,13 @@ export const getEntityCoverImage = async ({
   // A mature image on a restricted base model is its uploader's alone.
   const baseModelAllowed = imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null });
 
-  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
-  // (a NULL mode), so the image and post arms keep images on no model version.
-  const modelNotWithheld = Prisma.sql`(
-    m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
-    OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
-  )`;
+  const modelNotWithheld = modelNotWithheldSql({
+    mode: Prisma.raw('m.mode'),
+    ownerId: Prisma.raw('m."userId"'),
+    signedIn,
+    viewerId,
+    isModerator,
+  });
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
@@ -7017,16 +7085,20 @@ export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUs
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
   if (hashes.length === 0) return new Set();
-  const rows = await blocklistClient().$query<{ hash: string }>`
+  const client = blocklistClient();
+  const rows = await blocklistCall(
+    () =>
+      client.$query<{ hash: string }>`
     SELECT toString(hash) AS hash
     FROM (
-      SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
+      SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
       FROM "blocked_images"
       WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')})
       GROUP BY hash
     )
     WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false
-  `;
+  `
+  );
   return new Set(rows.map((row) => row.hash));
 }
 
@@ -7035,6 +7107,8 @@ function blocklistClient() {
   if (!clickhouse) throw new Error('blocked_images: no ClickHouse client');
   return clickhouse;
 }
+
+export { BlocklistStoreError };
 
 /** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
 function logBlocklistCheckFailed(
@@ -7051,7 +7125,7 @@ function logBlocklistCheckFailed(
       step: context?.step,
       imageIds: context?.imageIds,
       actorUserId: context?.actorUserId,
-      hashes: rows.map(({ hash }) => hash.toString()),
+      hashCount: rows.length,
       reasons: rows.map(({ reason }) => reason),
       error: safeError(error),
     },
@@ -7085,7 +7159,7 @@ const COPY_MIN_ATTEMPT_MS = 50;
  * may still land, which is harmless: the upsert is idempotent. Twin: apps/moderator
  * image-moderation-effects.ts addImagesToBlocklist.
  */
-async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteContext) {
+export async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteContext) {
   const sql = mirrorBlockedHashesSql(hashes);
   if (!sql) return;
   const deadline = Date.now() + COPY_BUDGET_MS;
@@ -7133,6 +7207,23 @@ async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteConte
   throw new HeldMediaCopyError(lastError);
 }
 
+/** A CSAM removal with no hash to write: logged, as the block itself succeeds. Ids only. */
+export function logCsamBlocklistNoHash(imageIds: number[], step: string) {
+  for (const imageId of imageIds)
+    logToAxiom({
+      type: 'warning',
+      name: 'csam-blocklist-no-hash',
+      message: 'a CSAM removal had no hash to write to the blocklist',
+      payload: { imageId, step },
+    });
+}
+
+/**
+ * A CSAM entry is inserted synchronously: the client's async default acknowledges before the
+ * buffer flushes, so a row lost at flush time would never surface as an error.
+ */
+const CSAM_INSERT_SETTINGS = { async_insert: 0 } as const;
+
 export function addBlockedImage({
   hash,
   reason,
@@ -7158,20 +7249,24 @@ export async function bulkAddBlockedImages({
   context?: BlocklistWriteContext;
 }) {
   if (data.length === 0) return;
-  const write = (rows: typeof data) =>
-    rows.length
-      ? blocklistClient().insert({
-          table: 'blocked_images',
-          values: rows.map(({ hash, reason }) => ({
-            hash: toClickhouseInt64(hash),
-            reason: reason.toString(),
-          })),
-          format: 'JSONEachRow',
-        })
-      : undefined;
+  const write = async (rows: typeof data, sync = false) => {
+    if (!rows.length) return;
+    const client = blocklistClient();
+    await blocklistCall(() =>
+      client.insert({
+        table: 'blocked_images',
+        values: rows.map(({ hash, reason }) => ({
+          hash: toClickhouseInt64(hash),
+          reason: reason.toString(),
+        })),
+        format: 'JSONEachRow',
+        ...(sync && { clickhouse_settings: CSAM_INSERT_SETTINGS }),
+      })
+    );
+  };
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
-  await write(csamRows);
+  await write(csamRows, true);
   let othersError: unknown;
   try {
     const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
@@ -7213,12 +7308,15 @@ export async function bulkRemoveBlockedImages(hashes: bigint[], context?: Blockl
   let blocked: { hash: string; reason: string }[];
   let csam: Set<string>;
   try {
+    const client = blocklistClient();
     [blocked, csam] = await Promise.all([
-      blocklistClient().$query<{ hash: string; reason: string }>`
-        SELECT toString(hash) AS hash, reason
-        FROM "blocked_images"
-        WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
-      `,
+      blocklistCall(
+        () => client.$query<{ hash: string; reason: string }>`
+          SELECT toString(hash) AS hash, reason
+          FROM "blocked_images"
+          WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
+        `
+      ),
       csamBlockedHashes(hashes),
     ]);
   } catch (error) {
@@ -7247,11 +7345,10 @@ export async function bulkRemoveBlockedImages(hashes: bigint[], context?: Blockl
     }));
   if (!values.length) return;
 
-  return await blocklistClient().insert({
-    table: 'blocked_images',
-    values,
-    format: 'JSONEachRow',
-  });
+  const client = blocklistClient();
+  await blocklistCall(() =>
+    client.insert({ table: 'blocked_images', values, format: 'JSONEachRow' })
+  );
 }
 
 // export async function bulkRemoveBlockedImages({

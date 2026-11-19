@@ -1,6 +1,6 @@
 import { imageUrl } from '$lib/server/image-url';
 import { sealItem, type ItemRef } from '$lib/server/feed-token';
-import { pickHiddenCheck } from '$lib/server/hidden/hidden.service';
+import { hiddenItemId, pickHiddenCheck } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { getFeed } from '$lib/server/queue/queue.service';
 import { feedSecret } from '$lib/server/smites/runtime';
@@ -9,7 +9,8 @@ import { burstDue, burstRoller, servedHistory } from '$lib/server/yesno/cadence'
 import { pickYesNo } from '$lib/server/yesno/feed';
 import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
-import { db } from '$lib/server/db';
+import { db, dbRead } from '$lib/server/db';
+import { liveKey } from '$lib/server/live/live-key';
 import { itemKey, type PickedItem } from './optimistic';
 
 /**
@@ -27,7 +28,8 @@ export async function pickItem(
   /** Every item already handed out ahead of the player, oldest first: the cadence counts them as served. */
   served?: ItemRef[]
 ): Promise<PickedItem | null> {
-  const feed = await getFeed(db, userId, { limit: 1, exclude: skipped?.queue });
+  // The replica may lag: an item judged a moment ago can come back, and castVote refuses it ('already-voted').
+  const feed = await getFeed(dbRead, userId, { limit: 1, exclude: skipped?.queue });
   const secret = feedSecret();
 
   const yesNo = await yesNoConfig();
@@ -60,6 +62,7 @@ export async function pickItem(
       item: {
         id: sealItem(secret, userId, { kind: 'yesno', id: offer.itemId }),
         key: itemKey('yesno', imageUrl(offer.imageKey)),
+        live: liveKey(secret, offer.itemId),
         src: imageUrl(offer.imageKey),
         width: offer.width,
         height: offer.height,
@@ -87,6 +90,8 @@ export async function pickItem(
       item: {
         id: sealItem(secret, userId, { kind: 'hidden', id: hidden.referenceId }),
         key: itemKey(hidden.question.key, imageUrl(hidden.imageKey)),
+        // Never announced (queue ids are positive), yet shaped like any other, so a skill check cannot be told apart.
+        live: liveKey(secret, hiddenItemId(hidden.referenceId)),
         src: imageUrl(hidden.imageKey),
         width: hidden.width,
         height: hidden.height,
@@ -102,6 +107,7 @@ export async function pickItem(
     item: {
       id: sealItem(secret, userId, { kind: 'queue', id: item.id }),
       key: itemKey(feed.question.key, imageUrl(item.imageKey)),
+      live: liveKey(secret, item.id),
       src: imageUrl(item.imageKey),
       width: item.width,
       height: item.height,

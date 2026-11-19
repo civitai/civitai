@@ -204,14 +204,7 @@ describe('profile picture updates are scoped to the caller', () => {
       expect(mockUpdateUserById).not.toHaveBeenCalled();
     });
 
-    it('by the caller, or already the current one, is written', async () => {
-      dbMock.dbWrite.$queryRaw.mockImplementation(
-        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }])
-      );
-      await saveImage();
-      expect(mockUpdateUserById.mock.calls[0][0].data.image).toBe(AVATAR_KEY);
-
-      vi.clearAllMocks();
+    it('already the current one, is written', async () => {
       dbMock.dbWrite.$queryRaw.mockImplementation(
         imageUrlOwnersFake([{ url: AVATAR_KEY, userId: OTHER_USER_ID }])
       );
@@ -306,9 +299,79 @@ describe('a legacy avatar image', () => {
     expect(mockAnyImageHeld).not.toHaveBeenCalled();
   });
 
-  it('is saved when its key names none', async () => {
-    await saveImage(AVATAR_KEY);
-    expect(mockAnyImageHeld).toHaveBeenCalledWith(expect.anything(), [AVATAR_KEY]);
-    expect(mockUpdateUserById.mock.calls[0][0].data.image).toBe(AVATAR_KEY);
+  it('is refused as a new value when it is an upload key, even one issued to the caller', async () => {
+    await expect(saveImage(AVATAR_KEY)).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('is refused when an upload key comes wrapped in a CDN url', async () => {
+    const fresh = '7e2b9c41-3d5a-4f86-b0c2-9a1d4e6f8b37';
+    await expect(
+      saveImage(`https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${fresh}/width=96`)
+    ).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('compares an unchanged value against the primary, not a lagging replica', async () => {
+    // The replica still has the key the primary has since cleared; re-sending it is a change.
+    mockGetUserById.mockImplementation(async ({ db }: { db?: unknown }) =>
+      db === dbMock.dbWrite
+        ? { profilePictureId: null, image: null }
+        : { profilePictureId: null, image: AVATAR_KEY }
+    );
+    await expect(saveImage(AVATAR_KEY)).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('may be an allowed external avatar url, or cleared', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    await saveImage(external);
+    expect(mockUpdateUserById.mock.calls[0][0].data.image).toBe(external);
+
+    await updateUserHandler({
+      ctx: { user: { id: CALLER_ID } },
+      input: { id: CALLER_ID, image: null },
+    } as never);
+    expect(mockUpdateUserById.mock.calls[1][0].data.image).toBeNull();
+  });
+});
+
+describe('the legacy avatar image on a save', () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+  const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY}/width=96`;
+  const holding = (image: string | null) =>
+    mockGetUserById.mockResolvedValue({
+      profilePictureId: CURRENT_PICTURE_ID,
+      profilePicture: { userId: CALLER_ID },
+      image,
+    });
+  const written = () => mockUpdateUserById.mock.calls[0][0].data as { image?: unknown };
+  beforeEach(() =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }])
+    )
+  );
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  it('🔴 is cleared when a new picture replaces an upload key it still holds', async () => {
+    holding(staleKey);
+    await saveProfilePicture();
+    expect(written()).toMatchObject({ image: null });
+  });
+
+  it('keeps an external avatar url when a new picture is saved (control)', async () => {
+    holding('https://avatars.githubusercontent.com/u/1?v=4');
+    await saveProfilePicture();
+    expect(written().image).toBeUndefined();
+  });
+
+  it('🔴 is left out of the write when re-sent unchanged, so a clear committed since the read stands', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    holding(external);
+    await updateUserHandler({
+      ctx: { user: { id: CALLER_ID } },
+      input: { id: CALLER_ID, image: external },
+    } as never);
+    expect(written().image).toBeUndefined();
   });
 });

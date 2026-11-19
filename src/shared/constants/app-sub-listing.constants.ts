@@ -3,18 +3,22 @@ import type {
   StoreGridItem,
   SubListingCard,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { NsfwLevel } from '~/server/common/enums';
 import {
+  contentRatingFromNsfwLevel,
   OFFSITE_CONTENT_RATING_LADDER,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * App Store sub-listings: the vocabulary shared by the write service, the store read path,
- * the moderator tab and the card. Client-safe (no server imports).
+ * the moderator tab and the card. Client-safe: its one server-path import is the enums module
+ * (`~/server/common/enums`), which `browsingLevel.constants` already brings in.
  *
  * The status and rating sets mirror the CHECKs in
- * `packages/civitai-db-schema/prisma/migrations/20261010120000_app_sub_listings/migration.sql`;
- * `app-sub-listing.constants.test.ts` parses that file and fails on drift.
+ * `packages/civitai-db-schema/prisma/migrations/20261010120000_app_sub_listings/migration.sql`, the
+ * rating set as widened by `20271118200000_app_sub_listing_xxx_rating/migration.sql`;
+ * `app-sub-listing.constants.test.ts` parses those files and fails on drift.
  */
 
 export const APP_SUB_LISTING_STATUSES = ['pending', 'approved', 'hidden', 'withdrawn'] as const;
@@ -26,9 +30,23 @@ export function isActiveSubListingStatus(status: string): boolean {
   return (APP_SUB_LISTING_ACTIVE_STATUSES as readonly string[]).includes(status);
 }
 
-/** Same five values, same order, as the listing rating ladder (ascending maturity). */
-export const APP_SUB_LISTING_CONTENT_RATINGS = OFFSITE_CONTENT_RATING_LADDER;
-export type AppSubListingContentRating = OffsiteRatingValue;
+/**
+ * The listing rating ladder (ascending maturity) plus `xxx` on top. An app is never rated above
+ * `x`, but an item card takes its item's content level (content levels), and XXX must stay
+ * distinct from X: the store filters each per viewer (`subListingMatureFilter`).
+ */
+export const APP_SUB_LISTING_CONTENT_RATINGS = [...OFFSITE_CONTENT_RATING_LADDER, 'xxx'] as const;
+export type AppSubListingContentRating = OffsiteRatingValue | 'xxx';
+
+/**
+ * The card rating for an item's content level: the minimal rating whose ceiling covers it, as
+ * `contentRatingFromNsfwLevel` gives an app, except XXX, which is `xxx` here and never `x`. Blocked
+ * has no card rating (the card is hidden); it fails closed to the top rung.
+ */
+export function subListingRatingFromNsfwLevel(level: number): AppSubListingContentRating {
+  if (level & (NsfwLevel.XXX | NsfwLevel.Blocked)) return 'xxx';
+  return contentRatingFromNsfwLevel(level);
+}
 
 export const APP_SUB_LISTING_TITLE_MAX = 80;
 export const APP_SUB_LISTING_TAGLINE_MAX = 140;

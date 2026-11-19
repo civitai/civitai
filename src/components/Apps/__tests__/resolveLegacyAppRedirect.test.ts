@@ -543,9 +543,9 @@ describe('legacyListingSlugForViewer — the R/X gate on the legacy redirect', (
     row: { slug: string; contentRating: string | null } | null,
     mature: { r: boolean; x: boolean }
   ) => string | null;
-  const NONE = { r: false, x: false };
-  const R_ONLY = { r: true, x: false };
-  const X_ONLY = { r: false, x: true };
+  const NONE = { r: false, x: false, xxx: false };
+  const R_ONLY = { r: true, x: false, xxx: false };
+  const X_ONLY = { r: false, x: true, xxx: false };
 
   it('🔴 an R app is not redirected to for a viewer who may not see R', () => {
     expect(slugFor({ slug: 'vitrine', contentRating: 'r' }, NONE)).toBeNull();

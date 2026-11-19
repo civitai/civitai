@@ -1,6 +1,6 @@
 import { newS3Client } from '~/utils/s3-client-factory';
 import type { S3Client } from '@aws-sdk/client-s3';
-import { purgeObjectVersions } from '~/utils/s3-purge-versions';
+import { purgeObjectVersions } from '@civitai/storage/s3-purge-versions';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';

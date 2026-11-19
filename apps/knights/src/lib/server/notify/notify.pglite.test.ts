@@ -272,6 +272,18 @@ describe('sendNotifications', () => {
     expect(received().size).toBe(0);
   });
 
+  it('is silent when the only open item is an image the player posted', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedImage(pg, 7, { userId: 1 });
+    await enqueueItem(db, { questionKey: Q, imageId: 7, source: 'test', expiresAt: null }, at(1));
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([2]);
+  });
+
   it('picks the best type: verdicts over the streak warning over new images', async () => {
     for (const id of [1, 2, 3]) {
       await seedPlayer(pg, id);

@@ -36,6 +36,7 @@ import {
   updateImageNsfwLevel,
   getOpenImageReportIds,
   updateImageReportStatusByReason,
+  logCsamBlocklistNoHash,
   writeModeratorBlock,
   logNoticeUnderReview,
 } from '~/server/services/image.service';
@@ -345,9 +346,11 @@ export const setTosViolationHandler = async ({
     await queueComicsForPanelImage(id);
     if (image.postId) await bustCachesForPosts(image.postId);
     // After the steps that hide the image: a blocklist write that throws must not skip them.
-    if (image.pHash)
+    const pHash = written.pHashes.get(id);
+    if (!pHash && written.removedForCsam.has(id)) logCsamBlocklistNoHash([id], 'block');
+    if (pHash)
       await addBlockedImage({
-        hash: image.pHash,
+        hash: pHash,
         // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
         reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
         context: { step: 'block', imageIds: [id], actorUserId: user.id },
@@ -1296,7 +1299,7 @@ export const getEntitiesCoverImageHandler = async ({
     const covers = await getEntityCoverImage({
       ...input,
       include: ['tags'],
-      viewer: ctx.user,
+      viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { challengeCoverSql, imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -166,10 +166,10 @@ const challengeSelectFragment = Prisma.sql`
   c.theme,
   c.invitation,
   c."coverImageId",
-  (SELECT url FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverUrl",
-  (SELECT hash FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageHash",
-  (SELECT width FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageWidth",
-  (SELECT height FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageHeight",
+  (SELECT url FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverUrl",
+  (SELECT hash FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageHash",
+  (SELECT width FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageWidth",
+  (SELECT height FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()} AND ${challengeCoverSql()}) as "coverImageHeight",
   c."nsfwLevel",
   c."allowedNsfwLevel",
   c."modelVersionIds",

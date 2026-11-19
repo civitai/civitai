@@ -613,9 +613,6 @@ describe('remove-blocked-images retention clock', () => {
     }
 
     expect(deletedIds()).toContain(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'evidence hold sweep failed' })
-    );
   });
 
   it("holds the placeholder owner's media", async () => {

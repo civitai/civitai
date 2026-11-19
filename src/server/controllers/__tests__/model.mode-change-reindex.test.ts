@@ -9,9 +9,10 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 }));
 
 /**
- * A taken-down model's search document carries no images, nor do the collection covers drawn from
- * them. Entering or leaving TakenDown queues the model's document and its collections; another
- * change of mode queues the model's document only, and an edit that leaves the mode alone neither.
+ * A taken-down model has no search document, and the collection covers drawn from its images skip
+ * them. Entering TakenDown deletes the model's document and queues its collections; leaving it
+ * rewrites both; another change of mode rewrites the model's document only, and an edit that leaves
+ * the mode alone queues neither.
  */
 
 const { modelsSearchIndex, collectionsSearchIndex, articlesSearchIndex } = await import(
@@ -68,14 +69,22 @@ beforeEach(() => {
 const ctx = (isModerator = false) =>
   ({ user: { id: OWNER, isModerator }, track: { modelEvent: vi.fn() } } as never);
 const actor = { actor: { id: 7 }, tracker: { modelEvent: vi.fn() } };
-const reindexed = () =>
+const queuedAs = (action: SearchIndexUpdateQueueAction) =>
   queued.mock.calls.some(([items]) =>
     items.some(
       (item) =>
-        (item as { id: number }).id === MODEL &&
-        (item as { action?: string }).action === SearchIndexUpdateQueueAction.Update
+        (item as { id: number }).id === MODEL && (item as { action?: string }).action === action
     )
   );
+const reindexed = () => queuedAs(SearchIndexUpdateQueueAction.Update);
+const queuedActions = () =>
+  queued.mock.calls.flatMap(([items]) =>
+    items
+      .filter((item) => (item as { id: number }).id === MODEL)
+      .map((item) => (item as { action?: string }).action)
+  );
+const removedFromSearch = () =>
+  queuedAs(SearchIndexUpdateQueueAction.Delete) && !queuedAs(SearchIndexUpdateQueueAction.Update);
 
 const collectionRebuilt = () =>
   collectionsQueued.mock.calls.some(([items]) =>
@@ -99,16 +108,16 @@ const articleRebuilt = () =>
 const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 describe("a change of a model's mode", () => {
-  it('reindexes the model when a moderator takes it down', async () => {
+  it('removes the model from search when a moderator takes it down', async () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: 'TakenDown' }, ctx: ctx(true) });
-    expect(reindexed()).toBe(true);
+    expect(removedFromSearch()).toBe(true);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
 
-  it('reindexes the model when it is taken down in the moderator app', async () => {
+  it('removes the model from search when it is taken down in the moderator app', async () => {
     await takeDown.handler({ modelId: MODEL }, actor);
-    expect(reindexed()).toBe(true);
+    expect(removedFromSearch()).toBe(true);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
@@ -117,6 +126,7 @@ describe("a change of a model's mode", () => {
     mode = 'TakenDown';
     await bringBack.handler({ modelId: MODEL }, actor);
     expect(reindexed()).toBe(true);
+    expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     await settled();
     expect(collectionRebuilt()).toBe(true);
   });
@@ -150,21 +160,23 @@ describe("a change of a model's mode", () => {
     await changeModelModifierHandler({ input: { id: MODEL, mode: to } as never, ctx: ctx() });
     await settled();
     expect(reindexed()).toBe(true);
+    // Archived stays searchable.
+    expect(queuedAs(SearchIndexUpdateQueueAction.Delete)).toBe(false);
     expect(collectionRebuilt()).toBe(false);
   });
 
   // Prisma's `{ set }` form says the same as a bare value.
   it.each([
-    ['takes it down', 'TakenDown', true],
-    ['archives it', 'Archived', false],
-  ])('reads the set form when a locked write %s', async (_, to, rebuilt) => {
+    ['takes it down', 'TakenDown', SearchIndexUpdateQueueAction.Delete, true],
+    ['archives it', 'Archived', SearchIndexUpdateQueueAction.Update, false],
+  ])('reads the set form when a locked write %s', async (_, to, action, rebuilt) => {
     await updateModelById({
       id: MODEL,
       data: { mode: { set: to as never } },
       meta: (stored) => stored ?? {},
     });
     await settled();
-    expect(reindexed()).toBe(true);
+    expect(queuedActions()).toEqual([action]);
     expect(collectionRebuilt()).toBe(rebuilt);
   });
 

@@ -100,6 +100,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
 import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
+import { idempotencyKeyPurge } from '~/server/jobs/idempotency-key-purge';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -137,6 +138,7 @@ import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor'
 import { providerFetchSpikeMonitorJob } from '~/server/jobs/provider-fetch-spike-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
+import { modelHotRankSnapshotJob } from '~/server/jobs/model-hot-rank-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -150,6 +152,7 @@ import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nu
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { csamBlocklistSelfHeal } from '~/server/jobs/csam-blocklist-self-heal';
 import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
@@ -167,8 +170,10 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { appDocRaterJob } from '~/server/jobs/app-doc-rater';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
+import { articleCategoryRetryJob } from '~/server/jobs/article-category-retry';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
@@ -229,6 +234,7 @@ export const jobs: Job[] = [
   cdnAccessSync,
   cdnAccessReconcile,
   missedNotificationDigest,
+  idempotencyKeyPurge,
   removeReplacedImages,
   purgeFeedbackCaptures,
   imageStorageDeletes,
@@ -280,6 +286,7 @@ export const jobs: Job[] = [
   providerFetchSpikeMonitorJob,
   userActivityRollupJob,
   userPopulationSnapshotJob,
+  modelHotRankSnapshotJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -336,6 +343,7 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   minorHashSweep,
   poiHashSweep,
+  csamBlocklistSelfHeal,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,
@@ -355,9 +363,11 @@ export const jobs: Job[] = [
   creatorBoxPayoutSweepJob,
   mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
+  appDocRaterJob,
   textScanRetention,
   textScanChatWindowsJob,
   textScanNewUsersJob,
+  articleCategoryRetryJob,
   articleIngestionReconcile,
   serviceOfferingIngestionReconcile,
   articleContentLinkHold,

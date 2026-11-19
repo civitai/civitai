@@ -139,8 +139,13 @@ export const routes: ApiRoutes = {
   'strike/create': () => import('~/server/api-routes/mod/strike/create'),
   'strike/get-user-strikes': () => import('~/server/api-routes/mod/strike/get-user-strikes'),
   'strike/void': () => import('~/server/api-routes/mod/strike/void'),
+  'text-scan/csam-hold/mark-reported': () =>
+    import('~/server/api-routes/mod/text-scan/csam-hold/mark-reported'),
+  'text-scan/csam-hold/refer': () => import('~/server/api-routes/mod/text-scan/csam-hold/refer'),
   'text-scan/csam-hold/resolve': () =>
     import('~/server/api-routes/mod/text-scan/csam-hold/resolve'),
+  'text-scan/csam-hold/set-report-choice': () =>
+    import('~/server/api-routes/mod/text-scan/csam-hold/set-report-choice'),
   'text-scan/model-rules-hold/resolve': () =>
     import('~/server/api-routes/mod/text-scan/model-rules-hold/resolve'),
   'tipalti-resync-payee': () => import('~/server/api-routes/mod/tipalti-resync-payee'),

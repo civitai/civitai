@@ -21,6 +21,7 @@ import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-i
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
@@ -287,7 +288,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
             'id', u.id,
             'username', u.username,
             'deletedAt', u."deletedAt",
-            'image', u.image,
+            'image', ${Prisma.raw(fallbackUserImageColumn)},
             'profilePictureId', u."profilePictureId"
           ) user
         FROM "User" u

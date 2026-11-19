@@ -5,7 +5,7 @@ import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  readUserWithProfileViaKysely,
+  readUserWithProfileAndPictureGateViaKysely,
   readUserWithProfileViaPrisma,
 } from '~/server/services/hot-reads-9.reads';
 import type {
@@ -26,7 +26,14 @@ import {
 } from '~/server/schema/user-profile.schema';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  ArticleIngestionStatus,
+  ArticleStatus,
+  Availability,
+  ImageIngestionStatus,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
@@ -128,9 +135,13 @@ export const getUserWithProfile = async ({
   }
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
-    const user = viaKysely
-      ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
-      : await readUserWithProfileViaPrisma(dbWrite, { id, username });
+    // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
+    const { user, pictureBlockedFor } = viaKysely
+      ? await readUserWithProfileAndPictureGateViaKysely(kyselyWrite, { id, username })
+      : {
+          user: await readUserWithProfileViaPrisma(dbWrite, { id, username }),
+          pictureBlockedFor: null,
+        };
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
@@ -198,7 +209,8 @@ export const getUserWithProfile = async ({
           servableProfilePicture(
             user.profilePicture,
             null,
-            await isPictureModelRestricted(user.profilePicture)
+            await isPictureModelRestricted(user.profilePicture),
+            pictureBlockedFor
           ),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
@@ -290,8 +302,6 @@ export const assertShowcaseItemsOwned = async ({
   if (addedItems.some((item) => !allowedTypes.includes(item.entityType)))
     throw throwBadRequestError(`Only ${allowedTypes.join(', ')} items can be added to a showcase`);
 
-  if (isModerator) return;
-
   const idsOf = (entityType: ShowcaseItemSchema['entityType']) => [
     ...new Set(
       addedItems.filter((item) => item.entityType === entityType).map((item) => item.entityId)
@@ -300,6 +310,18 @@ export const assertShowcaseItemsOwned = async ({
   const imageIds = idsOf('Image');
   const modelIds = idsOf('Model');
   const articleIds = idsOf('Article');
+
+  // Moderators included: a taken-down model is shown to no visitor, so it never joins a showcase.
+  if (
+    modelIds.length &&
+    // primary: a takedown moments ago must already be refused.
+    (await dbWrite.model.count({
+      where: { id: { in: modelIds }, mode: ModelModifier.TakenDown },
+    }))
+  )
+    throw throwBadRequestError('A taken-down model cannot be showcased');
+
+  if (isModerator) return;
 
   // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
   const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
@@ -383,7 +405,66 @@ export const setShowcaseSections = async ({
   return saved;
 };
 
-/** Adds one of the caller's images to the front of one of their Images sections. */
+// One answer for "not yours" and "can't be shown", so the reply says nothing about another user's
+// item.
+const isOwnServableItem = async ({
+  userId,
+  entityType,
+  entityId,
+}: Pick<AddToShowcaseSectionSchema, 'entityType' | 'entityId'> & { userId: number }) => {
+  const select = { id: true } as const;
+  switch (entityType) {
+    case 'Image':
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.image.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          ...publishedImageWhere(),
+          ingestion: { notIn: [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound] },
+        },
+        select,
+      }));
+    case 'Model':
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.model.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          status: ModelStatus.Published,
+          deletedAt: null,
+          tosViolation: false,
+          availability: { not: Availability.Private },
+          // No modifier: the section feed drops Archived, so one would take a slot and never show.
+          mode: null,
+        },
+        select,
+      }));
+    case 'Article':
+      // Pending/Rescan pass: the section's feed shows other viewers only Scanned articles.
+      // primary: an item published moments ago is the likeliest to be added.
+      return !!(await dbWrite.article.findFirst({
+        where: {
+          id: entityId,
+          userId,
+          status: ArticleStatus.Published,
+          publishedAt: { lte: new Date() },
+          tosViolation: false,
+          ingestion: { not: ArticleIngestionStatus.Blocked },
+          availability: { not: Availability.Private },
+        },
+        select,
+      }));
+  }
+};
+
+const notShowableMessage: Record<AddToShowcaseSectionSchema['entityType'], string> = {
+  Image: 'Only your own images in a published post can be showcased',
+  Model: 'Only your own published models can be showcased',
+  Article: 'Only your own published articles can be showcased',
+};
+
+/** Adds one of the caller's items to the front of one of their sections of its type. */
 export const addToShowcaseSection = async ({
   userId,
   sectionId,
@@ -404,20 +485,8 @@ export const addToShowcaseSection = async ({
       `This section is full: it holds up to ${showcaseSectionLimits.items} items`
     );
 
-  // One answer for "not yours" and "can't be shown", so the reply says nothing about another
-  // user's image.
-  // primary: an image published moments ago is the likeliest to be added.
-  const showable = await dbWrite.image.findFirst({
-    where: {
-      id: entityId,
-      userId,
-      ...publishedImageWhere(),
-      ingestion: { notIn: [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound] },
-    },
-    select: { id: true },
-  });
-  if (!showable)
-    throw throwBadRequestError('Only your own images in a published post can be showcased');
+  if (!(await isOwnServableItem({ userId, entityType, entityId })))
+    throw throwBadRequestError(notShowableMessage[entityType]);
 
   const updated = await setShowcaseSections({
     userId,
@@ -493,7 +562,8 @@ export const updateUserProfile = async ({
   if (profile.showcaseItems)
     await assertShowcaseItemsOwned({
       userId,
-      isModerator,
+      // A moderator may curate another user's showcase, never fill their own with others' items.
+      isModerator: isModerator && sessionUserId !== userId,
       showcaseItems: profile.showcaseItems,
       currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
     });

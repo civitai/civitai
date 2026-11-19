@@ -258,7 +258,9 @@ export function ImageDetailCarousel({
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        className="flex-1"
+        // min-w-0 here and on each slide: a text slide's words are not allowed to widen the
+        // carousel or the slide past the stage, which clips the slide on the right.
+        className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
@@ -273,7 +275,7 @@ export function ImageDetailCarousel({
               <Embla.Slide
                 key={item.type === 'image' ? item.image.id : item.key}
                 index={i}
-                className="flex-[0_0_100%]"
+                className="min-w-0 flex-[0_0_100%]"
               >
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.

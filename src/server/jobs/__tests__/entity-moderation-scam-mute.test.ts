@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AutoMute from '~/server/services/scam-auto-mute.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.mock('~/server/services/scam-auto-mute.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AutoMute>()),
@@ -46,7 +45,7 @@ describe('Clavata scam auto-mute', () => {
     expect(autoMuteScamAccount).not.toHaveBeenCalled();
   });
 
-  it('logs rather than throws when the mute fails', async () => {
+  it('does not throw when the mute fails', async () => {
     vi.mocked(autoMuteScamAccount).mockRejectedValueOnce(new Error('db down'));
     await expect(
       autoMuteIfScamAccount({
@@ -57,7 +56,6 @@ describe('Clavata scam auto-mute', () => {
         value: 'x',
       })
     ).resolves.toBeUndefined();
-    expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
 });
 

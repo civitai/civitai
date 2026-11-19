@@ -95,6 +95,16 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
+// Non-test sources, read once. A call naming `needle` must contain it, so only those files are parsed.
+let sources: { rel: string; text: string }[] | undefined;
+function sourcesNaming(needle: RegExp) {
+  sources ??= walk(SRC)
+    .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
+    .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    .map((rel) => ({ rel, text: readFileSync(join(SRC, rel), 'utf8') }));
+  return sources.filter((s) => needle.test(s.text)).map((s) => s.rel);
+}
+
 describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', () => {
   it('is FROZEN, so the export cannot be widened by reference', () => {
     // 🔴 The guard that closes the one-line leak, and it is behavioural rather than textual.
@@ -133,10 +143,9 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // `~/server/search-index/__tests__/models-index-insight-projection.test.ts`.
     const MUTATOR =
       /^(modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES|modelsSearchableAttributes)\.(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/;
-    const offenders = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
-      .filter((rel) => callsIn(rel).some((c) => MUTATOR.test(c.callee)));
+    const offenders = sourcesNaming(
+      /modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES|modelsSearchableAttributes/
+    ).filter((rel) => callsIn(rel).some((c) => MUTATOR.test(c.callee)));
 
     expect(offenders).toEqual([]);
   });
@@ -278,9 +287,7 @@ describe('the writer seam', () => {
     // 🔴 Excluding tests is load-bearing, not tidiness: this file names the very string it
     // searches for, so without the filter the scan matches ITSELF and the ledger can never be
     // satisfied. Same shape as `pgrep -f` matching the shell that ran it.
-    const writers = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    const writers = sourcesNaming(/updateDisplayedAttributes/)
       .filter((rel) =>
         callsIn(rel).some((c) => c.callee.split('.').pop() === 'updateDisplayedAttributes')
       )
@@ -334,9 +341,7 @@ describe('the writer seam', () => {
     // write, which is the review event we want: a NEW writer is the hazard, and a writer
     // DISAPPEARING means an index stopped having its whitelist applied at all and silently fell
     // back to Meili's `["*"]`.
-    const writers = walk(SRC)
-      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
-      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+    const writers = sourcesNaming(/updateSearchableAttributes/)
       .filter((rel) =>
         callsIn(rel).some((c) => c.callee.split('.').pop() === 'updateSearchableAttributes')
       )

@@ -1,3 +1,7 @@
+import {
+  fallbackUserImageColumn,
+  fallbackUserImageColumnOf,
+} from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
@@ -158,6 +162,7 @@ import {
   hasBlockMarker,
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
+  challengeCoverWhere,
 } from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
@@ -349,14 +354,14 @@ const challengeCardQuery = Prisma.sql`
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt"
     FROM "Challenge" c
     JOIN "User" u ON u.id = c."createdById"
@@ -398,7 +403,10 @@ async function mapChallengeRowsToCards(
 
   const coverImageIds = items.map((item) => item.coverImageId).filter((id): id is number => !!id);
   const coverImages = await dbRead.image.findMany({
-    where: { id: { in: coverImageIds }, ...imageNotRestrictedWhere({ viewerId: site.viewerId }) },
+    where: {
+      id: { in: coverImageIds },
+      AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
+    },
     select: imageSelect,
   });
 
@@ -515,8 +523,12 @@ export async function getMyChallenges({
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
-           u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
-           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
+           u.username AS "creatorUsername", ${Prisma.raw(
+             fallbackUserImageColumn
+           )} AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
+           cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ${Prisma.raw(
+             fallbackUserImageColumnOf('ju')
+           )} AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
            cw."place" AS "myPlace",
            (c."createdById" = ${userId} AND c.source = ${
     ChallengeSource.User
@@ -949,9 +961,9 @@ async function buildChallengeDetail(
   const [creator] = await dbRead.$queryRaw<
     [{ id: number; username: string | null; image: string | null; deletedAt: Date | null }]
   >`
-    SELECT id, username, image, "deletedAt"
-    FROM "User"
-    WHERE id = ${createdById}
+    SELECT u.id, u.username, ${Prisma.raw(fallbackUserImageColumn)} AS image, u."deletedAt"
+    FROM "User" u
+    WHERE u.id = ${createdById}
   `;
 
   // Fetch profile picture and cosmetics for creator
@@ -968,7 +980,14 @@ async function buildChallengeDetail(
         where: {
           id: challenge.coverImageId,
           // The edit form must round-trip the cover it keeps, or a save would drop it.
-          ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: green?.viewerId })),
+          ...(forEdit
+            ? {}
+            : {
+                AND: [
+                  imageNotRestrictedWhere({ viewerId: green?.viewerId }),
+                  challengeCoverWhere(),
+                ],
+              }),
         },
         select: imageSelect,
       })
@@ -1017,7 +1036,9 @@ async function buildChallengeDetail(
         | undefined
       ]
     >`
-      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, u.image, u."deletedAt"
+      SELECT cj.id, cj."userId", cj.name, cj.bio, u.username, ${Prisma.raw(
+        fallbackUserImageColumn
+      )} AS image, u."deletedAt"
       FROM "ChallengeJudge" cj
       JOIN "User" u ON u.id = cj."userId"
       WHERE cj.id = ${challenge.judgeId}
@@ -3377,7 +3398,9 @@ async function getEventCoverImages(
   const images = await dbRead.image.findMany({
     where: {
       id: { in: ids },
-      ...(forEdit ? {} : imageNotRestrictedWhere({ viewerId: site.viewerId })),
+      ...(forEdit
+        ? {}
+        : { AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()] }),
     },
     select: imageSelect,
   });
@@ -3528,7 +3551,7 @@ export async function getActiveEvents(
           .findMany({
             where: {
               id: { in: coverImageIds },
-              ...imageNotRestrictedWhere({ viewerId: site.viewerId }),
+              AND: [imageNotRestrictedWhere({ viewerId: site.viewerId }), challengeCoverWhere()],
             },
             select: imageSelect,
           })
@@ -4324,14 +4347,14 @@ export async function getCompletedChallengesWithWinners(
       c."collectionId",
       c."createdById",
       u.username as "creatorUsername",
-      u.image as "creatorImage",
+      ${Prisma.raw(fallbackUserImageColumn)} as "creatorImage",
       u."deletedAt" as "creatorDeletedAt",
       cj.id as "judgeId",
       cj.name as "judgeName",
       cj.bio as "judgeBio",
       cj."userId" as "judgeUserId",
       ju.username as "judgeUsername",
-      ju.image as "judgeImage",
+      ${Prisma.raw(fallbackUserImageColumnOf('ju'))} as "judgeImage",
       ju."deletedAt" as "judgeDeletedAt",
       c.metadata,
       c."judgingCategories"
@@ -4443,7 +4466,7 @@ export async function getCompletedChallengesWithWinners(
       ? await dbRead.image.findMany({
           where: {
             id: { in: coverImageIds },
-            ...imageNotRestrictedWhere({ viewerId: currentUserId }),
+            AND: [imageNotRestrictedWhere({ viewerId: currentUserId }), challengeCoverWhere()],
           },
           select: imageSelect,
         })

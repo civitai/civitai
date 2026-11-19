@@ -1,4 +1,5 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
@@ -546,6 +547,7 @@ export const getModelsRaw = async ({
   eventDecorationViewer,
   faceBrowsingLevel,
   coverage,
+  includeWithheld,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -594,6 +596,11 @@ export const getModelsRaw = async ({
    * audience-blind answer.
    */
   coverage?: CoverageAudience;
+  /**
+   * Keep taken-down models listed (the v1 API's documented behaviour). A sibling of `input` so
+   * it can never arrive from parsed query params.
+   */
+  includeWithheld?: boolean;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -795,6 +802,17 @@ export const getModelsRaw = async ({
       Prisma.sql`(${pSql}."mode" IS NULL OR ${pSql}."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
   }
+  if (!includeWithheld) {
+    AND.push(
+      modelNotWithheldSql({
+        mode: Prisma.sql`${pSql}."mode"`,
+        ownerId: Prisma.raw('mm."userId"'),
+        signedIn: !!userId,
+        viewerId: userId,
+        isModerator,
+      })
+    );
+  }
 
   if (disablePoi) {
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
@@ -863,12 +881,14 @@ export const getModelsRaw = async ({
     )`);
   }
 
+  let listedUserId: number | undefined;
   if (username || user) {
     const userFindArgs = { where: { username: (username || user) ?? '' }, select: { id: true } };
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
+    listedUserId = targetUser.id;
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -1088,7 +1108,9 @@ export const getModelsRaw = async ({
     );
   }
   if (availability) {
-    if (availability === Availability.Private && !(username || isModerator)) {
+    // Private models are listed only to their owner and moderators.
+    const ownListing = !!sessionUser && listedUserId === sessionUser.id;
+    if (availability === Availability.Private && !(ownListing || isModerator)) {
       throw throwAuthorizationError();
     }
 
@@ -1632,6 +1654,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
+
+  // A Private model is listed to moderators only: these lists are cached per moderator flag, not per
+  // user, so an owner exemption here would reach other viewers.
+  if (!sessionUser?.isModerator) AND.push({ availability: { not: Availability.Private } });
 
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
@@ -2292,13 +2318,21 @@ export const updateModelById = async ({
   // through here, and the cached body's images/files/downloadUrl depend on
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
-  // A taken-down model's search document carries no images, so a change of mode rewrites it.
   if (written && 'mode' in written) {
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
-    // Not awaited: the lookup reads every image on the model.
     const writtenMode =
       written.mode && typeof written.mode === 'object' ? written.mode.set : written.mode;
+    // Update would not remove a taken-down model's document: the indexer only writes eligible models.
+    await modelsSearchIndex.queueUpdate([
+      {
+        id,
+        action:
+          writtenMode === ModelModifier.TakenDown
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
+    // Collection covers drawn from its images change only when it enters or leaves TakenDown.
+    // Not awaited: the lookup reads every image on the model.
     if (
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
@@ -2808,6 +2842,12 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
+  // A sfwOnly-only change leaves image rows alone: they carry no sfwOnly. A minor model re-syncs
+  // its images on every flag write, so an image added since the last one is flagged too.
+  const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
+  // An image's own minor flag (set by a scan or a moderator) is written only by a change to the
+  // model's minor flag or by a minor model: a poi-only change on a non-minor model leaves it.
+  const syncMinor = after.minor !== before.minor || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
       await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
@@ -2818,14 +2858,18 @@ export async function applyModelFlagSideEffects({
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
       // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
       // id into the search index) when the flags already match.
-      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+      const updatedImages = !syncImageFlags
+        ? []
+        : await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
-          SET minor = ${after.minor},
+          SET minor = CASE WHEN ${syncMinor} THEN ${after.minor} ELSE i.minor END,
               poi = ${after.poi}
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
+          AND (${
+            syncMinor ? Prisma.sql`i.minor IS DISTINCT FROM ${after.minor} OR` : Prisma.empty
+          } i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
 
@@ -4054,8 +4098,10 @@ async function assertScanRatingKept({
   modelId,
   before,
   data,
+  db,
 }: {
   modelId: number;
+  db?: Prisma.TransactionClient;
   before: {
     nsfw: boolean;
     name: string;
@@ -4102,7 +4148,7 @@ async function assertScanRatingKept({
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;
-  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
+  if (await moderatorRuledNsfwSince(modelId, ratedAt, { db })) return;
   throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
 }
 
@@ -4497,7 +4543,7 @@ export const upsertModel = async (
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           // The scan's rating has no lock to enforce here: a rating that landed since the read
           // above is held by its guard, judged again on this row.
-          await assertScanRatingKept({ modelId: id, before: locked, data });
+          await assertScanRatingKept({ modelId: id, before: locked, data, db: tx });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;
@@ -6865,6 +6911,7 @@ export async function getModelsWithVersions({
     ignoreBrowsingAddons,
     ownerUserId,
     publicVersionsOnly,
+    includeWithheld: true,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
@@ -7734,6 +7781,8 @@ export const privateModelFromTraining = async ({
   // Set when the flow is refused before it wrote anything (a take-down first, or a gate on the locked
   // row), so there is nothing to roll back.
   let takenDown = false;
+  // The flags as the locked row had them, for the side effects of the sfwOnly this flow forces on.
+  let flagsBefore: Parameters<typeof applyModelFlagSideEffects>[0]['before'] | undefined;
 
   try {
     // One transaction: the model row stays locked until its versions are written, so a model
@@ -7757,6 +7806,13 @@ export const privateModelFromTraining = async ({
           takenDown = true;
           throw error;
         }
+        flagsBefore = {
+          poi: locked.poi,
+          minor: locked.minor,
+          sfwOnly: locked.sfwOnly,
+          nsfw: locked.nsfw,
+          gallerySettings: locked.gallerySettings,
+        };
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         const intentMeta = user.isModerator
@@ -7889,6 +7945,17 @@ export const privateModelFromTraining = async ({
     );
     // The model is now SFW-only, which holds the gallery level it serves.
     await bustModelGallerySettings([id]);
+    // Logged, not thrown: the model is already Private, and a throw here would send it down the revert below.
+    if (flagsBefore)
+      await applyModelFlagSideEffects({ before: flagsBefore, after: result }).catch((error) =>
+        logToAxiom({
+          name: 'private-model-from-training',
+          type: 'error',
+          message: 'flag side effects failed',
+          modelId: id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
     return withoutModeratorOnlyMeta(result);

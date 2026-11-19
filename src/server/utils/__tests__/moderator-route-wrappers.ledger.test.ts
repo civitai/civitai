@@ -230,6 +230,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
   'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
   'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
+  'v1/models/index':
+    'the system account keeps its moderator rights on its own keys when listing models',
   'v1/permissions/check': 'entity access check that also admits owners and public entities',
   'webhooks/stripe': 'a lost dispute skips banning a payer who is a moderator; not a caller gate',
 };

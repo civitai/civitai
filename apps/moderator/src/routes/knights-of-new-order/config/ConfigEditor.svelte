@@ -83,7 +83,7 @@
       toggles: ['harvest'],
     },
   ];
-  const DANGER: ToggleKey[] = ['shopDisabled', 'conversionDisabled'];
+  const DANGER: ToggleKey[] = ['shopDisabled', 'conversionDisabled', 'signalsDisabled'];
 
   async function post(action: string, body: FormData) {
     const response = await fetch(`?/${action}`, {

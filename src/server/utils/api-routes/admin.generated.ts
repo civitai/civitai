@@ -46,6 +46,8 @@ export const routes: ApiRoutes = {
   'send-discount': () => import('~/server/api-routes/admin/send-discount'),
   'system-account-api-key': () => import('~/server/api-routes/admin/system-account-api-key'),
   'system-account-profile': () => import('~/server/api-routes/admin/system-account-profile'),
+  'temp/app-doc-levels-backfill': () =>
+    import('~/server/api-routes/admin/temp/app-doc-levels-backfill'),
   'temp/apply-models-index-displayed-attributes': () =>
     import('~/server/api-routes/admin/temp/apply-models-index-displayed-attributes'),
   'temp/apply-models-index-filterable-attributes': () =>
@@ -81,6 +83,8 @@ export const routes: ApiRoutes = {
   'temp/child-label-reindex': () => import('~/server/api-routes/admin/temp/child-label-reindex'),
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
+  'temp/clear-user-image-keys': () =>
+    import('~/server/api-routes/admin/temp/clear-user-image-keys'),
   'temp/convert-model-rules': () => import('~/server/api-routes/admin/temp/convert-model-rules'),
   'temp/merge-moss-image-base': () =>
     import('~/server/api-routes/admin/temp/merge-moss-image-base'),
@@ -107,6 +111,8 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/recompute-self-activity'),
   'temp/reconcile-detected-image-resources': () =>
     import('~/server/api-routes/admin/temp/reconcile-detected-image-resources'),
+  'temp/refresh-marked-profile-pictures': () =>
+    import('~/server/api-routes/admin/temp/refresh-marked-profile-pictures'),
   'temp/repair-post-unpublished-stamp': () =>
     import('~/server/api-routes/admin/temp/repair-post-unpublished-stamp'),
   'temp/reprocess-exempt-blocked-images': () =>

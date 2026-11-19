@@ -957,13 +957,10 @@ jobs:
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
       #
-      # VITEST_MAX_WORKERS=2 (read by vitest.config.mts): uncapped, Vitest runs one fork per
-      # core and shard 4's PGlite-heavy files exhausted the hosted runner's 16 GB. At 3 workers
-      # (2026-11-18, four runs) memory still reached 15.4 GB used with 3 GB swap full inside
-      # 2 minutes, and one of the four runs was killed.
+      # No worker cap: Vitest runs its default fork count. Shard 4 once exhausted the hosted
+      # runner's 16 GB because the resource-intent PGlite tests never freed an instance; their
+      # harness now frees each one after its test (#9535).
       - name: Unit tests
-        env:
-          VITEST_MAX_WORKERS: 2
         # The [mem] line also goes into this step's log, which streams live: a runner killed for
         # memory never reaches the upload step below (observed 2026-11-18), but its log keeps
         # every line up to the kill.

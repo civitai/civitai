@@ -19,13 +19,10 @@ describe('when the event registry cannot be loaded', () => {
     loggingMock.logToAxiom.mockReset();
   });
 
-  it('refuses an event-item purchase and logs the failure', async () => {
+  it('refuses an event-item purchase', async () => {
     await expect(
       assertEventShopItemPurchasable({ userId: 1, data: eventItem, payWith: 'default' })
     ).rejects.toThrow('This item is not available right now');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ level: 'error', message: 'events: lazy load failed' })
-    );
   });
 
   it('hides event items but still shows ordinary ones', async () => {

@@ -518,7 +518,11 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
     expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
     expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
-    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: false, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: false,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 
@@ -534,7 +538,11 @@ describe('a moderator lifting the nsfw lock', () => {
     await unlock();
     const meta = updateData().meta as ModelMeta;
     expect(meta.comFaceIntent).toEqual(detection);
-    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({ detected: true, reason: 'r' });
+    expect(reusableComFaceIntent(meta, listingHash, 77)).toEqual({
+      detected: true,
+      reason: 'r',
+      promptId: 77,
+    });
     expect(meta.comFaceIntentRelockSuppressed).toEqual({
       textHash: listingHash,
       at: expect.any(String),

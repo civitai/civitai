@@ -2047,20 +2047,21 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
-      const { listAvailableListings } = await import(
-        '~/server/services/blocks/app-listing.service'
+      const { listStoreGrid, storeGridRequest } = await import(
+        '~/server/services/blocks/app-index-search.service'
       );
-      return listAvailableListings(input, {
-        redCapable: isRedCapableRequest(ctx),
-        scope,
-        floor,
-        viewer: listingViewerFromCtx(ctx),
-        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
-        // `SubListingCard` just because the viewer has the flag.
-        includeSubListings:
-          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
-        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-      });
+      return listStoreGrid(
+        input,
+        // The sub-listing opt-in and the index switch meet the viewer's flags there.
+        ...storeGridRequest(input, {
+          features: ctx.features,
+          redCapable: isRedCapableRequest(ctx),
+          scope,
+          floor,
+          viewer: listingViewerFromCtx(ctx),
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        })
+      );
     }),
 
   /**

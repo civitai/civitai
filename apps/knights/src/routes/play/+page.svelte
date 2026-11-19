@@ -40,8 +40,26 @@
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
+  import type { PlayerStatsSignal } from '$lib/server/live/announce';
+  import { connectSignals, joinTopic, onSignal } from '$lib/signals';
+  import { liveStatus } from '$lib/live-status.svelte';
+  import {
+    PLAYER_STATS_EVENT,
+    QUEUE_DROP_EVENT,
+    acceptsStats,
+    dropsForPlayer,
+    queueTopic,
+    readQueueDrops,
+  } from '$lib/live-events';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  // The latest stats signal, taken only when it is newer than the page's data and counts every vote the page shows.
+  let live = $state.raw<PlayerStatsSignal | null>(null);
+  let shown = $derived(
+    data.mode === 'queue' && live && live.at > data.live.at
+      ? { ...data, status: live.status, daily: live.daily }
+      : data
+  );
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
@@ -350,6 +368,7 @@
       const body: { items?: PickedItem[] } | null = response.ok ? await response.json() : null;
       for (const entry of body?.items ?? []) {
         if (mine !== epoch) return;
+        if (dropped.has(entry.item.live)) continue;
         if (buffer.enqueue(entry, (key) => tracker.has(key) || key === currentKey)) {
           download(entry, mine);
           added += 1;
@@ -423,7 +442,7 @@
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
     // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
-    const smitesBefore = data.status.smites;
+    const smitesBefore = shown.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -466,7 +485,7 @@
       // stays counted against the data on screen until the refreshed data, which holds it, replaces it.
       onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
-        if (counted && alive) landVote(inFlight, data.daily, { paysGold });
+        if (counted && alive) landVote(inFlight, shown.daily, { paysGold });
         counted = false;
         // Votes post one at a time, so a vote still unlanded settles after this one and reads the page then. Reading it now
         // as well would only be discarded when that read starts, and while reads kept replacing each other the status froze.
@@ -524,27 +543,101 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, pendingVotes(inFlight, data.daily))) : null);
-  let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
+  const SETTLED_NOTICE = 'Already settled by the Order. On to the next one.';
+  // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
+  const dropped = new Set<string>();
+  const MAX_DROPPED = 200;
+
+  // Items other players settled (or moved past this player's stages) leave the buffer, and the one on screen is swapped for
+  // the next, so no judgment is spent on an item the server would refuse.
+  function onDrops(payload: unknown) {
+    if (data.mode !== 'queue') return;
+    const stages = data.live.stages;
+    const gone = new Set(
+      readQueueDrops(payload)
+        .filter((drop) => dropsForPlayer(drop, stages))
+        .map((drop) => drop.k)
+    );
+    if (gone.size === 0) return;
+    for (const k of gone) dropped.add(k);
+    while (dropped.size > MAX_DROPPED) dropped.delete(dropped.values().next().value!);
+    for (const key of buffer.dropLive(gone)) {
+      preloaded.delete(key);
+      downloading.delete(key);
+    }
+    syncBuffer();
+    const onScreen = view?.item;
+    if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key)) return;
+    // A refusal note must stay until the next judgment; it outranks this one.
+    if (!sticky) tell(SETTLED_NOTICE);
+    // Without a decoded item to show, the dropped one stays up (a vote on it is refused): falling back to the
+    // server's item would show one already judged, and the buffer head may not be decoded yet.
+    const next = buffer.peek() ? buffer.next() : null;
+    if (!next) {
+      if (!local && !tracker.pending) void invalidate('app:play');
+      return;
+    }
+    preloaded.delete(next.item.key);
+    local = next;
+    syncBuffer();
+    cooling = true;
+    setTimeout(() => (cooling = false), SETTLE_MS);
+  }
+
+  function onStats(payload: unknown) {
+    const signal = payload as PlayerStatsSignal | null;
+    if (data.mode !== 'queue' || !signal?.status || !signal.daily) return;
+    const daily = shown.mode === 'queue' ? shown.daily : null;
+    if (!daily) return;
+    const at = Math.max(data.live.at, live?.at ?? 0);
+    const votes = daily.votes + pendingVotes(inFlight, daily);
+    if (acceptsStats(signal, { at, votes, inFlight: inFlight.count })) live = signal;
+  }
+
+  onMount(() => {
+    connectSignals();
+    const offDrops = onSignal(QUEUE_DROP_EVENT, onDrops);
+    const offStats = onSignal(PLAYER_STATS_EVENT, onStats);
+    return () => {
+      offDrops();
+      offStats();
+    };
+  });
+
+  const headerStatus = liveStatus();
+  $effect(() => {
+    headerStatus.current = shown === data ? null : shown.status;
+  });
+  onDestroy(() => (headerStatus.current = null));
+
+  // A primitive, so a page reload with the same stages does not leave and rejoin the topics.
+  let stageList = $derived(data.mode === 'queue' ? data.live.stages.join(',') : '');
+  $effect(() => {
+    const leave = stageList ? stageList.split(',').map((stage) => joinTopic(queueTopic(stage))) : [];
+    return () => leave.forEach((left) => left());
+  });
+
+  let strip = $derived(shown.mode === 'queue' ? watchStrip(withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily))) : null);
+  let watching = $derived(shown.mode === 'queue' && !paused && Boolean(view) && watchInProgress(shown.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
     const action = leaveAction({ inProgress: watching, type, toPath: to?.url.pathname ?? null });
     if (action === 'native') cancel();
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
-  let hearts = $derived(heartsLeft(data.status));
+  let hearts = $derived(heartsLeft(shown.status));
   // Which body the page shows: the template branches on it, and the ruling sits directly above the stage when there is one.
   let screen = $derived.by(() => {
-    if (data.mode === 'apprentice') {
-      const apprentice = data.apprentice;
+    if (shown.mode === 'apprentice') {
+      const apprentice = shown.apprentice;
       if (apprentice.kind === 'question') return { kind: 'apprentice-question' as const, apprentice };
       if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
       return { kind: 'no-practice' as const };
     }
-    if (data.muted) return { kind: 'muted' as const };
-    if (data.lockoutSeconds) return { kind: 'lockout' as const, seconds: data.lockoutSeconds };
+    if (shown.muted) return { kind: 'muted' as const };
+    if (shown.lockoutSeconds) return { kind: 'lockout' as const, seconds: shown.lockoutSeconds };
     if (view) return { kind: 'queue-stage' as const, view };
-    return { kind: data.resetPending ? ('none' as const) : ('clear' as const), daily: data.daily };
+    return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
   });
   let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
@@ -608,11 +701,9 @@
 
 {#snippet questionTools()}
   <div class="qtools">
-    {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
-        <Icon name="book-open" size={16} />Guide
-      </button>
-    {/if}
+    <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
+      <Icon name="book-open" size={16} />Guide
+    </button>
     {@render soundToggle()}
   </div>
 {/snippet}
@@ -621,7 +712,7 @@
   <!-- Not drawn under a dialog, so its auto-hide never runs unseen. -->
   {#if rulingNotice.showing && !dialogOpen}
     <RulingToast
-      notices={data.notices}
+      notices={shown.notices}
       message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
       submit={rulingNotice.submit}
       {anchored}
@@ -633,7 +724,7 @@
   {#if levelNotice && progress.showing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
-      xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
+      xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === shown.status.level ? shown.status.xpForNextLevel - shown.status.xpIntoLevel : null}
       message={form?.progressFailed && progress.failed ? form.message : null}
       submit={progress.submit}
       {floating}
@@ -646,42 +737,42 @@
 <div class="play">
   {#if careerReset.showing}
     <ResetNotice
-      smites={data.status.maxSmites}
+      smites={shown.status.maxSmites}
       message={form?.resetNoticeFailed && careerReset.failed ? form.message : null}
       submit={careerReset.submit}
     />
   {:else}
-  {#if data.mode === 'queue' && data.apprenticeMeter}
+  {#if shown.mode === 'queue' && shown.apprenticeMeter}
     <ApprenticeMeter
-      level={data.status.level}
-      levelFraction={data.status.progressPercent / 100}
-      accuracy={data.apprenticeMeter.accuracy}
-      bar={data.apprenticeMeter.bar}
-      knightLevel={data.apprenticeMeter.knightLevel}
-      answerWindow={data.apprenticeMeter.window}
+      level={shown.status.level}
+      levelFraction={shown.status.progressPercent / 100}
+      accuracy={shown.apprenticeMeter.accuracy}
+      bar={shown.apprenticeMeter.bar}
+      knightLevel={shown.apprenticeMeter.knightLevel}
+      answerWindow={shown.apprenticeMeter.window}
     />
-  {:else if strip && data.mode === 'queue'}
+  {:else if strip && shown.mode === 'queue'}
     <WatchMeta
       value={strip.value}
       max={strip.max}
-      watch={data.daily.watch}
+      watch={shown.daily.watch}
       done={strip.done}
-      streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
+      streak={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily)).streak}
       {hearts}
-      maxHearts={data.status.maxSmites}
-      heartBack={data.status.heartBack}
+      maxHearts={shown.status.maxSmites}
+      heartBack={shown.status.heartBack}
       onmore={() => (railSheetOpen = true)}
     />
-  {:else if data.mode === 'apprentice'}
+  {:else if shown.mode === 'apprentice'}
     <ApprenticeMeter
-      level={data.status.level}
-      levelFraction={data.status.progressPercent / 100}
-      accuracy={data.apprentice.progress.accuracy}
-      bar={data.apprentice.progress.bar}
-      knightLevel={data.apprentice.progress.knightLevel}
-      answerWindow={data.apprentice.progress.window}
+      level={shown.status.level}
+      levelFraction={shown.status.progressPercent / 100}
+      accuracy={shown.apprentice.progress.accuracy}
+      bar={shown.apprentice.progress.bar}
+      knightLevel={shown.apprentice.progress.knightLevel}
+      answerWindow={shown.apprentice.progress.window}
       {hearts}
-      maxHearts={data.status.maxSmites}
+      maxHearts={shown.status.maxSmites}
     />
   {/if}
 
@@ -689,7 +780,7 @@
   <div class="main">
   {#if !rulingInStage}{@render ruling(false)}{/if}
 
-  {#if data.mode === 'queue' && data.resetPending}
+  {#if shown.mode === 'queue' && shown.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
@@ -830,8 +921,7 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        <!-- Hidden, not removed, on yes/no: its slot keeps Skip from shifting. -->
-        <span class="rowtool" class:held={yesNo}>
+        <span class="rowtool">
           <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
         </span>
         <span class="rowtool">{@render soundToggle()}</span>
@@ -848,39 +938,40 @@
     <QueueClear daily={screen.daily} />
   {/if}
   </div>
-  {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
+  {#if shown.mode === 'queue' && !shown.apprenticeMeter}
+    <PlayRail status={shown.status} daily={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily), pendingGoldVotes(inFlight, shown.daily))} rail={shown.rail} ladder={shown.ladder} />
   {/if}
   </div>
   {/if}
 </div>
 
-{#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
+{#if railSheetOpen && shown.mode === 'queue' && !shown.apprenticeMeter}
   <RailSheet
-    status={data.status}
-    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))}
-    rail={data.rail}
-    ladder={data.ladder}
+    status={shown.status}
+    daily={withVotesSent(shown.daily, pendingVotes(inFlight, shown.daily), pendingGoldVotes(inFlight, shown.daily))}
+    rail={shown.rail}
+    ladder={shown.ladder}
     onclose={() => (railSheetOpen = false)}
   />
 {/if}
 
 {#if guideOpen}
   <GuideDialog
-    guide={data.ratingGuide}
-    first={data.showGuide}
+    guide={shown.ratingGuide}
+    scrollToRules={yesNo}
+    first={shown.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}
     submit={submitGuide}
   />
-{:else if data.progress?.kind === 'rank' && progress.showing}
+{:else if shown.progress?.kind === 'rank' && progress.showing}
   <RankUpDialog
-    rank={data.progress.rank}
-    level={data.progress.level}
-    levels={data.progress.levels}
-    goldMultiplier={data.progress.goldMultiplier}
-    previous={data.progress.previous}
-    badge={data.badges.large[data.progress.rank]}
+    rank={shown.progress.rank}
+    level={shown.progress.level}
+    levels={shown.progress.levels}
+    goldMultiplier={shown.progress.goldMultiplier}
+    previous={shown.progress.previous}
+    badge={shown.badges.large[shown.progress.rank]}
     message={form?.progressFailed && progress.failed ? form.message : null}
     submit={progress.submit}
   />
@@ -1201,9 +1292,6 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-  .rowtool.held {
-    visibility: hidden;
   }
   .quiet.guide {
     color: var(--io-gold);

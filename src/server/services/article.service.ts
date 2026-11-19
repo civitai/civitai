@@ -26,6 +26,7 @@ import {
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -563,7 +564,7 @@ export const getArticles = async ({
           'id', u."id",
           'username', u."username",
           'deletedAt', u."deletedAt",
-          'image', u."image",
+          'image', ${Prisma.raw(fallbackUserImageColumn)},
           'profilePictureId', u."profilePictureId"
         ) as "user",
         (

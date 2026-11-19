@@ -75,9 +75,10 @@ export type DecodeBudget = { left: number };
 
 /**
  * `value` and each form it takes as its `%XX` escapes are decoded, one pass at a time, each escape
- * on its own.
+ * on its own, with the characters a url parser drops (tab, CR, LF) removed. Shared with the
+ * content-level rater's image-url scan (`doc-rating-media.ts`).
  */
-function decodedForms(value: string, budget?: DecodeBudget) {
+export function decodedForms(value: string, budget?: DecodeBudget) {
   const forms = [compacted(value)];
   for (let pass = 0; pass < MAX_DECODE_PASSES; pass++) {
     const current = forms[forms.length - 1];
