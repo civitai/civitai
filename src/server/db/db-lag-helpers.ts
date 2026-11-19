@@ -44,7 +44,12 @@ type LaggingType =
   | 'userArticles'
   | 'userApiKeys'
   | 'collection'
+  | 'collectionItem'
   | 'userCollections';
+
+/** The `collectionItem` lag id of an item's entry in a collection. */
+export const collectionItemLagId = (collectionId: number, itemKey: string, itemId: unknown) =>
+  `${collectionId}:${itemKey}:${itemId}`;
 
 function lagKey(type: LaggingType, id: number | string) {
   return `${REDIS_KEYS.LAG_HELPER}:${type}:${id}` as RedisKeyTemplateCache;
