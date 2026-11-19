@@ -103,9 +103,11 @@ import {
 } from '~/server/utils/errorHandling';
 import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
-import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
-import { getViewableModelVersionIds } from '~/server/services/model-version-visibility.service';
+import {
+  canViewModelVersion,
+  getViewableModelVersionIds,
+} from '~/server/services/model-version-visibility.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
@@ -275,21 +277,26 @@ const loadModelVersion = async ({
       },
     });
     const ownerViewer = ownerOrModeratorViewer(ctx);
-    const hiddenByStatus =
-      publicRead &&
+    const hidden =
       !!version &&
-      !canViewModelVersionStatus({
-        viewer: ownerViewer,
-        ownerId: version.model.user.id,
-        modelStatus: version.model.status as ModelStatus,
-        versionStatus: version.status as ModelStatus,
-        publishedAt: version.publishedAt,
-      });
-    if (
-      hiddenByStatus ||
-      (version && !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer))
-    )
-      throw throwNotFoundError(`No version with id ${input.id}`);
+      (publicRead
+        ? !(await canViewModelVersion(
+            {
+              id: version.id,
+              status: version.status as ModelStatus,
+              publishedAt: version.publishedAt,
+              availability: version.availability,
+              model: {
+                userId: version.model.user.id,
+                status: version.model.status as ModelStatus,
+                availability: version.model.availability,
+                poi: version.model.poi,
+              },
+            },
+            ownerViewer
+          ))
+        : !canViewPoiModel(version.model.poi, version.model.user.id, ownerViewer));
+    if (hidden) throw throwNotFoundError(`No version with id ${input.id}`);
 
     // Separate linked components from regular recommended resources
     const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
