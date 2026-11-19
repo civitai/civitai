@@ -85,6 +85,9 @@ export const backoffMinutes = (attempts: number) =>
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
+/** An item as it stood before a step moved it off its stage: what the live queue drops are worked out from. */
+export type MovedItem = { id: number; status: string; minRank: string };
+
 export type QuestionOption = { value: string; label: string };
 
 export type Feed = {
@@ -862,13 +865,18 @@ async function applyReroute(
  */
 export async function closeModeratorRuledItems(
   db: Kysely<DB>,
-  { now, limit = 200, mirror }: { now: Date; limit?: number; mirror?: XpMirror }
+  {
+    now,
+    limit = 200,
+    mirror,
+    moved,
+  }: { now: Date; limit?: number; mirror?: XpMirror; moved?: (items: MovedItem[]) => void }
 ): Promise<{ closed: number; failed: number }> {
   // Narrowed to rows the rule closes, so rows it skips cannot fill the limit every tick.
   const candidates = await db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .select(['i.id', 'i.imageId'])
+    .select(['i.id', 'i.imageId', 'i.minRank'])
     .where('i.status', '=', 'Open')
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
@@ -879,7 +887,8 @@ export async function closeModeratorRuledItems(
     .execute();
 
   const counts = { closed: 0, failed: 0 };
-  for (const { id, imageId } of candidates) {
+  const closed: MovedItem[] = [];
+  for (const { id, imageId, minRank } of candidates) {
     try {
       const xp = await db.transaction().execute(async (trx) => {
         const item = await trx
@@ -896,6 +905,7 @@ export async function closeModeratorRuledItems(
       });
       if (!xp) continue;
       counts.closed++;
+      closed.push({ id, status: 'Open', minRank });
       await mirrorXp(mirror, xp);
     } catch (error) {
       counts.failed++;
@@ -905,6 +915,7 @@ export async function closeModeratorRuledItems(
       });
     }
   }
+  moved?.(closed);
   return counts;
 }
 
@@ -1067,7 +1078,7 @@ export async function applyPendingResolutions(
  */
 export async function escalateExpired(
   db: Kysely<DB>,
-  { now, limit = 200 }: { now: Date; limit?: number }
+  { now, limit = 200, moved }: { now: Date; limit?: number; moved?: (items: MovedItem[]) => void }
 ): Promise<{
   escalated: number;
   toInquisitor: number;
@@ -1075,6 +1086,7 @@ export async function escalateExpired(
   expired: number;
   rerated: number;
 }> {
+  let left: MovedItem[] = [];
   const result = await db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
@@ -1165,6 +1177,9 @@ export async function escalateExpired(
       counts.expired = lapsed.length;
     }
 
+    left = due
+      .filter((item) => !extend(item))
+      .map((item) => ({ id: item.id, status: 'Open', minRank: item.minRank }));
     for (const item of due) {
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
@@ -1175,6 +1190,7 @@ export async function escalateExpired(
     return counts;
   });
   for (let i = 0; i < result.expired; i++) metrics.escalation('expired');
+  moved?.(left);
   return result;
 }
 
