@@ -1,6 +1,8 @@
 <script lang="ts">
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
+  import { IconPhotoOff } from '@tabler/icons-svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import TriageRow from '$lib/components/triage/TriageRow.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { shortAge } from '$lib/format';
@@ -11,6 +13,8 @@
     type InquisitorFilter,
   } from '$lib/knights/inquisitor-filters';
   import type { InquisitorItem } from '$lib/server/knights/inquisitor.service';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
+  import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
   import { pressDecisionKey } from '$lib/triage/decision-form';
   import { formActionHref } from '$lib/triage/queue';
   import InquisitorChips from './InquisitorChips.svelte';
@@ -32,6 +36,16 @@
     label: TAB_LABELS[value],
     hint: INQUISITOR_FILTER_LABELS[value],
   }));
+  const mediaItem = (row: InquisitorItem) => ({
+    id: row.imageId,
+    url: row.imageKey,
+    type: row.imageType === 'video' ? ('video' as const) : ('image' as const),
+    name: row.imageName,
+  });
+
+  // The item whose rating key was pressed while it is blocked; cleared by moving to another item.
+  let refusedItem = $state<number | null>(null);
+
   const actionHref = (action: string) =>
     formActionHref(action, {
       filter: data.filter === DEFAULT_INQUISITOR_FILTER ? undefined : data.filter,
@@ -74,6 +88,7 @@
       itemLabel="Image"
       decisionEnabled={inquisitorDecisionsEnabled}
       ondecision={(_row, index) => pressDecisionKey(index)}
+      ondecisionrefused={(row: InquisitorItem) => (refusedItem = row.id)}
       pageNumber={1}
       hasMore={false}
       offset={0}
@@ -89,12 +104,25 @@
           selected={state.selected}
           title="Image #{row.imageId}"
           meta={shortAge(row.createdAt)}
-          coverUrl={row.imageKey}
+          coverUrl={row.media === 'cdn' ? row.imageKey : undefined}
           coverType={row.imageType}
           verdict={state.verdict}
           error={state.error}
           onselect={state.select}
         >
+          {#snippet coverMedia()}
+            {#if row.media === 'retracted'}
+              <CdnOrRetractedMedia
+                item={mediaItem(row)}
+                width={96}
+                class="size-full object-cover"
+              />
+            {:else}
+              <div class="grid size-full place-items-center text-dark-2" title={RETRACTED_REFUSED}>
+                <IconPhotoOff size={18} aria-label={RETRACTED_REFUSED} />
+              </div>
+            {/if}
+          {/snippet}
           {#snippet badges()}
             <InquisitorChips {row} />
             {#if row.votes[0]}
@@ -109,7 +137,7 @@
         <InquisitorDetail
           {row}
           verdict={state.verdict}
-          error={state.error}
+          error={state.error ?? (refusedItem === row.id ? BLOCKED_RATING_REFUSED : undefined)}
           submit={state.submit}
           {actionHref}
         />
