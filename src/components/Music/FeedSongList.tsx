@@ -5,13 +5,13 @@ import { createContext, useCallback, useContext } from 'react';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { SongImage, SongList } from '~/components/MusicPlayer/PostSong';
-import { playSongFromList, SongMenuItems } from '~/components/MusicPlayer/PostSong';
+import { playSongFromList, SongMenuItems, songTrack } from '~/components/MusicPlayer/PostSong';
 import {
   useMusicPlayerCovers,
   useSongListCovers,
 } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { PlayerSongCover } from '~/server/services/post.service';
-import { useMusicPlayerStore } from '~/store/music-player.store';
+import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /** Up next's name for songs played from a mixed image feed (Audio picked in its filters). */
@@ -64,6 +64,25 @@ export function useFeedSongList() {
 }
 
 /**
+ * Pauses the song when it is playing, resumes it when it is paused in this same list, and
+ * otherwise plays it from this list: a song loaded paused after a reload, or left by another list,
+ * would resume with no Up next or with that other list's.
+ */
+function pressFeedSongPlay(song: SongImage, list: SongList) {
+  const player = useMusicPlayerStore.getState();
+  const isCurrent = player.current?.id === song.id;
+  if (isCurrent && (player.playing || player.listName === list.name)) return player.togglePlay();
+  const index = list.songs.findIndex((s) => s.id === song.id);
+  if (!isCurrent || index < 0) return playSongFromList(song, list);
+  player.playFromList({
+    name: list.name,
+    tracks: list.songs.map(songTrack),
+    index,
+    startAtSec: useMusicPlayheadStore.getState().currentTime,
+  });
+}
+
+/**
  * The play / pause control of a song in a feed: a white disc with a dark icon on the Song Card
  * (Pencil `AECSM`), a bare white icon over the dimmed cover in a Song Row (`VQ3N0`).
  */
@@ -83,7 +102,6 @@ export function FeedSongPlayButton({
   className?: string;
 }) {
   const getList = useFeedSongList();
-  const isCurrent = useMusicPlayerStore((s) => s.current?.id === song.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === song.id && s.playing);
   const label = playing ? 'Pause' : 'Play';
   const Icon = playing ? IconPlayerPause : IconPlayerPlay;
@@ -95,8 +113,7 @@ export function FeedSongPlayButton({
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (isCurrent) useMusicPlayerStore.getState().togglePlay();
-          else playSongFromList(song, getList());
+          pressFeedSongPlay(song, getList());
         }}
         style={{ width: size, height: size }}
         className={clsx(

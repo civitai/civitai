@@ -36,8 +36,9 @@ import { SongListNameProvider } from '~/components/Music/FeedSongList';
 import { SongCard } from '~/components/Music/SongCard';
 import { SongRow } from '~/components/Music/SongRow';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
+import { MUSIC_PLAYER_RESUME_KEY, resumeMusicPlayer } from '~/store/music-player-resume';
 import type { MusicList } from '~/store/music-player.store';
-import { useMusicPlayerStore } from '~/store/music-player.store';
+import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
 const song = (id: number, title: string) =>
   ({
@@ -56,6 +57,7 @@ const realPlayFromList = useMusicPlayerStore.getState().playFromList;
 
 beforeEach(() => {
   useMusicPlayerStore.getState().close();
+  useMusicPlayheadStore.setState({ currentTime: 0, duration: 0 });
   playFromList.mockReset();
   playFromList.mockImplementation((list) => realPlayFromList(list));
   useMusicPlayerStore.setState({ playFromList });
@@ -104,6 +106,59 @@ describe('songs in a feed fill Up next from the feed', () => {
     await renderWithProviders(<SongCard data={songs[1]} height={360} />);
     await playSecondSong();
     expectPlayedFrom('Images');
+  });
+});
+
+describe('a song the player already has', () => {
+  // What a reload leaves: the last song loaded paused at its saved spot, with no list.
+  async function reloadWithSavedSong(saved: ImagesInfiniteModel, positionSec: number) {
+    const storage = new Map([
+      [MUSIC_PLAYER_RESUME_KEY, JSON.stringify({ track: songTrack(saved), positionSec })],
+    ]);
+    await resumeMusicPlayer({
+      store: useMusicPlayerStore,
+      fetchSong: async () => saved as never,
+      storage: {
+        getItem: (key) => storage.get(key) ?? null,
+        setItem: (key, value) => void storage.set(key, value),
+        removeItem: (key) => void storage.delete(key),
+      },
+    });
+    // The audio element reports the restored spot once it loads.
+    useMusicPlayheadStore.setState({ currentTime: positionSec });
+  }
+
+  const renderCollection = () =>
+    renderWithProviders(
+      <SongListNameProvider name="T8a e2e mix">
+        {songs.map((s) => (
+          <SongCard key={s.id} data={s} height={360} />
+        ))}
+      </SongListNameProvider>
+    );
+
+  test('restored after a reload, it plays from the list it is pressed in, where it was', async () => {
+    feed.images = songs;
+    await reloadWithSavedSong(songs[1], 42);
+    expect(useMusicPlayerStore.getState().current?.id).toBe(2);
+    await renderCollection();
+    await page.getByRole('button', { name: 'Play Palm Static' }).click();
+    const player = useMusicPlayerStore.getState();
+    expect(player.playing).toBe(true);
+    expect(player.listName).toBe('T8a e2e mix');
+    expect(player.list.map((t) => t.title)).toEqual(['Chrome Heart']);
+    expect(player.playback?.startAtSec).toBe(42);
+  });
+
+  test('pressed again in the same list, it pauses and resumes without restarting the list', async () => {
+    feed.images = songs;
+    await renderCollection();
+    await page.getByRole('button', { name: 'Play Palm Static' }).click();
+    await page.getByRole('button', { name: 'Pause Palm Static' }).click();
+    expect(useMusicPlayerStore.getState().playing).toBe(false);
+    await page.getByRole('button', { name: 'Play Palm Static' }).click();
+    expect(useMusicPlayerStore.getState().playing).toBe(true);
+    expect(playFromList).toHaveBeenCalledTimes(1);
   });
 });
 
