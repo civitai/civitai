@@ -1,3 +1,4 @@
+import { captureImageStateHeldSql } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
@@ -1179,11 +1180,14 @@ export async function resolveServiceDealFileDownload({
       scannedEtag: string | null;
       scannedVersionId: string | null;
       contentLevel: number | null;
+      csamHeld: boolean;
     }[]
   >`
     SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
       f."malwareScanStatus", f."status", f."removedAt", f."scannedEtag", f."scannedVersionId",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
+      EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
+        WHERE e."fileId" = f."id" AND ${captureImageStateHeldSql('i')}) AS "csamHeld",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -1235,6 +1239,8 @@ export async function resolveServiceDealFileDownload({
     // A video is served only as the version its scan copy was made from, and only where its rating
     // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
     const disputeReview = isModerator && !!moderatorFetch;
+    // Held for CSAM or a minor, it goes only through the CSAM path, never this route.
+    if (row.csamHeld) return null;
     // Dispute review sees it whatever its rating, Blocked included, which no domain's levels hold.
     const levelShown =
       disputeReview || (!!row.contentLevel && Flags.intersects(row.contentLevel, servableLevels));

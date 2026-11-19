@@ -2660,6 +2660,37 @@ describe('a video Final', () => {
     expect(await download(fileId, BUYER, 31)).toBeNull();
   });
 
+  it.each([
+    ['blocked for CSAM', `"blockedFor" = 'CSAM'`],
+    ['flagged as a minor', 'minor = true'],
+  ])('serves a video %s to no one, dispute review included', async (_n, held) => {
+    const { dealId, fileId } = await videoFinal(4);
+    await judged(fileId, 4);
+    await completed(dealId);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const [{ id: imageId }] = await q<{ id: number }>(
+      `INSERT INTO "Image" (url, "nsfwLevel") VALUES ('held', 32) RETURNING id`
+    );
+    expect(
+      await q(
+        `UPDATE "ServiceDealFileEntry" SET "imageId" = $2, "nsfwLevel" = 32 WHERE "fileId" = $1 RETURNING 1`,
+        [fileId, imageId]
+      )
+    ).toHaveLength(1);
+    const disputeReview = () =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch: true,
+        servableLevels: 31,
+      });
+    // The control: blocked for another reason, dispute review opens it.
+    expect(await disputeReview()).toMatchObject({ versionId: 'ver1' });
+    await q(`UPDATE "Image" SET ${held} WHERE id = $1`, [imageId]);
+    expect(await disputeReview()).toBeNull();
+  });
+
   it('gives a video not yet rated only to dispute review', async () => {
     const { fileId } = await videoFinal(4);
     s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
