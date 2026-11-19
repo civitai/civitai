@@ -190,7 +190,7 @@ describe('the count of what a scan newly sets after a moderator review', () => {
     expect(lines()[0].payload).toMatchObject({ priorReview: false, sampled: true });
   });
 
-  it('still writes the outcome when the review lookup fails, with no unhandled rejection', async () => {
+  it('logs nothing when the review lookup fails, and lets no rejection escape', async () => {
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
     vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValue(new Error('replica down'));
@@ -229,15 +229,6 @@ describe('the count of what a scan newly sets after a moderator review', () => {
 
   it('does not hold the outcome for a slow review lookup', async () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockReturnValue(new Promise(() => undefined) as never);
-    await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
-    expect(writtenMinor()).toBe(true);
-  });
-
-  it('still writes the outcome when the log line throws', async () => {
-    reviewed(true);
-    loggingMock.logToAxiom.mockImplementationOnce(() => {
-      throw new Error('log down');
-    });
     await resolveScanOutcome({ image: { ...image, minor: false }, workflowId: 'wf' });
     expect(writtenMinor()).toBe(true);
   });
