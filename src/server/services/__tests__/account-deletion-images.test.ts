@@ -89,8 +89,9 @@ function splitTopLevel(body: string) {
 const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
-const CLAIMS_BY_ID = /^WHERE\s+id IN \(\s*SELECT i\.id\s+FROM "Image" i\s+WHERE\s/;
-const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*$/;
+const CLAIM_START =
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview", i\."metadata"->>\?::text AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
+const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
@@ -155,8 +156,11 @@ function evalValue(expr: string, keys: string[], row: ImageRow): string | null {
 function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   const sql = rawSql.replace(/--[^\n]*/g, '');
   const params = [...values];
-  const whereAt = sql.indexOf('WHERE');
-  const assignments = splitTopLevel(sql.slice(sql.indexOf('SET ') + 4, whereAt)).map(
+  // The whole gallery reaching Node in one statement is the failure this batching exists to
+  // prevent, so a claim without its own bound is rejected rather than run.
+  const claimAt = sql.search(CLAIM_START);
+  if (claimAt < 0) throw new Error(`the reversal must claim rows by id: ${sql}`);
+  const assignments = splitTopLevel(sql.slice(sql.indexOf('SET ') + 4, claimAt)).map(
     (assignment) => {
       const split = assignment.indexOf('=');
       const expr = assignment.slice(split + 1).trim();
@@ -168,11 +172,9 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
     }
   );
 
-  // The whole gallery reaching Node in one statement is the failure this batching exists to
-  // prevent, so a claim without its own bound is rejected rather than run.
-  const claim = sql.slice(whereAt, sql.indexOf('RETURNING'));
-  if (!CLAIMS_BY_ID.test(claim)) throw new Error(`the reversal must claim rows by id: ${claim}`);
-  const innerWhereAt = claim.indexOf('WHERE', 1);
+  const claim = sql.slice(claimAt, sql.indexOf('RETURNING'));
+  const recordedReviewKey = params.shift() as string;
+  const innerWhereAt = claim.indexOf('WHERE');
   const limitAt = claim.lastIndexOf('LIMIT');
   if (limitAt < innerWhereAt || !BOUNDED_CLAIM.test(claim.slice(limitAt).trim()))
     throw new Error(`the claim must be bounded by a LIMIT: ${claim}`);
@@ -204,22 +206,27 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
+      // Which review flag survives is pinned on Postgres, in scan-outcome-csam-block.behavior.test.ts.
+      if (column === 'needsReview') continue;
       if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
         next.metadata = metadata;
       } else next[column as 'ingestion'] = evalValue(expr, [...keys], row)!;
     }
-    return { row, next };
+    return { row, next, recordedReview: row.metadata[recordedReviewKey] ?? null };
   });
   for (const { row, next } of staged) if (!row.stuck) Object.assign(row, next);
 
   claimedPerPass.push(claimed.length);
-  return claimed.map(({ id, postId, ingestion, blockedFor }) => ({
-    id,
-    postId,
-    ingestion,
-    blockedFor,
+  return staged.map(({ row, recordedReview }) => ({
+    id: row.id,
+    postId: row.postId,
+    ingestion: row.ingestion,
+    blockedFor: row.blockedFor,
+    needsReview: row.needsReview ?? null,
+    currentReview: row.needsReview ?? null,
+    recordedReview,
   }));
 }
 
@@ -407,95 +414,6 @@ describe('unblockAccountDeletionImages', () => {
 
     await unblockAccountDeletionImages(7);
 
-    expect(images[0].metadata).toEqual({});
-  });
-
-  it('puts back the review flag the grace pass cleared', async () => {
-    images = [
-      hidden(1, 'Scanned', {
-        needsReview: null,
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' },
-      }),
-      hidden(2, 'Scanned', {
-        needsReview: 'csam',
-        blockedFor: 'CSAM',
-        metadata: {
-          [PRIOR_INGESTION_KEY]: 'Scanned',
-          [PRIOR_BLOCKED_FOR_KEY]: 'CSAM',
-          [PRIOR_NEEDS_REVIEW_KEY]: 'csam',
-        },
-      }),
-    ];
-
-    await unblockAccountDeletionImages(7);
-
-    // Visible again, but back in the review queue it was held in.
-    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: 'minor' });
-    expect(images[1]).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
-    expect(images.map((image) => image.metadata)).toEqual([{}, {}]);
-  });
-
-  it('puts back only an owner-hidden review, whatever else the breadcrumb says', async () => {
-    images = [
-      hidden(1, 'Scanned', {
-        needsReview: null,
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'not-a-review' },
-      }),
-      // Not owner-hidden: dropped through a restore, as before this breadcrumb existed.
-      hidden(2, 'Scanned', {
-        needsReview: null,
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'poi' },
-      }),
-      hidden(3, 'Scanned', {
-        needsReview: null,
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' },
-      }),
-      // The grace block keeps 'csam' on the row; none left means a moderator dismissed it.
-      hidden(4, 'Scanned', {
-        needsReview: null,
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'csam' },
-      }),
-    ];
-
-    await unblockAccountDeletionImages(7);
-
-    expect(images.map((image) => [image.id, image.needsReview, image.metadata])).toEqual([
-      [1, null, {}],
-      [2, null, {}],
-      [3, 'minor', {}],
-      [4, null, {}],
-    ]);
-  });
-
-  it('puts a recorded minor hold back over any flag set since, except csam', async () => {
-    const recordedMinor = { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'minor' };
-    images = [
-      hidden(1, 'Scanned', { needsReview: 'appeal', metadata: { ...recordedMinor } }),
-      hidden(2, 'Scanned', { needsReview: 'poi', metadata: { ...recordedMinor } }),
-      hidden(3, 'Scanned', { needsReview: 'csam', metadata: { ...recordedMinor } }),
-      // No hold recorded: a flag set since is kept.
-      hidden(4, 'Scanned', {
-        needsReview: 'poi',
-        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', [PRIOR_NEEDS_REVIEW_KEY]: 'tag' },
-      }),
-    ];
-
-    await unblockAccountDeletionImages(7);
-
-    expect(images.map((image) => [image.id, image.needsReview])).toEqual([
-      [1, 'minor'],
-      [2, 'minor'],
-      [3, 'csam'],
-      [4, 'poi'],
-    ]);
-  });
-
-  it('leaves the review flag alone on a row blocked before the flag was recorded', async () => {
-    images = [hidden(1, 'Scanned', { needsReview: null })];
-
-    await unblockAccountDeletionImages(7);
-
-    expect(images[0]).toMatchObject({ ingestion: 'Scanned', needsReview: null });
     expect(images[0].metadata).toEqual({});
   });
 

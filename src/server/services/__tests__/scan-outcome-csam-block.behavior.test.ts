@@ -56,6 +56,7 @@ import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { getImagesModRules } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
@@ -518,47 +519,96 @@ const restore = async () => {
 };
 
 describe('a restore and the recorded review flag, on the real statement', () => {
-  it('puts back a recorded minor hold over any flag set since but csam, and nothing else', async () => {
-    const crumbs = (review: string) =>
-      `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": "${review}"}'`;
+  const crumbs = (review: string | null) =>
+    `'{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorBlockedFor": null, "accountDeletionPriorNeedsReview": ${
+      review === null ? 'null' : `"${review}"`
+    }}'`;
+  const reviewsOf = async (ids: number[]) =>
+    (
+      await holder.db.query<{ id: number; needsReview: string | null; ingestion: string }>(
+        `SELECT id, "needsReview", ingestion FROM "Image" WHERE id = ANY($1) ORDER BY id`,
+        [ids]
+      )
+    ).rows;
+
+  it('keeps the higher of the current and the recorded review, and logs the one it drops', async () => {
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
-        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
-        (82, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
-        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
-        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
-        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
-        (86, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('minor')}),
-        (87, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
-        (88, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
-      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+        (81, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('poi')}),
+        (82, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')}),
+        (83, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('appeal')}),
+        (84, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('modRule')}),
+        (85, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('tag')}),
+        (86, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('remixSource')}),
+        (87, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('newUser')}),
+        (88, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('not-a-review')}),
+        (89, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('csam')}),
+        (90, ${OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs(null)}),
+        (91, ${OWNER}, 'Blocked', 'moderated', 32, 'csam', ${crumbs('minor')}),
+        (92, ${OWNER}, 'Blocked', 'moderated', 32, 'poi', ${crumbs('minor')}),
+        (93, ${OWNER}, 'Blocked', 'moderated', 32, 'minor', ${crumbs('newUser')}),
+        (94, ${OWNER}, 'Blocked', 'moderated', 32, 'newUser', ${crumbs('poi')}),
+        (95, ${OWNER}, 'Blocked', 'moderated', 32, 'tag', ${crumbs('tag')}),
+        (96, ${OWNER}, 'Blocked', 'moderated', 32, 'appeal', ${crumbs('csam')});
     `);
-    await unblockAccountDeletionImages(OTHER_OWNER);
-    // An account deleted again keeps its grace block.
-    expect(
-      (await holder.db.query<{ ingestion: string }>(`SELECT ingestion FROM "Image" WHERE id = 88`))
-        .rows[0]
-    ).toEqual({ ingestion: 'Blocked' });
 
     await unblockAccountDeletionImages(OWNER);
 
-    const { rows } = await holder.db.query<{
-      id: number;
-      needsReview: string | null;
-      ingestion: string;
-    }>(`SELECT id, "needsReview", ingestion FROM "Image" WHERE id BETWEEN 81 AND 87 ORDER BY id`);
+    const rows = await reviewsOf([81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96]);
     // Control: every row was restored, so the review flags below are the restore's doing.
-    expect(rows.map((row) => row.ingestion)).toEqual(Array(7).fill('Scanned'));
+    expect(rows.map((row) => row.ingestion)).toEqual(Array(16).fill('Scanned'));
     expect(rows.map((row) => [row.id, row.needsReview])).toEqual([
-      [81, 'minor'],
-      // A recorded minor hold beats a flag set since; a current csam one is kept.
+      // Nothing set since: every listed review but csam comes back.
+      [81, 'poi'],
       [82, 'minor'],
-      [83, null],
-      [84, null],
-      [85, null],
-      [86, 'minor'],
-      [87, 'csam'],
+      [83, 'appeal'],
+      [84, 'modRule'],
+      [85, 'tag'],
+      [86, 'remixSource'],
+      [87, 'newUser'],
+      // A value outside the list, a recorded csam (dismissed, or the block would have kept it) and
+      // a JSON null write nothing.
+      [88, null],
+      [89, null],
+      [90, null],
+      // A current csam is never overwritten.
+      [91, 'csam'],
+      // Otherwise the higher of the two stays.
+      [92, 'minor'],
+      [93, 'minor'],
+      [94, 'poi'],
+      [95, 'tag'],
+      [96, 'appeal'],
     ]);
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { message?: string; payload?: { reviews: { imageId: number }[] } })
+      .filter((entry) => entry.message === 'kept the higher of two competing review flags')
+      .flatMap((entry) => entry.payload?.reviews ?? []);
+    expect(logged.sort((a, b) => a.imageId - b.imageId)).toEqual([
+      { imageId: 91, kept: 'csam', dropped: 'minor' },
+      { imageId: 92, kept: 'minor', dropped: 'poi' },
+      { imageId: 93, kept: 'minor', dropped: 'newUser' },
+      { imageId: 94, kept: 'poi', dropped: 'newUser' },
+    ]);
+  });
+
+  it('leaves an account deleted again blocked, and restores it once it is not', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview", metadata) VALUES
+        (97, ${OTHER_OWNER}, 'Blocked', 'moderated', 32, NULL, ${crumbs('minor')});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OTHER_OWNER};
+    `);
+
+    const deleted = await unblockAccountDeletionImages(OTHER_OWNER);
+    // The claim finds nothing, so the reversal reads as drained: restore-user-images then drops the
+    // worklist entry, and a later restore queues it again.
+    expect(deleted).toMatchObject({ unblocked: 0, drained: true });
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: null, ingestion: 'Blocked' }]);
+
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OTHER_OWNER}`);
+    await unblockAccountDeletionImages(OTHER_OWNER);
+    expect(await reviewsOf([97])).toEqual([{ id: 97, needsReview: 'minor', ingestion: 'Scanned' }]);
   });
 });
 

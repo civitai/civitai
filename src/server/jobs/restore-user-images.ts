@@ -14,15 +14,6 @@ import { createJob } from './job';
  */
 export const RESTORE_USERS_PER_RUN = 25;
 
-async function isRestored(userId: number) {
-  const [row] = await dbWrite.$queryRaw<{ restored: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL
-    ) AS restored
-  `;
-  return row?.restored ?? false;
-}
-
 async function filterRestored(userIds: number[]) {
   if (!userIds.length) return [];
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -32,11 +23,12 @@ async function filterRestored(userIds: number[]) {
   return userIds.filter((id) => restored.has(id));
 }
 
+const isRestored = async (userId: number) => (await filterRestored([userId])).length > 0;
+
 /**
- * Undoes the grace block `remove-deleted-user-images` wrote, off a worklist `restoreUser` names
- * rather than one this job discovers: the breadcrumb has no supporting index on ~120M `Image`
- * rows and a filtered `User` scan measures ~1.7s, which a cron this frequent would pay on every
- * tick to learn that nobody was restored. An empty set costs one SMEMBERS and no query at all.
+ * Undoes the grace block `remove-deleted-user-images` wrote, for the accounts `restoreUser` puts on
+ * a worklist. Finding them instead would cost a ~1.7s `User` scan every tick, since the breadcrumb
+ * has no index; an empty worklist costs one SMEMBERS.
  *
  * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked, drained
  * or threw. The grace block cleared any `User.image` naming one of their images, and that stays
