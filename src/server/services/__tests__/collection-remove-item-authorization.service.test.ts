@@ -32,7 +32,8 @@ const ENTITY_DELEGATES = {
 type EntityType = keyof typeof ENTITY_DELEGATES;
 
 // The $queryRaw is the permission row (getUserCollectionPermissionsByIds); the item owner comes
-// from `itemType`'s table only, so a lookup in any other table finds nothing.
+// from `itemType`'s table and ITEM_ID's row only, so a lookup in any other table, or of any other
+// id, finds nothing.
 function arrangeCollection({
   write,
   collectionType = 'Image',
@@ -66,7 +67,10 @@ function arrangeCollection({
   ]);
   for (const [entity, delegate] of Object.entries(ENTITY_DELEGATES)) {
     delegate.findUnique.mockReset();
-    delegate.findUnique.mockResolvedValue(entity === itemType ? { userId: ITEM_AUTHOR_ID } : null);
+    delegate.findUnique.mockImplementation((({ where }: { where: { id: number } }) =>
+      Promise.resolve(
+        entity === itemType && where.id === ITEM_ID ? { userId: ITEM_AUTHOR_ID } : null
+      )) as never);
   }
 
   // The lookup's own WHERE clause is now the only thing deciding which rows the writes below
@@ -311,6 +315,24 @@ describe('removeCollectionItem entity type', () => {
     await expect(remove({ userId: COLLECTION_OWNER_ID, type: 'Model' })).resolves.toMatchObject({
       type: 'Model',
     });
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: [ITEM_ROW_ID] } },
+    });
+  });
+
+  // The caller's `type` now picks the table ownership is read from, so it needs its own controls.
+  it('rejects an outsider on a type-NULL collection', async () => {
+    arrangeCollection({ write: 'Public', collectionType: null, itemType: 'Model' });
+
+    await expect(remove({ userId: OUTSIDER_ID, type: 'Model' })).rejects.toThrow(/permission/i);
+    expect(mockDbWrite.collectionItem.deleteMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('allows the item author to remove their entry from a type-NULL collection', async () => {
+    arrangeCollection({ write: 'Public', collectionType: null, itemType: 'Model' });
+
+    await expect(remove({ userId: ITEM_AUTHOR_ID, type: 'Model' })).resolves.toBeTruthy();
     expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: [ITEM_ROW_ID] } },
     });
