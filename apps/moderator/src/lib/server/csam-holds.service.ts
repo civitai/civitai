@@ -104,13 +104,11 @@ export async function decideAuthorHolds({
   holdId,
   also,
   decision,
-  reportChoice,
   note,
 }: {
   holdId: number;
   also: AlsoDecidedHold[];
   decision: CsamHoldDecision;
-  reportChoice?: CsamReportChoice;
   note?: string;
 }): Promise<AlsoDecidedResult[]> {
   const targets = [...new Map(also.map((hold) => [hold.holdId, hold])).values()].filter(
@@ -142,7 +140,7 @@ export async function decideAuthorHolds({
 
   const batch = decidable.slice(0, BATCH_MAX);
   if (batch.length) {
-    for (const result of await decideBatch(batch, decision, reportChoice, note))
+    for (const result of await decideBatch(batch, decision, note))
       outcome.set(result.holdId, result);
   }
   return targets.map((target) => outcome.get(target.holdId)!);
@@ -151,7 +149,6 @@ export async function decideAuthorHolds({
 async function decideBatch(
   batch: AlsoDecidedHold[],
   decision: CsamHoldDecision,
-  reportChoice: CsamReportChoice | undefined,
   note: string | undefined
 ): Promise<AlsoDecidedResult[]> {
   const other = decisionForOtherHolds(decision);
@@ -161,7 +158,6 @@ async function decideBatch(
     {
       holds: batch,
       decision: other,
-      ...(other !== 'dismiss' && reportChoice ? { reportChoice } : {}),
       ...(note ? { note } : {}),
     },
     'Decide holds',
@@ -205,6 +201,27 @@ export async function markCsamHoldReported({
     'text-scan/csam-hold/mark-reported',
     { holdId, included },
     included ? 'Mark included in a report' : 'Undo included in a report'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}
+
+/** The main app records the report choice on a confirmed hold decided without one. */
+export async function setCsamHoldReportChoice({
+  holdId,
+  reportChoice,
+}: {
+  holdId: number;
+  reportChoice: CsamReportChoice;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/set-report-choice',
+    { holdId, reportChoice },
+    'Set report choice'
   );
   if (!result.ok) {
     if (!result.requestNeverSent && result.status === undefined)

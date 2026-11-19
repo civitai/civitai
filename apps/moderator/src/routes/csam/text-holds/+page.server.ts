@@ -17,6 +17,7 @@ import {
   getHoldCoverImages,
   listCsamHolds,
   markCsamHoldReported,
+  setCsamHoldReportChoice,
   referCsamHold,
   type CsamHoldCovers,
 } from '$lib/server/csam-holds.service';
@@ -144,6 +145,11 @@ const markReportedSchema = z.object({
   included: z.enum(['true', 'false']).transform((v) => v === 'true'),
 });
 
+const setReportChoiceSchema = z.object({
+  holdId: int4Id,
+  reportChoice: z.enum(CSAM_REPORT_CHOICES),
+});
+
 const referSchema = z.object({
   holdId: int4Id,
   textHash: z.string().min(1).max(200),
@@ -167,7 +173,6 @@ export const actions: Actions = {
           holdId: input.holdId,
           also,
           decision: input.decision,
-          reportChoice: input.reportChoice,
           note: input.note,
         }).catch((err) => {
           console.error('CSAM hold bulk decision failed', err);
@@ -186,6 +191,13 @@ export const actions: Actions = {
     const result = await referCsamHold(input);
     if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
     return { success: true, key: input.holdId, referred: true };
+  }),
+  setReportChoice: requiresGrant('csam.report.file', async ({ request }) => {
+    const input = parseForm(setReportChoiceSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    const result = await setCsamHoldReportChoice(input);
+    if (!result.ok) return fail(400, { error: result.error, key: input.holdId });
+    return { success: true, key: input.holdId, reportChoice: input.reportChoice };
   }),
   markReported: requiresGrant('csam.report.file', async ({ request }) => {
     const input = parseForm(markReportedSchema, await request.formData());

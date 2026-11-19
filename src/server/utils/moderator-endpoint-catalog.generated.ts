@@ -101,6 +101,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/text-scan/csam-hold/refer': () => import('~/pages/api/mod/text-scan/csam-hold/refer'),
   '/api/mod/text-scan/csam-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
+  '/api/mod/text-scan/csam-hold/set-report-choice': () =>
+    import('~/pages/api/mod/text-scan/csam-hold/set-report-choice'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
   '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),

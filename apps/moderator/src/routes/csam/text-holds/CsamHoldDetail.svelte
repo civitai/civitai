@@ -30,6 +30,7 @@
   import {
     reportChoiceCopy,
     reportChoicesFor,
+    CSAM_REPORT_CHOICES,
     CSAM_REPORT_NOT_SURE,
     CSAM_REPORT_QUESTION,
     isReportableChoice,
@@ -127,6 +128,7 @@
   let referEl: HTMLFormElement | undefined = $state();
   let markEl: HTMLFormElement | undefined = $state();
   let markOpen = $state(false);
+  let setChoice = $state<CsamReportChoice | ''>('');
   let referNote = $state('');
   // The note is typed in the decision form; "Not sure" sends it along.
   async function refer() {
@@ -504,6 +506,38 @@
           </AlertDialog.Footer>
         </AlertDialog.Content>
       </AlertDialog.Root>
+    {/if}
+    {#if row.needsReportChoice && canDecide}
+      <form
+        method="POST"
+        action={actionHref('setReportChoice')}
+        class="flex flex-col gap-2"
+        use:enhance={submit(() => 'Report choice recorded')}
+      >
+        <input type="hidden" name="holdId" value={row.id} />
+        <fieldset class="m-0 flex flex-col gap-2 border-0 p-0">
+          <legend class="mb-1 text-sm font-medium text-dark-0">
+            Confirmed with another hold, so no report choice was made for this item. {CSAM_REPORT_QUESTION}
+          </legend>
+          <RadioGroup name="reportChoice" class="gap-2" bind:value={setChoice}>
+            {#each CSAM_REPORT_CHOICES as choice (choice)}
+              {@const copy = reportChoiceCopy(choice)}
+              <div class="flex items-start gap-2">
+                <RadioGroupItem value={choice} id="set-choice-{choice}" class="mt-0.5" />
+                <Label for="set-choice-{choice}" class="flex flex-col gap-0.5 font-normal">
+                  <span class="font-medium text-dark-0">{copy.title}</span>
+                  <span class="text-[13px] text-dark-2">{copy.body}</span>
+                </Label>
+              </div>
+            {/each}
+          </RadioGroup>
+        </fieldset>
+        <div>
+          <Button type="submit" variant="outline" size="sm" disabled={!setChoice}
+            >Record choice</Button
+          >
+        </div>
+      </form>
     {/if}
   {:else if canDecide}
     <form

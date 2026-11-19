@@ -52,7 +52,6 @@ describe('decideCsamHoldBatch', () => {
         { holdId: 4, textHash: 'c' },
       ],
       decision: 'remove',
-      reportChoice: 'none',
       note: 'n',
       actor,
       tracker,
@@ -63,13 +62,13 @@ describe('decideCsamHoldBatch', () => {
         args.holdId,
         args.textHash,
         args.decision,
-        args.reportChoice,
+        'reportChoice' in args,
         args.batched,
       ])
     ).toEqual([
-      [2, 'a', 'remove', 'none', true],
-      [3, 'b', 'remove', 'none', true],
-      [4, 'c', 'remove', 'none', true],
+      [2, 'a', 'remove', false, true],
+      [3, 'b', 'remove', false, true],
+      [4, 'c', 'remove', false, true],
     ]);
     expect(results).toEqual([
       { holdId: 2, ok: true, status: 'Confirmed', entityType: 'Model', entityId: 1, userId: 9 },

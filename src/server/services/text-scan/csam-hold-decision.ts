@@ -471,6 +471,34 @@ export async function markCsamHoldReported({
   return { holdId, reportIncluded: included };
 }
 
+/**
+ * Records the report choice on a confirmed csam hold that has none: one decided alongside another
+ * (a batch never carries the on-screen hold's choice) or by a moderator app that predates the choice.
+ * `meta.reportChoiceSet` records who set it and when. A choice once set is never replaced here.
+ */
+export async function setCsamHoldReportChoice({
+  holdId,
+  reportChoice,
+  actor,
+}: {
+  holdId: number;
+  reportChoice: CsamReportChoice;
+  actor: { id: number };
+}) {
+  const changed = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = "meta" || jsonb_build_object(
+      'reportChoice', ${reportChoice}::text,
+      'reportChoiceSet', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Confirmed'
+      AND jsonb_typeof("meta") = 'object' AND "meta" ->> 'reportChoice' IS NULL
+    RETURNING "id"
+  `;
+  if (!changed.length)
+    throw throwConflictError('Hold not confirmed, already has a report choice, or missing.');
+  return { holdId, reportChoice };
+}
+
 export const CSAM_HOLD_BATCH_MAX = 50;
 /** A strike or ban belongs to the author once, with the hold the moderator is on, never per hold. */
 const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
@@ -482,6 +510,13 @@ const note = z.string().trim().max(500).optional();
 export const markCsamHoldReportedInput = z.object({
   holdId,
   included: z.boolean().default(true).describe('false takes a mark back.'),
+});
+
+export const setCsamHoldReportChoiceInput = z.object({
+  holdId,
+  reportChoice: z
+    .enum(CSAM_REPORT_CHOICES)
+    .describe('The reportable category, or `none` when nothing in it is reportable.'),
 });
 
 export const referCsamHoldInput = z.object({
@@ -504,7 +539,7 @@ export const resolveCsamHoldInput = z
       .max(CSAM_HOLD_BATCH_MAX)
       .optional()
       .describe(
-        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50.'
+        'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50. A batch records no report choice: `reportChoice` is ignored with it.'
       ),
     decision: z.enum(CSAM_HOLD_DECISIONS),
     reportChoice: z
@@ -557,11 +592,14 @@ export type CsamHoldBatchResult =
     }
   | { holdId: number; ok: false; stale: boolean; error: string };
 
-/** Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest. */
+/**
+ * Decides each hold on its own, one after the other: a hold that is stale or refused never stops the rest.
+ * Records no report choice: the choice is made per item, so a confirmed hold waits on "Report not filed"
+ * until a moderator sets one.
+ */
 export async function decideCsamHoldBatch({
   holds,
   decision,
-  reportChoice,
   note,
   actor,
   tracker,
@@ -569,7 +607,6 @@ export async function decideCsamHoldBatch({
 }: {
   holds: { holdId: number; textHash: string }[];
   decision: CsamHoldDecision;
-  reportChoice?: CsamReportChoice;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
@@ -583,7 +620,6 @@ export async function decideCsamHoldBatch({
         holdId: hold.holdId,
         textHash: hold.textHash,
         decision,
-        reportChoice,
         note,
         actor,
         tracker,

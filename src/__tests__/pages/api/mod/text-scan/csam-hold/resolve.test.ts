@@ -76,6 +76,7 @@ const findFirst = hold.findFirst;
 import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
 import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-reported';
 import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
+import setReportChoiceHandler from '~/pages/api/mod/text-scan/csam-hold/set-report-choice';
 
 function call(body: Record<string, unknown>, endpoint: typeof handler = handler) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
@@ -175,9 +176,7 @@ describe('textScan.resolveCsamHold', () => {
     const missing = loggingMock.logToAxiom.mock.calls
       .map(([entry]) => entry as Record<string, unknown>)
       .filter((entry) => entry.type === 'reportChoice-missing');
-    expect(missing).toEqual([
-      expect.objectContaining({ payload: { decision: 'remove', count: 1 } }),
-    ]);
+    expect(missing).toEqual([expect.objectContaining({ payload: { decision: 'remove' } })]);
     expect(missing[0]).not.toHaveProperty('holdId');
     expect(missing[0]).not.toHaveProperty('userId');
   });
@@ -206,6 +205,31 @@ describe('textScan.resolveCsamHold', () => {
     expect(status).toBe(400);
     expect(findFirst).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['none', 'imagery'] as const)(
+    'records no report choice on any hold of a batch, even when %s is sent',
+    async (reportChoice) => {
+      const res = await call({
+        holds: [12, 13, 14].map((holdId) => ({ holdId, textHash: 'h-1' })),
+        decision: 'remove',
+        reportChoice,
+      });
+      expect(res.status).toBe(200);
+      expect(updateMany).toHaveBeenCalledTimes(3);
+      for (const [args] of updateMany.mock.calls) {
+        const meta = (args as { data: { meta: Record<string, unknown> } }).data.meta;
+        expect(meta).not.toHaveProperty('reportChoice');
+        expect(meta).toMatchObject({ reviewedDecision: false });
+      }
+    }
+  );
+
+  it('does not count a batch without a choice as an older app', async () => {
+    await call({ holds: [{ holdId: 12, textHash: 'h-1' }], decision: 'remove' });
+    expect(
+      loggingMock.logToAxiom.mock.calls.filter(([entry]) => entry.type === 'reportChoice-missing')
+    ).toEqual([]);
   });
 
   it('accepts a batch whose holds carry their own text hash, with none at the top level', async () => {
@@ -787,6 +811,11 @@ describe.each([
   ['textScan.referCsamHold', referHandler, { holdId: 12, textHash: 'h-1', note: 'unsure' }],
   ['textScan.markCsamHoldReported', markReportedHandler, { holdId: 12 }],
   ['textScan.markCsamHoldReported (undo)', markReportedHandler, { holdId: 12, included: false }],
+  [
+    'textScan.setCsamHoldReportChoice',
+    setReportChoiceHandler,
+    { holdId: 12, reportChoice: 'none' },
+  ],
 ] as const)('%s', (_, endpoint, body) => {
   it('refuses a moderator without the csam permission, before writing', async () => {
     mocks.hasModeratorGrant.mockResolvedValue(false);

@@ -308,6 +308,32 @@ describe('the lead-review and report-not-filed views', () => {
         decidedAt: '2026-09-13',
         meta: { decision: 'remove', reportChoice: 'none' },
       },
+      // Confirmed alongside another hold: no choice made for this item.
+      {
+        id: 14,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reviewedDecision: false },
+      },
+      // Confirmed on its own by a moderator app that predates the choice.
+      {
+        id: 15,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reviewedDecision: true },
+      },
+      {
+        id: 16,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'none', reviewedDecision: false },
+      },
       {
         id: 12,
         createdAt: '2026-09-14',
@@ -324,8 +350,13 @@ describe('the lead-review and report-not-filed views', () => {
     expect(held).toMatchObject({ leadReviewAt: '2026-09-15T00:00:00Z', reportChoice: null });
   });
 
-  it('lists only a reportable confirm', async () => {
-    expect(await ids('report-not-filed')).toEqual([8]);
+  it('lists a reportable confirm and one confirmed with another hold that has no choice yet', async () => {
+    expect(await ids('report-not-filed')).toEqual([8, 14]);
+    const rows = (await listCsamHolds({ ...OLDEST_PENDING, status: 'report-not-filed' })).items;
+    expect(rows.map((h) => [h.id, h.needsReportChoice])).toEqual([
+      [8, false],
+      [14, true],
+    ]);
   });
 });
 

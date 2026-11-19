@@ -411,23 +411,30 @@ describe('csam text holds decide', () => {
 describe('csam text holds decide with the author’s other holds', () => {
   const also = JSON.stringify([{ holdId: 13, textHash: 'h-13' }]);
 
-  it('decides the open hold first, then the others, and reports each', async () => {
+  it('decides the open hold first, then the others, and gives only the open hold the choice', async () => {
     const result = await decide(
-      { holdId: '12', textHash: 'h-12', decision: 'remove_ban', also, note: 'x' },
+      {
+        holdId: '12',
+        textHash: 'h-12',
+        decision: 'remove_ban',
+        reportChoice: 'imagery',
+        also,
+        note: 'x',
+      },
       holder
     );
     expect(decideCsamHold).toHaveBeenCalledWith({
       holdId: 12,
       textHash: 'h-12',
       decision: 'remove_ban',
-      reportChoice: 'none',
+      reportChoice: 'imagery',
       note: 'x',
     });
+    // Exact: the others carry no report choice.
     expect(decideAuthorHolds).toHaveBeenCalledWith({
       holdId: 12,
       also: [{ holdId: 13, textHash: 'h-13' }],
       decision: 'remove_ban',
-      reportChoice: 'none',
       note: 'x',
     });
     expect(decideCsamHold.mock.invocationCallOrder[0]).toBeLessThan(
