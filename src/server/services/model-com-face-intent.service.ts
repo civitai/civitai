@@ -47,14 +47,15 @@ export function reusableComFaceIntent(
   meta: unknown,
   textHash: string,
   activePromptId: number | undefined
-): Pick<ComFaceIntentRecord, 'detected' | 'reason'> | null {
+): Pick<ComFaceIntentRecord, 'detected' | 'reason' | 'promptId'> | null {
   const record = (meta as ModelMeta | null)?.comFaceIntent;
   if (!record || typeof record !== 'object' || record.textHash !== textHash) return null;
   if (typeof record.detected !== 'boolean') return null;
   // An overturned detection stands as allowed for the text it was ruled on.
-  if (record.overturnedAt) return { detected: false, reason: record.reason };
+  if (record.overturnedAt)
+    return { detected: false, reason: record.reason, promptId: record.promptId };
   if (activePromptId === undefined || record.promptId !== activePromptId) return null;
-  return { detected: record.detected, reason: record.reason };
+  return { detected: record.detected, reason: record.reason, promptId: record.promptId };
 }
 
 /**
