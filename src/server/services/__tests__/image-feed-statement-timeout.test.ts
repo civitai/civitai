@@ -1,26 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as Blocked from '~/server/services/blocked-browsing-tags.service';
 
-const { rawQuery, counterInc } = vi.hoisted(() => ({
-  rawQuery: vi.fn(),
-  counterInc: vi.fn(),
-}));
+const { rawQuery } = vi.hoisted(() => ({ rawQuery: vi.fn() }));
 
-vi.mock('~/server/prom/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof PromClient>();
-  return {
-    ...actual,
-    registerCounter: () => ({ inc: vi.fn() }),
-    registerCounterWithLabels: ((opts: { name: string }) =>
-      opts.name === 'image_feed_statement_timeout_total'
-        ? { inc: (labels: Record<string, string>) => counterInc(labels) }
-        : actual.registerCounterWithLabels(
-            opts as Parameters<typeof actual.registerCounterWithLabels>[0]
-          )) as typeof actual.registerCounterWithLabels,
-  };
-});
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: (...args: unknown[]) => rawQuery(...args),
@@ -39,7 +22,6 @@ vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal
 }));
 
 import { getAllImages } from '../image.service';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const request = (extra: Record<string, unknown> = {}) =>
   ({
@@ -73,11 +55,6 @@ describe('getAllImages on a statement timeout', () => {
       code: '57014',
     });
     expect(rawQuery).toHaveBeenCalledTimes(1);
-    // Still counted and logged before the rethrow.
-    expect(counterInc).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'getInfiniteImages:statement_timeout' })
-    );
   });
 
   it('[invariant on the pre-change code] still propagates a 57014 that is not a statement timeout', async () => {

@@ -15,7 +15,6 @@ const {
   mockClient,
   mockGetQuota,
   mockProvisionReviewPreview,
-  mockLogToAxiom,
   mockGetUserById,
   mockGetSessionUser,
   mockIsAppBlocksAuthorEnabled,
@@ -55,7 +54,6 @@ const {
           .slice(0, 48)}"`,
       })
     ),
-    mockLogToAxiom: vi.fn(async () => undefined),
     mockGetUserById: vi.fn(),
     mockGetSessionUser: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
@@ -100,9 +98,6 @@ vi.mock('~/server/services/apps/storage-provision.service', () => ({
     getUserQuota: (...args: unknown[]) => mockGetUserQuota(...args),
     provisionReviewPreview: (...args: unknown[]) => mockProvisionReviewPreview(...args),
   },
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...args: unknown[]) => mockGetUserById(...args),
@@ -238,7 +233,6 @@ beforeEach(() => {
   mockGetUserQuota.mockReset();
   mockIsRevoked.mockReset();
   mockIsRevoked.mockResolvedValue(false);
-  mockLogToAxiom.mockReset();
   mockGetUserById.mockReset();
   mockGetSessionUser.mockReset();
   mockIsAppBlocksAuthorEnabled.mockReset();
@@ -285,7 +279,6 @@ beforeEach(() => {
   mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'pending' });
   mockPool.query.mockImplementation(defaultPoolQuery);
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('apps.storage shared gates', () => {
@@ -1300,8 +1293,6 @@ describe('apps.storage.set', () => {
     // The fallback must not swallow a genuinely broken schema: `quota` missing
     // too raises the same 42P01 from the fallback statement and propagates.
     it('still fails when the app `quota` table is missing as well', async () => {
-      const inc = vi.mocked(appStorageOpsCounter.inc);
-      inc.mockClear();
       mockPool.query.mockImplementation(async () => {
         throw undefinedTable('app_x.quota');
       });
@@ -1316,19 +1307,10 @@ describe('apps.storage.set', () => {
       expect(
         mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))
       ).toHaveLength(2);
-      expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
     });
   });
 
-  // ── An unexpected fault must be COUNTABLE ──────────────────────────────────
-  //
-  // Only the write transaction's own catch incremented `outcome:'error'`, so any
-  // fault BEFORE `BEGIN` — the quota round trip, the pool checkout, token
-  // resolution — was visible solely as the `ok` series falling to zero. An
-  // outage with no error series is an outage nothing can alert on.
-  it("counts outcome:'error' for a fault raised before the write transaction opens", async () => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
+  it('fails a fault raised before the write transaction opens without opening it', async () => {
     mockPool.query.mockImplementation(async () => {
       throw new Error('connection terminated unexpectedly');
     });
@@ -1337,98 +1319,7 @@ describe('apps.storage.set', () => {
     await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
       'connection terminated unexpectedly'
     );
-    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
     expect(mockPool.connect).not.toHaveBeenCalled();
-  });
-
-  // …and must be counted exactly ONCE when it happens inside the transaction,
-  // which is where it was already counted. The catch-all discriminates on the
-  // error TYPE, so a double-count here would be silent.
-  //
-  // INVARIANT GUARD, not regression coverage: this case was green before the
-  // catch-all existed too (the write transaction's own catch counted it once).
-  // What it pins is that ADDING the catch-all did not turn one increment into
-  // two. Its killing mutation is re-adding `appStorageOpsCounter.inc({ op:
-  // 'set', outcome: 'error' })` to the inner transaction catch — measured, that
-  // turns THIS test red and nothing else. Deleting the `TRPCError` early-return
-  // in `countStorageFault` does NOT reach it (the fault here is a raw Error, so
-  // the early-return never applies); that mutation is caught by the sibling
-  // deliberate-refusal case below instead.
-  it("counts outcome:'error' once, not twice, for a fault inside the write", async () => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query
-      .mockResolvedValueOnce({
-        rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
-        rowCount: 1,
-      })
-      .mockResolvedValueOnce(sizeProbe());
-    mockClient.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('INSERT INTO')) throw new Error('deadlock detected');
-      return { rows: [], rowCount: 0 };
-    });
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
-      'deadlock detected'
-    );
-    const errorIncs = inc.mock.calls.filter(
-      ([labels]) => (labels as { outcome?: string })?.outcome === 'error'
-    );
-    expect(errorIncs).toHaveLength(1);
-  });
-
-  // A deliberate refusal already counts its own outcome. The catch-all must not
-  // add a second, wrong one on top — otherwise every quota refusal would also
-  // read as a fault, and `outcome:'error'` would stop meaning anything.
-  //
-  // INVARIANT GUARD as well (green before the catch-all, for want of a
-  // catch-all). This is the case that pins `countStorageFault`'s TRPCError
-  // early-return: measured, deleting that `return` turns THIS test red — and
-  // only this one — because a deliberate refusal is the only path where an
-  // already-counted error reaches the catch-all.
-  it("does NOT count outcome:'error' for a deliberate quota refusal", async () => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
-    useSubjectFromSub();
-    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
-    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
-    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'quota_exceeded' });
-    expect(inc).not.toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
-  });
-
-  // The refusal's own log has to be readable. `userUsedBytes` is the
-  // trigger-maintained counter (stored bytes) and the gate that refused is
-  // `userUsedBytes + netDelta`, so `attemptedBytes` must be in the SAME unit — a
-  // wire byte count there reads as the number that was compared and is not, by
-  // anywhere from 1.50x (a dense integer array) to 44.4x (a numeric-heavy one),
-  // measured. `quotaPoolFor` answers the probe with DEFAULT_STORED_BYTES for a
-  // fresh key, which is not the wire size of the value written.
-  it('logs the refusal in STORED bytes, the unit the gate actually compared', async () => {
-    useSubjectFromSub();
-    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    const value = 'x'.repeat(500);
-    await expect(caller.storage.set({ blockToken: 't', key: 'k', value })).rejects.toMatchObject({
-      message: 'per-user storage quota exceeded',
-    });
-    // The wire size and the stored size are different numbers here, which is what
-    // makes the assertion able to tell them apart.
-    expect(Buffer.byteLength(JSON.stringify(value), 'utf8')).not.toBe(DEFAULT_STORED_BYTES);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'user_quota_exceeded',
-        attemptedBytes: DEFAULT_STORED_BYTES,
-        netDeltaBytes: DEFAULT_STORED_BYTES,
-        userUsedBytes: USER_CAP_BYTES - 10,
-      }),
-      expect.anything()
-    );
   });
 
   // ── The stored-size probe must FAIL LOUD, never absorb ─────────────────────

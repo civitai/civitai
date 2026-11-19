@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { rejectCrossSlot } from '~/__tests__/cluster-slots';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { SnapshotRedis } from '~/server/registry-adapter/snapshot-store.redis';
 import {
   SNAPSHOT_RETENTION_SECONDS,
@@ -11,7 +13,7 @@ import {
  * An in-memory Redis with the semantics the store relies on: strings with a TTL, lists with
  * LREM / LPUSH / LRANGE (negative stop) / LTRIM, EXPIRE, and MULTI whose queued commands run
  * together at EXEC. List commands outside a MULTI are counted, so a write that is not atomic
- * shows up.
+ * shows up. Like the cache cluster, EXEC refuses a MULTI whose keys span hash slots (CROSSSLOT).
  */
 function fakeRedis() {
   const strings = new Map<string, string>();
@@ -63,14 +65,17 @@ function fakeRedis() {
     lPush: outside(ops.lPush),
     multi() {
       const queued: Array<() => unknown> = [];
+      const keys: string[] = [];
       const tx: Record<string, unknown> = {
         exec: async () => {
+          rejectCrossSlot(keys);
           counts.exec++;
           return queued.map((q) => q());
         },
       };
       for (const [name, f] of Object.entries(ops)) {
         tx[name] = (...a: unknown[]) => {
+          keys.push(String(a[0]));
           queued.push(() => (f as (...x: unknown[]) => unknown)(...a));
           return tx;
         };
@@ -142,7 +147,17 @@ describe('createRedisSnapshotStore', () => {
     expect(r.counts.listOpsOutsideMulti).toBe(0);
   });
 
-  it('🔴 touch refreshes a held state without rewriting it, in one MULTI', async () => {
+  it('🔴 no MULTI spans two cluster slots: the snapshot and its stream list are written apart', async () => {
+    const r = fakeRedis();
+    const store = createRedisSnapshotStore(r.client, 2);
+    // d1..d3 push d1 off the list (a delete); the second d2 moves an existing digest; touch resumes.
+    for (const d of ['d1', 'd2', 'd3', 'd2']) await store.put(d, `state-${d}`, S1);
+    await store.touch('d3', S1);
+    expect(r.counts.exec).toBe(10);
+    expect(r.lists.get(streamStatesKey(S1))).toEqual(['d3', 'd2']);
+  });
+
+  it('🔴 touch refreshes a held state without rewriting it', async () => {
     const r = fakeRedis();
     const store = createRedisSnapshotStore(r.client, 2);
     await store.put('d1', 'state-d1', S1);
@@ -150,7 +165,8 @@ describe('createRedisSnapshotStore', () => {
     r.ttl.clear();
     const before = { ...r.counts };
     await store.touch('d1', S1);
-    expect(r.counts).toEqual({ ...before, exec: before.exec + 1 });
+    // One MULTI for the snapshot's TTL, one for the list.
+    expect(r.counts).toEqual({ ...before, exec: before.exec + 2 });
     expect(await store.get('d1')).toBe('state-d1');
     expect(r.lists.get(streamStatesKey(S1))).toEqual(['d1', 'd2']);
     expect([r.ttl.get(snapshotKey('d1')), r.ttl.get(streamStatesKey(S1))]).toEqual([
@@ -166,5 +182,15 @@ describe('createRedisSnapshotStore', () => {
     for (const d of ['b1', 'b2', 'b3']) await store.put(d, `state-${d}`, S2);
     expect(await store.get('a1')).toBe('state-a1');
     expect(r.lists.get(streamStatesKey(S2))).toEqual(['b3', 'b2']);
+  });
+});
+
+describe('the default store', () => {
+  it('🔴 reads and writes the cache cluster, never system Redis', async () => {
+    redisMock.redis.get.mockResolvedValueOnce('state-d1');
+    const store = createRedisSnapshotStore();
+    expect(await store.get('d1')).toBe('state-d1');
+    expect(redisMock.redis.get).toHaveBeenCalledWith(snapshotKey('d1'));
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
   });
 });

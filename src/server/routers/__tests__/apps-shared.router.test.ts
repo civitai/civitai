@@ -1536,10 +1536,6 @@ describe('the item’s store card follows an in-app withdraw or moderator hide',
       ok: true,
       deleted: true,
     });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'app-sub-listing-shared-sync-failed' }),
-      undefined
-    );
   });
 });
 

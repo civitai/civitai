@@ -165,7 +165,7 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
     const rows = await resultSet.json<{ hash: string }>();
     return new Set(rows.map((row) => row.hash));
   } catch (error) {
-    throw new Error('blocked_images: the CSAM-entry check failed', { cause: error });
+    throw new BlocklistStoreError(error, 'blocked_images: the CSAM-entry check failed');
   }
 }
 
@@ -190,6 +190,29 @@ const errorClass = (error: unknown) => ({
   errorName: (error as Error)?.name,
   errorCode: (error as { code?: unknown })?.code,
 });
+
+/**
+ * A blocklist store call failed. Only the driver error's class and code are kept: its message can
+ * quote the statement, hashes included, and callers log it. Twin: the main app's BlocklistStoreError.
+ */
+class BlocklistStoreError extends Error {
+  readonly code: unknown;
+  constructor(failure: unknown, message = 'blocked_images: the blocklist call failed') {
+    const { errorName, errorCode } = errorClass(failure);
+    super(message, { cause: { name: errorName, code: errorCode } });
+    this.name = 'BlocklistStoreError';
+    this.code = errorCode;
+  }
+}
+
+/** Runs one blocklist store call, rethrowing its failure as a BlocklistStoreError. */
+async function blocklistCall<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw new BlocklistStoreError(error);
+  }
+}
 
 /** The blocklist entries were written but their Postgres copy failed. Its message holds no hash. */
 class HeldMediaCopyError extends Error {
@@ -275,7 +298,7 @@ function logBlocklistCheckFailed(
       step: context?.step,
       imageId: context?.imageId,
       actorUserId: context?.actorUserId,
-      hashes: rows.map(({ hash }) => hash),
+      hashCount: rows.length,
       reasons: rows.map(({ reason }) => reason),
       error: error instanceof Error ? error.message : String(error),
     },
@@ -299,7 +322,9 @@ export async function addImagesToBlocklist(
     }));
   const write = async (values: typeof candidates) => {
     if (values.length)
-      await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
+      await blocklistCall(() =>
+        getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' })
+      );
   };
 
   const csamRows = candidates.filter((v) => v.reason === 'CSAM');
@@ -338,14 +363,15 @@ export async function removeImagesFromBlocklist(
   let csam: Set<string>;
   try {
     [blocked, csam] = await Promise.all([
-      ch
-        .query({
+      blocklistCall(async () => {
+        const resultSet = await ch.query({
           query: `SELECT toString(hash) AS hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
             ','
           )}) AND disabled = false`,
           format: 'JSONEachRow',
-        })
-        .then((resultSet) => resultSet.json<{ hash: string; reason: string }>()),
+        });
+        return resultSet.json<{ hash: string; reason: string }>();
+      }),
       csamBlockedHashes(hashes),
     ]);
   } catch (error) {
@@ -366,11 +392,13 @@ export async function removeImagesFromBlocklist(
     });
   const disable = blocked.filter((b) => !csam.has(b.hash));
   if (!disable.length) return;
-  await ch.insert({
-    table: 'blocked_images',
-    values: disable.map((b) => ({ hash: b.hash, reason: b.reason, disabled: true })),
-    format: 'JSONEachRow',
-  });
+  await blocklistCall(() =>
+    ch.insert({
+      table: 'blocked_images',
+      values: disable.map((b) => ({ hash: b.hash, reason: b.reason, disabled: true })),
+      format: 'JSONEachRow',
+    })
+  );
 }
 
 const NEEDS_REVIEW_TO_VIOLATION: Record<string, string> = {

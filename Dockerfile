@@ -199,6 +199,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # `served-pages.cjs` is required by server.cjs at module scope, so the boot-graph gate below
 # fails the build if it is missing here.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs ./trpc-server/
+# The image feed benchmark (scripts/feed-bench/README.md): its standalone Node arm
+# (`node -- feed-bench/server.cjs`, which requires ../trpc-server/next-compat.cjs) and its replay
+# harness (`node feed-bench/bench.cjs`). Nothing runs them unless a deployment names the command;
+# deliberately NOT in the boot-graph gate below: a broken benchmark script must not block a release.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/feed-bench/server.cjs /app/scripts/feed-bench/bench.cjs /app/scripts/feed-bench/lib.cjs ./feed-bench/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).

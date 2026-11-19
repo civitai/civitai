@@ -65,6 +65,25 @@ export const MIGRATION_DOC_RATING_ID_DOWN = path.resolve(
   '../migrations/20261118120000_appdata_doc_rating_id.down.sql'
 );
 
+/**
+ * The `doc.record_id` column with its `gen_random_uuid()` default, and its unique index (built
+ * CONCURRENTLY; PGlite accepts the shipped file as is). ON by default, so every PGlite suite runs
+ * the store against a table that has the column, as an environment will once it is applied.
+ */
+export const MIGRATION_RECORD_ID_UP = path.resolve(
+  __dirname,
+  '../migrations/20261119120000_appdata_doc_record_id.sql'
+);
+export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
+  __dirname,
+  '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
+);
+/** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
+export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
+  __dirname,
+  '../migrations/20261119120100_appdata_doc_record_id_backfill.sql'
+);
+
 export type Row = Record<string, unknown>;
 
 export type StatementRecord = { sql: string; params: unknown[]; app: string; ns: string };
@@ -229,6 +248,8 @@ export async function createPgliteHarness(opts: {
   docLevels?: boolean;
   /** Apply the rater's rating-id migration too (default false). */
   docRatingId?: boolean;
+  /** Apply the `doc.record_id` column and its unique index too (default true). */
+  recordId?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
@@ -236,6 +257,10 @@ export async function createPgliteHarness(opts: {
   if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
   if (opts.docLevels) await pg.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
   if (opts.docRatingId) await pg.exec(readFileSync(MIGRATION_DOC_RATING_ID_UP, 'utf8'));
+  if (opts.recordId !== false) {
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UNIQUE, 'utf8'));
+  }
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);

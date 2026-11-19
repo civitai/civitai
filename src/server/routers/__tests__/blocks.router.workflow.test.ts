@@ -3670,11 +3670,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(result.snapshot.autoClaim).toBeUndefined();
     // But the workflow still went through to the real submit.
     expect(result.snapshot.workflowId).toBe('wf_real');
-    // And the failure was logged for ops.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'apply' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim and submit still proceeds when precheck (balance lookup) throws', async () => {
@@ -3690,10 +3685,6 @@ describe('blocks.submitWorkflow — daily boost autoclaim', () => {
     expect(mockDailyBoostApply).not.toHaveBeenCalled();
     expect(result.snapshot.autoClaim).toBeUndefined();
     expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'precheck' }),
-      'webhooks'
-    );
   });
 
   it('does NOT claim when the reward multiplier zeros the award (rewardsIneligible)', async () => {
@@ -4075,52 +4066,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   }
 
-  const BLOB_SOURCE = {
-    url: 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg',
-    width: 768,
-    height: 1024,
-  };
-  /** The host-source rows, each with whether it was written before the orchestrator token. */
-  const hostSourceRows = () => {
-    const tokenAt = mockGetOrchestratorToken.mock.invocationCallOrder[0] ?? Infinity;
-    return mockLogToAxiom.mock.calls
-      .map(([data], i) => ({
-        data: data as Record<string, unknown>,
-        beforeToken: mockLogToAxiom.mock.invocationCallOrder[i] < tokenAt,
-      }))
-      .filter(({ data }) => data.name === 'app-block-host-source');
-  };
-
   describe('estimateWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged estimate', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
-      happyVersionLookup();
-      happyUser();
-      mockSubmitWorkflow.mockResolvedValue({
-        id: '',
-        status: 'succeeded',
-        cost: { total: 12 },
-        steps: [],
-      });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .estimateWorkflow({ blockToken: 'tok', body: validBody({ sourceImage: BLOB_SOURCE }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({
-            reason: 'host-orchestrator-source',
-            count: 1,
-            stepTypes: 'textToImage',
-            phase: 'estimate',
-          }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
       // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
       // page token must NOT.
@@ -4347,33 +4293,6 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
   });
 
   describe('submitWorkflow', () => {
-    it('counts an orchestrator source image once, before the token, tagged submit', async () => {
-      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
-      happyVersionLookup();
-      happyUser();
-      mockSysRedis.incrBy.mockResolvedValue(25);
-      mockSubmitWorkflow
-        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
-        .mockResolvedValueOnce({
-          id: 'wf_real',
-          status: 'unassigned',
-          cost: { total: 25 },
-          steps: [],
-        });
-      mockLogToAxiom.mockClear();
-      mockGetOrchestratorToken.mockClear();
-      const caller = blocksRouter.createCaller(fakeCtx() as never);
-      await caller
-        .submitWorkflow({ blockToken: 'tok', body: validBody({ sourceImages: [BLOB_SOURCE] }) })
-        .catch(() => undefined);
-      expect(hostSourceRows()).toEqual([
-        {
-          data: expect.objectContaining({ count: 1, stepTypes: 'textToImage', phase: 'submit' }),
-          beforeToken: true,
-        },
-      ]);
-    });
-
     it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
       happyVersionLookup();

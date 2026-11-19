@@ -8,6 +8,7 @@ import {
   resyncTipaltiPayees,
   TIPALTI_RESYNC_MAX_USERS,
 } from '~/server/services/tipalti-payee-resync.service';
+import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as NotificationService from '~/server/services/notification.service';
@@ -55,10 +56,13 @@ const stored = (paymentsEnabled: boolean, status = 'Active', userId = USER_ID): 
   tipaltiPaymentsEnabled: paymentsEnabled,
 });
 
+// GET /payees spells statuses ACTIVE, SUSPENDED, ... (Tipalti's ePayeeStatus); the stored value is
+// the webhook's 'Active'. This fixture once said 'Active', so every test passed while every real
+// resync was refused. Keep it in the REST spelling.
 const payee = (overrides: Record<string, unknown> = {}, userId = USER_ID) => ({
   id: `${PAYEE_ID}-${userId}`,
   refCode: String(userId),
-  status: 'Active',
+  status: 'ACTIVE',
   isPayable: true,
   lastChangeDateTimeUTC: '2026-07-04T23:18:00Z',
   ...overrides,
@@ -148,7 +152,7 @@ describe('resyncTipaltiPayees', () => {
   });
 
   it('syncs a status-only change and writes the status Tipalti reports', async () => {
-    arrange(stored(false, 'Active'), payee({ status: 'Suspended', isPayable: false }));
+    arrange(stored(false, 'Active'), payee({ status: 'SUSPENDED', isPayable: false }));
 
     const [row] = await run(false);
 
@@ -176,6 +180,8 @@ describe('resyncTipaltiPayees', () => {
     ['a refCode that is not this user', payee({ refCode: '999' }), /refCode/],
     ['a payee with no isPayable', payee({ isPayable: undefined }), /isPayable/],
     ['a status we do not recognise', payee({ status: 'SomethingNew' }), /recognise/],
+    // Tipalti: "treat it as an unrecognized value rather than branching on it", isPayable or not.
+    ['an INTERNAL_VALUE status', payee({ status: 'INTERNAL_VALUE' }), /recognise/],
     ['no payee at all', null, /no payee/],
   ])('refuses to write for %s', async (_label, tipaltiPayee, reason) => {
     arrange(stored(false), tipaltiPayee);
@@ -187,6 +193,14 @@ describe('resyncTipaltiPayees', () => {
     if (/refCode|payee id/.test(String(reason))) expect(row.tipalti).toBeNull();
     expect(update).not.toHaveBeenCalled();
     expect(bust).not.toHaveBeenCalled();
+  });
+
+  it('reports the status exactly as Tipalti sent it, so an unrecognised one is visible', async () => {
+    arrange(stored(false), payee({ status: 'SomethingNew' }));
+
+    const [row] = await run(true);
+
+    expect(row.tipalti).toMatchObject({ status: 'INTERNAL_VALUE', rawStatus: 'SomethingNew' });
   });
 
   it('refuses, and tells no one, when a webhook changes the row between the read and the write', async () => {
@@ -206,7 +220,7 @@ describe('resyncTipaltiPayees', () => {
   });
 
   it('a status-only move to Blocked sends the rejection notification', async () => {
-    arrange(stored(false, 'Active'), payee({ status: 'Blocked', isPayable: false }));
+    arrange(stored(false, 'Active'), payee({ status: 'BLOCKED', isPayable: false }));
 
     const [row] = await run(false);
 
@@ -303,6 +317,20 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, error: expect.stringMatching(/cache bust/) });
+  });
+});
+
+describe('Tipalti.createPayeeResponseSchema status', () => {
+  it.each([
+    ['ACTIVE', 'Active'],
+    ['SUSPENDED', 'Suspended'],
+    ['BLOCKED', 'Blocked'],
+    ['BLOCKED_BY_TIPALTI', 'BlockedByProvider'],
+    ['INTERNAL_VALUE', 'INTERNAL_VALUE'],
+  ])('reads the REST status %s as the stored %s', (rest, storedStatus) => {
+    expect(Tipalti.createPayeeResponseSchema.parse({ id: 'p', status: rest }).status).toBe(
+      storedStatus
+    );
   });
 });
 

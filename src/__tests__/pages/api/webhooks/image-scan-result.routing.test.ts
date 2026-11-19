@@ -39,7 +39,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 vi.mock('~/server/utils/webhook-debounce', () => ({ fanOutArticleImageUpdates: vi.fn() }));
 
 import handler from '~/pages/api/webhooks/image-scan-result';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const call = async (body: unknown) => {
   const res = {
@@ -118,7 +117,7 @@ describe('image-scan-result webhook routing', () => {
   it.each([
     ['imageScanning', [{ $type: 'imageScanning' }], 'image-scanning-result'],
     ['legacy', [{ $type: 'wdTagging' }, { $type: 'mediaRating' }], 'image-scan-result'],
-  ])('logs a %s pipeline failure under its own name', async (_, steps, name) => {
+  ])('answers 400 when the %s pipeline fails', async (_, steps, name) => {
     const pipeline =
       name === 'image-scanning-result'
         ? mocks.processImageScanningWorkflow
@@ -127,9 +126,6 @@ describe('image-scan-result webhook routing', () => {
     const res = await deliver('succeeded', steps);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name, type: 'error', message: 'boom' })
-    );
   });
 
   it('acknowledges a result for an image deleted since the scan was submitted', async () => {

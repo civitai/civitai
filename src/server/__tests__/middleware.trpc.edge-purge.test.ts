@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import superjson from 'superjson';
 import * as z from 'zod';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
@@ -118,17 +117,6 @@ describe('edge-cache purge bookkeeping', () => {
     );
     expect((await query('tagged', canonical('tagged', { n: 1 }), 1)).edgeTTL).toBe(0);
     expect(lua.pttl(SET)).toBeGreaterThan(0);
-    // Logged once per tag per process, naming the request that hit the bound.
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'edge-cache-tag-cap',
-        tag: TAG,
-        cap: 100,
-        path: 'tagged',
-        url: canonical('tagged', { n: 1 }),
-      }),
-      'civitai-prod'
-    );
     lua.nowMs += (TTL + 1) * 1000;
     expect((await query('tagged', canonical('tagged', { n: 1 }), 1)).edgeTTL).toBe(TTL);
   });

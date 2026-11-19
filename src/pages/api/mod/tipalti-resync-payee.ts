@@ -10,7 +10,7 @@ export default defineModeratorEndpoint('tipalti.resyncPayee', {
   summary:
     "Re-read users' Tipalti payees and set their payable flag (which gates cash withdrawals) and account status from Tipalti's own record.",
   returns:
-    "{ execute, rows: [{ userId, before: { status, paymentsEnabled } | null, tipalti: { status, isPayable, unpayableReasons, lastChangeDateTimeUTC, paymentMethodType } | null, refused, wouldChange, direction: 'enable' | 'disable' | null, applied, error? }] }",
+    "{ execute, rows: [{ userId, before: { status, paymentsEnabled } | null, tipalti: { status, rawStatus, isPayable, unpayableReasons, lastChangeDateTimeUTC, paymentMethodType } | null, refused, wouldChange, direction: 'enable' | 'disable' | null, applied, error? }] }",
   notes: [
     'Dry run unless `execute=true`. The dry run reads Tipalti and reports what execute would change.',
     'Tipalti is only read (GET /payees). Both directions are applied: a payee Tipalti says is unpayable is disabled.',

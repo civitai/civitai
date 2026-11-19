@@ -16,10 +16,6 @@ const SYS_KEY_LEDGER = [
   'app:cases:sends-paused',
   'app:page-access',
   'app:review-batch',
-  'app:review-batch-idem',
-  'app:review-batch-idem-lock',
-  'app:review-batch-key',
-  'app:review-sheet:session',
   'buzz-withdrawal-request:status',
   'clavata-policies',
   'client',
@@ -51,7 +47,6 @@ const SYS_KEY_LEDGER = [
   'dl:link',
   'dl:linkid',
   'dl:links:cred',
-  'dl:reuse',
   'download:count',
   'download:limits',
   'entities',
@@ -85,9 +80,7 @@ const SYS_KEY_LEDGER = [
   'limits:history-downloads',
   'linked-account-review:config',
   'linked-account-review:filed',
-  'membership-extend:lock',
   'message-as-civitai:idempotency',
-  'message-as-civitai:send-lock',
   'metric-reconciliation:nightly-exactness',
   'new-order:active-slot',
   'new-order:blessed-buzz',
@@ -160,14 +153,11 @@ const SYS_KEY_LEDGER = [
   'system:blocks:goods-idem',
   'system:blocks:hibernation-wake-ticket',
   'system:blocks:listing-check-spend',
-  'system:blocks:live-pointer-dirty',
-  'system:blocks:live-pointer-lock',
   'system:blocks:live-pointer-takedown',
   'system:blocks:output-unlock-lock',
   'system:blocks:private-run-buzz-cap',
   'system:blocks:review-auto-builds',
   'system:blocks:review-run-for-real-buzz-cap',
-  'system:blocks:source-repo-lock',
   'system:blocks:step-quote',
   'system:blocks:submissions-rate-limit',
   'system:blocks:submit-rate-limit',
@@ -196,8 +186,6 @@ const SYS_KEY_LEDGER = [
   'system:pending-image-restores',
   'system:permissions',
   'system:pricing:fee-allowance-boost',
-  'system:registry-adapter:snapshot',
-  'system:registry-adapter:stream-states',
   'system:scanner-policy:run-cancel',
   'system:scanner-policy:run-counter',
   'system:semantic-search-audit',
@@ -208,14 +196,11 @@ const SYS_KEY_LEDGER = [
   'system:text-scan:config',
   'system:text-scan:label-modes',
   'system:text-scan:modes',
-  'system:text-scan:redetection-lock',
   'system:text-scan:web-search',
   'system:upload-key-owner',
   'system:upload-prompt-scan-retry',
   'system:user-score-multipliers',
   'training:status',
-  'training:studio-auto-label-daily',
-  'training:studio-dataset-rating-daily',
   'training:studio-dataset-rating-sent',
   'urllists',
   'webhooks:image-scan:job-reason',
@@ -263,5 +248,10 @@ describe('REDIS_SYS_KEYS ledger', () => {
 
   it('lists each key once', () => {
     expect(SYS_KEY_LEDGER.length).toBe(ledger.size);
+  });
+
+  // The ledger's size, written out: a change to it is a change to this number too.
+  it('holds 195 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(195);
   });
 });

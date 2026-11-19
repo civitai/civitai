@@ -2,8 +2,11 @@ import { error } from '@sveltejs/kit';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { db } from '$lib/server/db/db';
 import { apiKeyScopeInsert } from './scope';
+import { lockAppBlockSuspended } from './app-block-mint-lock';
 import { OAUTH_TOKEN_PREFIX, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from './constants';
 
 interface TokenPair {
@@ -17,6 +20,7 @@ interface TokenPair {
 export const CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX = 'oauth-cc:';
 
 async function insertToken(opts: {
+  executor?: Kysely<DB>;
   userId: number;
   clientId: string;
   scope: bigint;
@@ -28,7 +32,7 @@ async function insertToken(opts: {
   const prefix = opts.clientCredentials
     ? CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX
     : `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:`;
-  await db
+  await (opts.executor ?? db)
     .insertInto('ApiKey')
     .values({
       key: generateSecretHash(token),
@@ -119,17 +123,32 @@ export async function createAppAccessToken(
   clientId: string,
   scope: bigint,
   ttlSeconds: number,
-  opts: { clientCredentials?: boolean } = {}
+  opts: { clientCredentials?: boolean; refuseSuspendedAppBlock?: boolean } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {
   await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
-  const accessToken = await insertToken({
-    userId,
-    clientId,
-    scope: scope | TokenScope.UserRead,
-    type: 'Access',
-    expiresAt,
-    clientCredentials: opts.clientCredentials,
+  const insert = (executor?: Kysely<DB>) =>
+    insertToken({
+      executor,
+      userId,
+      clientId,
+      scope: scope | TokenScope.UserRead,
+      type: 'Access',
+      expiresAt,
+      clientCredentials: opts.clientCredentials,
+    });
+  if (!opts.refuseSuspendedAppBlock) return { accessToken: await insert(), expiresAt };
+
+  const accessToken = await db.transaction().execute(async (trx) => {
+    if (await lockAppBlockSuspended(trx, clientId)) throw new AppBlockSuspendedError();
+    return insert(trx);
   });
   return { accessToken, expiresAt };
+}
+
+export class AppBlockSuspendedError extends Error {
+  constructor() {
+    super('app block suspended');
+    this.name = 'AppBlockSuspendedError';
+  }
 }
