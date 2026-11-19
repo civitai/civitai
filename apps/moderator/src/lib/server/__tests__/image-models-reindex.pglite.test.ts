@@ -33,7 +33,6 @@ const { bustCachedObject } = await import('../cache');
 const { logAxiomError } = await import('../axiom');
 
 const CHILD_TAG = childBrowsingTagIds[0];
-const OTHER_TAG = 7;
 
 // Image 1 and 2 are on versions 10 and 11 of model 100; image 3 is on no post.
 const SCHEMA = `
@@ -98,11 +97,11 @@ describe('spoke queueDocumentsForImageMinorChanges', () => {
     await queueDocumentsForImageMinorChanges({ levelImageIds: [1] });
 
     expect(syncSearchIndexBulk).not.toHaveBeenCalled();
+    expect(logAxiomError).not.toHaveBeenCalled();
   });
 
   // The minor rule reads the level, so a re-rate of a minor-flagged image counts.
   it('🔴 queues a re-rated minor-flagged image', async () => {
-    await tag(2, OTHER_TAG);
     await db.query(`UPDATE "Image" SET "minor" = true WHERE "id" = 2`);
 
     await queueDocumentsForImageMinorChanges({ levelImageIds: [2] });
