@@ -12,7 +12,6 @@ const {
   mockGetUserById,
   mockIngestImage,
   mockIngestImageById,
-  mockDeleteImageById,
   mockDeleteImages,
   mockAnyImageHeld,
 } = vi.hoisted(() => ({
@@ -20,7 +19,6 @@ const {
   mockGetUserById: vi.fn(),
   mockIngestImage: vi.fn(),
   mockIngestImageById: vi.fn(),
-  mockDeleteImageById: vi.fn(),
   mockDeleteImages: vi.fn(),
   mockAnyImageHeld: vi.fn(),
 }));
@@ -48,7 +46,6 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImage: mockIngestImage,
   ingestImageById: mockIngestImageById,
-  deleteImageById: mockDeleteImageById,
   deleteImages: mockDeleteImages,
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
@@ -106,7 +103,6 @@ const currentPictureOwnedBy = (userId: number | null) =>
   );
 
 function expectImageUntouched(imageId: number) {
-  expect(mockDeleteImageById).not.toHaveBeenCalled();
   expect(mockDeleteImages).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.image.delete).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.image.deleteMany).not.toHaveBeenCalled();
