@@ -185,11 +185,9 @@ describe('restorePrompt', () => {
   it('keeps a note the moderator wrote, after the version it restores', async () => {
     await restorePrompt(input({ note: 'roll back' }));
     const [, content, opts] = harness.putPrompt.mock.calls[0];
-    // The audit row of the put records this note and baseId: the restore's to- and from-version.
     expect(opts).toEqual({
       note: `Restored #${input({}).id}: roll back`,
       baseId: 3,
-      // Marks the put a rollback: the main app then refuses revoked text even for a holder.
       restore: true,
     });
     expect(content).toBe(`TEXT ${input({}).id}`);

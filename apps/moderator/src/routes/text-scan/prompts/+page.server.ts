@@ -23,7 +23,7 @@ export const load: PageServerLoad = async ({ url }) => {
   const q = parseQuery(url, querySchema);
   const prompts = await loadPrompts(q.key, 'prompts');
   const authors = await promptAuthors(prompts.ok ? prompts.value : null);
-  // A restore needs no run, so the live intent text can be unchecked against the live base, model and cases.
+  // A restore skips the publish gate, so the live intent text may no longer pass it.
   const intentCheck =
     q.key === INTENT_PROMPT_KEY && prompts.ok
       ? await checkLiveIntent(getModeratorDb(), prompts.value).catch(() => ({
