@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const getDocument = vi.hoisted(() => vi.fn());
+const getDocument = vi.hoisted(() =>
+  vi.fn(async (_id: number): Promise<{ profilePicture?: { id?: number } | null }> => ({}))
+);
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index: () => ({ getDocument }) },
 }));
@@ -50,11 +52,11 @@ describe('the one-off refresh of profile pictures that follow visibility rules',
   });
 
   it('refreshes and queues in chunks of 100', async () => {
-    const refresh = vi.fn(async () => undefined);
-    const queue = vi.fn(async () => undefined);
+    const refresh = vi.fn(async (_ids: number[]) => undefined);
+    const queue = vi.fn(async (_items: { id: number; action: string }[]) => undefined);
     const ids = Array.from({ length: 250 }, (_, i) => i + 1);
     expect(await refreshMarkedPictureUsers(ids, { refresh, queue })).toEqual({ chunks: 3 });
-    expect(refresh.mock.calls.map(([chunk]) => (chunk as number[]).length)).toEqual([100, 100, 50]);
+    expect(refresh.mock.calls.map(([chunk]) => chunk.length)).toEqual([100, 100, 50]);
     expect(queue.mock.calls[2][0]).toEqual(ids.slice(200).map((id) => ({ id, action: 'Update' })));
   });
 
