@@ -5,7 +5,7 @@ import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
  * The hash tag shared by a judge's voted-pairs set and anchor hash. RECORD_VOTED_PAIR_SCRIPT writes
  * both in one script, which the cache cluster runs only when every key is in one slot.
  */
-const judgeVoteTag = (crucibleId: number, userId: number) => `${crucibleId}:${userId}`; // PROBE: tag removed
+const judgeVoteTag = (crucibleId: number, userId: number) => `{${crucibleId}:${userId}}`;
 
 /** Pair keys (`small:large`) this judge has voted on in this crucible. On the cache cluster. */
 export function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateCache {
