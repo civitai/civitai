@@ -130,6 +130,7 @@ describe('classifyException — DROP: ad-blocker / 3p script blocks', () => {
     'Failed to load script: //securepubads.g.doubleclick.net/tag/js/gpt.js',
     'Failed to load script: //cdn.snigelweb.com/adengine/loader.js',
     'Failed to load script: //adengine.snigelw.com/loader.js',
+    'Failed to load script: //www.flashb.id/universal/f812656a.js',
     'Failed to load script: googletag',
     'Failed to load script: //doubleclick.net/x',
     'Failed to load script: adsbygoogle',
