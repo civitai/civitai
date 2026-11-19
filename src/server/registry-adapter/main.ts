@@ -89,6 +89,15 @@ function main() {
   for (const line of regions.warn) console.warn('registry-adapter: WARNING:', line);
   // One limiter for both bindings, so its total counts every open stream of the process.
   const limiter = createSubscriptionLimiter(subscriptionLimitsFromEnv(process.env));
+  // This process serves no /metrics, so the open-subscription count is a log line: checked every
+  // minute, logged when it changed.
+  let loggedOpen = -1;
+  setInterval(() => {
+    const open = limiter.open();
+    if (open === loggedOpen) return;
+    loggedOpen = open;
+    console.log(`registry-adapter: open subscriptions: ${open}`);
+  }, 60_000).unref();
   const verifyToken = createCivitaiTokenVerifier({
     resource: resourceUrl,
     issuer,

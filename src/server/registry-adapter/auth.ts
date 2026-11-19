@@ -16,7 +16,9 @@
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the
  *     consumer re-snapshots under them.
  *
- * This source requires no scope, so it never sends `insufficient_scope`.
+ * No stream requires a scope yet, so this source never sends `insufficient_scope`; a verified
+ * token carries its scope ({@link VerifiedToken.scope}) for the check that will
+ * (`hasScope` in `auth.jwt.ts`).
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
@@ -27,6 +29,15 @@ import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol
 export type VerifiedToken = {
   /** Stable for the token's user and client, across token refreshes. */
   subject: string;
+  /** The OAuth client the token was issued to (the JWT's `client_id`). */
+  clientId: string;
+  /**
+   * The scopes the token GRANTS, as the site's bitmask: a name the site does not know grants
+   * nothing (`scopeGrantBits` in `auth.jwt.ts`). Read it with `hasScope`.
+   */
+  scope: bigint;
+  /** Who presents the token on the user's behalf (the JWT's `act.sub`); null when no one does. */
+  actor: string | null;
   /** The user's browsing settings, which set the token's {@link Audience}. */
   user: { showNsfw?: boolean | null; browsingLevel?: number | null };
   expiresAt: Date | null;
@@ -79,10 +90,7 @@ const expired = (token: VerifiedToken, now: number) =>
 export async function authenticate(
   authorization: string | undefined,
   verify: VerifyToken | undefined,
-  {
-    now = Date.now,
-    regionRestricted,
-  }: { now?: () => number; regionRestricted: () => boolean }
+  { now = Date.now, regionRestricted }: { now?: () => number; regionRestricted: () => boolean }
 ): Promise<Principal> {
   if (authorization === undefined || authorization === '') return ANONYMOUS_PRINCIPAL;
   const token = BEARER_RE.exec(authorization)?.[1];
@@ -183,14 +191,19 @@ export function watchPrincipal(
   return stop;
 }
 
-/** The `WWW-Authenticate` value of an auth error sent before a stream starts (RFC 6750, RFC 9728). */
+/**
+ * The `WWW-Authenticate` value of an auth error sent before a stream starts (RFC 6750, RFC 9728).
+ * `scope`, for an `insufficient_scope` answer, names the scopes the request needs (RFC 6750 §3).
+ */
 export function wwwAuthenticate(
   code: ErrorCode,
   message: string,
-  resourceMetadataUrl?: string
+  resourceMetadataUrl?: string,
+  scope?: string
 ): string {
   const quote = (s: string) => `"${s.replace(/["\\]/g, '')}"`;
   const params = [`error=${quote(code)}`, `error_description=${quote(message)}`];
+  if (scope) params.push(`scope=${quote(scope)}`);
   if (resourceMetadataUrl) params.push(`resource_metadata=${quote(resourceMetadataUrl)}`);
   return `Bearer ${params.join(', ')}`;
 }
