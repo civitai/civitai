@@ -38,7 +38,7 @@ async function settle<T>(step: string, run: () => Promise<T>) {
 export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
 
-  // `escalated`, `toInquisitor`, `extended` and `expired` (unvoted items closed) go straight into the response.
+  // `escalated`, `toInquisitor`, `extended`, `expired` (items closed undecided) and `rerated` go straight into the response.
   const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)

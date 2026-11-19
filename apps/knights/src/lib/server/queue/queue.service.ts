@@ -46,6 +46,7 @@ import {
   isBlockedLevel,
   isExcessiveDownRating,
   moderatorRuling,
+  mostVotedLevel,
   type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
@@ -453,12 +454,21 @@ export async function staffedRanks(db: Executor, now: Date): Promise<Set<string>
   return new Set();
 }
 
+/** `reason` of a rating item re-rated to its most-voted level because its last stage reached no consensus (`rerate`). */
+export const NO_CONSENSUS_RERATE_REASON = 'no-consensus-rerate';
+
+type SplitItem = { id: number; minRank: string; questionKey: string; imageId: number };
+
+/** Only the rating question is re-rated at the end of the path; any other choice question still goes to the Inquisitors. */
+const reratesAtEnd = (item: Pick<SplitItem, 'questionKey'>) =>
+  item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
+
 async function escalate(
-  trx: Executor,
-  item: { id: number; minRank: string },
+  trx: Transaction<DB>,
+  item: SplitItem,
   now: Date,
   staffed: ReadonlySet<string>
-): Promise<'escalated' | 'inquisitor'> {
+): Promise<'escalated' | 'inquisitor' | 'rerated'> {
   const next = nextStaffedRank(item.minRank, staffed);
   if (next && next !== 'Inquisitor') {
     await trx
@@ -475,8 +485,62 @@ async function escalate(
     metrics.escalation('next-stage');
     return 'escalated';
   }
+  if (reratesAtEnd(item)) return rerate(trx, item, now);
   await toInquisitor(trx, item.id, now, 'no-consensus');
   return 'inquisitor';
+}
+
+/**
+ * Re-rates a no-consensus rating to its most-voted level, down as well as up (the pushed-down check is skipped). A Blocked pick
+ * goes to the Inquisitors. Leaves the item Resolved and unwritten for `settleResolved`; the caller guarantees a counted vote at
+ * its stage.
+ */
+async function rerate(
+  trx: Transaction<DB>,
+  item: SplitItem,
+  now: Date
+): Promise<'inquisitor' | 'rerated'> {
+  const votes = await trx
+    .selectFrom('KnightsVote')
+    .select(['answer', 'weight', 'playerId'])
+    .where('itemId', '=', item.id)
+    .where('stage', '=', item.minRank)
+    .orderBy('createdAt', 'desc')
+    .orderBy('playerId', 'desc')
+    .execute();
+  const level = mostVotedLevel(votes);
+  if (level === null) throw new Error(`item ${item.id} has no counted vote to re-rate by`);
+  if (isBlockedLevel(Number(level))) {
+    await toInquisitor(trx, item.id, now, 'blocked');
+    return 'inquisitor';
+  }
+
+  const image = await trx
+    .selectFrom('Image')
+    .select('nsfwLevel')
+    .where('id', '=', item.imageId)
+    .executeTakeFirst();
+  // The write-back's actor: the latest counted voter who gave the level (the backfill picks the same one).
+  const actor = votes.find(
+    (vote) => vote.weight > 0 && vote.answer === level
+  ) as (typeof votes)[number];
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({
+      status: 'Resolved',
+      resolvedValue: level,
+      resolvedAt: utc(now),
+      resolvedBy: actor.playerId,
+      resolvedFromLevel: image?.nsfwLevel ?? null,
+      appliedAt: null,
+      reason: NO_CONSENSUS_RERATE_REASON,
+      updatedAt: utc(now),
+    })
+    .where('id', '=', item.id)
+    .execute();
+  await setVotesAside(trx, [item.id]);
+  metrics.escalation(NO_CONSENSUS_RERATE_REASON);
+  return 'rerated';
 }
 
 async function regradeVotes(
@@ -640,10 +704,9 @@ export async function castVote(
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {
-          return {
-            result: { status: await escalate(trx, item, now, await staffedRanks(trx, now)) },
-            xp: [voted],
-          };
+          const outcome = await escalate(trx, item, now, await staffedRanks(trx, now));
+          if (outcome !== 'rerated') return { result: { status: outcome }, xp: [voted] };
+          return { result: { status: 'resolved' }, settledItemId: item.id, xp: [voted] };
         }
 
         if (writesBack) {
@@ -995,7 +1058,8 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with votes is handed up: to the next stage someone can serve, or to the Inquisitors.
+ * Moves items whose stage window lapsed. An item with votes is handed up to the next stage someone can serve. At the end of the
+ * path a rating is re-rated, or closes as `expired` below quorum (a Blocked pick goes to the Inquisitors).
  * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
@@ -1004,11 +1068,17 @@ export async function applyPendingResolutions(
 export async function escalateExpired(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ escalated: number; toInquisitor: number; extended: number; expired: number }> {
+): Promise<{
+  escalated: number;
+  toInquisitor: number;
+  extended: number;
+  expired: number;
+  rerated: number;
+}> {
   const result = await db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
-      .select(['id', 'minRank', 'escalatedAt', 'createdAt'])
+      .select(['id', 'minRank', 'escalatedAt', 'createdAt', 'questionKey', 'imageId'])
       .where('status', '=', 'Open')
       .where('expiresAt', '<=', utc(now))
       .orderBy('expiresAt', 'asc')
@@ -1017,28 +1087,27 @@ export async function escalateExpired(
       .skipLocked()
       .execute();
 
-    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0 };
+    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
-    const voted = new Set(
-      (
-        await trx
-          .selectFrom('KnightsVote as v')
-          .innerJoin('KnightsQueueItem as i', (join) =>
-            join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
-          )
-          .select('v.itemId')
-          .distinct()
-          // A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
-          .where('v.weight', '>', 0)
-          .where(
-            'v.itemId',
-            'in',
-            due.map((item) => item.id)
-          )
-          .execute()
-      ).map((row) => row.itemId)
-    );
+    // Counted votes at each item's stage. A held player's vote (weight 0) decides nothing, so an item with only those had no vote.
+    const counted = new Map<number, WeightedAnswer[]>();
+    const stageVotes = await trx
+      .selectFrom('KnightsVote as v')
+      .innerJoin('KnightsQueueItem as i', (join) =>
+        join.onRef('i.id', '=', 'v.itemId').onRef('i.minRank', '=', 'v.stage')
+      )
+      .select(['v.itemId', 'v.answer', 'v.weight'])
+      .where('v.weight', '>', 0)
+      .where(
+        'v.itemId',
+        'in',
+        due.map((item) => item.id)
+      )
+      .execute();
+    for (const { itemId, ...vote } of stageVotes) {
+      counted.set(itemId, [...(counted.get(itemId) ?? []), vote]);
+    }
     const staffed = await staffedRanks(trx, now);
 
     // An item extends only until two stage windows after it entered the stage (a custom shorter first `expiresAt` can extend
@@ -1046,7 +1115,7 @@ export async function escalateExpired(
     // player who could serve it may have judged it already).
     const enteredSince = addHours(now, -KNIGHTS_STAGE_MAX_HOURS);
     const extend = (item: (typeof due)[number]) =>
-      !voted.has(item.id) &&
+      !counted.has(item.id) &&
       staffed.has(item.minRank) &&
       (item.escalatedAt ?? item.createdAt) > enteredSince;
 
@@ -1064,11 +1133,24 @@ export async function escalateExpired(
       counts.extended = idle.length;
     }
 
-    const expire = (item: (typeof due)[number]) => {
-      if (voted.has(item.id) || extend(item)) return false;
-      if (staffed.has(item.minRank)) return true;
+    const leavesPlayers = (item: (typeof due)[number]) => {
       const next = nextStaffedRank(item.minRank, staffed);
       return !next || next === 'Inquisitor';
+    };
+    const expire = (item: (typeof due)[number]) => {
+      if (extend(item)) return false;
+      const votes = counted.get(item.id) ?? [];
+      // A re-rate needs the stage's quorum: fewer counted votes than that decide nothing, as none would, unless they point at
+      // Blocked, which `rerate` hands to the Inquisitors whatever the count.
+      if (votes.length > 0) {
+        return (
+          reratesAtEnd(item) &&
+          leavesPlayers(item) &&
+          votes.length < votesNeededAt(item.minRank) &&
+          !isBlockedLevel(Number(mostVotedLevel(votes)))
+        );
+      }
+      return staffed.has(item.minRank) || leavesPlayers(item);
     };
     const lapsed = due.filter(expire);
     if (lapsed.length > 0) {
@@ -1087,6 +1169,7 @@ export async function escalateExpired(
       if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
+      else if (outcome === 'rerated') counts.rerated++;
       else counts.toInquisitor++;
     }
     return counts;
@@ -1186,6 +1269,11 @@ async function closeItems(trx: Transaction<DB>, itemIds: number[], now: Date, re
     .set({ status: 'Closed', updatedAt: utc(now), ...(reason ? { reason } : {}) })
     .where('id', 'in', itemIds)
     .execute();
+  await setVotesAside(trx, itemIds);
+}
+
+/** Pending votes on the items become `inconclusive`: they never grade or pay beyond their XP at cast. */
+async function setVotesAside(trx: Transaction<DB>, itemIds: number[]) {
   await trx
     .updateTable('KnightsVote')
     .set({ verdict: 'inconclusive' })
