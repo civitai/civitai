@@ -51,7 +51,8 @@ CREATE TABLE "hot_reads_6_parity"."Image" (
   "height"    INTEGER,
   "metadata"  JSONB                                           NOT NULL DEFAULT '{}',
   "needsReview" TEXT,
-  "modelRestricted" BOOLEAN NOT NULL DEFAULT false
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT false,
+  "blockedFor" TEXT
 );
 
 CREATE TABLE "hot_reads_6_parity"."Cosmetic" (

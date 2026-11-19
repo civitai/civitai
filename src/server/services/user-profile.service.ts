@@ -5,7 +5,7 @@ import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  readUserWithProfileViaKysely,
+  readUserWithProfileAndPictureGateViaKysely,
   readUserWithProfileViaPrisma,
 } from '~/server/services/hot-reads-9.reads';
 import type {
@@ -135,9 +135,13 @@ export const getUserWithProfile = async ({
   }
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
-    const user = viaKysely
-      ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
-      : await readUserWithProfileViaPrisma(dbWrite, { id, username });
+    // No blockedFor on the Prisma read: the servable-profile-picture extension already gated it.
+    const { user, pictureBlockedFor } = viaKysely
+      ? await readUserWithProfileAndPictureGateViaKysely(kyselyWrite, { id, username })
+      : {
+          user: await readUserWithProfileViaPrisma(dbWrite, { id, username }),
+          pictureBlockedFor: null,
+        };
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
@@ -205,7 +209,8 @@ export const getUserWithProfile = async ({
           servableProfilePicture(
             user.profilePicture,
             null,
-            await isPictureModelRestricted(user.profilePicture)
+            await isPictureModelRestricted(user.profilePicture),
+            pictureBlockedFor
           ),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
