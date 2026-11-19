@@ -1463,11 +1463,11 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   if (isShared && !isReservedModerationUsername(username))
     throw throwBadRequestError('The shared moderation account keeps its reserved username.');
 
-  // A ban or a second restore since the checks above: the guarded writes below match no row.
+  // A ban, a second restore or a new deletion since the read above: the guarded write matches no row.
   const refuseIfBannedMeanwhile = (error: unknown): never => {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
       throw throwBadRequestError(
-        `User ${id} was banned or restored meanwhile; unban the account before restoring it`
+        `User ${id} was banned, restored or deleted again meanwhile; reload it before restoring`
       );
     throw error;
   };
@@ -1509,17 +1509,15 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     createdIds = created.filter((modelId) => !transferred.has(modelId));
   }
 
-  // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and
-  // model writes in one transaction: a user can own thousands of models, and an interactive
-  // transaction would hold a connection + row locks open across the whole set (and risk Prisma's
-  // 5s timeout). Doing it first also keeps the operation re-runnable — if it fails, deletedAt is
-  // still set, so a retry passes the guard above instead of being locked out.
+  // The orphaned models to reclaim. The reclaim itself commits with the restore below, in one batch
+  // (each a single statement, so no interactive transaction holds locks across the set): a ban or a
+  // second restore landing in between refuses both, and a failure leaves the account deleted and
+  // the restore re-runnable.
   //
   // The deletion path (removeModels:false) sets Model.userId = -1 without touching status/deletedAt,
   // so only those orphans are reclaimed, and only those whose last recorded owner before the
   // placeholder is this account. Models deleted via removeModels:true keep their userId and get
   // status='Deleted' instead — they are intentionally NOT restored here.
-  let modelsRestored = 0;
   let restoredModelIds: number[] = [];
   if (restoreModels) {
     const orphans = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -1543,32 +1541,6 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       ORDER BY m.id
     `;
     restoredModelIds = orphans.map((m) => m.id);
-
-    if (restoredModelIds.length > 0) {
-      const [, updated] = await dbWrite
-        .$transaction([
-          // Locks the account and re-checks it, so a ban landing since the check above refuses
-          // the reclaim instead of handing models to a banned account its ban never unpublished.
-          dbWrite.user.update({
-            where: { id, deletedAt: { not: null }, bannedAt: null },
-            data: { deletedAt: user.deletedAt },
-            select: { id: true },
-          }),
-          dbWrite.model.updateMany({
-            where: { id: { in: restoredModelIds }, userId: -1 },
-            data: { userId: id },
-          }),
-          dbWrite.$executeRaw(
-            recordModelOwnershipSql({
-              where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
-              userId: id,
-              reason: 'restore',
-            })
-          ),
-        ])
-        .catch(refuseIfBannedMeanwhile);
-      modelsRestored = updated.count;
-    }
   }
 
   // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
@@ -1585,17 +1557,35 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
   // list that moved since would make some accounts unrestorable.
-  // The state is re-checked by the write itself: a ban landing after the check above rolls back
-  // the whole restore, purge disarm included.
-  await dbWrite
+  // The write re-checks the account as read above, the same deletion and still unbanned, and locks
+  // it first: a ban or another restore landing since rolls back all of it, models and purge disarm
+  // included.
+  const reclaim = restoredModelIds.length
+    ? [
+        dbWrite.model.updateMany({
+          where: { id: { in: restoredModelIds }, userId: -1 },
+          data: { userId: id },
+        }),
+        dbWrite.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
+            userId: id,
+            reason: 'restore',
+          })
+        ),
+      ]
+    : [];
+  const [, , reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
-        where: { id, deletedAt: { not: null }, bannedAt: null },
+        where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);
+  const modelsRestored = (reclaimed as Prisma.BatchPayload | undefined)?.count ?? 0;
   await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.

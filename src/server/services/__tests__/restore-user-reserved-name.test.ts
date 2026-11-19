@@ -95,13 +95,30 @@ describe('restoreUser and the reserved username', () => {
 });
 
 describe('restoreUser and a banned account', () => {
+  const DELETED_AT = new Date('2026-07-28T00:00:00Z');
   const deleted = (bannedAt: Date | null) =>
     dbMock.dbWrite.user.findFirst.mockImplementation(
-      async ({ where }: { where: { id?: number } }) =>
+      async ({ where, select }: { where: { id?: number }; select?: Record<string, boolean> }) =>
         where.id === USER_ID
-          ? { id: USER_ID, deletedAt: new Date('2026-07-28T00:00:00Z'), bannedAt, meta: {} }
+          ? {
+              id: USER_ID,
+              deletedAt: DELETED_AT,
+              meta: {},
+              // Only what the read selects, so a read that stops selecting the ban cannot see it.
+              ...(select?.bannedAt ? { bannedAt } : {}),
+            }
           : null
     );
+  const landsFirst = () =>
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record found', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+  const guardedWrite = expect.objectContaining({
+    where: expect.objectContaining({ id: USER_ID, deletedAt: DELETED_AT, bannedAt: null }),
+  });
 
   it('refuses a banned account and leaves its images hidden', async () => {
     deleted(new Date('2026-07-27T00:00:00Z'));
@@ -112,42 +129,24 @@ describe('restoreUser and a banned account', () => {
 
   it('refuses, in the purge-disarm transaction, when a ban lands before the write', async () => {
     deleted(null);
-    dbMock.dbWrite.user.update.mockRejectedValueOnce(
-      new Prisma.PrismaClientKnownRequestError('No record found', {
-        code: 'P2025',
-        clientVersion: 'test',
-      })
-    );
-    await expect(restore('back')).rejects.toThrow(/banned or restored meanwhile/);
-    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: USER_ID, deletedAt: { not: null }, bannedAt: null }),
-      })
-    );
+    landsFirst();
+    await expect(restore('back')).rejects.toThrow(/banned, restored or deleted again meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
     // The guarded write and the purge disarm commit or roll back together.
     expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
   });
 
-  it('refuses the model reclaim, in its transaction, when a ban lands before it', async () => {
+  it('refuses the model reclaim too, in the same transaction, when a ban lands first', async () => {
     deleted(null);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 501 }]);
-    dbMock.dbWrite.user.update.mockRejectedValueOnce(
-      new Prisma.PrismaClientKnownRequestError('No record found', {
-        code: 'P2025',
-        clientVersion: 'test',
-      })
-    );
+    landsFirst();
     await expect(
       restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true })
-    ).rejects.toThrow(/banned or restored meanwhile/);
-    expect(dbMock.dbWrite.user.update).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: USER_ID, deletedAt: { not: null }, bannedAt: null }),
-      })
-    );
-    // The re-check, the reclaim and its ownership record commit or roll back together.
-    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(3);
+    ).rejects.toThrow(/banned, restored or deleted again meanwhile/);
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith(guardedWrite);
+    // One batch: the guarded write, the purge disarm, the reclaim and its ownership record.
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(4);
   });
 
   it('restores an account that is not banned', async () => {
