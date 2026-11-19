@@ -19,6 +19,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 20_000 });
 
 const spies = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
+  /** When set, the replica: `dbRead` answers from it while `dbWrite` stays on the row. */
+  replica: { current: null as unknown },
   ch: { inserts: [] as { table: string; values: unknown[] }[], fail: false },
   logToAxiom: vi.fn(async (_data: Record<string, unknown>) => undefined),
   logAxiomError: vi.fn(async (_error: unknown, _extra?: Record<string, unknown>) => undefined),
@@ -32,7 +34,7 @@ const { ch, logToAxiom } = spies;
 
 vi.mock('../db', () => ({
   get dbRead() {
-    return spies.dbHandle.current;
+    return spies.replica.current ?? spies.dbHandle.current;
   },
   get dbWrite() {
     return spies.dbHandle.current;
@@ -215,6 +217,25 @@ describe('a re-block of a removed, held image', () => {
 
     expect(blocklistEntries()).toEqual([[{ hash: HASH, reason: 'CSAM' }]]);
     expect(await pgRows()).toEqual([{ hash: HASH, reason: 'CSAM' }]);
+  });
+
+  it('writes the CSAM entry from the row when the replica read has no hash yet', async () => {
+    const lagging = await freshPglite();
+    await lagging.exec(SCHEMA);
+    await lagging.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash")
+        VALUES ($1, 7, 'csam', 'CSAM', 'Blocked', 32, NULL)`,
+      [REMOVED]
+    );
+    spies.replica.current = new Kysely({ dialect: pgliteDialect(lagging) });
+    try {
+      await reblock(REMOVED);
+    } finally {
+      spies.replica.current = null;
+      await lagging.close();
+    }
+
+    expect(blocklistEntries()).toEqual([[{ hash: HASH, reason: 'CSAM' }]]);
   });
 
   it('a re-block with no hash on the row still succeeds, writes no entry, and logs only its id and step', async () => {

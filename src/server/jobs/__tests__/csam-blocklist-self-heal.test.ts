@@ -159,6 +159,20 @@ describe('healCsamBlocklist', () => {
     expect(counts.healed).toBe(0);
   });
 
+  it('does not copy an entry disabled after the classification', async () => {
+    const w = world([{ id: 3, pHash: '33' }], { '33': { reason: 'CSAM', disabled: false } });
+    const classify = w.deps.readNewest;
+    let reads = 0;
+    w.deps.readNewest = async (hashes) =>
+      ++reads === 1
+        ? classify(hashes)
+        : hashes.map((hash) => ({ hash, reason: 'CSAM', disabled: true }));
+
+    await healCsamBlocklist({ writes: true }, w.deps);
+
+    expect(w.copied).toEqual([]);
+  });
+
   it('heals at most HEAL_CAP hashes a run and says it was capped', async () => {
     const many = Array.from({ length: HEAL_CAP + 1 }, (_, i) => ({ id: i + 1, pHash: `${i + 1}` }));
     const w = world(many);
@@ -195,7 +209,7 @@ describe('the candidate SQL, on real Postgres', () => {
         (4, 7, 'Blocked', 'moderated', 204),             -- listed, re-labelled
         (5, 7, 'Blocked', 'CSAM', 205);                  -- listed as an object
       INSERT INTO "CsamReport" ("userId", images) VALUES
-        (7, '[1, 3, 4]'), (7, '[{"id": 5}]');
+        (7, '[1, 3, 4, "abc", 1234567890123456789]'), (7, '[{"id": 5}]');
     `);
   });
 
@@ -259,6 +273,7 @@ describe('the job as scheduled, against its boundaries', () => {
         : []) as never);
     dbMock.dbWrite.$queryRawUnsafe.mockReset();
     dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([{ id: 1, pHash: HASH }] as never);
+    dbMock.dbWrite.$executeRawUnsafe.mockReset();
     dbMock.dbWrite.$executeRawUnsafe.mockResolvedValue(1 as never);
   });
 
@@ -296,6 +311,19 @@ describe('the job as scheduled, against its boundaries', () => {
 
     expect(boundary.chQueries[0]).toContain(NEWEST_BLOCKLIST_ROW_SQL);
     expect(boundary.chQueries[0]).toContain(HASH);
+  });
+
+  it('with the flag on, writes only the Postgres copy of a live entry that lacks one', async () => {
+    boundary.flagOn = true;
+    boundary.chRows = [{ hash: HASH, reason: 'CSAM', disabled: false }];
+
+    const counts = await runCsamBlocklistSelfHeal();
+
+    expect(counts).toMatchObject({ pgGap: 1, healed: 1 });
+    expect(boundary.inserts).toEqual([]);
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining(`INSERT INTO "BlockedImage" (hash, reason) VALUES (${HASH}, 'CSAM')`)
+    );
   });
 
   it('keeps the hashes it looks up in Postgres out of the slow-query log', () => {

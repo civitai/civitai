@@ -103,14 +103,15 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
       )
     );
     const ready = batch.filter(({ hash }) => still.has(hash));
-    // Read again just before the write: a row that landed since (a newer TOS block, say) wins.
-    const landed = new Set(
-      (await deps.readNewest(ready.filter((b) => !b.copyOnly).map((b) => b.hash))).map(
-        (row) => row.hash
-      )
-    );
-    const entries = ready.filter((b) => !b.copyOnly && !landed.has(b.hash)).map((b) => b.hash);
-    const copies = ready.filter((b) => b.copyOnly).map((b) => b.hash);
+    // Read again just before the write, so a row that landed since (a newer TOS block, say) wins: an
+    // entry only where there is still no row, a copy only where the entry is still live.
+    const now = new Map((await deps.readNewest(ready.map((b) => b.hash))).map((r) => [r.hash, r]));
+    const live = (hash: string) => {
+      const row = now.get(hash);
+      return !!row && row.reason === 'CSAM' && !row.disabled;
+    };
+    const entries = ready.filter((b) => !b.copyOnly && !now.has(b.hash)).map((b) => b.hash);
+    const copies = ready.filter((b) => b.copyOnly && live(b.hash)).map((b) => b.hash);
     if (entries.length) await deps.addEntries(entries);
     if (copies.length) await deps.copyToPg(copies);
     healed = entries.length + copies.length;
