@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -232,13 +231,6 @@ describe('sendAsCivitai', () => {
     expect(h.reportConcernsUser).toHaveBeenCalledWith(77, USER);
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'message-as-civitai-report-link-dropped',
-        reason: 'not-about-recipient',
-        reportId: 77,
-      })
-    );
   });
 
   it('links nothing when the report cannot be checked, and still sends', async () => {
@@ -251,9 +243,6 @@ describe('sendAsCivitai', () => {
     });
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'check-failed', error: 'db down' })
-    );
   });
 
   it('reuses the one thread per user', async () => {

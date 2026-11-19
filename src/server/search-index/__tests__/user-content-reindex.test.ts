@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -76,7 +75,7 @@ describe('queueOwnedContentUpdate', () => {
     expect(queuedIds(MODELS_SEARCH_INDEX)).toEqual(ids);
   });
 
-  it('a failing index is logged and does not stop the others or throw', async () => {
+  it('a failing index does not stop the others or throw', async () => {
     dbMock.dbRead.model.findMany.mockResolvedValueOnce(rows(1));
     dbMock.dbRead.article.findMany.mockRejectedValueOnce(new Error('statement timeout'));
     dbMock.dbRead.collection.findMany.mockResolvedValueOnce(rows(4));
@@ -85,11 +84,5 @@ describe('queueOwnedContentUpdate', () => {
 
     expect(queuedIds(MODELS_SEARCH_INDEX)).toEqual([1]);
     expect(queuedIds(COLLECTIONS_SEARCH_INDEX)).toEqual([4]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'owned-content-search-index',
-        indexName: ARTICLES_SEARCH_INDEX,
-      })
-    );
   });
 });

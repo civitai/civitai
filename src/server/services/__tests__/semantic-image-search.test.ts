@@ -1230,6 +1230,67 @@ describeSemanticAuditContract({
   ownCache: true,
 });
 
+describe('the showcase picker ranks images tagged with the query first', () => {
+  const TAG = 900;
+  // The model ranks lookalikes (1, 2) above the images carrying the rare tag (7, 3).
+  function taggedIndex() {
+    const calls: Parameters<CandidateSource>[0][] = [];
+    const source: CandidateSource = async (args) => {
+      calls.push(args);
+      const excluded = new Set(args.filter.excludedIds ?? []);
+      const pool = args.filter.tagIds?.includes(TAG)
+        ? [7, 3]
+        : [1, 2, 7, 3, 4].filter((id) => !excluded.has(id));
+      return { ids: pool.slice(args.offset, args.offset + args.limit) };
+    };
+    return { source, calls };
+  }
+  const picker = (source: CandidateSource, tagMatchesFirst: boolean) =>
+    searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ query: 'Tiefling', imageId: undefined, userIds: [VIEWER.id], limit: 25 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+      tagMatchesFirst,
+    });
+
+  beforeEach(() => {
+    h.fakeGetAllImages = visibleOnly(new Set([1, 2, 3, 4, 7]));
+  });
+
+  it('puts the tagged images ahead of the semantic ranking', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source } = taggedIndex();
+    const { items } = await picker(source, true);
+    expect(items.map((x) => x.id)).toEqual([7, 3, 1, 2, 4]);
+  });
+
+  // Control: the same index without the option is the model's order.
+  it('is the semantic ranking without the option', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    const { items } = await picker(source, false);
+    expect(items.map((x) => x.id)).toEqual([1, 2, 7, 3, 4]);
+    expect(calls.some((call) => call.filter.tagIds?.includes(TAG))).toBe(false);
+  });
+
+  it('keeps the viewer filter on the tagged pass', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: TAG, name: 'tiefling' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    const tagged = calls.find((call) => call.filter.tagIds?.includes(TAG));
+    expect(tagged?.filter.userIds).toEqual([VIEWER.id]);
+  });
+
+  it('does not order by a tag that cannot be browsed', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 601, name: 'not browsable' }]);
+    const { source, calls } = taggedIndex();
+    await picker(source, true);
+    expect(calls.some((call) => call.filter.tagIds?.includes(601))).toBe(false);
+  });
+});
+
 describe('search by uploaded image', () => {
   const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
   const R = 4;

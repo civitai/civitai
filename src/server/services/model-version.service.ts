@@ -161,6 +161,7 @@ import {
   queueComFaceRecheck,
   queueComFaceRestore,
 } from '~/server/services/model-com-face-recheck.service';
+import { queueComFaceVersionText } from '~/server/services/model-com-face-version-text.service';
 import {
   bustOrchestratorAirs,
   bustOrchestratorModelCache,
@@ -1086,6 +1087,7 @@ export const upsertModelVersion = async ({
     if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
+      await queueComFaceVersionText(version.modelId);
     }
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
@@ -1349,6 +1351,7 @@ export const upsertModelVersion = async ({
     if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
+      await queueComFaceVersionText(version.modelId);
     }
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;

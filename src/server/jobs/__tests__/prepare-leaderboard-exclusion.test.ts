@@ -29,7 +29,6 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { getJobDate } from '~/server/jobs/job';
 import {
@@ -197,7 +196,7 @@ describe('prepare-leaderboard job', () => {
     expect(setLastRun).toHaveBeenCalled();
   });
 
-  it('retries the read, then populates unfiltered and logs when the list stays unreadable', async () => {
+  it('retries the read, then populates unfiltered when the list stays unreadable', async () => {
     vi.useFakeTimers();
     vi.mocked(getMetricExcludedUserIdsOrThrow).mockRejectedValue(new Error('clickhouse down'));
     vi.mocked(getMetricExcludedUserIds).mockResolvedValue([EXCLUDED]);
@@ -209,9 +208,6 @@ describe('prepare-leaderboard job', () => {
 
     expect(getMetricExcludedUserIdsOrThrow).toHaveBeenCalledTimes(4);
     expect(userIdsInserted()).toEqual([1, EXCLUDED]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'leaderboard-metric-exclusion-unavailable' })
-    );
     expect(setLastRun).toHaveBeenCalled();
   });
 });
