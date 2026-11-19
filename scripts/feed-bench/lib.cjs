@@ -301,12 +301,11 @@ function isSuperjsonEnvelope(v) {
 }
 
 /**
- * Decode one superjson envelope the way `superjson.deserialize` treats its `["undefined"]`
- * annotations: every annotated path is set to `undefined` (its setDeep assigns the parent's key
- * whether or not the json carried it). Returns the decoded value and EVERY annotation (path -> the
- * annotation as JSON), compared separately as sets. Only the undefined ones are applied: a Date stays
- * its ISO string. `meta.referentialEqualities` (object identity after
- * decode, never a value) and any other `meta` key are ignored.
+ * Decode one superjson envelope as `superjson.deserialize` does for `["undefined"]` annotations: each
+ * annotated path is set to `undefined` (setDeep assigns the parent's key whether or not the json
+ * carried it). The Node app writes an undefined member as `null` plus that annotation; feed-go omits
+ * the member and writes the same annotation, so both decode alike. Returns the value and every
+ * annotation (path -> JSON), which are compared separately as sets.
  */
 function decodeSuperjson(env) {
   let value = env.json;
@@ -386,18 +385,11 @@ function diffAnnotations(annA, annB, out, max) {
 }
 
 /**
- * Compare two response bodies, raw and decoded:
- *  - `bytesEqual`: byte-identical;
- *  - `jsonEqual` / `diffs`: the parsed JSON trees identical (object key order ignored, array order
- *    not), and the first `maxDiffs` differing paths (`$.result.data.json.items[0].postId`);
- *  - `valueEqual` / `valueDiffs`: the same after each tRPC result's superjson envelope is decoded as
- *    the client decodes it (`decodeSuperjson`) — what the client renders. The Node app writes an
- *    undefined member as `null` plus an `["undefined"]` annotation in `meta.values`; feed-go's writer
- *    omits the member and writes the same annotation. Both decode to the same object, so only the
- *    raw compare differs there. A key absent on one side and undefined on the other is equal in the
- *    value walk; a literal `null` with no annotation against an absent key is still a diff. The
- *    annotation sets (undefined, Date, …) are compared as sets: one on one side only is a diff.
- * A body that is not JSON compares unequal at `$` (all three equal only if the bytes are).
+ * Compare two bodies raw (`bytesEqual`; `jsonEqual` / `diffs`: key order ignored, array order not) and
+ * decoded (`valueEqual` / `valueDiffs`: after each tRPC superjson envelope is decoded as the client
+ * does, `decodeSuperjson`, plus the annotation sets). Decoded, a key absent on one side and undefined
+ * on the other is equal; a literal `null` with no annotation against an absent key is still a diff.
+ * A non-JSON body compares unequal at `$`.
  *
  * The decoding is done here, not by the `superjson` package: this harness has no dependencies
  * beyond Node, and superjson 2 is ESM-only.
