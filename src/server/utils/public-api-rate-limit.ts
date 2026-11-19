@@ -58,7 +58,7 @@ export const PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS = 60;
 // limiter's keys.
 const KEY_PREFIX = 'public-api:rate-limit';
 
-export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts';
+export type PublicApiRateLimitFamily = 'articles' | 'collections' | 'posts' | 'comics';
 
 export type PublicApiRateLimitResult =
   | { allowed: true }
