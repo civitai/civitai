@@ -234,6 +234,58 @@ func TestDecideInvalidInput(t *testing.T) {
 	}
 }
 
+// 🔴 A request that leaves out an input its context requires is never decided as the site would
+// decide it (the widest answer): it gets the SFW fallback, 422, reason missing-input. Each context ×
+// missing host / missing country, with a full mature user, so a decision would carry r, x and xxx.
+func TestDecideMissingInputFailsClosed(t *testing.T) {
+	cases := []struct {
+		name, body string
+		fallback   bool
+	}{
+		{"site, no host", `{"context":"site","userId":7,"country":"NL"}`, true},
+		{"site, empty host", `{"context":"site","userId":7,"country":"NL","host":""}`, true},
+		{"site, no country", `{"context":"site","userId":7,"host":"red"}`, true},
+		{"site, empty country", `{"context":"site","userId":7,"country":"","host":"red"}`, true},
+		{"site, neither", `{"context":"site","userId":7}`, true},
+		{"public-api, no country", `{"context":"public-api"}`, true},
+		{"public-api, empty country", `{"context":"public-api","country":""}`, true},
+		// The registry ignores the host, and holds a request with no country: a decision, not a fallback.
+		{"registry, no country", `{"context":"registry-subscription","userId":7}`, false},
+	}
+	for _, c := range cases {
+		u := &fakeUsers{users: map[int64]policy.User{7: fullUser}}
+		s, _ := newServer(t, u)
+		code, res, _ := post(t, s, c.body)
+		if slices.Contains(res.Ratings, "r") || slices.Contains(res.Ratings, "x") || slices.Contains(res.Ratings, "xxx") || res.UnknownRating {
+			t.Errorf("%s: got a mature answer %+v", c.name, res)
+		}
+		if c.fallback && (code != http.StatusUnprocessableEntity || !isSFWFallback(res, policy.ReasonMissingInput) || u.calls != 0) {
+			t.Errorf("%s: got %d %+v (lookups %d), want 422 with the SFW fallback (reason missing-input) and no lookup", c.name, code, res, u.calls)
+		}
+		if !c.fallback && (code != http.StatusOK || res.Fallback || res.RegionHold != policy.HoldRestricted) {
+			t.Errorf("%s: got %d %+v, want a held decision", c.name, code, res)
+		}
+	}
+	// Positive controls: with every required input present each context decides (mature for this user).
+	for _, body := range []string{
+		`{"context":"site","userId":7,"country":"NL","host":"red"}`,
+		`{"context":"site","userId":7,"isUk":"0","country":"NL","host":"red"}`,
+		`{"context":"public-api","country":"NL"}`,
+		`{"context":"registry-subscription","userId":7,"country":"NL"}`,
+	} {
+		s, _ := newServer(t, &fakeUsers{users: map[int64]policy.User{7: fullUser}})
+		code, res, _ := post(t, s, body)
+		if code != http.StatusOK || res.Fallback || !slices.Contains(res.Ratings, "r") {
+			t.Errorf("%s: got %d %+v, want a mature decision", body, code, res)
+		}
+	}
+	// x-isuk names GB, so a site request with no country header still has one (and is refused as blocked).
+	s, _ := newServer(t, &fakeUsers{users: map[int64]policy.User{7: fullUser}})
+	if code, res, _ := post(t, s, `{"context":"site","userId":7,"isUk":"1","host":"red"}`); code != http.StatusOK || res.RegionHold != policy.HoldBlocked {
+		t.Errorf("x-isuk 1 with no country: got %d %+v, want a decision refusing GB", code, res)
+	}
+}
+
 func TestDecideInvalidContextLabel(t *testing.T) {
 	s, _ := newServer(t, &fakeUsers{})
 	post(t, s, `{"context":"anything-at-all"}`)

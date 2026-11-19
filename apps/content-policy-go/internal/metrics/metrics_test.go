@@ -37,9 +37,9 @@ func TestEndpointsAreTheContexts(t *testing.T) {
 func TestSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	New(reg)
-	// The two fallback series per context (three contexts and `invalid`), and every lookup result.
-	if n := testutil.CollectAndCount(reg, "content_policy_decisions_total"); n != 8 {
-		t.Fatalf("%d seeded decision series, want 8", n)
+	// The three fallback series per context (three contexts and `invalid`), and every lookup result.
+	if n := testutil.CollectAndCount(reg, "content_policy_decisions_total"); n != 12 {
+		t.Fatalf("%d seeded decision series, want 12", n)
 	}
 	if n := testutil.CollectAndCount(reg, "content_policy_user_lookups_total"); n != len(LookupResults) {
 		t.Fatalf("%d seeded lookup series, want %d", n, len(LookupResults))

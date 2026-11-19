@@ -39,7 +39,7 @@ The answer:
 | `fallback`      | true when this is the SFW fallback, not a decision about this viewer                                     |
 | `error`         | on a fallback, why                                                                                       |
 
-`reason`, in order: `error`, `invalid-input`, `unknown-country`, `region-blocked`,
+`reason`, in order: `error`, `invalid-input`, `missing-input`, `unknown-country`, `region-blocked`,
 `region-restricted`, `moderator-bypass`, `host-sfw`, `unrestricted`, `anonymous`, `user-unavailable`,
 `user-settings`.
 
@@ -56,6 +56,7 @@ status that is not 200:
 | status | reason          | when                                                                    |
 | ------ | --------------- | ----------------------------------------------------------------------- |
 | 400    | `invalid-input` | the body is not one JSON object of the fields above, or a field is bad   |
+| 422    | `missing-input` | an input the context requires is absent or empty (below)                 |
 | 503    | `error`         | the user's settings could not be read within the lookup timeout         |
 | 500    | `error`         | anything else (a panic is recovered into this answer)                   |
 
@@ -66,6 +67,16 @@ is a decision, not an error: it is decided as anonymous, `reason: user-unavailab
 
 Input bounds: body 4 KiB, each string field 64 bytes, `userId` 1 to 2³¹−1 (`"User".id` is an int4),
 no unknown fields, nothing after the object.
+
+**Required inputs** (`requireHost`, `requireCountry` in each context's rules; `policy.Missing`).
+`site` needs `host` and a country; `public-api` needs a country. A country is present when
+`country` is non-empty or `isUk` names GB. Without one the answer is the SFW fallback, 422,
+`reason: missing-input`, and no user is looked up. This is an **intentional divergence from the
+site**: the site serves a request with no host (`hasFeature` skips its server check) or no country
+(`checkRegionAccess` allows it) with the user's own mature level, and the vectors still pin that
+answer for the policy port. The service will not give it, because a caller that drops a field
+would get the widest answer. `registry-subscription` requires neither: it ignores the host, and
+holds a request with no country to SFW (rule `unknownCountry`).
 
 ## Caller contexts
 
@@ -82,6 +93,8 @@ keeps its own behaviour and nothing is resolved silently.
 | `ratingSurface`   | `unless-held`                                            | `red-host`: isRedCapableHost                                   | `always`                         |
 | `unknownRating`   | `closed`: only to a viewer who may read R, X and XXX     | `open`: not mature, admitted                                   | `open`                           |
 | `moderatorBypass` | no                                                       | yes: a moderator is let past the region restriction            | no                               |
+| `normalizeLocation` | yes: country and region trimmed and uppercased once (`normalizeRegion`) | no: the lists are read as sent                          | no                               |
+| required inputs   | none                                                     | `host`, country                                                | country                          |
 | Node code         | `describeRegion`, `audienceForUser`, `audienceAdmits`     | `getFeatureFlags().canViewNsfw`, `getServerBrowsingLevel`, the `/apps` store gate (`matureRatingsAllowed`) | `apiBrowsingLevel`, `isAPIAccessBlocked` |
 
 `site` is the site's request: its `canViewNsfw` feature, the level it gives, and the `/apps` store's
@@ -104,7 +117,7 @@ Measured by the vectors (the generator runs the real functions; each row is pinn
 4. **No host on the site.** `hasFeature` skips its server check when the request has no host, so
    `canViewNsfw` is on (the user's own level applies), while `isRedCapableHost(undefined)` is off (no
    mature rating). Part of `nsfwHost: color`. feed-go's `CanViewNsfw` answers false for no host:
-   narrower than the site.
+   narrower than the site. The service does not answer it at all (required inputs, above).
 5. **Unknown rating.** The adapter fails closed (`audienceAdmits`: a null, empty or unknown rating
    only to a viewer who may read R, X and XXX); the store's `matureRatingAllowed` admits any rating
    that is not mature. Rule `unknownRating`.
@@ -118,17 +131,17 @@ Measured by the vectors (the generator runs the real functions; each row is pinn
    adapter does not. Rule `moderatorBypass`.
 8. **The API ignores the user.** `apiBrowsingLevel` is every level, or SFW in a restricted region,
    whoever asks. Rule `level: api`.
-9. **Trimming.** The adapter's `countryKnown` trims and uppercases the country, but the region lists
-   are read untrimmed (`getRegionEffectiveDate`). So ` GB`, `gb\n` or `\u00a0FR` (a leading NBSP) count as a known
-   country and match no list: the adapter serves them **unrestricted**, though the trimmed country is
-   blocked or restricted. The edge never sends such a value; a `meta` value could, once
-   `REGISTRY_ADAPTER_TRUST_META` is on. Reproduced, and reported.
-10. **`US` is case-sensitive.** The site judges a US state only when the country is exactly `US`:
-    `us` with `NY` is judged as the country `US`. feed-go uppercases first and judges `US:NY`.
-11. **Dates.** A rule applies from the END of its date (`${date}T23:59:59.999Z`) everywhere. A date
+9. **Normalisation (`US` case).** The registry adapter trims and uppercases the country and region
+   code once (`normalizeRegion`), before judging both whether the country is known and whether a
+   region list names it, so ` FR`, `gb\n` or `us` with ` ny ` are held exactly as `FR`, `GB` and
+   `US:NY` are. The site does not normalise: it judges a US state only when the country is exactly
+   `US` (`us` with `NY` is the country `US`), and reads a padded country as one no list names. feed-go
+   uppercases (not trims) first. Rule `normalizeLocation`. (Before the adapter normalised, a padded
+   country counted as known yet matched no list, and the adapter served it unrestricted.)
+10. **Dates.** A rule applies from the END of its date (`${date}T23:59:59.999Z`) everywhere. A date
     that is not a real `YYYY-MM-DD` is handed to `new Date` by the site (`2025-02-30` becomes March
     2; garbage makes a rule that never applies); feed-go and this service refuse to start on it.
-12. **Unicode.** The site uppercases with JavaScript's full case mapping (`ß` → `SS`, `ſ` → `S`) and
+11. **Unicode.** The site uppercases with JavaScript's full case mapping (`ß` → `SS`, `ſ` → `S`) and
     trims JavaScript's whitespace set (NBSP and BOM, not NEL). The service does the same
     (`jsUpper`, `jsTrim`); Go's `strings.ToUpper` and `strings.TrimSpace` differ on each.
 
@@ -139,8 +152,9 @@ front of the original request set them and stripped any a client sent, and only 
 passes them on unchanged. So:
 
 - **Only in-cluster callers may reach this service**, each admitted by name by the deployment's
-  network policy. It has no public route. A caller that can reach it chooses the viewer's country,
-  and so whether they are held to SFW.
+  network policy. It has no public route and **no authentication of its own**, so that ingress
+  allowlist is a prerequisite of any deployment, not an option. A caller that can reach it chooses
+  the viewer's country, and so whether they are held to SFW.
 - A caller passes the edge's values for the request it is serving, never values a client sent it.
   The registry adapter sends the same values it judges itself (`regionHeaders`: the headers, with
   `meta` applied only under `REGISTRY_ADAPTER_TRUST_META=1`).
@@ -179,8 +193,8 @@ SFW fallback.
 
 `/metrics`; no label is named `endpoint`.
 
-- `content_policy_decisions_total{context, reason, region_hold}`: every answer. `reason=error` and
-  `reason=invalid-input` are the fallback (seeded at 0).
+- `content_policy_decisions_total{context, reason, region_hold}`: every answer. `reason=error`,
+  `reason=invalid-input` and `reason=missing-input` are the fallback (seeded at 0).
 - `content_policy_decision_duration_seconds{context}`: latency, user read included.
 - `content_policy_user_lookups_total{result}`: `cache_hit`, `found`, `not_found`, `error`, `timeout`.
 - `content_policy_db_errors_total`: user reads that failed or timed out.
@@ -197,8 +211,8 @@ whole decision. The matrix:
 - every user setting combination: `showNsfw` off and on × 14 level classes (0, PG, SFW, each mature
   bit alone, mixes, all, Blocked alone and with all, −1) × moderator or not, and anonymous;
 - every host: none, green, blue, red, a host of no color;
-- 44 edge value classes: restricted, blocked and plain countries, lowercase, padded with each kind of
-  whitespace, US with and without a listed state, `us` lowercase, an empty region, no country, empty,
+- 46 edge value classes: restricted, blocked and plain countries, lowercase, padded with each kind of
+  whitespace, US with and without a listed state, `us` lowercase and padded, an empty region, no country, empty,
   `XX`, `T1`, three letters, one letter, digits, `ß` / `ſe` / `ﬀ`, and `x-isuk` on, off and odd;
 - both sides of the end of two dated rules (the day's start, its last two milliseconds, the next day);
 - each caller context.
@@ -215,7 +229,9 @@ The port is registered in `ports/manifest.json` (`contentPolicy.registrySubscrip
 1. **Shadow** (the registry adapter, now). Set `REGISTRY_ADAPTER_POLICY_URL`; the adapter compares
    each subscription with the service (`registry_adapter_policy_shadow_total{result}`) and logs one
    line per disagreement (the field and both values; never the user, token or address). The live
-   decision does not change.
+   decision does not change. At most 32 comparisons wait on the service at once; past that one is
+   not sent and is counted `dropped`. A misconfigured shadow (a bad URL, timeout or metrics port, or
+   a metrics port already in use) is one warning, never a failed start.
 2. **Read the comparison.** Expected disagreements: a user who changed their settings within the
    cache TTL or the adapter's token re-check (five minutes), on either side. Anything else is a bug
    in one of the two; the vectors say which.

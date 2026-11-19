@@ -87,6 +87,34 @@ type Rules struct {
 	RatingSurface   RatingSurfaceRule  `json:"ratingSurface"`
 	UnknownRating   UnknownRatingRule  `json:"unknownRating"`
 	ModeratorBypass bool               `json:"moderatorBypass"`
+	// NormalizeLocation trims and uppercases the country and region code once, before both whether
+	// the country is known and whether a region list names it (the registry adapter's
+	// normalizeRegion). Without it, the values are read as the site reads them: the lists untrimmed.
+	NormalizeLocation bool `json:"normalizeLocation"`
+	// RequireHost and RequireCountry name the inputs the service will not decide without (Missing):
+	// the site serves a request with no host, or no country, as mature-capable and unrestricted, so a
+	// caller that leaves one out would be told the widest answer. The registry needs neither: it
+	// ignores the host, and holds a request with no country.
+	RequireHost    bool `json:"requireHost"`
+	RequireCountry bool `json:"requireCountry"`
+}
+
+// Missing names the first input a context requires that the request left out ("host" or
+// "country"), or "" when none is. A country is present when it is non-empty, or when x-isuk names
+// GB (getRegion). The service answers a request missing one with the SFW fallback
+// (ReasonMissingInput), never a decision.
+func Missing(context string, l Location, host string) string {
+	r, ok := Contexts[context]
+	if !ok {
+		return ""
+	}
+	if r.RequireHost && host == "" {
+		return "host"
+	}
+	if r.RequireCountry && !nonEmpty(resolve(l, false).country) {
+		return "country"
+	}
+	return ""
 }
 
 // Contexts is every context and its rules.
@@ -98,6 +126,8 @@ var Contexts = map[string]Rules{
 		NsfwHost:       NsfwHostIgnored,
 		RatingSurface:  RatingSurfaceUnlessHeld,
 		UnknownRating:  UnknownRatingClosed,
+		// A padded or lowercased country is held as its clean form (` FR`, `gb\n`).
+		NormalizeLocation: true,
 	},
 	ContextSite: {
 		UnknownCountry:  UnknownCountryUnrestricted,
@@ -107,6 +137,8 @@ var Contexts = map[string]Rules{
 		RatingSurface:   RatingSurfaceRedHost,
 		UnknownRating:   UnknownRatingOpen,
 		ModeratorBypass: true,
+		RequireHost:     true,
+		RequireCountry:  true,
 	},
 	ContextPublicAPI: {
 		UnknownCountry: UnknownCountryUnrestricted,
@@ -115,6 +147,7 @@ var Contexts = map[string]Rules{
 		NsfwHost:       NsfwHostIgnored,
 		RatingSurface:  RatingSurfaceAlways,
 		UnknownRating:  UnknownRatingOpen,
+		RequireCountry: true,
 	},
 }
 

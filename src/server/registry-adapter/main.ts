@@ -74,12 +74,7 @@ import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
-import {
-  createMetricsServer,
-  createPolicyShadow,
-  createShadowMetrics,
-  policyShadowFromEnv,
-} from '~/server/registry-adapter/policy-shadow';
+import { startPolicyShadow } from '~/server/registry-adapter/policy-shadow';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -138,20 +133,9 @@ function main() {
     );
   }
   const onRegion = (line: string) => console.log('registry-adapter:', line);
-  // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision.
-  const shadowConfig = policyShadowFromEnv(process.env);
-  let policyShadow: ReturnType<typeof createPolicyShadow> | undefined;
-  if (shadowConfig) {
-    const metrics = createShadowMetrics();
-    policyShadow = createPolicyShadow({
-      url: shadowConfig.url,
-      timeoutMs: shadowConfig.timeoutMs,
-      counter: metrics.counter,
-    });
-    createMetricsServer(metrics.registry).listen(shadowConfig.metricsPort, () =>
-      console.log(`registry-adapter: policy shadow on; /metrics on :${shadowConfig.metricsPort}`)
-    );
-  }
+  // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision, and a
+  // misconfiguration of it never stops the adapter (`startPolicyShadow`).
+  const { shadow: policyShadow } = startPolicyShadow(process.env);
   const auth = { verifyToken, resource, limiter, onRegion, policyShadow };
 
   const deps = liveCatalogReadDeps();

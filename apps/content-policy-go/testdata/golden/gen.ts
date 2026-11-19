@@ -12,18 +12,29 @@
 //
 // Where an expected value comes from: the REAL Node code, each caller context through the functions
 // that caller calls today:
-//   - registry-subscription: getRegion, describeRegion, countryKnown (request-origin.ts),
-//     isRegionBlocked / isRegionRestricted (region-blocking.ts), audienceForUser,
-//     ANONYMOUS_AUDIENCE and audienceAdmits (audience.ts), getServerBrowsingLevel (browsing-level.ts;
-//     the level audienceForUser computes, which an Audience does not keep).
+//   - registry-subscription: getRegion, describeRegion, normalizeRegion, countryKnown
+//     (request-origin.ts), isRegionBlocked / isRegionRestricted (region-blocking.ts),
+//     audienceForUser, ANONYMOUS_AUDIENCE and audienceAdmits (audience.ts).
 //   - site: getFeatureFlags(...).canViewNsfw (feature-flags.service.ts), getServerBrowsingLevel,
 //     isRedCapableHost (server-domain.ts), matureRatingsAllowed / matureRatingAllowed
-//     (app-listing-store-gate.ts), isRegionBlocked (the site's block page and the API's 451).
+//     (app-listing-store-gate.ts), isRegionRestricted / isRegionBlocked.
 //   - public-api: apiBrowsingLevel (browsing-level.ts), isAPIAccessBlocked (region-blocking.ts),
 //     matureRatingsAllowed / matureRatingAllowed.
 // The site and API read the wall clock (`new Date()`), so each of their vectors runs with
-// `new Date()` answering its `at` (withClock). Only `reason` is this file's own classification of
-// what the real functions answered (the service's metric label); DESIGN.md defines it.
+// `new Date()` answering its `at` (withClock).
+//
+// What this file DERIVES itself, composing the real functions' answers (no Node function returns
+// these as such; each is checked or explained where it is computed):
+//   - every `reason` (the service's metric label; DESIGN.md defines it);
+//   - the registry's `regionHold` split into blocked vs restricted: describeRegion answers only
+//     held or not, so the split is isRegionBlocked / isRegionRestricted on the same normalised
+//     region, checked against describeRegion's `restricted` (a mismatch throws);
+//   - the registry's `browsingLevel`: getServerBrowsingLevel with canViewNsfw = not held, the call
+//     audienceForUser makes (an Audience does not keep the level);
+//   - the site's `regionHold`: restricted unless the user is a moderator (the feature-flag
+//     service's bypass), from isRegionRestricted;
+//   - the site's and API's blocked answer: refused (no ratings, level 0), from isRegionBlocked /
+//     isAPIAccessBlocked, standing for the site's block page and the API's 451, which serve nothing.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -103,6 +114,7 @@ const REGION_CASES: Loc[] = [
   loc('\ufeffFR'),
   loc('\u0085FR'),
   loc('gb\n'),
+  loc(' GB'), // a blocked country padded: the adapter holds it (normalizeRegion), the site does not
   loc('GB'), // blocked
   loc('gb'),
   loc('GB', 'ENG'), // a region beside a non-US country is ignored
@@ -118,6 +130,7 @@ const REGION_CASES: Loc[] = [
   loc('US', 'UT'), // blocked from 2026-12-01
   loc('US', ''), // an empty region is no region
   loc('US', ' NY'),
+  loc('us', ' ny '), // lowercased and padded: the adapter judges US:NY, the site judges US
   loc(null), // no country header
   loc(''),
   loc('XX'), // the edge's "unknown"
@@ -281,12 +294,16 @@ export async function buildVectors() {
 
     if (c.context === 'registry-subscription') {
       const held = origin.describeRegion({ headers }, at).restricted;
-      const known = origin.countryKnown(region);
+      // The adapter judges the region normalised (normalizeRegion), so the split is made on it too.
+      const normal = origin.normalizeRegion(region);
+      const known = origin.countryKnown(normal);
+      const regBlocked = rb.isRegionBlocked(normal, at);
+      const regRestricted = rb.isRegionRestricted(normal, at);
       const [regionHold, regionReason] = !known
         ? (['restricted', 'unknown-country'] as const)
-        : blocked
+        : regBlocked
         ? (['blocked', 'region-blocked'] as const)
-        : restricted
+        : regRestricted
         ? (['restricted', 'region-restricted'] as const)
         : (['none', null] as const);
       if (held !== (regionHold !== 'none'))

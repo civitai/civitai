@@ -11,8 +11,10 @@
 //
 // Fail closed: every answer that is not a decision carries the SFW decision (policy.SFW) in the same
 // shape, with `fallback: true` and a status that is not 200: 400 for a malformed request
-// (reason=invalid-input), 503 when the user's settings could not be read (reason=error), 500 for
-// anything else (reason=error). A caller that reads only the body still gets SFW.
+// (reason=invalid-input), 422 for a request missing an input its context requires
+// (reason=missing-input: the site's host, or a country), 503 when the user's settings could not be
+// read (reason=error), 500 for anything else (reason=error). A caller that reads only the body
+// still gets SFW.
 package api
 
 import (
@@ -130,6 +132,11 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Host != nil {
 		in.Host = *req.Host
+	}
+	// Fail closed on a missing input the context requires: the site would answer it as mature.
+	if missing := policy.Missing(req.Context, in.Location, in.Host); missing != "" {
+		status, res = http.StatusUnprocessableEntity, s.fallback(req.Context, policy.ReasonMissingInput, missing+" is required for "+req.Context)
+		return
 	}
 	if req.UserID != nil && policy.ReadsUser(req.Context) {
 		u, found, lookupErr := s.lookup(r.Context(), *req.UserID)

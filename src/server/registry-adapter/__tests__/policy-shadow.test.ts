@@ -18,6 +18,7 @@ import {
   policyRequest,
   policyShadowFromEnv,
   runShadow,
+  startPolicyShadow,
   userIdOfSubject,
 } from '~/server/registry-adapter/policy-shadow';
 import type { Adapter, AdapterContext, Entity } from '~/server/registry-adapter/protocol';
@@ -451,6 +452,121 @@ describe('the comparison', () => {
         held: false,
       })
     ).not.toThrow();
+  });
+});
+
+describe('the in-flight cap', () => {
+  const p = (): Principal => ({
+    subject: null,
+    audience: ANONYMOUS_AUDIENCE,
+    expiresAt: null,
+    recheck: null,
+  });
+  const run = (shadow: PolicyShadow) =>
+    shadow({ origin: { headers: {} }, principal: p(), held: false });
+
+  it('past the cap a comparison is not sent and is counted dropped; a freed slot sends again', async () => {
+    const { counter } = createShadowMetrics();
+    const pending: (() => void)[] = [];
+    let sent = 0;
+    // A service that answers only when the test lets it, and never by itself (a black hole).
+    const fetchImpl = (() => {
+      sent++;
+      return new Promise<Response>((resolve) =>
+        pending.push(() => resolve(new Response(JSON.stringify(AGREEING), { status: 200 })))
+      );
+    }) as unknown as typeof fetch;
+    const shadow = createPolicyShadow({
+      url: 'http://content-policy.invalid',
+      counter,
+      fetch: fetchImpl,
+      maxInFlight: 2,
+    });
+    const first = run(shadow);
+    const second = run(shadow);
+    const third = run(shadow);
+    // Checked before awaiting: a third request sent to the black hole would never come back.
+    expect(sent).toBe(2);
+    expect(await third).toBe('dropped');
+    const value = async (r: string) =>
+      (await counter.get()).values.find((v) => v.labels.result === r)?.value;
+    expect(await value('dropped')).toBe(1);
+    pending.splice(0).forEach((answer) => answer());
+    await Promise.all([first, second]);
+    // Both slots are free again: the next one is sent, not dropped.
+    const fourth = run(shadow);
+    expect(sent).toBe(3);
+    pending.splice(0).forEach((answer) => answer());
+    await fourth;
+    expect(await value('dropped')).toBe(1);
+  });
+});
+
+describe('🔴 a shadow misconfiguration never stops the adapter', () => {
+  it.each([
+    [{ REGISTRY_ADAPTER_POLICY_URL: 'not a url' }, 'REGISTRY_ADAPTER_POLICY_URL is not a URL'],
+    [
+      {
+        REGISTRY_ADAPTER_POLICY_URL: 'http://cp.invalid',
+        REGISTRY_ADAPTER_POLICY_TIMEOUT_MS: '-1',
+      },
+      'REGISTRY_ADAPTER_POLICY_TIMEOUT_MS must be a positive integer',
+    ],
+    [
+      { REGISTRY_ADAPTER_POLICY_URL: 'http://cp.invalid', REGISTRY_ADAPTER_METRICS_PORT: 'x' },
+      'REGISTRY_ADAPTER_METRICS_PORT must be a positive integer',
+    ],
+  ])('%j: one warning, shadow off, no throw', (env, message) => {
+    const warned: string[] = [];
+    let started: ReturnType<typeof startPolicyShadow> | undefined;
+    expect(() => {
+      started = startPolicyShadow(env, { warn: (l) => warned.push(l), log: () => undefined });
+    }).not.toThrow();
+    expect(started).toEqual({});
+    expect(warned).toEqual([`registry-adapter: WARNING: policy shadow off: ${message}`]);
+  });
+
+  it('unset: nothing, and nothing logged', () => {
+    const lines: string[] = [];
+    expect(
+      startPolicyShadow({}, { warn: (l) => lines.push(l), log: (l) => lines.push(l) })
+    ).toEqual({});
+    expect(lines).toEqual([]);
+  });
+
+  it('a metrics port already in use is a warning; the comparison still runs', async () => {
+    const port = await listen(createServer());
+    const warned: string[] = [];
+    const started = startPolicyShadow(
+      {
+        REGISTRY_ADAPTER_POLICY_URL: 'http://127.0.0.1:1',
+        REGISTRY_ADAPTER_METRICS_PORT: String(port),
+      },
+      { warn: (l) => warned.push(l), log: () => undefined }
+    );
+    expect(started.shadow).toBeTypeOf('function');
+    await new Promise<void>((resolve) => started.server!.once('error', () => resolve()));
+    expect(warned).toEqual([
+      `registry-adapter: WARNING: policy shadow /metrics not served on :${port} (EADDRINUSE); the comparison still runs`,
+    ]);
+    expect(started.server!.listening).toBe(false);
+  });
+
+  it('positive control: a free port serves /metrics', async () => {
+    const free = await listen(createServer());
+    servers.pop()!.close();
+    const logged: string[] = [];
+    const started = startPolicyShadow(
+      {
+        REGISTRY_ADAPTER_POLICY_URL: 'http://127.0.0.1:1',
+        REGISTRY_ADAPTER_METRICS_PORT: String(free),
+      },
+      { warn: (l) => logged.push(l), log: (l) => logged.push(l) }
+    );
+    servers.push(started.server!);
+    await new Promise<void>((resolve) => started.server!.once('listening', () => resolve()));
+    expect(logged).toEqual([`registry-adapter: policy shadow on; /metrics on :${free}`]);
+    expect((await fetch(`http://127.0.0.1:${free}/metrics`)).status).toBe(200);
   });
 });
 

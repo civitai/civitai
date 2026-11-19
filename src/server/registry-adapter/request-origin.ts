@@ -140,19 +140,41 @@ export type RegionDecision = {
 };
 
 /** `origin`'s region decision at `at`; {@link regionRestricted} is its `restricted` field. */
+/**
+ * `region` with its country and region code trimmed and uppercased, and the full location code
+ * rebuilt from them, as `getRegion` builds it. The one place this source normalises a region:
+ * whether the country is known ({@link countryKnown}) and whether a region list names it are both
+ * judged on this, so a value the edge padded or lowercased (` FR`, `gb\n`, `us` with `ny`) is held
+ * by the lists exactly as its clean form is. Before this, `countryKnown` trimmed but the lists were
+ * read untrimmed, so a padded country counted as known, matched no list, and was served
+ * unrestricted. A value that is not a string (a repeated header) is left as it is: it names no
+ * country.
+ */
+export function normalizeRegion(region: RegionInfo): RegionInfo {
+  const clean = (v: string | null | undefined) =>
+    typeof v === 'string' ? v.trim().toUpperCase() : v ?? null;
+  const countryCode = clean(region.countryCode);
+  const regionCode = clean(region.regionCode);
+  return {
+    countryCode,
+    regionCode,
+    fullLocationCode: countryCode && regionCode ? `${countryCode}:${regionCode}` : countryCode,
+  };
+}
+
 export function describeRegion(origin: RequestOrigin, at: Date = new Date()): RegionDecision {
   const { headers, fromMeta } = regionHeaders(origin);
-  const region = getRegion({ headers } as unknown as IncomingMessage);
-  const raw = region.countryCode;
+  const read = getRegion({ headers } as unknown as IncomingMessage);
+  const raw = read.countryCode;
   // A country `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
   let source: RegionDecision['source'] = 'none';
   if (fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry']) source = 'meta';
   else if (typeof raw === 'string' && raw !== '') source = 'header';
+  const region = normalizeRegion(read);
   if (!countryKnown(region)) return { country: 'none', source, restricted: true };
-  const country = (raw as string).trim().toUpperCase();
-  const code = typeof region.regionCode === 'string' ? region.regionCode.trim().toUpperCase() : '';
+  const code = region.regionCode ?? '';
   return {
-    country,
+    country: region.countryCode as string,
     region: /^[A-Z0-9]{1,3}$/.test(code) ? code : undefined,
     source,
     restricted: isRegionRestricted(region, at) || isRegionBlocked(region, at),

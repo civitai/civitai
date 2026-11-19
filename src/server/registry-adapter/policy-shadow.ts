@@ -32,11 +32,17 @@ export const POLICY_RATINGS = ['g', 'pg', 'pg13', 'r', 'x', 'xxx'] as const;
 /** The service's caller context for a subscription. */
 export const POLICY_CONTEXT = 'registry-subscription';
 
-export const SHADOW_RESULTS = ['agree', 'disagree', 'error', 'timeout'] as const;
+export const SHADOW_RESULTS = ['agree', 'disagree', 'error', 'timeout', 'dropped'] as const;
 export type ShadowResult = (typeof SHADOW_RESULTS)[number];
 
 export const DEFAULT_POLICY_TIMEOUT_MS = 250;
 export const DEFAULT_METRICS_PORT = 7132;
+/**
+ * How many comparisons may be waiting on the service at once. Past it a comparison is not sent and
+ * is counted `dropped`, so a service that never answers cannot pile up requests in this process,
+ * even with the outbound deadline switched off (`outbound-fetch-timeouts-off`).
+ */
+export const DEFAULT_MAX_IN_FLIGHT = 32;
 
 /** What this source decided for a subscription, in the service's terms. */
 export type OurDecision = {
@@ -152,7 +158,7 @@ export type PolicyShadow = (s: {
 export function createShadowMetrics(registry = new Registry()) {
   const counter = new Counter({
     name: 'registry_adapter_policy_shadow_total',
-    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout.',
+    help: 'Subscriptions compared with the content-policy service, by result: agree, disagree, error (an error answer, its SFW fallback, or no decision in the body), timeout, dropped (not sent: the in-flight cap was full).',
     labelNames: ['result'],
     registers: [registry],
   });
@@ -168,6 +174,8 @@ export function createPolicyShadow(opts: {
   counter: Counter<'result'>;
   log?: (line: string) => void;
   fetch?: typeof fetch;
+  /** Comparisons waiting on the service at once; past it, `dropped` ({@link DEFAULT_MAX_IN_FLIGHT}). */
+  maxInFlight?: number;
 }): PolicyShadow {
   const endpoint = new URL('/v1/decide', opts.url).toString();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_POLICY_TIMEOUT_MS;
@@ -177,7 +185,11 @@ export function createPolicyShadow(opts: {
     opts.counter.inc({ result });
     return result;
   };
+  const maxInFlight = opts.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT;
+  let inFlight = 0;
   return async ({ origin, principal, held }) => {
+    if (inFlight >= maxInFlight) return count('dropped');
+    inFlight++;
     try {
       const ours = ourDecision(principal, held);
       const body = policyRequest(origin, principal);
@@ -205,6 +217,8 @@ export function createPolicyShadow(opts: {
           ? 'timeout'
           : 'error'
       );
+    } finally {
+      inFlight--;
     }
   };
 }
@@ -256,6 +270,45 @@ export function policyShadowFromEnv(env: Record<string, string | undefined>): {
     timeoutMs: positive('REGISTRY_ADAPTER_POLICY_TIMEOUT_MS', DEFAULT_POLICY_TIMEOUT_MS),
     metricsPort: positive('REGISTRY_ADAPTER_METRICS_PORT', DEFAULT_METRICS_PORT),
   };
+}
+
+/**
+ * The shadow as `main.ts` starts it. A misconfiguration never stops the adapter:
+ *   - an invalid REGISTRY_ADAPTER_POLICY_URL / _TIMEOUT_MS / METRICS_PORT is one warning, and the
+ *     adapter runs with the shadow off;
+ *   - a metrics port it cannot listen on (EADDRINUSE, EACCES) is one warning; the comparison still
+ *     runs and logs its disagreements, and only its counter goes unserved.
+ * Unset REGISTRY_ADAPTER_POLICY_URL: nothing at all (no shadow, no port).
+ */
+export function startPolicyShadow(
+  env: Record<string, string | undefined>,
+  {
+    log = (line: string) => console.log(line),
+    warn = (line: string) => console.warn(line),
+  }: { log?: (line: string) => void; warn?: (line: string) => void } = {}
+): { shadow?: PolicyShadow; server?: Server } {
+  let config: ReturnType<typeof policyShadowFromEnv>;
+  try {
+    config = policyShadowFromEnv(env);
+  } catch (err) {
+    warn(`registry-adapter: WARNING: policy shadow off: ${(err as Error).message}`);
+    return {};
+  }
+  if (!config) return {};
+  const { url, timeoutMs, metricsPort } = config;
+  const metrics = createShadowMetrics();
+  const shadow = createPolicyShadow({ url, timeoutMs, counter: metrics.counter });
+  const server = createMetricsServer(metrics.registry);
+  server.on('error', (err: NodeJS.ErrnoException) =>
+    warn(
+      `registry-adapter: WARNING: policy shadow /metrics not served on :${metricsPort} ` +
+        `(${err.code ?? err.message}); the comparison still runs`
+    )
+  );
+  server.listen(metricsPort, () =>
+    log(`registry-adapter: policy shadow on; /metrics on :${metricsPort}`)
+  );
+  return { shadow, server };
 }
 
 /** A server answering `GET /metrics` from `registry`, and 404 for anything else. */

@@ -31,6 +31,7 @@ var Holds = []string{HoldNone, HoldRestricted, HoldBlocked}
 const (
 	ReasonError            = "error"             // the service could not decide; the SFW decision
 	ReasonInvalidInput     = "invalid-input"     // the request was malformed; the SFW decision
+	ReasonMissingInput     = "missing-input"     // a required input was left out (Missing); the SFW decision
 	ReasonUnknownCountry   = "unknown-country"   // held: the country cannot be told (UnknownCountryHold)
 	ReasonRegionBlocked    = "region-blocked"    // a blocked region (held or refused)
 	ReasonRegionRestricted = "region-restricted" // a region restricted to SFW
@@ -44,7 +45,7 @@ const (
 
 // Reasons is every Reason value.
 var Reasons = []string{
-	ReasonError, ReasonInvalidInput, ReasonUnknownCountry, ReasonRegionBlocked, ReasonRegionRestricted,
+	ReasonError, ReasonInvalidInput, ReasonMissingInput, ReasonUnknownCountry, ReasonRegionBlocked, ReasonRegionRestricted,
 	ReasonModeratorBypass, ReasonHostSFW, ReasonUnrestricted, ReasonAnonymous, ReasonUserUnavailable,
 	ReasonUserSettings,
 }
@@ -152,7 +153,7 @@ func (e *Engine) Decide(in Input) (Decision, error) {
 	if !ok {
 		return SFW(ReasonInvalidInput), ErrUnknownContext
 	}
-	info := resolve(in.Location)
+	info := resolve(in.Location, rules.NormalizeLocation)
 	blocked := matches(e.Blocked, info, in.At)
 	restricted := matches(e.Restricted, info, in.At)
 	signedIn := in.Viewer == SignedIn

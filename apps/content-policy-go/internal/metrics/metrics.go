@@ -34,7 +34,7 @@ func New(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Decisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "content_policy_decisions_total",
-			Help: "Decisions answered, by caller context, reason and region hold. reason=error and reason=invalid-input are the SFW fallback.",
+			Help: "Decisions answered, by caller context, reason and region hold. reason=error, reason=invalid-input and reason=missing-input are the SFW fallback.",
 		}, []string{"context", "reason", "region_hold"}),
 		Duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "content_policy_decision_duration_seconds",
@@ -60,6 +60,7 @@ func New(reg prometheus.Registerer) *Metrics {
 	for _, c := range append(append([]string(nil), Endpoints...), InvalidContext) {
 		m.Decisions.WithLabelValues(c, policy.ReasonError, policy.HoldRestricted)
 		m.Decisions.WithLabelValues(c, policy.ReasonInvalidInput, policy.HoldRestricted)
+		m.Decisions.WithLabelValues(c, policy.ReasonMissingInput, policy.HoldRestricted)
 		m.Duration.WithLabelValues(c)
 	}
 	for _, r := range LookupResults {

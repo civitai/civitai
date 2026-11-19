@@ -89,7 +89,7 @@ func TestJSString(t *testing.T) {
 
 func TestCountryKnown(t *testing.T) {
 	known := func(country *string, isUK *string) bool {
-		return countryKnown(resolve(Location{Country: country, IsUK: isUK}))
+		return countryKnown(resolve(Location{Country: country, IsUK: isUK}, false))
 	}
 	for _, c := range []string{"GB", "gb", " fr ", "ZZ", "\u00df"} {
 		if !known(sp(c), nil) {
@@ -112,7 +112,7 @@ func TestCountryKnown(t *testing.T) {
 func TestMatches(t *testing.T) {
 	rules := mustRules(t, "US:2025-06-01,US:NY:2025-07-24,FR:2025-08-01")
 	m := func(country, region *string) bool {
-		return matches(rules, resolve(Location{Country: country, Region: region}), at0)
+		return matches(rules, resolve(Location{Country: country, Region: region}, false), at0)
 	}
 	cases := []struct {
 		country, region *string
@@ -137,14 +137,14 @@ func TestMatches(t *testing.T) {
 	}
 	// The first entry naming the region decides, even when a later one would apply sooner.
 	first := mustRules(t, "FR:2030-01-01,FR:2020-01-01")
-	if matches(first, resolve(Location{Country: sp("FR")}), at0) {
+	if matches(first, resolve(Location{Country: sp("FR")}, false), at0) {
 		t.Error("the first FR entry (2030) must decide")
 	}
 }
 
 func TestDatedRuleBoundary(t *testing.T) {
 	rules := mustRules(t, "FR:2025-08-01")
-	info := resolve(Location{Country: sp("FR")})
+	info := resolve(Location{Country: sp("FR")}, false)
 	for _, c := range []struct {
 		at   time.Time
 		want bool
@@ -251,6 +251,67 @@ func TestRegistryXXXByItsOwnBit(t *testing.T) {
 		if !slices.Equal(got.Ratings, want.ratings) || got.UnknownRating != want.unknown {
 			t.Errorf("registry level %d: ratings %v unknownRating %v, want %v %v", level, got.Ratings, got.UnknownRating, want.ratings, want.unknown)
 		}
+	}
+}
+
+// The registry normalises the location once (normalizeRegion): a padded or lowercased country is
+// held exactly as its clean form. The site reads the lists untrimmed, so it does not.
+func TestRegistryNormalizesLocation(t *testing.T) {
+	e := NewEngine(mustRules(t, "FR:2025-08-01,US:NY:2025-07-24"), mustRules(t, "GB:2025-07-24"))
+	user := User{ShowNsfw: true, BrowsingLevel: 31}
+	for _, c := range []struct {
+		country, region *string
+		hold            string
+	}{
+		{sp(" FR"), nil, HoldRestricted},
+		{sp("fr\n"), nil, HoldRestricted},
+		{sp(" GB"), nil, HoldBlocked},
+		{sp("gb\n"), nil, HoldBlocked},
+		{sp("us"), sp(" ny "), HoldRestricted},
+	} {
+		got, _ := e.Decide(Input{Context: ContextRegistrySubscription, Location: Location{Country: c.country, Region: c.region},
+			At: at0, Viewer: SignedIn, User: user})
+		if got.RegionHold != c.hold || slices.Contains(got.Ratings, "r") {
+			t.Errorf("registry country %s region %s: hold %q ratings %v, want %q and no mature rating",
+				str(c.country), str(c.region), got.RegionHold, got.Ratings, c.hold)
+		}
+		site, _ := e.Decide(Input{Context: ContextSite, Location: Location{Country: c.country}, Host: "red",
+			At: at0, Viewer: SignedIn, User: user})
+		if c.region == nil && site.RegionHold != HoldNone {
+			t.Errorf("site country %s: hold %q, want none (the site reads the lists untrimmed)", str(c.country), site.RegionHold)
+		}
+	}
+}
+
+func TestMissing(t *testing.T) {
+	for _, c := range []struct {
+		context string
+		loc     Location
+		host    string
+		want    string
+	}{
+		{ContextSite, Location{Country: sp("NL")}, "", "host"},
+		{ContextSite, Location{}, "red", "country"},
+		{ContextSite, Location{Country: sp("")}, "red", "country"},
+		{ContextSite, Location{IsUK: sp("1")}, "red", ""}, // x-isuk names GB
+		{ContextSite, Location{Country: sp("NL")}, "red", ""},
+		{ContextPublicAPI, Location{}, "", "country"},
+		{ContextPublicAPI, Location{Country: sp("NL")}, "", ""}, // the API needs no host
+		{ContextRegistrySubscription, Location{}, "", ""},       // held, not missing
+		{"nope", Location{}, "", ""},
+	} {
+		if got := Missing(c.context, c.loc, c.host); got != c.want {
+			t.Errorf("Missing(%s, country %s, isUk %s, host %q) = %q, want %q", c.context, str(c.loc.Country), str(c.loc.IsUK), c.host, got, c.want)
+		}
+	}
+}
+
+func TestClean(t *testing.T) {
+	if clean(nil) != nil {
+		t.Fatal("clean(nil) must stay nil")
+	}
+	if got := clean(sp("\u00a0us\n")); *got != "US" {
+		t.Fatalf("clean = %q, want US", *got)
 	}
 }
 

@@ -77,18 +77,31 @@ type regionInfo struct {
 	full    *string
 }
 
-func resolve(l Location) regionInfo {
-	country := l.Country
+func resolve(l Location, normalize bool) regionInfo {
+	country, region := l.Country, l.Region
 	if l.IsUK != nil && (*l.IsUK == "true" || *l.IsUK == "1") {
 		gb := "GB"
 		country = &gb
 	}
+	if normalize {
+		country, region = clean(country), clean(region)
+	}
 	full := country
-	if nonEmpty(country) && nonEmpty(l.Region) {
-		f := *country + ":" + *l.Region
+	if nonEmpty(country) && nonEmpty(region) {
+		f := *country + ":" + *region
 		full = &f
 	}
 	return regionInfo{country: country, full: full}
+}
+
+// clean is normalizeRegion's step for one value (request-origin.ts): trimmed and uppercased, as
+// JavaScript trims and uppercases; absent stays absent.
+func clean(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	c := jsUpper(jsTrim(*s))
+	return &c
 }
 
 func nonEmpty(s *string) bool { return s != nil && *s != "" }
