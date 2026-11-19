@@ -15,6 +15,7 @@
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.490.0",
     "@civitai/auth": "workspace:*",
     "@civitai/axiom": "workspace:*",
     "@civitai/brand": "workspace:*",

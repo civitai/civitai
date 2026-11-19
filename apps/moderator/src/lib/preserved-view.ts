@@ -1,0 +1,13 @@
+/** Where the preserved-file review lives. A hidden page: granted on /admin, never listed in the nav. */
+export const PRESERVED_VIEW_PAGE = '/csam/preserved-view';
+
+export const PRESERVED_VERDICTS = ['apparent', 'not'] as const;
+export type PreservedVerdict = (typeof PRESERVED_VERDICTS)[number];
+
+export const isPreservedVerdict = (value: unknown): value is PreservedVerdict =>
+  (PRESERVED_VERDICTS as readonly unknown[]).includes(value);
+
+export const PRESERVED_VERDICT_LABELS: Record<PreservedVerdict, string> = {
+  apparent: 'Apparent CSAM',
+  not: 'Not apparent CSAM',
+};
