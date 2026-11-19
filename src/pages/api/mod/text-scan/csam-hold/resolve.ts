@@ -55,9 +55,9 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
           entityId: r.ok ? r.entityId : undefined,
           userId: r.ok ? r.userId : undefined,
           decision: input.decision,
-          reportChoice: input.reportChoice,
           outcome: r.ok ? 'ok' : r.stale ? 'stale' : 'error',
           moderatorId: ctx.actor.id,
+          payload: { reportChoice: input.reportChoice },
         });
       }
       return {
@@ -107,9 +107,9 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       entityId: result.entityId,
       userId: result.userId,
       decision: input.decision,
-      reportChoice: input.reportChoice,
       outcome: 'ok',
       moderatorId: ctx.actor.id,
+      payload: { reportChoice: input.reportChoice },
     });
 
     return {

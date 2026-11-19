@@ -626,8 +626,8 @@ describe('textScan.resolveCsamHold', () => {
           entityType: 'CommentV3',
           entityId: 55,
           decision: 'remove_ban',
-          reportChoice: 'none',
           moderatorId: 7,
+          payload: { reportChoice: 'none' },
         })
       );
     });

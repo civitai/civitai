@@ -105,7 +105,7 @@ async function purgeOne(textId: number): Promise<'deleted' | 'held' | 'failed'> 
       name: 'purge-confirmed-csam-text',
       type: 'error',
       message: 'csam text purge delete failed',
-      textId,
+      payload: { textId },
       code: (error as { code?: unknown })?.code,
       errorName: error instanceof Error ? error.name : typeof error,
     });
