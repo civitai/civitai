@@ -676,6 +676,16 @@ describe('🔴 service tokens and the service-client allowlist', () => {
     );
   });
 
+  it('a service token without AppsRead is refused, listed or not', async () => {
+    const verify = allowing(SERVICE_ID);
+    expect(await verify(await serviceToken({ scope: 'ModelsRead' }))).toBeNull();
+    expect(await verify(await serviceToken({ scope: 'Bogus' }))).toBeNull();
+    // Control: the same token with AppsRead (beside another scope) is accepted.
+    expect((await verify(await serviceToken({ scope: 'ModelsRead AppsRead' })))?.service).toBe(
+      true
+    );
+  });
+
   it('a token whose sub is not its client_id and not a user id is refused, listed or not', async () => {
     const verify = allowing(SERVICE_ID);
     expect(await verify(await mint({ sub: 'someone-else', client_id: SERVICE_ID }))).toBeNull();

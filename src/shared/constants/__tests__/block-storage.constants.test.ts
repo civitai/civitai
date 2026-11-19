@@ -25,15 +25,16 @@ const REQUESTS = {
 
 describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
-  // runtime behind it.
-  it('ships with anyone-writes, owner writes, log collections, TTL, per-author write budgets, permission hooks and registry export switched off', () => {
+  // runtime behind it. `hooks` is on: the write path calls them (`doc-store-hook.ts`), and who
+  // may declare one is the `app-blocks-storage-hooks` cohort's to decide (`storage-hooks.ts`).
+  it('ships with permission hooks on, and anyone-writes, owner writes, log collections, TTL, per-author write budgets and registry export switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
       logCollections: false,
       ttl: false,
       perAuthorWriteBudget: false,
-      hooks: false,
+      hooks: true,
       registryExport: false,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
@@ -61,11 +62,26 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
 
   it.each(FEATURE_CONTROLS)('%s: refused while off, accepted once on', (feature, decl) => {
     const storage = { collections: { c: decl } };
-    expect(parseManifestStorage({ storage }).errors).toHaveLength(1);
+    expect(
+      parseManifestStorage({ storage }, { ...APP_STORAGE_ENABLED_FEATURES, [feature]: false })
+        .errors
+    ).toHaveLength(1);
     expect(
       parseManifestStorage({ storage }, { ...APP_STORAGE_ENABLED_FEATURES, [feature]: true }).errors
     ).toEqual([]);
   });
+
+  // The production switch, read per row: an off feature's declaration is refused, an on one's
+  // accepted, with nothing else in the way.
+  it.each(FEATURE_CONTROLS)(
+    '%s: under the production switch, follows the switch',
+    (feature, decl) => {
+      const storage = { collections: { c: decl } };
+      expect(parseManifestStorage({ storage }).errors).toHaveLength(
+        APP_STORAGE_ENABLED_FEATURES[feature] ? 0 : 1
+      );
+    }
+  );
 });
 
 describe('registry (publishing a collection to registries)', () => {
@@ -315,9 +331,8 @@ describe('write "anyone" collections (feature on)', () => {
 });
 
 /**
- * Permission hooks. Refused by the feature switch in production (the off/on control is in the
- * ledger above), so the shape rules are pinned with the feature on, plus the exact refusal text
- * while it is off.
+ * Permission hooks. On in production (the off/on control is in the ledger above); the shape
+ * rules are pinned with the feature on explicitly, plus the exact refusal text with it off.
  */
 describe('storage hooks', () => {
   const HOOKS_ON = { ...APP_STORAGE_ENABLED_FEATURES, hooks: true };
@@ -331,11 +346,14 @@ describe('storage hooks', () => {
 
   it('while the feature is off, says the hook is not available yet', () => {
     expect(
-      parseManifestStorage({
-        storage: {
-          collections: { cards: { visibility: 'private', hook: { file: 'h.js', sha256: SHA } } },
+      parseManifestStorage(
+        {
+          storage: {
+            collections: { cards: { visibility: 'private', hook: { file: 'h.js', sha256: SHA } } },
+          },
         },
-      }).errors
+        { ...APP_STORAGE_ENABLED_FEATURES, hooks: false }
+      ).errors
     ).toEqual([
       'storage.collections.cards.hook is not available yet — permission hooks arrive in a later phase of App Storage; remove hook (the collection schema still applies)',
     ]);

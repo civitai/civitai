@@ -83,9 +83,10 @@ export function metaTrusted(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * `origin`'s headers with each region header replaced by its `meta` key, when that is a string,
- * and the names of the headers so replaced.
+ * and the names of the headers so replaced. Exported for the content-policy shadow
+ * (`policy-shadow.ts`), which sends the service the same values this file judges.
  */
-function regionHeaders(origin: RequestOrigin): {
+export function regionHeaders(origin: RequestOrigin): {
   headers: RequestOrigin['headers'];
   fromMeta: Set<string>;
 } {
@@ -102,8 +103,11 @@ function regionHeaders(origin: RequestOrigin): {
   return { headers, fromMeta };
 }
 
-/** The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. */
-const NO_COUNTRY = new Set(['XX', 'T1']);
+/**
+ * The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. Exported for
+ * scripts/content-policy-go-data.ts, which hands it to the Go content-policy service.
+ */
+export const NO_COUNTRY: ReadonlySet<string> = new Set(['XX', 'T1']);
 
 /**
  * Whether `region` names a country: a two-letter code other than the edge's {@link NO_COUNTRY}
@@ -137,19 +141,41 @@ export type RegionDecision = {
 };
 
 /** `origin`'s region decision at `at`; {@link regionRestricted} is its `restricted` field. */
+/**
+ * `region` with its country and region code trimmed and uppercased, and the full location code
+ * rebuilt from them, as `getRegion` builds it. The one place this source normalises a region:
+ * whether the country is known ({@link countryKnown}) and whether a region list names it are both
+ * judged on this, so a value the edge padded or lowercased (` FR`, `gb\n`, `us` with `ny`) is held
+ * by the lists exactly as its clean form is. Before this, `countryKnown` trimmed but the lists were
+ * read untrimmed, so a padded country counted as known, matched no list, and was served
+ * unrestricted. A value that is not a string (a repeated header) is left as it is: it names no
+ * country.
+ */
+export function normalizeRegion(region: RegionInfo): RegionInfo {
+  const clean = (v: string | null | undefined) =>
+    typeof v === 'string' ? v.trim().toUpperCase() : v ?? null;
+  const countryCode = clean(region.countryCode);
+  const regionCode = clean(region.regionCode);
+  return {
+    countryCode,
+    regionCode,
+    fullLocationCode: countryCode && regionCode ? `${countryCode}:${regionCode}` : countryCode,
+  };
+}
+
 export function describeRegion(origin: RequestOrigin, at: Date = new Date()): RegionDecision {
   const { headers, fromMeta } = regionHeaders(origin);
-  const region = getRegion({ headers } as unknown as IncomingMessage);
-  const raw = region.countryCode;
+  const read = getRegion({ headers } as unknown as IncomingMessage);
+  const raw = read.countryCode;
   // A country `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
   let source: RegionDecision['source'] = 'none';
   if (fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry']) source = 'meta';
   else if (typeof raw === 'string' && raw !== '') source = 'header';
+  const region = normalizeRegion(read);
   if (!countryKnown(region)) return { country: 'none', source, restricted: true };
-  const country = (raw as string).trim().toUpperCase();
-  const code = typeof region.regionCode === 'string' ? region.regionCode.trim().toUpperCase() : '';
+  const code = region.regionCode ?? '';
   return {
-    country,
+    country: region.countryCode as string,
     region: /^[A-Z0-9]{1,3}$/.test(code) ? code : undefined,
     source,
     restricted: isRegionRestricted(region, at) || isRegionBlocked(region, at),
@@ -177,12 +203,11 @@ export function regionLine(binding: 'http' | 'grpc', d: RegionDecision): string 
 
 /**
  * The line a subscription on `binding` logs as it starts: `origin`'s region decision, with the
- * SFW hold `restricted` decides (a binding's injected rule, when it has one), then the audience
+ * SFW hold applied (`restricted`, a binding's injected rule when it has one; never for a service
+ * principal, which no region holds), then the audience
  * decision for its token: `principal` (`anonymous`, `user` or `service`), the token's `client`
  * (`client_id`) and `act` (`act.sub`, the relay that presented it), each `none` when absent, and
- * the `audience` key it is streamed (`audience.ts`). A user or anonymous stream is held to SFW
- * when `restricted` is true; a service stream (`SERVICE_AUDIENCE`) never is, so its `audience`
- * is the one to read. No user id is logged.
+ * the `audience` key it is streamed (`audience.ts`). No user id is logged.
  */
 export function subscriptionRegionLine(
   binding: 'http' | 'grpc',
@@ -196,8 +221,10 @@ export function subscriptionRegionLine(
   // space would split the line's fields) is logged as `invalid`, never echoed.
   const id = (v: string | null | undefined) =>
     !v ? 'none' : /^[A-Za-z0-9._:-]{1,128}$/.test(v) ? v : 'invalid';
+  // `restricted` is the hold applied: a service stream is never held, whatever its region.
+  const held = principal.service === true ? false : restricted(origin);
   return (
-    regionLine(binding, { ...describeRegion(origin), restricted: restricted(origin) }) +
+    regionLine(binding, { ...describeRegion(origin), restricted: held }) +
     ` principal=${kind} client=${id(principal.clientId)} act=${id(principal.actor)}` +
     ` audience=${principal.audience.key}`
   );

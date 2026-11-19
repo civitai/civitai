@@ -18,7 +18,8 @@
  *
  * A service token is the hub's token for a client acting as itself, with no user: its `sub` is
  * the client's own id, equal to `client_id` (the format of the hub's service tokens), with
- * `act.sub` naming the relay that presented it, if one did. It is accepted only when `client_id` is on {@link HubJwtConfig.serviceClients}, and
+ * `act.sub` naming the relay that presented it, if one did. It must grant `AppsRead`. It is
+ * accepted only when `client_id` is on {@link HubJwtConfig.serviceClients}, and
  * stands for `service:{clientId}`; off the list it is refused, as every token without a user was
  * before the list existed. A user's token (numeric `sub`) is a user's token whatever its client,
  * so the list never changes what a user's app may read.
@@ -136,13 +137,15 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
     if (typeof sub !== 'string') return null;
     if (typeof clientId !== 'string' || clientId === '') return null;
     if (typeof exp !== 'number') return null;
-    // No user: the client as itself. Read only for a client the allowlist names.
+    // No user: the client as itself. Read only for a client the allowlist names, holding AppsRead.
     if (sub === clientId && !USER_ID_RE.test(sub)) {
       if (!serviceClients.has(clientId)) return null;
+      const scope = scopeGrantBits(payload.scope);
+      if (!hasScope({ scope }, 'AppsRead')) return null;
       return {
         subject: `service:${clientId}`,
         clientId,
-        scope: scopeGrantBits(payload.scope),
+        scope,
         actor: actorOf(act),
         service: true,
         expiresAt: new Date(exp * 1000),

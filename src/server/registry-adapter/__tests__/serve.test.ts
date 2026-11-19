@@ -254,7 +254,7 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
     });
     expect(asService.status).toBe(200);
     expect(asService.logged).toEqual([
-      'subscription region: binding=http country=CA region=none source=header restricted=true principal=service client=7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b act=relay-exp-2a audience=mrx+xxx',
+      'subscription region: binding=http country=CA region=none source=header restricted=false principal=service client=7e3a1c55-2b4d-4f60-9a8e-1c2d3e4f5a6b act=relay-exp-2a audience=mrx+xxx',
     ]);
     const asUser = await lines(undefined, {
       headers: { authorization: 'Bearer u' },

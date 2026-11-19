@@ -5,7 +5,8 @@ import type { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schem
 
 export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];
 export async function getAllTools(input?: GetAllToolsSchema) {
-  const { cursor, limit, sort, type, include } = input || {};
+  const { cursor, limit, sort, type, include, query } = input || {};
+  const text = query?.trim();
   const includeUnlisted = include?.includes('unlisted');
 
   const orderBy: Prisma.ToolFindManyArgs['orderBy'] = [{ supported: 'desc' }];
@@ -30,7 +31,17 @@ export async function getAllTools(input?: GetAllToolsSchema) {
       createdAt: true,
       alias: true,
     },
-    where: { type, enabled: true, unlisted: includeUnlisted ? undefined : false },
+    where: {
+      type,
+      enabled: true,
+      unlisted: includeUnlisted ? undefined : false,
+      ...(text && {
+        OR: [
+          { name: { contains: text, mode: 'insensitive' } },
+          { company: { contains: text, mode: 'insensitive' } },
+        ],
+      }),
+    },
     cursor: cursor ? { id: cursor } : undefined,
     orderBy,
     take: limit ? limit + 1 : undefined,

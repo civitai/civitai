@@ -21,6 +21,7 @@ declare global {
     __tcfapi: (...args: any[]) => void;
     googletag: any;
     adngin: any;
+    _hbdbrk?: unknown[];
   }
 }
 
@@ -222,6 +223,16 @@ export function AdsProvider({
     };
   }, []);
 
+  const pageType = router.pathname.split('/')[1] || 'home';
+  const path = router.asPath.split('?')[0];
+
+  // Sparteo asks a single-page app to push `_vars` on every route change.
+  useEffect(() => {
+    if (!adsEnabled || useDirectAds) return;
+    window._hbdbrk = window._hbdbrk || [];
+    window._hbdbrk.push(['_vars', { page_type: pageType }]);
+  }, [adsEnabled, useDirectAds, pageType, path]);
+
   return (
     <AdsContext.Provider
       value={{
@@ -282,6 +293,14 @@ export function AdsProvider({
           src={adEngineLoaders[adEngine]}
           onError={handleLoadedError}
           onLoad={handleLoaded}
+        />
+      )}
+      {/* Sparteo, which replaces Snigel, serves nothing from this tag until it activates the site. */}
+      {adsEnabled && !useDirectAds && (
+        <Script
+          id="sparteo-tag"
+          data-cfasync="false"
+          src="https://www.flashb.id/universal/f812656a-2eb5-5363-b9fb-90c27d71eb79.js"
         />
       )}
       {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}

@@ -56,6 +56,8 @@ import type {
   StreamEvent,
 } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
+import { runShadow } from '~/server/registry-adapter/policy-shadow';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
@@ -439,6 +441,8 @@ export function createGrpcServer(
     regionRestricted?: (origin: RequestOrigin) => boolean;
     /** As for HTTP: called with one line per subscription once its token is accepted. */
     onRegion?: (line: string) => void;
+    /** As for HTTP: the content-policy shadow comparison (`policy-shadow.ts`). */
+    policyShadow?: PolicyShadow;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -471,6 +475,7 @@ export function createGrpcServer(
           });
           slot?.claim(principal.subject);
           opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted, principal));
+          runShadow(opts.policyShadow, { origin, principal, held: restricted(origin) });
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
