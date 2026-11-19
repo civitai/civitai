@@ -173,6 +173,21 @@ describe('getInquisitorQueue', () => {
     ]);
   });
 
+  it('carries the level the image had when the item was escalated, or null when none was recorded', async () => {
+    await insertItem(1, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(2, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await db.query(
+      `UPDATE "KnightsQueueItem" SET "meta" = '{"escalatedFromLevel": 16}'::jsonb WHERE "id" = 1`
+    );
+
+    const queue = await getInquisitorQueue();
+
+    expect(queue.map((row) => [row.id, row.currentLevel, row.escalatedFromLevel])).toEqual([
+      [1, 4, 16],
+      [2, 2, null],
+    ]);
+  });
+
   it('breaks each answer down by the stage it was voted at, lowest stage first', async () => {
     await insertItem(1, 1, 'Inquisitor');
     await insertVote(1, 11, '8', 1, 'pending', null, 11, 'Paladin');

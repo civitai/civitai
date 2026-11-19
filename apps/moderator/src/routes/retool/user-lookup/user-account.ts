@@ -110,7 +110,7 @@ export type ShopPurchase = {
   refunded: boolean;
 };
 
-export type AvailableCosmetic = { id: number; name: string };
+export type GrantBadge = { id: number; name: string; data: unknown; owned: boolean };
 
 export type GrantedBox = Jsonified<GrantedBoxRow>;
 
@@ -123,7 +123,7 @@ export type Account = {
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;
   shopPurchases: Capped<ShopPurchase>;
-  availableBadges: AvailableCosmetic[];
+  badges: GrantBadge[];
   grantedBoxes: Capped<GrantedBox>;
   grantableBoxes: GrantableBox[];
 };

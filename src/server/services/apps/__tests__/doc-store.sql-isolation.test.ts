@@ -429,6 +429,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-rater.service.pglite.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
+    // The permission-hooks suite rates a document Blocked and reads back what a hooked write left.
+    'server/services/apps/__tests__/doc-store-api.hooks.test.ts',
     // The publish suite reads back the copies, seqs, usage and tombstones a publish wrote.
     'server/services/apps/__tests__/doc-store-api.publish.test.ts',
     // The tally-operator suite compares the rows the old routes and the PATCH operators write.

@@ -3385,8 +3385,6 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
-    // apps/event-engine's own `profilePictures` cache (imageData.cache.ts): raw hashes, not packed.
-    EVENT_ENGINE_PROFILE_PICTURES: 'user:profilePicture:v3',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',

@@ -699,6 +699,7 @@ describe('resolution', () => {
       resolvedValue: null,
       questionKey: Q,
       escalationReason: 'pushed-down',
+      meta: { escalatedFromLevel: 16 },
     });
     expect(applyConsensus).not.toHaveBeenCalled();
     expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
@@ -1594,8 +1595,13 @@ describe('closeModeratorRuledItems', () => {
     await vote(2, id, '8');
     await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
     const before = { right: await exp(1), wrong: await exp(2) };
+    const moved = vi.fn();
 
-    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Knight' }]);
     expect(await itemRow(id)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-ruled',
@@ -1646,27 +1652,95 @@ describe('closeModeratorRuledItems', () => {
     expect(await sweep()).toEqual({ closed: 0, failed: 0 });
     expect(await snapshot()).toEqual(before);
   });
+
+  it('closes an item waiting on the Inquisitors when a moderator rules on its image elsewhere, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      escalationReason: 'pushed-down',
+    });
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = await exp(1);
+    const moved = vi.fn();
+
+    // Players were never served it, so the live queue must not be told an Open item left.
+    expect(await closeModeratorRuledItems(db, { now: NOW, moved })).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Inquisitor', minRank: 'Inquisitor' }]);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '1',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+      'correct',
+      'correct',
+      'correct',
+      'correct',
+    ]);
+    expect(await settled(id)).toEqual([true, true, true, true]);
+    expect(await exp(1)).toBe(before + PROGRESSION.correctXp);
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves a Blocked consensus waiting on the Inquisitors even when the image carries a moderator lock', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 2 });
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '32');
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
+  });
+
+  it('leaves an Inquisitor item alone while a moderator is ruling on it', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '1');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Ruling', "resolvedBy"=7 WHERE id=$1`, [
+      id,
+    ]);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
+    const before = { item: await itemRow(id), votes: await verdicts(id) };
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect({ item: await itemRow(id), votes: await verdicts(id) }).toEqual(before);
+  });
 });
 
 describe('closeUnservableItems', () => {
   const at = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
   const sweep = (limit?: number) => closeUnservableItems(db, { now: NOW, limit });
-  /** An item queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
+  /** A scan sample (or `source`) queued at `createdAt` with its current window ending at `expiresAt`, on image `id` (post `id`, publishing at `publishedAt`). */
   async function queued(
     id: number,
     {
       publishedAt = at(-1000),
       createdAt = NOW,
       expiresAt = at(72) as Date | null,
-    }: { publishedAt?: Date | null; createdAt?: Date; expiresAt?: Date | null } = {}
+      source = 'scan-sample',
+    }: {
+      publishedAt?: Date | null;
+      createdAt?: Date;
+      expiresAt?: Date | null;
+      source?: string;
+    } = {}
   ) {
     await image(id, 4, publishedAt === null ? null : publishedAt.toISOString());
     const itemId = await item(id, { expires: expiresAt ?? undefined });
-    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2 WHERE id=$3`, [
-      createdAt,
-      expiresAt,
-      itemId,
-    ]);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "createdAt"=$1, "expiresAt"=$2, source=$3 WHERE id=$4`,
+      [createdAt, expiresAt, source, itemId]
+    );
     return itemId;
   }
   async function countedVote(itemId: number, playerId: number, imageId: number) {
@@ -1706,7 +1780,11 @@ describe('closeUnservableItems', () => {
       }),
     };
 
-    expect(await sweep()).toEqual({ unservable: 2, publishesAfterExpiry: 2 });
+    expect(await sweep()).toEqual({
+      unservable: 2,
+      publishesAfterExpiry: 2,
+      unpublishedDrafts: 0,
+    });
 
     expect(
       await statusOf([
@@ -1747,7 +1825,11 @@ describe('closeUnservableItems', () => {
     ).toEqual({ goldEarned: 0 });
     expect(await applyPendingResolutions(db, deps())).toMatchObject({ applied: 0 });
     expect(applyConsensus).not.toHaveBeenCalled();
-    expect(await sweep()).toEqual({ unservable: 0, publishesAfterExpiry: 0 });
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
   });
 
   it('leaves hidden checks, yes/no items, voted, escalated and never-expiring items alone, but closes any stage on a gone image', async () => {
@@ -1773,7 +1855,11 @@ describe('closeUnservableItems', () => {
     );
     await pg.query(`DELETE FROM "Image" WHERE id=25`);
 
-    expect(await sweep()).toEqual({ unservable: 1, publishesAfterExpiry: 0 });
+    expect(await sweep()).toEqual({
+      unservable: 1,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
     expect(await statusOf([hidden, yesNo, voted, escalated, neverExpires, escalatedGone])).toEqual([
       ['Open', null],
       ['Open', null],
@@ -1789,10 +1875,151 @@ describe('closeUnservableItems', () => {
     for (const id of [31, 32, 33, 34, 35]) ids.push(await queued(id));
     await pg.query(`DELETE FROM "Image" WHERE id IN (31, 32, 33, 34, 35)`);
 
-    expect(await sweep(3)).toEqual({ unservable: 3, publishesAfterExpiry: 0 });
+    expect(await sweep(3)).toEqual({
+      unservable: 3,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
     expect((await statusOf(ids)).filter(([status]) => status === 'Closed')).toHaveLength(3);
-    expect(await sweep(3)).toEqual({ unservable: 2, publishesAfterExpiry: 0 });
+    expect(await sweep(3)).toEqual({
+      unservable: 2,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
     expect((await statusOf(ids)).every(([status]) => status === 'Closed')).toBe(true);
+  });
+
+  it('closes an item whose post is still a draft a day after queueing, at any stage, and leaves the other reasons as they were', async () => {
+    await active(1, 'Knight');
+    const day = { createdAt: at(-25) };
+    const freshDraft = await queued(40, { publishedAt: null, createdAt: at(-23) });
+    const staleDraft = await queued(41, { ...day, publishedAt: null });
+    const published = await queued(42, day);
+    // Scheduled: within the item's life it is left alone, past it it is `publishes-after-expiry`, never a draft.
+    const scheduledInTime = await queued(43, { ...day, publishedAt: at(100) });
+    const scheduledTooLate = await queued(44, { ...day, publishedAt: at(500) });
+    // A deleted post is `unservable`, whatever it was before.
+    const postGone = await queued(45, { ...day, publishedAt: null });
+    await pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=45`);
+    const escalatedDraft = await queued(46, { ...day, publishedAt: null });
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "minRank"='Templar', "escalatedAt"=$1 WHERE id=$2`,
+      [at(-2), escalatedDraft]
+    );
+    // A vote cast before the post went back to a draft is left over: it becomes inconclusive and settles unpaid.
+    const votedDraft = await queued(47, { ...day, publishedAt: null });
+    await countedVote(votedDraft, 3, 47);
+    const neverExpiresDraft = await queued(48, { ...day, publishedAt: null, expiresAt: null });
+    // Only scan samples: an owner's rating on a day-old draft stays open.
+    const ownerRatingDraft = await queued(49, {
+      ...day,
+      publishedAt: null,
+      source: 'owner-rating',
+    });
+    const before = await counterValue('knights_escalations_total', {
+      reason: 'unpublished-draft',
+    });
+
+    expect(await sweep()).toEqual({
+      unservable: 1,
+      publishesAfterExpiry: 1,
+      unpublishedDrafts: 4,
+    });
+
+    expect(
+      await statusOf([
+        freshDraft,
+        staleDraft,
+        published,
+        scheduledInTime,
+        scheduledTooLate,
+        postGone,
+        escalatedDraft,
+        votedDraft,
+        neverExpiresDraft,
+        ownerRatingDraft,
+      ])
+    ).toEqual([
+      ['Open', null],
+      ['Closed', 'unpublished-draft'],
+      ['Open', null],
+      ['Open', null],
+      ['Closed', 'publishes-after-expiry'],
+      ['Closed', 'unservable'],
+      ['Closed', 'unpublished-draft'],
+      ['Closed', 'unpublished-draft'],
+      ['Closed', 'unpublished-draft'],
+      ['Open', null],
+    ]);
+    expect(await itemRow(staleDraft)).toMatchObject({
+      resolvedValue: null,
+      escalationReason: null,
+    });
+    expect(await counterValue('knights_escalations_total', { reason: 'unpublished-draft' })).toBe(
+      before + 4
+    );
+    expect(await verdicts(votedDraft)).toEqual([
+      { playerId: 3, verdict: 'inconclusive', stage: 'Knight' },
+    ]);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 1, failed: 0 });
+    expect(
+      (await pg.query(`SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=3`)).rows[0]
+    ).toEqual({ goldEarned: 0 });
+    expect(await applyPendingResolutions(db, deps())).toMatchObject({ applied: 0 });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
+  });
+
+  it('leaves hidden checks and yes/no items on a day-old draft alone', async () => {
+    await image(50, 4, null);
+    const hidden = await item(50, { hidden: true });
+    await image(51, 4, null);
+    const yesNo = await item(51, { question: 'knights.test.bool' });
+    await pg.query(`UPDATE "KnightsQueueItem" SET audience='players' WHERE id=$1`, [yesNo]);
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "createdAt"=$1, source='scan-sample' WHERE id IN ($2, $3)`,
+      [at(-25), hidden, yesNo]
+    );
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+    });
+    expect(await statusOf([hidden, yesNo])).toEqual([
+      ['Open', null],
+      ['Open', null],
+    ]);
+  });
+
+  it('shares the batch limit between every reason, oldest item first', async () => {
+    const day = { createdAt: at(-25) };
+    const draft = await queued(61, { ...day, publishedAt: null });
+    const gone = await queued(62, day);
+    await pg.query(`DELETE FROM "Image" WHERE id=62`);
+    const laterDraft = await queued(63, { ...day, publishedAt: null });
+    const late = await queued(64, { ...day, publishedAt: at(500) });
+
+    expect(await sweep(2)).toEqual({
+      unservable: 1,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 1,
+    });
+    expect(await statusOf([draft, gone, laterDraft, late])).toEqual([
+      ['Closed', 'unpublished-draft'],
+      ['Closed', 'unservable'],
+      ['Open', null],
+      ['Open', null],
+    ]);
+    expect(await sweep(2)).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 1,
+      unpublishedDrafts: 1,
+    });
   });
 });
 

@@ -167,7 +167,7 @@ describe('manifest schema', () => {
     [
       'a Go handler outside the Go services',
       { ...base(), goHandler: ['apps/other/main.go'] },
-      '/ports/0/goHandler/0: must match pattern "^apps/(feed-go|beacon-go)/.+\\.go$"',
+      '/ports/0/goHandler/0: must match pattern "^apps/(feed-go|beacon-go|content-policy-go)/.+\\.go$"',
     ],
     [
       'a tRPC id that is a REST route',
@@ -186,6 +186,64 @@ describe('manifest schema', () => {
     ],
   ])('rejects %s', (_name, port, expected) => {
     expect(errs(port)).toContain(expected);
+  });
+});
+
+// A policy port: a decision the Node side makes inside another endpoint, answered by a Go service.
+// Its shadow comparison is turned on by an environment variable, not a Flipt flag.
+const policy = (): Port => ({
+  ...base(),
+  id: 'contentPolicy.registrySubscription',
+  kind: 'policy',
+  service: 'content-policy-go',
+  metricEndpoint: 'registry-subscription',
+  routes: ['/v1/decide'],
+  nodeEntry: { file: 'src/server/registry-adapter/audience.ts', symbol: 'audienceForUser' },
+  goHandler: ['apps/content-policy-go/internal/policy/decide.go'],
+  flags: { shadow: null, transport: null, probe: null },
+  shadowEnv: 'REGISTRY_ADAPTER_POLICY_URL',
+});
+
+describe('policy ports', () => {
+  it('accepts a policy port in shadow with its shadow variable and no Flipt flag', () => {
+    expect(errs(policy())).toEqual([]);
+  });
+
+  // Pinned by message: each must be rejected for its own rule.
+  it.each<[string, Port, string]>([
+    [
+      'a policy port in shadow without its shadow variable',
+      without(policy(), 'shadowEnv'),
+      "/ports/0: must have required property 'shadowEnv'",
+    ],
+    [
+      'a shadow variable that is not an environment variable name',
+      { ...policy(), shadowEnv: 'policy-url' },
+      '/ports/0/shadowEnv: must match pattern "^[A-Z][A-Z0-9_]*$"',
+    ],
+    [
+      'a policy id that is not <area>.<decision>',
+      { ...policy(), id: 'POST /v1/decide' },
+      '/ports/0/id: must match pattern "^[a-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"',
+    ],
+    [
+      'a policy port in shadow with a holdout',
+      { ...policy(), holdout: 5 },
+      '/ports/0/holdout: must be null',
+    ],
+    [
+      'a shadow variable on a tRPC port',
+      { ...base(), shadowEnv: 'X_URL' },
+      '/ports/0/shadowEnv: boolean schema is false',
+    ],
+  ])('rejects %s', (_name, port, expected) => {
+    expect(errs(port)).toContain(expected);
+  });
+
+  it('still requires a Flipt shadow flag of a tRPC port in shadow', () => {
+    expect(errs({ ...base(), flags: { shadow: null, transport: null, probe: null } })).toContain(
+      '/ports/0/flags/shadow: must be string'
+    );
   });
 });
 

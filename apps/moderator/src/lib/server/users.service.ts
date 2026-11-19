@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { escapeLike } from './like';
 
 // Account -1 is `civitai`, the system bot: it auto-posts chat join lines and owns 14% of ChatMessage.
 // It is also flagged `isModerator`, so treating it as a person has already shipped one bug — the User
@@ -72,6 +73,16 @@ export async function usersByIds(ids: number[]): Promise<Map<number, UserSummary
   );
 }
 
+/** Strips zero-width format characters and a leading `@`/`#`, which a paste carries and typing never
+ *  does; unstripped, a pasted name matches nothing. */
+export const normalizeUserSearchTerm = (query: string): string =>
+  query
+    .replace(/\p{Cf}/gu, '')
+    .trim()
+    .replace(/^[@#]/, '')
+    .trim();
+
+/** An all-digit term is both a pasted id and a plausible username, so the id's account goes first. */
 export async function searchUsers({
   query,
   limit = 10,
@@ -79,18 +90,31 @@ export async function searchUsers({
   query: string;
   limit?: number;
 }): Promise<UserSearchResult[]> {
-  const q = query.trim();
+  const q = normalizeUserSearchTerm(query);
   if (!q) return [];
 
-  return dbRead
-    .selectFrom('User')
-    .select(['id', 'username', 'image'])
-    .where('username', 'like', `${q}%`)
-    .where('deletedAt', 'is', null)
-    .where('id', '!=', SYSTEM_USER_ID)
-    .orderBy(sql`length(username)`, 'asc')
-    .limit(limit)
-    .execute();
+  const id = /^\d+$/.test(q) ? Number(q) : NaN;
+  const [byId, byName] = await Promise.all([
+    isInt4Id(id)
+      ? dbRead
+          .selectFrom('User')
+          .select(['id', 'username', 'image'])
+          .where('id', '=', id)
+          .where('deletedAt', 'is', null)
+          .executeTakeFirst()
+      : undefined,
+    dbRead
+      .selectFrom('User')
+      .select(['id', 'username', 'image'])
+      .where('username', 'like', `${escapeLike(q)}%`)
+      .where('deletedAt', 'is', null)
+      .where('id', '!=', SYSTEM_USER_ID)
+      .orderBy(sql`length(username)`, 'asc')
+      .limit(limit)
+      .execute(),
+  ]);
+  if (!byId) return byName;
+  return [byId, ...byName.filter((u) => u.id !== byId.id)].slice(0, limit);
 }
 
 /** Does a user with exactly this username exist? Disambiguates an all-digit search term, which is both
