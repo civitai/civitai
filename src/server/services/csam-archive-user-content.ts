@@ -76,7 +76,8 @@ type Reader = (
  * `BountyEntry` have `userId` indexes the schema does not declare; `Collection` and `ChatMember`
  * have declared `userId` btree indexes, `Bounty` and `ResourceReview` hash indexes;
  * `ServiceOffering` has `(sellerId, status)`. `PostText`, `Question` and `Answer` have none and
- * are small. For `ChatMessage`, see `chatMessages`. All reads use the read pool.
+ * are small. For `ChatMessage`, see `chatMessages`. Reads use the read pool `db`, except the
+ * `chatMessages` author pass and its edit reads, which use `authorDb` (see `authorPassPool`).
  */
 export const userContentReaders: { name: string; rows: Reader }[] = [
   {
