@@ -887,6 +887,8 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
