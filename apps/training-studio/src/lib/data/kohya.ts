@@ -77,7 +77,7 @@ export function kohyaDefaults(version: ModelVersionInfo): RunParamDefaults {
   const anima = version.ecosystem === 'anima';
   return {
     epochs: flow ? 5 : 10,
-    unetLr: pony ? 1 : anima ? 1e-4 : 5e-4,
+    unetLr: pony ? 1 : anima ? 3e-4 : 5e-4,
     textEncoderLr: flow ? 0 : pony ? 1 : anime ? 1e-4 : 5e-5,
     networkDim: anime || anima ? 16 : 32,
     networkAlpha: anime ? 8 : version.key === 'flux_dev' ? 2 : 16,
