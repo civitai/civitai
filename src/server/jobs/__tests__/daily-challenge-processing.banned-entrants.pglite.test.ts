@@ -178,7 +178,7 @@ function routeQueries() {
       sql.includes('JOIN "User" u') ||
       sql.includes('HAVING COUNT(*) >=') ||
       sql.includes('"ImageResourceNew"') ||
-      sql.includes('status = \'REVIEW\' AND "imageId" IS NOT NULL')
+      sql.includes("status = 'REVIEW'")
     )
       return runOnPglite(strings, ...values);
     if (sql.includes('AS "exists"')) return [{ exists: false }];
@@ -405,8 +405,8 @@ describe('model-restricted mature entries', () => {
   });
 });
 
-// The featured resource has to be able to run on the entry's checkpoint. Promotion checks REVIEW
-// entries; the judged field also drops entries ACCEPTED before the rule existed.
+// The featured resource has to be able to run on the entry's checkpoint. Entries submitted before
+// the rule existed are still in collections: they cannot place, but they are not rejected.
 describe('entries whose featured resource cannot run on their checkpoint', () => {
   const JUDGE_COLLECTION = 400;
   const PROMOTE_COLLECTION = 401;
@@ -470,7 +470,10 @@ describe('entries whose featured resource cannot run on their checkpoint', () =>
     expect(entries.map((e) => e.imageId).sort()).toEqual([ON_SDXL, NO_CHECKPOINT]);
   });
 
-  it('is rejected at promotion; compatible and checkpoint-less entries are accepted', async () => {
+  // Deliberate: an entry still in REVIEW may have paid an entry fee under the old rule, and fees are
+  // not refunded. Promotion must not reject it; getJudgedEntries keeps it from placing. Do not add
+  // the compatibility check back to promotion without a refund path.
+  it('is still accepted at promotion, so a fee paid before the rule is not forfeited', async () => {
     vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(
       (async (strings: TemplateStringsArray, ...values: unknown[]) =>
         (await runOnPglite(strings, ...values)).length) as never
@@ -492,10 +495,10 @@ describe('entries whose featured resource cannot run on their checkpoint', () =>
       [PROMOTE_COLLECTION]
     );
     expect(rows).toEqual([
-      { imageId: ON_KREA, status: 'REJECTED' },
+      { imageId: ON_KREA, status: 'ACCEPTED' },
       { imageId: ON_SDXL, status: 'ACCEPTED' },
       { imageId: NO_CHECKPOINT, status: 'ACCEPTED' },
-      { imageId: ON_KREA_SDXL_CREDITED, status: 'REJECTED' },
+      { imageId: ON_KREA_SDXL_CREDITED, status: 'ACCEPTED' },
     ]);
   });
 });
