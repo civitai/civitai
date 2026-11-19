@@ -416,6 +416,29 @@ describe('collection images', () => {
       expect((body as { hits: unknown }).hits).toEqual([]);
     });
 
+    it.each([
+      ['PG only', NsfwLevel.PG, false],
+      ['PG and PG-13', NsfwLevel.PG | NsfwLevel.PG13, true],
+    ])('a viewer on %s keeps srcs: %s', async (_label, level, kept) => {
+      respond({ hits: [{ id: 1, image: null, images: [], srcs, _formatted: { srcs } }] });
+      const [hit] = hitsOf(
+        (
+          await siteIndexSearch(
+            COLLECTIONS_SEARCH_INDEX,
+            { q: 'x' },
+            { showSfwFace: false, collectionImageLevel: level }
+          )
+        ).body
+      );
+      if (kept) {
+        expect(hit.srcs).toEqual(srcs);
+        expect(hit._formatted.srcs).toEqual(srcs);
+      } else {
+        expect(hit).not.toHaveProperty('srcs');
+        expect(hit._formatted).not.toHaveProperty('srcs');
+      }
+    });
+
     it('keeps a cover within that level', async () => {
       respond({ hits: [{ id: 1, image: pg, images: [pg] }] });
       const [hit] = hitsOf(

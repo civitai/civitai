@@ -21,6 +21,7 @@ import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
   allBrowsingLevelsFlag,
   effectiveBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -255,16 +256,19 @@ type CollectionHit = Record<string, unknown> & { _formatted?: Record<string, unk
  */
 function shapeCollectionHit(
   hit: CollectionHit,
-  browsingLevelCap: number | undefined
+  browsingLevelCap: number | undefined,
+  { keepSrcs = false }: { keepSrcs?: boolean } = {}
 ): CollectionHit {
   if (browsingLevelCap === undefined) return hit;
-  const { srcs: _srcs, ...shaped }: CollectionHit = { ...hit };
+  const { srcs, ...shaped }: CollectionHit = { ...hit };
+  if (keepSrcs && srcs !== undefined) shaped.srcs = srcs;
   if ('images' in shaped) shaped.images = capImages(shaped.images, browsingLevelCap);
   const cover = shaped.image as RatedImage | null | undefined;
   const coverKept = !!cover && isRatingWithinCap(cover.nsfwLevel, browsingLevelCap);
   if ('image' in shaped && cover) shaped.image = coverKept ? cover : null;
   if (shaped._formatted) {
-    const { srcs: _formattedSrcs, ...formatted } = shaped._formatted;
+    const { srcs: formattedSrcs, ...formatted } = shaped._formatted;
+    if (keepSrcs && formattedSrcs !== undefined) formatted.srcs = formattedSrcs;
     if ('images' in formatted) formatted.images = keepCopiesOf(formatted.images, shaped.images);
     if ('image' in formatted && formatted.image && !coverKept) formatted.image = null;
     shaped._formatted = formatted;
@@ -360,7 +364,15 @@ function shapeIndexHits(indexUid: string | undefined, hits: unknown, viewer: Sit
     return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
   if (indexUid === COLLECTIONS_SEARCH_INDEX)
     return hits.map((hit: CollectionHit) =>
-      shapeCollectionHit(hit, viewer.browsingLevelCap ?? viewer.collectionImageLevel)
+      viewer.browsingLevelCap !== undefined
+        ? shapeCollectionHit(hit, viewer.browsingLevelCap)
+        : shapeCollectionHit(hit, viewer.collectionImageLevel, {
+            // The index keeps a src only for an SFW article cover (collectionItemCoversSql's
+            // srcImageLevels), so a viewer on every SFW level may have it.
+            keepSrcs:
+              viewer.collectionImageLevel !== undefined &&
+              Flags.hasFlag(viewer.collectionImageLevel, sfwBrowsingLevelsFlag),
+          })
     );
   return hits;
 }
