@@ -30,8 +30,20 @@ describe('minor queue search', () => {
     const statement = await compile(() =>
       getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
     );
-    expect(statement).toMatch(/EXISTS \(\s*SELECT 1 FROM minor_src s3/);
+    expect(statement).toMatch(/EXISTS \(\s*SELECT 1 FROM searched_seeds s3/);
     expect(statement).not.toMatch(/"s"\."minorModelId" = \$/);
+  });
+
+  it('filters the seed set by the searched id once, not once per candidate', async () => {
+    const statement = await compile(() =>
+      getMinorHashMatchesForReview({ limit: 50, search: { modelOrUserId: 900 } })
+    );
+    // minor_src is an unindexed CTE (~20k rows at real size): an EXISTS over it per candidate cost
+    // seconds. The per-candidate check must read the id-filtered set instead.
+    expect(statement).toMatch(
+      /searched_seeds AS MATERIALIZED \(\s*SELECT hash, "userId" FROM minor_src\s+WHERE "minorModelId" = \$\d+ OR "userId" = \$\d+/
+    );
+    expect(statement).not.toMatch(/EXISTS \(\s*SELECT 1 FROM minor_src s3/);
   });
 
   it('compares a username case-insensitively', async () => {
