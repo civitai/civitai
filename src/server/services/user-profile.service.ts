@@ -390,7 +390,7 @@ export const setShowcaseSections = async ({
 };
 
 // One answer for "not yours" and "can't be shown", so the reply says nothing about another user's
-// item. Primary reads: something published moments ago is the likeliest to be added.
+// item.
 const isOwnServableItem = async ({
   userId,
   entityType,
@@ -399,6 +399,7 @@ const isOwnServableItem = async ({
   const select = { id: true } as const;
   switch (entityType) {
     case 'Image':
+      // primary: an image published moments ago is the likeliest to be added.
       return !!(await dbWrite.image.findFirst({
         where: {
           id: entityId,
@@ -409,6 +410,7 @@ const isOwnServableItem = async ({
         select,
       }));
     case 'Model':
+      // primary: as for images.
       return !!(await dbWrite.model.findFirst({
         where: {
           id: entityId,
@@ -424,6 +426,7 @@ const isOwnServableItem = async ({
       }));
     case 'Article':
       // Pending/Rescan pass: the section's feed shows other viewers only Scanned articles.
+      // primary: as for images.
       return !!(await dbWrite.article.findFirst({
         where: {
           id: entityId,
