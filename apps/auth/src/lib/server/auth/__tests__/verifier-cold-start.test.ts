@@ -95,6 +95,20 @@ describe('hub verifier at cold start', () => {
   });
 });
 
+describe('hub verifier starting during a store outage', () => {
+  it('waits one read deadline in all, then allows at once until the store is up', async () => {
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '80';
+    const { verifier } = await load();
+    const first = Date.now();
+    await verifier.verifyToken(live);
+    expect(Date.now() - first).toBeGreaterThanOrEqual(70);
+    const second = Date.now();
+    const claims = await verifier.verifyToken(live);
+    expect(Date.now() - second).toBeLessThan(30);
+    expect(claims?.sub).toBe('8');
+  });
+});
+
 describe('hub verifier after the store has been ready', () => {
   it('does not wait during a later outage, and marks the session it allows', async () => {
     const { verifier, isUnconfirmedSession } = await load();

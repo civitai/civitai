@@ -280,6 +280,9 @@ export async function establishSession(
   refuseModerationAccount(user, 'login');
   const prior = await resolvePriorSession(cookies);
   const priorUserId = prior ? Number(prior.sub) : undefined;
+  // A prior session the store could not confirm may be revoked: this sign-in stands on its own credentials and
+  // takes nothing from it (no family, no device-record proof), like a sign-in with no prior session.
+  const confirmedPrior = prior && !isUnconfirmedSession(prior) ? prior : undefined;
 
   // A login bound for a spoke on another registrable domain must not re-point THIS domain's session — the hub
   // cookie is civitai.com's session too. Hand the identity to /authorize out-of-band instead, leaving whoever
@@ -300,9 +303,8 @@ export async function establishSession(
   // session's family, so one sign-out ends both.
   let family: string | undefined;
   if (!handedOff) {
-    // The credentials prove who this is; a prior session the store could not confirm only loses the family link.
     const minted = await mintSession(user, {
-      parent: prior && !isUnconfirmedSession(prior) ? prior : null,
+      parent: confirmedPrior ?? null,
       iat0: Date.now(),
       clearImpersonation: true,
     });
@@ -312,9 +314,11 @@ export async function establishSession(
 
   // Link this account and family to the browser's records (docs/auth/auth-hub-spoke-overview.md). Records this
   // browser can't show it is signed in to stay with the old device id; the sign-in starts on a new one.
-  const proofFamily = prior ? familyId(prior) : undefined;
+  const proofFamily = confirmedPrior ? familyId(confirmedPrior) : undefined;
   // The prior session proves the browser is signed in to its principal: the moderator, when impersonating.
-  const priorPrincipal = prior ? prior.impersonatedBy ?? priorUserId : undefined;
+  const priorPrincipal = confirmedPrior
+    ? confirmedPrior.impersonatedBy ?? Number(confirmedPrior.sub)
+    : undefined;
   const link = (id: string, proof?: string) =>
     linkAccount(
       id,

@@ -303,7 +303,12 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // A code turns into lasting credentials at /token and /session, so it is not issued on a session the hub
   // accepted without reading the session store. A user handed over by a fresh sign-in is not this session.
-  if (user === locals.user && locals.session && isUnconfirmedSession(locals.session)) {
+  if (
+    locals.user &&
+    user.id === locals.user.id &&
+    locals.session &&
+    isUnconfirmedSession(locals.session)
+  ) {
     return failToClient('temporarily_unavailable', 'Try again in a minute', 503);
   }
 
@@ -377,7 +382,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     iat0: hubSession?.iat0,
     impersonatedBy: hubSession?.impersonatedBy,
     impExp: hubSession?.impExp,
-    proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
+    proofFamily:
+      isFirstParty && locals.session && !isUnconfirmedSession(locals.session)
+        ? familyId(locals.session)
+        : undefined,
   });
   // An impersonation code is redeemed only with its context, so none is sent without it.
   if (!stored && impersonation) {

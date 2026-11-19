@@ -30,6 +30,9 @@ const checkRevocation = createRevocationCheck({
 });
 
 let sysWasReady = false;
+// The end of the start-up wait window, set by the first check. Checks share it, so a process that starts during
+// a store outage waits at most one read deadline in all, not one per check.
+let coldStartUntil: number | undefined;
 
 // Until the sys client has been ready once (process start), wait for it inside the read deadline rather than
 // allowing every session unread. After that a store outage allows at once, as above.
@@ -40,7 +43,10 @@ async function isRevoked(claims: SessionClaims): Promise<boolean> {
   const budget = revocationReadTimeoutMs();
   if (sysWasReady || budget <= 0) return checkRevocation(claims);
   const started = Date.now();
-  await waitForRedisReady(sys, budget);
+  coldStartUntil ??= started + budget;
+  const wait = Math.min(budget, coldStartUntil - started);
+  if (wait <= 0) return checkRevocation(claims);
+  await waitForRedisReady(sys, wait);
   return checkRevocation(claims, { timeoutMs: Math.max(1, budget - (Date.now() - started)) });
 }
 

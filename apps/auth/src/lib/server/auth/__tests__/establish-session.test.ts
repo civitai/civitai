@@ -119,6 +119,23 @@ describe('establishSession 2nd-account detection', () => {
     expect(payload.sid).not.toBe('family-a');
   });
 
+  it('takes no device-record proof or principal from an unconfirmed prior session', async () => {
+    const prior = { sub: '100', jti: 'j1', sid: 'family-a' };
+    markUnconfirmedSession(prior as never);
+    h.verifyToken.mockResolvedValue(prior);
+
+    await establishSession(makeCookies({ 'civ-token': 'prior-session-for-100' }), user(200));
+
+    const [, , principal, records] = h.linkAccount.mock.calls[0] as unknown as [
+      string,
+      number,
+      number | undefined,
+      { proofFamily?: string } | undefined
+    ];
+    expect(principal).toBeUndefined();
+    expect(records?.proofFamily).toBeUndefined();
+  });
+
   it("joins a confirmed prior session's family on a fresh sign-in", async () => {
     h.verifyToken.mockResolvedValue({ sub: '200', jti: 'j', sid: 'family-a' });
     await establishSession(makeCookies({ 'civ-token': 'prior-session-for-200' }), user(200));

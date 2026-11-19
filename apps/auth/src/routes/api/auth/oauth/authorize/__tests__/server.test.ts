@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   consent: undefined as unknown,
   skipConsent: false,
   isFirstParty: false,
+  handoffUser: undefined as { id: number } | undefined,
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -47,7 +48,8 @@ vi.mock('$lib/server/auth/device', () => ({
   touchAccount: vi.fn(async () => undefined),
 }));
 vi.mock('$lib/server/auth/pending-authz', () => ({
-  resolveAuthorizingUser: async (o: { sessionUser?: unknown }) => o.sessionUser ?? { id: 7 },
+  resolveAuthorizingUser: async (o: { sessionUser?: unknown }) =>
+    h.handoffUser ?? o.sessionUser ?? { id: 7 },
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({ getOrProduceSessionUser: vi.fn() }));
 vi.mock('$lib/server/oauth/access', () => ({ checkClientAccess: async () => ({ allowed: true }) }));
@@ -98,6 +100,7 @@ beforeEach(() => {
   h.consent = undefined;
   h.skipConsent = false;
   h.isFirstParty = false;
+  h.handoffUser = undefined;
 });
 
 /** A sign-in starting at /authorize (no approval yet). Returns the response, or the redirect it throws. */
@@ -291,6 +294,25 @@ describe('authorize — session accepted without reading the session store', () 
   it('answers a first-party client 503 and issues no code', async () => {
     h.isFirstParty = true;
     expect((await start({}, unconfirmed())).status).toBe(503);
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('issues the code for a user handed over by a fresh sign-in, with no proof from the session', async () => {
+    h.isFirstParty = true;
+    h.handoffUser = { id: 9 };
+    vi.mocked(storeOidcContext).mockClear();
+    await start({}, unconfirmed());
+    expect(h.authorize).toHaveBeenCalledTimes(1);
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ proofFamily: undefined })
+    );
+  });
+
+  it('refuses the session user even when the handover resolves to an equal copy', async () => {
+    h.handoffUser = { id: 7 };
+    const res = await start({}, unconfirmed());
+    expect(new URL(res.location!).searchParams.get('error')).toBe('temporarily_unavailable');
     expect(h.authorize).not.toHaveBeenCalled();
   });
 
