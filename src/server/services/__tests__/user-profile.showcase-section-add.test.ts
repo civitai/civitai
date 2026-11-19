@@ -59,6 +59,89 @@ const saved = () =>
   (db.userProfile.updateMany.mock.calls.at(-1)?.[0] as { data: { showcaseSections: unknown } }).data
     .showcaseSections;
 
+// Models and articles: each refused row differs from the servable one by one field, so a refusal
+// can only come from that field. The fake evaluates the service's `where` like SQL (a NULL never
+// matches `not`) and throws on a filter it doesn't know, so a new clause can't pass unread.
+type Where = Record<string, unknown>;
+const holds = (value: unknown, cond: unknown): boolean => {
+  if (cond === null || typeof cond !== 'object' || cond instanceof Date) return value === cond;
+  return Object.entries(cond).every(([op, arg]) => {
+    if (op === 'not') return value !== null && value !== arg;
+    if (op === 'in') return (arg as unknown[]).includes(value);
+    if (op === 'notIn') return value !== null && !(arg as unknown[]).includes(value);
+    if (op === 'lte') return value instanceof Date && value <= (arg as Date);
+    throw new Error(`fake db: unsupported filter ${op}`);
+  });
+};
+const matchesWhere = (row: Where, where: Where): boolean =>
+  Object.entries(where).every(([field, cond]) => {
+    if (field === 'OR') return (cond as Where[]).some((w) => matchesWhere(row, w));
+    if (!(field in row)) throw new Error(`fake db: row has no ${field}`);
+    return holds(row[field], cond);
+  });
+
+const DAY = 24 * 60 * 60 * 1000;
+const servableModel = {
+  id: 0,
+  userId: OWNER_ID,
+  status: 'Published',
+  deletedAt: null as Date | null,
+  tosViolation: false,
+  availability: 'Public',
+  mode: null as string | null,
+};
+const modelVariants = {
+  servable: {},
+  archived: { mode: 'Archived' },
+  unsearchable: { availability: 'Unsearchable' },
+  stranger: { userId: STRANGER_ID },
+  draft: { status: 'Draft' },
+  unpublished: { status: 'Unpublished' },
+  unpublishedViolation: { status: 'UnpublishedViolation' },
+  scheduled: { status: 'Scheduled' },
+  deleted: { deletedAt: new Date(Date.now() - DAY) },
+  tosViolation: { tosViolation: true },
+  private: { availability: 'Private' },
+  takenDown: { mode: 'TakenDown' },
+} as const;
+const servableArticle = {
+  id: 0,
+  userId: OWNER_ID,
+  status: 'Published',
+  publishedAt: new Date(Date.now() - DAY) as Date | null,
+  tosViolation: false,
+  ingestion: 'Scanned',
+  availability: 'Public',
+};
+const articleVariants = {
+  servable: {},
+  pending: { ingestion: 'Pending' },
+  rescan: { ingestion: 'Rescan' },
+  stranger: { userId: STRANGER_ID },
+  draft: { status: 'Draft' },
+  unpublished: { status: 'Unpublished' },
+  unpublishedViolation: { status: 'UnpublishedViolation' },
+  scheduled: { publishedAt: new Date(Date.now() + DAY) },
+  neverPublished: { publishedAt: null },
+  tosViolation: { tosViolation: true },
+  blocked: { ingestion: 'Blocked' },
+  private: { availability: 'Private' },
+} as const;
+const rowsOf = <T extends object>(base: T, variants: Record<string, object>, from: number) => {
+  const ids = {} as Record<string, number>;
+  const rows: Record<number, Where> = {};
+  Object.entries(variants).forEach(([name, patch], i) => {
+    ids[name] = from + i;
+    rows[from + i] = { ...base, ...patch, id: from + i };
+  });
+  return { ids, rows };
+};
+const { ids: MODEL, rows: models } = rowsOf(servableModel, modelVariants, 500);
+const { ids: ARTICLE, rows: articles } = rowsOf(servableArticle, articleVariants, 700);
+
+const addAs = (entityType: 'Model' | 'Article', entityId: number, sectionId: string) =>
+  addToShowcaseSection({ userId: OWNER_ID, sectionId, entityType, entityId });
+
 const add = (entityId: number, sectionId = 's-img') =>
   addToShowcaseSection({ userId: OWNER_ID, sectionId, entityType: 'Image', entityId });
 
@@ -70,6 +153,19 @@ beforeEach(() => {
     ids(where)
       .filter((id) => matches(id, where))
       .map((id) => ({ id }))) as never);
+  for (const [delegate, rows] of [
+    [db.model, models],
+    [db.article, articles],
+  ] as const) {
+    delegate.findFirst.mockImplementation((async ({ where }: { where: Where }) => {
+      const id = where.id as number;
+      return rows[id] && matchesWhere(rows[id], where) ? { id } : null;
+    }) as never);
+    delegate.findMany.mockImplementation((async ({ where }: { where: Where }) =>
+      ((where.id as { in: number[] }).in ?? [])
+        .filter((id) => rows[id] && matchesWhere(rows[id], where))
+        .map((id) => ({ id }))) as never);
+  }
   db.userProfile.updateMany.mockResolvedValue({ count: 1 } as never);
   store([]);
 });
@@ -157,5 +253,93 @@ describe('addToShowcaseSection', () => {
         where: { userId: OWNER_ID, showcaseSections: { equals: read } },
       })
     );
+  });
+});
+
+describe('addToShowcaseSection — models', () => {
+  const models_ = () => section([], 's-model', 'Model');
+
+  it.each(['servable', 'unsearchable'] as const)(
+    'puts the owner’s %s model first in a Models section',
+    async (variant) => {
+      store([section([5], 's-model', 'Model'), section([6])]);
+      await expect(addAs('Model', MODEL[variant], 's-model')).resolves.toMatchObject({
+        added: true,
+      });
+      expect(saved()).toEqual([section([MODEL[variant], 5], 's-model', 'Model'), section([6])]);
+    }
+  );
+
+  it.each([
+    'stranger',
+    'draft',
+    'unpublished',
+    'unpublishedViolation',
+    'scheduled',
+    'deleted',
+    'tosViolation',
+    'private',
+    'takenDown',
+    // The section feed drops Archived models, so one would take a slot and never show.
+    'archived',
+  ] as const)('refuses a %s model and writes nothing', async (variant) => {
+    store([models_()]);
+    await expect(addAs('Model', MODEL[variant], 's-model')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Only your own published models can be showcased',
+    });
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an Images section', 's-img'],
+    ['an Articles section', 's-art'],
+  ])('refuses a model into %s', async (_name, sectionId) => {
+    store([section([]), section([], 's-art', 'Article')]);
+    await expect(addAs('Model', MODEL.servable, sectionId)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('addToShowcaseSection — articles', () => {
+  // Pending and Rescan are accepted on purpose; see article-showcase-pending.behavior.test.ts.
+  it.each(['servable', 'pending', 'rescan'] as const)(
+    'puts the owner’s %s article first in an Articles section',
+    async (variant) => {
+      store([section([9], 's-art', 'Article')]);
+      await expect(addAs('Article', ARTICLE[variant], 's-art')).resolves.toMatchObject({
+        added: true,
+      });
+      expect(saved()).toEqual([section([ARTICLE[variant], 9], 's-art', 'Article')]);
+    }
+  );
+
+  it.each([
+    'stranger',
+    'draft',
+    'unpublished',
+    'unpublishedViolation',
+    'scheduled',
+    'neverPublished',
+    'tosViolation',
+    'blocked',
+    'private',
+  ] as const)('refuses a %s article and writes nothing', async (variant) => {
+    store([section([], 's-art', 'Article')]);
+    await expect(addAs('Article', ARTICLE[variant], 's-art')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Only your own published articles can be showcased',
+    });
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses an article into a Models section', async () => {
+    store([section([], 's-model', 'Model')]);
+    await expect(addAs('Article', ARTICLE.servable, 's-model')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 });

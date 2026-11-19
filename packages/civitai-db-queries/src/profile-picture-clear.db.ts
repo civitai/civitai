@@ -19,6 +19,30 @@ const run = async (db: Kysely<DB>, statement: Statement) => {
 export const userImageNamesPicture = (alias: string, user = 'u') =>
   `(length(${alias}.url) > 0 AND strpos(replace(lower(${user}.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
 
+/**
+ * Whether `Image` aliased `alias` is under an owner-hidden review hold ($2, the reviews) or carries a
+ * block marker: the one rule the clear applies to every image `User.image` can name.
+ */
+const heldOrBlockedText = (alias: string) =>
+  `(${alias}."needsReview" = ANY($2::text[]) OR ${blockMarkerText(alias)})`;
+
+/**
+ * The first upload key in `User.image` (`User` aliased `user`), lowercased, an encoded dash read as one.
+ * Fewer forms than the main app's `keysIn`: the column holds a bare key or a CDN url around one, since
+ * the profile save refuses any new key and only the restore writes one (a picture's bare url).
+ */
+const userImageKeyText = (user: string) =>
+  `(regexp_match(replace(lower(${user}.image), '%2d', '-'), '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'))[1]`;
+
+/**
+ * Whether `Image` aliased `alias` is one of the user's own images stored under the key `User.image`
+ * (`User` aliased `user`) names: an equality on the stored url, answered by `Image_url_covered_idx`.
+ */
+export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
+  `(${alias}."userId" = ${user}.id AND ${alias}.url IN (${userImageKeyText(
+    user
+  )}, upper(${userImageKeyText(user)})))`;
+
 const heldImageMarker = `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`;
 
 /** The main app's `hasBlockMarkerSql` over `Image` aliased `alias`: Blocked ingestion, the Blocked level, or a block reason. */
@@ -30,11 +54,15 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
     SELECT u.id, (u.image IS NOT NULL AND ${userImageNamesPicture('picture')}) AS "namesPicture"
     FROM "User" u
     JOIN "Image" picture ON picture.id = u."profilePictureId"
+    WHERE u.id = ANY($1::int[]) AND ${heldOrBlockedText('picture')}
+  ), named AS (
+    SELECT DISTINCT u.id
+    FROM "User" u
+    JOIN "Image" other ON ${ownImageNamedByUserImage('other')}
     WHERE u.id = ANY($1::int[])
-      AND (
-        picture."needsReview" = ANY($2::text[])
-        OR ${blockMarkerText('picture')}
-      )
+      AND other.id IS DISTINCT FROM u."profilePictureId"
+      AND ${heldOrBlockedText('other')}
+      AND NOT EXISTS (SELECT 1 FROM held WHERE held.id = u.id AND held."namesPicture")
   ), cleared AS (
     UPDATE "User" u
     SET image = NULL,
@@ -46,23 +74,47 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
       END
     FROM held WHERE u.id = held.id AND held."namesPicture"
     RETURNING u.id
+  ), "namedCleared" AS (
+    UPDATE "User" u SET image = NULL FROM named WHERE u.id = named.id RETURNING u.id
   )
-  SELECT id FROM held
+  SELECT id FROM held UNION SELECT id FROM "namedCleared"
 `;
 
 /**
  * Of `userIds`, those whose profile picture is under an owner-hidden hold or carries a block marker.
  * For each of them whose `User.image` names that picture, clears `User.image` in the same statement
  * and marks it with `meta.heldImageCleared = { pictureId }` (no value: the value is the held key),
- * which the main app's `restoreClearedUserImages` reads once the picture is servable again. An object,
- * SQL NULL or JSON null `meta` takes the marker; any other JSON value keeps its value without one. Plain SQL text, so the main app runs it on Prisma and the moderator
- * app on Kysely (`clearHeldUserImages`).
+ * which the main app's `restoreClearedUserImages` reads once the picture is servable again.
+ * Also clears a `User.image` naming another of the user's own images that is held or blocked, with no
+ * marker: it is not the profile picture, so nothing puts it back. Returns both sets of users. Plain
+ * SQL text, so the main app runs it on Prisma and the moderator app on Kysely (`clearHeldUserImages`).
  */
 export const clearHeldUserImagesStatement = (userIds: number[]) => ({
   sql: CLEAR_HELD_USER_IMAGES_SQL,
   parameters: [userIdsParameter(userIds), OWNER_HIDDEN_REVIEWS] as unknown[],
   empty: !userIdsParameter(userIds).length,
 });
+
+const PICTURE_USER_IDS_SQL = `
+  SELECT u.id FROM "User" u WHERE u."profilePictureId" = ANY($1::int[])
+  UNION
+  SELECT u.id FROM "Image" i JOIN "User" u ON u.id = i."userId"
+  WHERE i.id = ANY($1::int[]) AND ${ownImageNamedByUserImage('i')}
+`;
+
+/**
+ * The users an image change can reach through their avatar: those whose profile picture is one of
+ * `imageIds`, and the owners whose `User.image` names one of them.
+ */
+export const pictureUserIdsStatement = (imageIds: number[]) => ({
+  sql: PICTURE_USER_IDS_SQL,
+  parameters: [userIdsParameter(imageIds)] as unknown[],
+  empty: !userIdsParameter(imageIds).length,
+});
+
+/** `pictureUserIdsStatement` on a Kysely client. */
+export const pictureUserIds = (db: Kysely<DB>, imageIds: number[]) =>
+  run(db, pictureUserIdsStatement(imageIds));
 
 /** `clearHeldUserImagesStatement` on a Kysely client. */
 export const clearHeldUserImages = (db: Kysely<DB>, userIds: number[]) =>
@@ -141,6 +193,12 @@ const RESTORE_CLEARED_USER_IMAGES_SQL = `
       AND ${MARKER_IS_CURRENT}
       AND u.image IS NULL
       AND ${servablePictureText}
+      -- Another of the user's rows stored under the same key, held or blocked, keeps it withheld.
+      AND NOT EXISTS (
+        SELECT 1 FROM "Image" twin
+        WHERE twin."userId" = u.id AND twin.url = i.url AND twin.id <> i.id
+          AND ${heldOrBlockedText('twin')}
+      )
     FOR SHARE OF i
   )
   UPDATE "User" u

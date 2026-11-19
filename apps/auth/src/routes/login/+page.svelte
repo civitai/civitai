@@ -19,6 +19,15 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
+  // The method this browser last signed in with goes first, marked "Last used".
+  const providers = $derived(
+    data.lastMethod
+      ? [...data.providers].sort(
+          (a, b) => Number(b.id === data.lastMethod) - Number(a.id === data.lastMethod)
+        )
+      : data.providers
+  );
+
   // Tracks the in-flight magic-link request so the button can show a pending state.
   let submitting = $state(false);
 
@@ -346,11 +355,12 @@
 
       {#if data.providers.length > 0}
         <div class="socials">
-          {#each data.providers as provider (provider.id)}
+          {#each providers as provider (provider.id)}
             {@const meta = providerMeta[provider.id]}
             <a class="social {meta?.cls ?? ''}" href={href(provider.id)}>
               {#if meta}{@const Icon = meta.Icon}<Icon size={20} stroke={2} />{/if}
               <span>{provider.name}</span>
+              {#if provider.id === data.lastMethod}<span class="last-used">Last used</span>{/if}
             </a>
           {/each}
         </div>
@@ -359,6 +369,11 @@
       {#if data.emailEnabled}
         {#if data.providers.length > 0}
           <div class="divider"><span>Or continue with Email</span></div>
+        {/if}
+        {#if data.lastMethod === 'email' && !form?.sent}
+          <p class="last-used-email">
+            <span class="last-used">Last used</span> You last signed in with email.
+          </p>
         {/if}
 
         {#if form?.sent}
@@ -587,6 +602,27 @@
   }
   .social.email:hover {
     background: color-mix(in srgb, #666, white 10%);
+  }
+  .last-used {
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .last-used-email {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.6rem;
+    color: #9aa0a6;
+    font-size: 0.85rem;
+  }
+  .last-used-email .last-used {
+    background: #2a2d34;
   }
   .social:disabled {
     opacity: 0.6;

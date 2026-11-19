@@ -19,7 +19,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
-import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
+import { mirrorBlockedHashesSql, NEWEST_BLOCKLIST_ROW_SQL } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -1336,8 +1336,20 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 export async function writeModeratorBlock(
   ids: number[],
   deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
-): Promise<{ held: Set<number>; underReview: Set<number>; removedForCsam: Set<number> }> {
-  if (!ids.length) return { held: new Set(), underReview: new Set(), removedForCsam: new Set() };
+): Promise<{
+  held: Set<number>;
+  underReview: Set<number>;
+  removedForCsam: Set<number>;
+  /** "pHash" per id, read here rather than off a replica that may not have the scan's hash yet. */
+  pHashes: Map<number, bigint | null>;
+}> {
+  if (!ids.length)
+    return {
+      held: new Set(),
+      underReview: new Set(),
+      removedForCsam: new Set(),
+      pHashes: new Map(),
+    };
   return dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
@@ -1355,10 +1367,16 @@ export async function writeModeratorBlock(
     // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
     // reads the set-aside row that dismissal committed.
     const rows = await tx.$queryRaw<
-      { id: number; held: boolean; removedForCsam: boolean; underReview: boolean }[]
+      {
+        id: number;
+        held: boolean;
+        removedForCsam: boolean;
+        underReview: boolean;
+        pHash: bigint | null;
+      }[]
     >`
       SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
-        "needsReview" = 'csam' AS "underReview"
+        "needsReview" = 'csam' AS "underReview", "pHash"
       FROM "Image" WHERE id = ANY(${ids}::int[])
     `;
     const deferIds = rows.filter((r) => r.held && !r.removedForCsam).map((r) => r.id);
@@ -1382,6 +1400,7 @@ export async function writeModeratorBlock(
       held: idsWhere('held'),
       underReview: idsWhere('underReview'),
       removedForCsam: idsWhere('removedForCsam'),
+      pHashes: new Map(rows.map((r) => [r.id, r.pHash])),
     };
   });
 }
@@ -1419,13 +1438,14 @@ export async function handleBlockImages({
     let held = new Set<number>();
     let underReview = new Set<number>();
     let removedForCsam = new Set<number>();
+    let pHashes = new Map<number, bigint | null>();
     await Promise.all([
       writeModeratorBlock(
         ids,
         include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
       )
         .then((written) => {
-          ({ held, underReview, removedForCsam } = written);
+          ({ held, underReview, removedForCsam, pHashes } = written);
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
@@ -1449,9 +1469,14 @@ export async function handleBlockImages({
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
+      logCsamBlocklistNoHash(
+        ids.filter((id) => removedForCsam.has(id) && !pHashes.get(id)),
+        'block'
+      );
       await bulkAddBlockedImages({
         data: images
-          .map(({ id, pHash, blockedFor }) => {
+          .map(({ id, blockedFor }) => {
+            const pHash = pHashes.get(id);
             if (!pHash) return null;
             return {
               hash: pHash,
@@ -7028,7 +7053,7 @@ async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
       client.$query<{ hash: string }>`
     SELECT toString(hash) AS hash
     FROM (
-      SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
+      SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
       FROM "blocked_images"
       WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')})
       GROUP BY hash
@@ -7096,7 +7121,7 @@ const COPY_MIN_ATTEMPT_MS = 50;
  * may still land, which is harmless: the upsert is idempotent. Twin: apps/moderator
  * image-moderation-effects.ts addImagesToBlocklist.
  */
-async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteContext) {
+export async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteContext) {
   const sql = mirrorBlockedHashesSql(hashes);
   if (!sql) return;
   const deadline = Date.now() + COPY_BUDGET_MS;
@@ -7144,6 +7169,23 @@ async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteConte
   throw new HeldMediaCopyError(lastError);
 }
 
+/** A CSAM removal with no hash to write: logged, as the block itself succeeds. Ids only. */
+export function logCsamBlocklistNoHash(imageIds: number[], step: string) {
+  for (const imageId of imageIds)
+    logToAxiom({
+      type: 'warning',
+      name: 'csam-blocklist-no-hash',
+      message: 'a CSAM removal had no hash to write to the blocklist',
+      payload: { imageId, step },
+    });
+}
+
+/**
+ * A CSAM entry is inserted synchronously: the client's async default acknowledges before the
+ * buffer flushes, so a row lost at flush time would never surface as an error.
+ */
+const CSAM_INSERT_SETTINGS = { async_insert: 0 } as const;
+
 export function addBlockedImage({
   hash,
   reason,
@@ -7169,7 +7211,7 @@ export async function bulkAddBlockedImages({
   context?: BlocklistWriteContext;
 }) {
   if (data.length === 0) return;
-  const write = async (rows: typeof data) => {
+  const write = async (rows: typeof data, sync = false) => {
     if (!rows.length) return;
     const client = blocklistClient();
     await blocklistCall(() =>
@@ -7180,12 +7222,13 @@ export async function bulkAddBlockedImages({
           reason: reason.toString(),
         })),
         format: 'JSONEachRow',
+        ...(sync && { clickhouse_settings: CSAM_INSERT_SETTINGS }),
       })
     );
   };
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
-  await write(csamRows);
+  await write(csamRows, true);
   let othersError: unknown;
   try {
     const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));

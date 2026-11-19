@@ -36,6 +36,7 @@ import { tagRouter } from '~/server/routers/tag.router';
 import { imageResourcesCache, imageTagsCache } from '~/server/redis/caches';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
 
 // assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
 // answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
@@ -143,12 +144,26 @@ const STRANGER: User = { id: VIEWER };
 const SELF: User = { id: OWNER };
 const MOD: User = { id: VIEWER, isModerator: true };
 
-function callerFor(user: User) {
+type Credential = {
+  tokenScope: bigint;
+  apiKeyId: number | null;
+  apiKeyType?: 'User';
+  subject?: { type: 'apiKey'; id: number };
+};
+const SESSION: Credential = { tokenScope: TokenScope.Full, apiKeyId: null };
+const keyOf = (tokenScope: bigint): Credential => ({
+  tokenScope,
+  apiKeyId: 7,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id: 7 },
+});
+
+function callerFor(user: User, credential: Credential = SESSION) {
   return imageRouter.createCaller({
-    user,
+    // As createContext builds it: the viewer read through the request's credential.
+    user: withModeratorRightsFor(user, credential),
     acceptableOrigin: true,
-    tokenScope: TokenScope.Full,
-    apiKeyId: null,
+    ...credential,
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
@@ -157,9 +172,9 @@ function callerFor(user: User) {
   } as never);
 }
 
-async function sees(user: User, id = 1) {
+async function sees(user: User, id = 1, credential?: Credential) {
   try {
-    const data = await callerFor(user).getDetail({ id });
+    const data = await callerFor(user, credential).getDetail({ id });
     expect(data.resources).toEqual([
       { id: 5, modelVersion: { id: 5, name: 'v1' }, detected: true },
     ]);
@@ -244,6 +259,17 @@ describe('image.getDetail visibility', () => {
     expect(hidden).toBe(missing);
     expect(JSON.parse(hidden).code).toBe('NOT_FOUND');
   });
+});
+
+describe('image.getDetail for a moderator on an API key', () => {
+  it.each(HIDDEN)(
+    'an image %s is NOT_FOUND on a scoped key, and answers on a full-scope key',
+    async (_, state) => {
+      await seed(state);
+      expect(await sees(MOD, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await sees(MOD, 1, keyOf(TokenScope.Full))).toBe(true);
+    }
+  );
 });
 
 describe('tag.getVotableTags on an image', () => {
