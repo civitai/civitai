@@ -271,7 +271,7 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getSongCoversSchema)
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
-    .query(({ input, ctx }) => getSongPlayCounts({ ids: input.ids, features: ctx.features })),
+    .query(({ input, ctx }) => getSongPlayCounts({ ids: input.ids, features: ctx.features, user: ctx.user })),
   // Per viewer (the music flag), so no `edgeCacheIt`.
   getSongGenreTags: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

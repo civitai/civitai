@@ -102,7 +102,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
 
   it('happy path: maps metrics when the metric service resolves quickly', async () => {
     fetchMock.mockResolvedValue({
-      1: { Like: 5, Heart: 2, Laugh: 0, Cry: 1, commentCount: 3, Collection: 4, tippedAmount: 100 },
+      1: { Like: 5, Heart: 2, Laugh: 0, Cry: 1, commentCount: 3, Collection: 4, tippedAmount: 100, Play: 0 },
     });
 
     const result = await getImageMetricsObject([{ id: 1 }]);
@@ -239,7 +239,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       comment: null,
       collection: null,
       buzz: null,
-      play: null,
+      play: undefined, // cached before plays were read: unknown, not 0
     });
     expect(result[2]).toBeUndefined();
     // The THROW arm takes the same fallback and increments neither counter.
