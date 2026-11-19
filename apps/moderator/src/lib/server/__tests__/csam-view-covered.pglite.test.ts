@@ -8,7 +8,8 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * The covered view: which held and blocked media a moderator without the CSAM page's grant is served.
  * Reported bytes are the line: an image listed on any CsamReport, sent or pending, or sharing a url
  * with a listed image or listed moderator delete, or carrying a listed image's pHash, is refused.
- * Everything else the routes hold back from such a moderator today is served.
+ * Evidence-held bytes are never covered either. Otherwise, what the routes hold back from such a
+ * moderator today (tier, scanner verdict, held media) is served, within each route's own eligibility.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
