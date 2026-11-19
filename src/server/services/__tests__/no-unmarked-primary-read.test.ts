@@ -260,7 +260,6 @@ const BASELINE: Counts = {
   'src/server/services/prize.service.ts': 9,
   'src/server/services/promotion.service.ts': 5,
   'src/server/services/purchasable-reward.service.ts': 3,
-  'src/server/services/rating-review.entities.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/redeemableCode.service.ts': 2,
   'src/server/services/referral.service.ts': 7,
