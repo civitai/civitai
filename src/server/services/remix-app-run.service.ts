@@ -506,8 +506,8 @@ async function loadRun(runId: string, caller: RemixAppCaller) {
       throw error instanceof TRPCError && error.code === 'NOT_FOUND' ? changed() : error;
     }
   );
-  // A disabled user app was rejected or pulled: its code is not replayed again, so its runs stop,
-  // finished ones included (their outputs stay in the viewer's generations).
+  // A rejected or pulled user app runs again only for its author or a mod: everyone else's runs
+  // stop here, finished ones too.
   const { author } = entry;
   if (author && !entry.enabled && author.userId !== caller.user.id && !caller.user.isModerator)
     throw new TRPCError({
