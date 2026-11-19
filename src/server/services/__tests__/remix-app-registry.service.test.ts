@@ -39,6 +39,7 @@ import {
   setRemixAppEnabled,
   submitUserRemixApp,
   reviewUserRemixApp,
+  clearRemixMinorThemed,
   remixReviewHash,
   visibleRemixApps,
   type RemixAppRow,
@@ -48,6 +49,7 @@ import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
+import { REMIX_REVIEW_LOG_MAX } from '~/shared/remix-apps/row.schema';
 
 const pixelArt = SEED_REMIX_APPS.find((app) => app.slug === 'pixel-art')!;
 const viewer = { features: { remixAppsUserCode: false } };
@@ -473,7 +475,13 @@ describe('a user app row', () => {
 
 describe('user apps: submit, review and enable', () => {
   const SOURCE = 'export default defineRemixApp({ async run(ctx) { return []; } });';
-  const userRow = (review: string, source = SOURCE, status = 'remix_disabled'): RemixAppRow => ({
+  const MOD = 88;
+  const userRow = (
+    review: string,
+    source = SOURCE,
+    status = 'remix_disabled',
+    extra: object = {}
+  ): RemixAppRow => ({
     id: 'ab_rx_u7_probe_____________',
     blockId: 'remix-u7-probe',
     version: '1.0.0',
@@ -485,26 +493,20 @@ describe('user apps: submit, review and enable', () => {
       remix: { icon: 'sparkles', engine: { safe: DEFAULT_ENGINE.safe }, source },
       author: { userId: 7 },
       review,
+      ...extra,
     },
     status,
     featuredOrder: 9,
   });
   const submission = { name: 'probe', title: 'Probe', icon: 'sparkles' as const, source: SOURCE };
   const hashOf = (row: RemixAppRow) => remixReviewHash(row.manifest as never);
-
-  it('binds a review to the listing text the mod read, not only the code', async () => {
-    const retitled = userRow('submitted');
-    (retitled.manifest as { name: string }).name = 'Something else';
-    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(retitled as never);
-    await expect(
-      reviewUserRemixApp({
-        slug: 'u7-probe',
-        sha256: hashOf(userRow('submitted')),
-        decision: 'approved',
-      })
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
-  });
+  type Written = {
+    where: object;
+    data: { status?: string; contentRating?: string; manifest: Record<string, unknown> };
+  };
+  const lastWrite = () => dbMock.dbWrite.appBlock.updateMany.mock.calls.at(-1)![0] as Written;
+  const logOf = (w: Written) => w.data.manifest.reviewLog as Record<string, unknown>[];
+  const marked = { minorThemed: { by: MOD, at: '2026-11-19T00:00:00.000Z' } };
 
   it("creates the author's app disabled, awaiting review, on the safe engine only", async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
@@ -513,7 +515,8 @@ describe('user apps: submit, review and enable', () => {
     const result = await submitUserRemixApp({ ...submission, authorId: 7 });
 
     expect(result).toEqual({ slug: 'u7-probe', version: 1, sha256: hashOf(userRow('submitted')) });
-    expect(dbMock.dbWrite.appBlock.create.mock.calls[0][0].data).toMatchObject({
+    const { data } = dbMock.dbWrite.appBlock.create.mock.calls[0][0];
+    expect(data).toMatchObject({
       blockId: 'remix-u7-probe',
       status: 'remix_disabled',
       contentRating: 'pg',
@@ -521,14 +524,12 @@ describe('user apps: submit, review and enable', () => {
         author: { userId: 7 },
         review: 'submitted',
         remix: { engine: { safe: DEFAULT_ENGINE.safe }, source: SOURCE },
+        reviewLog: [{ by: 7, action: 'submitted', sha256: result.sha256 }],
       },
     });
-    const { engine } = (
-      dbMock.dbWrite.appBlock.create.mock.calls[0][0].data.manifest as {
-        remix: { engine: object };
-      }
-    ).remix;
-    expect(engine).not.toHaveProperty('mature');
+    expect((data.manifest as { remix: { engine: object } }).remix.engine).not.toHaveProperty(
+      'mature'
+    );
   });
 
   it('takes an approved, enabled app back to review and out of menus when its author edits it', async () => {
@@ -547,6 +548,31 @@ describe('user apps: submit, review and enable', () => {
       status: 'remix_disabled',
       manifest: { review: 'submitted' },
     });
+  });
+
+  it("keeps the server's log and minor-themed mark through an author's edit, whatever the edit carries", async () => {
+    const prior = [
+      { by: MOD, at: '2026-11-18T00:00:00.000Z', action: 'rejected', reason: 'minor-themed' },
+    ];
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
+      userRow('rejected', SOURCE, 'remix_disabled', { ...marked, reviewLog: prior }) as never
+    );
+
+    await submitUserRemixApp({
+      ...submission,
+      authorId: 7,
+      ...({ reviewLog: [], minorThemed: undefined, review: 'approved' } as object),
+    });
+
+    const { manifest } = dbMock.dbWrite.appBlock.update.mock.calls[0][0].data as {
+      manifest: Record<string, unknown>;
+    };
+    expect(manifest.minorThemed).toEqual(marked.minorThemed);
+    expect(manifest.review).toBe('submitted');
+    expect(manifest.reviewLog).toEqual([
+      ...prior,
+      expect.objectContaining({ by: 7, action: 'submitted' }),
+    ]);
   });
 
   it('refuses a new app past the per-author cap, and still takes an edit there', async () => {
@@ -574,7 +600,7 @@ describe('user apps: submit, review and enable', () => {
     expect(dbMock.dbWrite.appBlock.update).not.toHaveBeenCalled();
   });
 
-  it('approves the source the mod read, conditional on the row not having changed since', async () => {
+  it('approves the version the mod read, conditional on the row not having changed since, and logs it', async () => {
     const row = userRow('submitted');
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
@@ -584,82 +610,174 @@ describe('user apps: submit, review and enable', () => {
       sha256: hashOf(row),
       decision: 'approved',
       mature: true,
+      moderatorId: MOD,
     });
 
-    const { where, data } = dbMock.dbWrite.appBlock.updateMany.mock.calls[0][0] as {
-      where: object;
-      data: Record<string, unknown>;
-    };
-    expect(where).toEqual({ id: row.id, manifest: { equals: row.manifest } });
-    expect(data).toMatchObject({
+    const written = lastWrite();
+    expect(written.where).toEqual({ id: row.id, manifest: { equals: row.manifest } });
+    expect(written.data).toMatchObject({
       contentRating: 'x',
       manifest: { review: 'approved', remix: { engine: DEFAULT_ENGINE } },
     });
-    expect(data).not.toHaveProperty('status');
+    expect(written.data).not.toHaveProperty('status');
+    expect(logOf(written)).toEqual([
+      expect.objectContaining({ by: MOD, action: 'approved', sha256: hashOf(row), mature: true }),
+    ]);
   });
 
-  it('rejects by taking the app out of menus, without the mature engine', async () => {
+  it('rejects with a reason, taking the app out of menus without the mature engine', async () => {
     const row = userRow('approved', SOURCE, 'remix');
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(row),
+        decision: 'rejected',
+        moderatorId: MOD,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
 
     await reviewUserRemixApp({
       slug: 'u7-probe',
       sha256: hashOf(row),
       decision: 'rejected',
+      reason: 'broken',
+      note: 'Throws on every image',
       mature: true,
+      moderatorId: MOD,
     });
 
-    const { data } = dbMock.dbWrite.appBlock.updateMany.mock.calls[0][0] as {
-      data: { status?: string; manifest: { review: string; remix: { engine: object } } };
-    };
-    expect(data.status).toBe('remix_disabled');
-    expect(data.manifest.review).toBe('rejected');
-    expect(data.manifest.remix.engine).not.toHaveProperty('mature');
+    const written = lastWrite();
+    expect(written.data.status).toBe('remix_disabled');
+    expect(written.data.manifest.review).toBe('rejected');
+    expect((written.data.manifest.remix as { engine: object }).engine).not.toHaveProperty('mature');
+    expect(written.data.manifest).not.toHaveProperty('minorThemed');
+    expect(logOf(written)).toEqual([
+      expect.objectContaining({
+        action: 'rejected',
+        reason: 'broken',
+        note: 'Throws on every image',
+      }),
+    ]);
   });
 
-  it('refuses a review of a source other than the one stored, and one that lost a race', async () => {
-    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('submitted') as never);
+  it('marks an app rejected as minor-themed for good: no mature engine until a second mod clears it', async () => {
+    const row = userRow('submitted');
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    await reviewUserRemixApp({
+      slug: 'u7-probe',
+      sha256: hashOf(row),
+      decision: 'rejected',
+      reason: 'minor-themed',
+      moderatorId: MOD,
+    });
+    expect(lastWrite().data.manifest.minorThemed).toEqual({ by: MOD, at: expect.any(String) });
+
+    const markedRow = userRow('submitted', SOURCE, 'remix_disabled', marked);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(markedRow as never);
+    dbMock.dbWrite.appBlock.updateMany.mockClear();
     await expect(
       reviewUserRemixApp({
         slug: 'u7-probe',
-        sha256: hashOf(userRow('submitted', 'other')),
+        sha256: hashOf(markedRow),
         decision: 'approved',
+        mature: true,
+        moderatorId: 99,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+
+    // CONTROL: the same app approves for safe sources, and keeps its mark.
+    await reviewUserRemixApp({
+      slug: 'u7-probe',
+      sha256: hashOf(markedRow),
+      decision: 'approved',
+      moderatorId: 99,
+    });
+    expect(lastWrite().data.manifest.minorThemed).toEqual(marked.minorThemed);
+
+    await expect(
+      clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: MOD })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: 99 });
+    expect(lastWrite().data.manifest).not.toHaveProperty('minorThemed');
+    expect(logOf(lastWrite()).at(-1)).toMatchObject({ by: 99, action: 'cleared-minor-themed' });
+  });
+
+  it('binds a review to the listing text the mod read, not only the code', async () => {
+    const retitled = userRow('submitted');
+    (retitled.manifest as { name: string }).name = 'Something else';
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(retitled as never);
+    await expect(
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(userRow('submitted')),
+        decision: 'approved',
+        moderatorId: MOD,
       })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
 
+  it('refuses a review that lost a race to a submit', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('submitted') as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
     await expect(
       reviewUserRemixApp({
         slug: 'u7-probe',
         sha256: hashOf(userRow('submitted')),
         decision: 'rejected',
+        reason: 'spam',
+        moderatorId: MOD,
       })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
-  it('enables a user app only while its review is approved, in the same write', async () => {
-    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
-    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: 'x' } as never);
-
-    await expect(setRemixAppEnabled({ slug: 'u7-probe', enabled: true })).rejects.toMatchObject({
-      code: 'PRECONDITION_FAILED',
-    });
-    expect(dbMock.dbWrite.appBlock.updateMany.mock.calls[0][0].where).toMatchObject({
-      blockId: 'remix-u7-probe',
-      manifest: { path: ['review'], equals: 'approved' },
-    });
-
-    // CONTROL: a system app's enable, and a user app's disable, carry no review condition.
+  it('keeps only the latest review log entries', async () => {
+    const full = Array.from({ length: REMIX_REVIEW_LOG_MAX }, (_, i) => ({
+      by: MOD,
+      at: `2026-11-19T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
+      action: i % 2 ? 'enabled' : 'disabled',
+    }));
+    const row = userRow('approved', SOURCE, 'remix', { reviewLog: full });
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
-    await setRemixAppEnabled({ slug: 'pixel-art', enabled: true });
-    await setRemixAppEnabled({ slug: 'u7-probe', enabled: false });
-    for (const call of dbMock.dbWrite.appBlock.updateMany.mock.calls.slice(1))
-      expect(call[0].where).not.toHaveProperty('manifest');
+
+    await setRemixAppEnabled({ slug: 'u7-probe', enabled: false, moderatorId: MOD });
+
+    // The log is the server's record, never part of what a mod's approval hashes.
+    expect(hashOf(row)).toBe(hashOf(userRow('approved', SOURCE, 'remix')));
+    const log = logOf(lastWrite());
+    expect(log).toHaveLength(REMIX_REVIEW_LOG_MAX);
+    expect(log[0]).toEqual(full[1]);
+    expect(log.at(-1)).toMatchObject({ action: 'disabled', by: MOD });
   });
 
-  it('lists a user app for review with its source and hash, and nothing a mod could edit', async () => {
+  it('enables a user app only while its review is approved, conditional on the row read, and logs it', async () => {
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(userRow('submitted') as never);
+    await expect(
+      setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: MOD })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+
+    const approved = userRow('approved');
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(approved as never);
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    await setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: MOD });
+    expect(lastWrite().where).toEqual({ id: approved.id, manifest: { equals: approved.manifest } });
+    expect(lastWrite().data.status).toBe('remix');
+    expect(logOf(lastWrite())).toEqual([expect.objectContaining({ by: MOD, action: 'enabled' })]);
+
+    // CONTROL: a system app's enable carries no review condition.
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: true });
+    expect(lastWrite().where).not.toHaveProperty('manifest');
+  });
+
+  it('lists a user app for review with its source, hash and log, and nothing a mod could edit', async () => {
     dbMock.dbWrite.appBlock.findMany.mockResolvedValue([userRow('submitted')] as never);
     dbMock.dbRead.appBlock.findMany.mockResolvedValue([userRow('submitted')] as never);
 
@@ -673,6 +791,8 @@ describe('user apps: submit, review and enable', () => {
         review: 'submitted',
         source: SOURCE,
         sha256: hashOf(userRow('submitted')),
+        reviewLog: [],
+        minorThemed: null,
       },
     });
   });

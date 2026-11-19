@@ -245,6 +245,36 @@ export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
 
 export const REMIX_REVIEW_STATES = ['submitted', 'rejected', 'approved'] as const;
 
+export const REMIX_REJECT_REASONS = [
+  'minor-themed',
+  'unsafe-prompts',
+  'broken',
+  'spam',
+  'other',
+] as const;
+export type RemixRejectReason = (typeof REMIX_REJECT_REASONS)[number];
+
+/** A user app's review log keeps its latest entries only, so toggling cannot grow the row. */
+export const REMIX_REVIEW_LOG_MAX = 50;
+
+const reviewLogEntry = z.strictObject({
+  by: z.number().int().positive(),
+  at: z.string(),
+  action: z.enum([
+    'submitted',
+    'approved',
+    'rejected',
+    'enabled',
+    'disabled',
+    'cleared-minor-themed',
+  ]),
+  sha256: z.string().optional(),
+  mature: z.boolean().optional(),
+  reason: z.enum(REMIX_REJECT_REASONS).optional(),
+  note: z.string().max(200).optional(),
+});
+export type RemixReviewLogEntry = z.infer<typeof reviewLogEntry>;
+
 /** Apps one author may hold: each row's source is read into the shared registry cache. */
 export const REMIX_USER_APPS_PER_AUTHOR = 10;
 
@@ -278,6 +308,10 @@ export const remixManifestSchema = z
     remix: storedSpecSchema,
     author: z.strictObject({ userId: z.number().int().positive() }).optional(),
     review: z.enum(REMIX_REVIEW_STATES).optional(),
+    /** Written by the server only, and never part of what a review hashes. */
+    reviewLog: z.array(reviewLogEntry).max(REMIX_REVIEW_LOG_MAX).optional(),
+    /** A rejection as minor-themed: it survives resubmits and bars the mature engine. */
+    minorThemed: z.strictObject({ by: z.number().int().positive(), at: z.string() }).optional(),
   })
   .superRefine((manifest, ctx) => {
     const user = 'source' in manifest.remix;

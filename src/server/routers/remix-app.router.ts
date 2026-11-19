@@ -32,11 +32,13 @@ import {
   deleteRemixApp,
   submitUserRemixApp,
   reviewUserRemixApp,
+  clearRemixMinorThemed,
 } from '~/server/services/remix-app-registry.service';
 import {
   remixAppInputSchema,
   remixAppSlugSchema,
   remixAppSubmitSchema,
+  REMIX_REJECT_REASONS,
 } from '~/shared/remix-apps/row.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
@@ -101,7 +103,7 @@ const remixAppAdminRouter = router({
     .mutation(({ input }) => saveRemixApp(input)),
   setEnabled: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
-    .mutation(({ input }) => setRemixAppEnabled(input)),
+    .mutation(({ ctx, input }) => setRemixAppEnabled({ ...input, moderatorId: ctx.user.id })),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
     .mutation(({ input }) => deleteRemixApp(input)),
@@ -113,9 +115,17 @@ const remixAppAdminRouter = router({
         sha256: z.string().regex(/^[a-f0-9]{64}$/),
         decision: z.enum(['approved', 'rejected']),
         mature: z.boolean().optional(),
+        reason: z.enum(REMIX_REJECT_REASONS).optional(),
+        note: z.string().trim().max(200).optional(),
       })
     )
-    .mutation(({ input }) => reviewUserRemixApp(input)),
+    .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+  /** Lifts a minor-themed mark; refused to the moderator who set it. */
+  clearMinorThemed: userCodeReviewProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ ctx, input }) =>
+      clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
+    ),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),

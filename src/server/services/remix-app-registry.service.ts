@@ -31,6 +31,9 @@ import {
   type RemixAppSubmitInput,
   remixAppSlugSchema,
   REMIX_USER_APPS_PER_AUTHOR,
+  REMIX_REVIEW_LOG_MAX,
+  type RemixRejectReason,
+  type RemixReviewLogEntry,
 } from '~/shared/remix-apps/row.schema';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import type { Prisma } from '@prisma/client';
@@ -463,7 +466,7 @@ export async function submitUserRemixApp({
   const previous = existing ? remixManifestSchema.safeParse(existing.manifest) : undefined;
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);
-  const manifest: RemixManifest = {
+  const listing = {
     kind: 'remix',
     name: title,
     ...(description ? { description } : {}),
@@ -472,7 +475,16 @@ export async function submitUserRemixApp({
     remix: spec,
     author: { userId: authorId },
     review: 'submitted',
-  };
+  } satisfies RemixManifest;
+  const sha256 = remixReviewHash(listing);
+  // The log and the minor-themed marker are the server's: an author's save carries them over as stored.
+  const kept = previous?.success ? previous.data : undefined;
+  const reviewLog = kept?.reviewLog;
+  const minorThemed = kept?.minorThemed;
+  const manifest = withReviewLog(
+    { ...listing, ...(reviewLog ? { reviewLog } : {}), ...(minorThemed ? { minorThemed } : {}) },
+    { by: authorId, action: 'submitted', sha256 }
+  );
   const fields = { manifest, version: manifest.version, contentRating: contentRatingOf(spec) };
   if (existing)
     await dbWrite.appBlock.update({
@@ -481,7 +493,52 @@ export async function submitUserRemixApp({
     });
   else await createRemixAppRow(slug, fields);
   await bumpRemixAppRegistry();
-  return { slug, version: runVersion, sha256: remixReviewHash({ ...manifest, remix: spec }) };
+  return { slug, version: runVersion, sha256 };
+}
+
+const withReviewLog = (
+  manifest: RemixManifest,
+  entry: Omit<RemixReviewLogEntry, 'at'>
+): RemixManifest => ({
+  ...manifest,
+  reviewLog: [...(manifest.reviewLog ?? []), { ...entry, at: new Date().toISOString() }].slice(
+    -REMIX_REVIEW_LOG_MAX
+  ),
+});
+
+/** A user app as stored now: every mod decision is checked against it. */
+async function readUserRemixApp(slug: string) {
+  // primary: a decision must be about the row as it is now, not a replica's copy.
+  const row = await dbWrite.appBlock.findUnique({
+    where: { blockId: remixBlockId(slug) },
+    select: remixAppRowSelect,
+  });
+  const parsed =
+    row && REMIX_STATUSES.includes(row.status)
+      ? remixManifestSchema.safeParse(row.manifest)
+      : undefined;
+  if (!row || !parsed?.success || !('source' in parsed.data.remix))
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'User remix app not found' });
+  return { row, parsed, manifest: parsed.data, remix: parsed.data.remix };
+}
+
+const userAppChanged = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'The app changed after you opened it. Reload it and try again.',
+  });
+
+/** Conditional on the manifest read, so a submit that lands in between is never acted on. */
+async function writeUserRemixApp(
+  row: { id: string; manifest: unknown },
+  data: Prisma.AppBlockUpdateManyMutationInput
+) {
+  const { count } = await dbWrite.appBlock.updateMany({
+    where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
+    data,
+  });
+  if (!count) throw userAppChanged();
+  await bumpRemixAppRegistry();
 }
 
 /**
@@ -493,52 +550,82 @@ export async function reviewUserRemixApp({
   sha256,
   decision,
   mature = false,
+  reason,
+  note,
+  moderatorId,
 }: {
   slug: string;
   sha256: string;
   decision: 'approved' | 'rejected';
   mature?: boolean;
+  reason?: RemixRejectReason;
+  note?: string;
+  moderatorId: number;
 }) {
-  // primary: the approval must be of the source stored now.
-  const row = await dbWrite.appBlock.findUnique({
-    where: { blockId: remixBlockId(slug) },
-    select: remixAppRowSelect,
-  });
-  const parsed =
-    row && REMIX_STATUSES.includes(row.status)
-      ? remixManifestSchema.safeParse(row.manifest)
-      : undefined;
-  if (!row || !parsed?.success || !('source' in parsed.data.remix))
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'User remix app not found' });
-  const changed = new TRPCError({
-    code: 'CONFLICT',
-    message: 'The app changed after you opened it. Reload it and review it again.',
-  });
-  const { remix } = parsed.data;
-  if (remixReviewHash({ ...parsed.data, remix }) !== sha256) throw changed;
+  if (decision === 'rejected' && !reason)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Give a reason for the rejection' });
+  const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
+  if (remixReviewHash({ ...stored, remix }) !== sha256) throw userAppChanged();
+  const withMature = decision === 'approved' && mature;
+  if (withMature && stored.minorThemed)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This app was rejected as minor-themed, so it can only be approved for safe sources',
+    });
 
-  const matureEngine = decision === 'approved' && mature ? { mature: DEFAULT_ENGINE.mature } : {};
-  const spec: RemixUserSpec = { ...remix, engine: { safe: remix.engine.safe, ...matureEngine } };
-  const runVersion = nextRunVersion(row, parsed, spec);
-  const manifest: RemixManifest = {
-    ...parsed.data,
-    version: `${runVersion}.0.0`,
-    remix: spec,
-    review: decision,
+  const spec: RemixUserSpec = {
+    ...remix,
+    engine: { safe: remix.engine.safe, ...(withMature ? { mature: DEFAULT_ENGINE.mature } : {}) },
   };
-  // Conditional on the manifest read above, so a submit that lands in between is never approved.
-  const { count } = await dbWrite.appBlock.updateMany({
-    where: { id: row.id, manifest: { equals: row.manifest as Prisma.InputJsonValue } },
-    data: {
-      manifest,
-      version: manifest.version,
-      contentRating: contentRatingOf(spec),
-      ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
+  const runVersion = nextRunVersion(row, parsed, spec);
+  const minorThemed =
+    stored.minorThemed ??
+    (reason === 'minor-themed' ? { by: moderatorId, at: new Date().toISOString() } : undefined);
+  const manifest = withReviewLog(
+    {
+      ...stored,
+      version: `${runVersion}.0.0`,
+      remix: spec,
+      review: decision,
+      ...(minorThemed ? { minorThemed } : {}),
     },
+    {
+      by: moderatorId,
+      action: decision,
+      sha256,
+      ...(decision === 'approved' ? { mature: withMature } : { reason }),
+      ...(note ? { note } : {}),
+    }
+  );
+  await writeUserRemixApp(row, {
+    manifest,
+    version: manifest.version,
+    contentRating: contentRatingOf(spec),
+    ...(decision === 'rejected' ? { status: REMIX_STATUS.disabled } : {}),
   });
-  if (!count) throw changed;
-  await bumpRemixAppRegistry();
   return { slug, review: decision, version: runVersion };
+}
+
+/** Lifts a minor-themed marker. A second moderator must do it: never the one who set it. */
+export async function clearRemixMinorThemed({
+  slug,
+  moderatorId,
+}: {
+  slug: string;
+  moderatorId: number;
+}) {
+  const { row, manifest: stored } = await readUserRemixApp(slug);
+  if (!stored.minorThemed)
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This app is not marked' });
+  if (stored.minorThemed.by === moderatorId)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must clear a mark you set',
+    });
+  const { minorThemed: _, ...rest } = stored;
+  await writeUserRemixApp(row, {
+    manifest: withReviewLog(rest, { by: moderatorId, action: 'cleared-minor-themed' }),
+  });
 }
 
 /** Read off the raw manifest, so a user row that no longer validates still counts as one. */
@@ -600,30 +687,41 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
   await bumpRemixAppRegistry();
 }
 
-export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enabled: boolean }) {
-  const blockId = remixBlockId(slug);
-  // In the update itself, so a submit between a read and this write cannot enable unreviewed code.
-  const approvedOnly = enabled && USER_REMIX_SLUG.test(slug);
-  const { count } = await dbWrite.appBlock.updateMany({
-    where: {
-      blockId,
-      status: { in: REMIX_STATUSES },
-      ...(approvedOnly ? { manifest: { path: ['review'], equals: 'approved' } } : {}),
-    },
-    data: { status: enabled ? REMIX_STATUS.enabled : REMIX_STATUS.disabled },
-  });
-  if (!count) {
-    if (
-      approvedOnly &&
-      // primary: tells a refused enable from a missing row, right after the write.
-      (await dbWrite.appBlock.findUnique({ where: { blockId }, select: { id: true } }))
-    )
+export async function setRemixAppEnabled({
+  slug,
+  enabled,
+  moderatorId,
+}: {
+  slug: string;
+  enabled: boolean;
+  /** Who did it, for a user app's review log. */
+  moderatorId?: number;
+}) {
+  const status = enabled ? REMIX_STATUS.enabled : REMIX_STATUS.disabled;
+  if (USER_REMIX_SLUG.test(slug)) {
+    if (!moderatorId) throw new Error('A user app is enabled or disabled by a named moderator');
+    const { row, manifest, remix } = await readUserRemixApp(slug);
+    if (enabled && manifest.review !== 'approved')
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'Approve this app before enabling it',
       });
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+    const sha256 = remixReviewHash({ ...manifest, remix });
+    await writeUserRemixApp(row, {
+      status,
+      manifest: withReviewLog(manifest, {
+        by: moderatorId,
+        action: enabled ? 'enabled' : 'disabled',
+        sha256,
+      }),
+    });
+    return;
   }
+  const { count } = await dbWrite.appBlock.updateMany({
+    where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
+    data: { status },
+  });
+  if (!count) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   await bumpRemixAppRegistry();
 }
 
@@ -676,6 +774,8 @@ export async function listRemixAppsForAdmin() {
             mature: !!remix.engine.mature,
             source: remix.source,
             sha256: remixReviewHash({ ...parsed.data, remix }),
+            reviewLog: parsed.data.reviewLog ?? [],
+            minorThemed: parsed.data.minorThemed ?? null,
           },
         };
       return {

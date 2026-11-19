@@ -199,6 +199,12 @@ describe('user app code: submit and review', () => {
       .createCaller(ctx(moderator, both))
       .submit({ ...submission(), authorId: 1 } as never);
     expect(u.submit).toHaveBeenCalledWith(expect.objectContaining({ authorId: moderator.id }));
+    // Nor can a submit carry the server's review fields.
+    await remixAppRouter
+      .createCaller(ctx(moderator, both))
+      .submit({ ...submission(), reviewLog: [], minorThemed: null, review: 'approved' } as never);
+    const sent = u.submit.mock.calls.at(-1)![0] as object;
+    for (const key of ['reviewLog', 'minorThemed', 'review']) expect(sent).not.toHaveProperty(key);
   });
 
   it('reviews only as a moderator with remixAppsUserCode on', async () => {
