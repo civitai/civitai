@@ -25,12 +25,12 @@ beforeEach(async () => {
       "deletedAt" TIMESTAMP);
     INSERT INTO "User" VALUES
       (-1, 'civitai', NULL, NULL),
-      (4992351, 'ColaMiner', NULL, NULL),
-      (12, 'ColaMinerAlt', NULL, NULL),
-      (13, 'ColaXMiner', NULL, NULL),
-      (14, 'Cola_Miner', NULL, NULL),
-      (15, '4992351fan', NULL, NULL),
-      (16, 'ColaMinerGone', NULL, '2026-11-01');
+      (990004992, 'SynthMiner', NULL, NULL),
+      (12, 'SynthMinerAlt', NULL, NULL),
+      (13, 'SynthXMiner', NULL, NULL),
+      (14, 'Synth_Miner', NULL, NULL),
+      (15, '990004992fan', NULL, NULL),
+      (16, 'SynthMinerGone', NULL, '2026-11-01');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -44,30 +44,30 @@ const names = async (query: string) => (await searchUsers({ query })).map((u) =>
 
 describe('the grant page user picker', () => {
   it('finds a pasted name that carries a zero-width space or a leading @', async () => {
-    expect(await names('ColaMiner​')).toEqual(['ColaMiner', 'ColaMinerAlt']);
-    expect(await names('​@ColaMiner ')).toEqual(['ColaMiner', 'ColaMinerAlt']);
+    expect(await names('SynthMiner​')).toEqual(['SynthMiner', 'SynthMinerAlt']);
+    expect(await names('​@SynthMiner ')).toEqual(['SynthMiner', 'SynthMinerAlt']);
   });
 
   it('puts the account with a pasted id first, then usernames that start with those digits', async () => {
-    expect(await names('4992351')).toEqual(['ColaMiner', '4992351fan']);
-    expect(await names('#4992351')).toEqual(['ColaMiner', '4992351fan']);
+    expect(await names('990004992')).toEqual(['SynthMiner', '990004992fan']);
+    expect(await names('#990004992')).toEqual(['SynthMiner', '990004992fan']);
   });
 
   it('treats an underscore as itself, not as any character', async () => {
-    expect(await names('Cola_')).toEqual(['Cola_Miner']);
+    expect(await names('Synth_')).toEqual(['Synth_Miner']);
   });
 
   it('never offers the system account or a deleted one, and survives an over-long id', async () => {
     expect(await names('civ')).toEqual([]);
     expect(await names('-1')).toEqual([]);
     expect(await names('99999999999')).toEqual([]);
-    expect(await names('ColaMinerG')).toEqual([]);
+    expect(await names('SynthMinerG')).toEqual([]);
   });
 });
 
 describe('User Lookup, which resolves one account from a pasted term', () => {
   it('resolves a pasted name with a zero-width space or a leading @, and a #id', async () => {
-    expect(await resolveUserId('​@ColaMiner')).toBe(4992351);
-    expect(await resolveUserId('#4992351')).toBe(4992351);
+    expect(await resolveUserId('​@SynthMiner')).toBe(990004992);
+    expect(await resolveUserId('#990004992')).toBe(990004992);
   });
 });
