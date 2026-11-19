@@ -141,6 +141,21 @@ describe('a file row in the model preview', () => {
     ]);
   });
 
+  it('spells out a scan that is not clean on a live file', () => {
+    const badges = (over: Partial<ModelPreviewFile>) =>
+      show(file({ type: 'Model', visibility: 'Public', ...over })).badges;
+    expect(badges({ pickleScan: 'Pending' })).toEqual(['Not scanned yet']);
+    expect(badges({ virusScan: 'Error' })).toEqual(['Scan failed']);
+    expect(badges({ pickleScan: 'Danger' })).toEqual(['Unsafe pickle']);
+    expect(badges({})).toEqual([]);
+  });
+
+  it('drops "scan failed" on a purged row too', () => {
+    expect(show(file({ purged: true, pickleScan: 'Error' })).badges).toEqual([
+      'Training data removed (purged)',
+    ]);
+  });
+
   it('offers a download on a live model file', () => {
     expect(show(file({ type: 'Model', visibility: 'Public' }))).toEqual({
       badges: [],
