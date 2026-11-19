@@ -13,6 +13,7 @@
   } from '@tabler/icons-svelte';
   import { onMount, untrack } from 'svelte';
   import '$lib/civitai-elements';
+  import type { StudioChipGroup } from '$lib/elements/studio-chip-group';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
   import { autoLabelAvailable, pickModel } from '$lib/host';
@@ -577,13 +578,13 @@
         <div id="media-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Media
         </div>
-        <civitai-segmented-control
-          class="min-w-0"
-          aria-labelledby="media-group-label"
+        <studio-chip-group
+          class="flex-1"
+          aria-label="Media"
           data={sections.map((m) => ({ value: m.id, label: m.name }))}
           value={activeSection}
-          onchange={(e: Event) => pickSection((e.currentTarget as HTMLInputElement).value)}
-        ></civitai-segmented-control>
+          onchange={(e: Event) => pickSection((e.currentTarget as StudioChipGroup).value)}
+        ></studio-chip-group>
       </div>
 
       {#if editSection}
@@ -597,13 +598,13 @@
         <div id="type-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Type
         </div>
-        <civitai-segmented-control
-          class="min-w-0"
-          aria-labelledby="type-group-label"
+        <studio-chip-group
+          class="flex-1"
+          aria-label="Type"
           data={types.map((t) => ({ value: t.id, label: t.name }))}
           value={loraType}
-          onchange={(e: Event) => pickType((e.currentTarget as HTMLInputElement).value)}
-        ></civitai-segmented-control>
+          onchange={(e: Event) => pickType((e.currentTarget as StudioChipGroup).value)}
+        ></studio-chip-group>
       </div>
       {/if}
 
@@ -613,16 +614,20 @@
             Engine
           </div>
           <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <civitai-segmented-control
-              aria-labelledby="engine-group-label"
-              title={kohyaBlockedReason ?? undefined}
+            <studio-chip-group
+              aria-label="Engine"
               data={[
                 { value: 'ai-toolkit', label: 'AI Toolkit' },
-                { value: 'kohya', label: 'Kohya', disabled: !kohyaMode && !!kohyaBlockedReason },
+                {
+                  value: 'kohya',
+                  label: 'Kohya',
+                  disabled: !kohyaMode && !!kohyaBlockedReason,
+                  title: kohyaMode ? undefined : kohyaBlockedReason ?? undefined,
+                },
               ]}
               value={kohyaMode ? 'kohya' : 'ai-toolkit'}
-              onchange={(e: Event) => pickEngine((e.currentTarget as HTMLInputElement).value)}
-            ></civitai-segmented-control>
+              onchange={(e: Event) => pickEngine((e.currentTarget as StudioChipGroup).value)}
+            ></studio-chip-group>
             <span class="font-mono text-xs text-dark-2">
               Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
             </span>
