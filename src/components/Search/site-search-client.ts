@@ -6,6 +6,7 @@ import {
   getSearchApiKey,
 } from '~/components/Search/search-api-key';
 import { isSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
+import { PROXY_ONLY_SEARCH_INDEXES } from '~/server/common/constants';
 
 /**
  * Browser site search, two ways, chosen per request by the `siteSearchProxy` flag:
@@ -46,6 +47,57 @@ async function proxySearchFetch<T>(path: string, init: RequestInit): Promise<T> 
   return body as T;
 }
 
+const isProxyOnly = (indexUid: unknown) =>
+  typeof indexUid === 'string' && PROXY_ONLY_SEARCH_INDEXES.includes(indexUid);
+
+type MultiSearchBody = { queries?: { indexUid?: unknown }[]; federation?: unknown };
+
+/**
+ * How a token-path request reaches a proxy-only index: a single-index request by its path, a
+ * multi-search by the indexes it names. A multi-search mixing both is split, so the other indexes
+ * still go straight to Meilisearch exactly as before; a federated one cannot be split and goes to
+ * the proxy whole.
+ */
+function proxyOnlyRoute(path: string, init: RequestInit) {
+  const index = /^\/indexes\/([^/?]+)/.exec(path)?.[1];
+  if (index !== undefined) return isProxyOnly(decodeURIComponent(index)) ? 'proxy' : 'direct';
+  if (!path.startsWith('/multi-search') || typeof init.body !== 'string') return 'direct';
+  let body: MultiSearchBody;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return 'direct';
+  }
+  const queries = Array.isArray(body?.queries) ? body.queries : [];
+  const proxied = queries.map((query) => isProxyOnly(query?.indexUid));
+  if (!proxied.some(Boolean)) return 'direct';
+  if (body.federation !== undefined || proxied.every(Boolean)) return 'proxy';
+  return { body, proxied };
+}
+
+async function splitMultiSearch<T>(
+  path: string,
+  init: RequestInit,
+  { body, proxied }: { body: MultiSearchBody; proxied: boolean[] },
+  direct: (path: string, init: RequestInit) => Promise<T>
+): Promise<T> {
+  const queries = body.queries ?? [];
+  const part = (toProxy: boolean) => ({
+    ...init,
+    body: JSON.stringify({ ...body, queries: queries.filter((_, i) => proxied[i] === toProxy) }),
+  });
+  const [fromProxy, fromDirect] = await Promise.all([
+    proxySearchFetch<{ results: unknown[] }>(path, part(true)),
+    direct(path, part(false)) as Promise<{ results: unknown[] }>,
+  ]);
+  const proxyResults = [...fromProxy.results];
+  const directResults = [...fromDirect.results];
+  return {
+    ...fromDirect,
+    results: proxied.map((toProxy) => (toProxy ? proxyResults.shift() : directResults.shift())),
+  } as T;
+}
+
 /**
  * `fetch` for site search, returning the parsed body. Shaped as the meilisearch-js `httpClient`
  * option, which must parse and throw on its own. Takes a URL on either the site-search path or the
@@ -56,7 +108,11 @@ export async function searchFetch<T = any>(url: string, init: RequestInit = {}):
   if (isSiteSearchProxyEnabled() || !(await getSearchApiKey()))
     return proxySearchFetch<T>(path, init);
   const host = (env.NEXT_PUBLIC_SEARCH_HOST ?? '').replace(/\/+$/, '');
-  return directSearchFetch<T>(`${host}${path}`, init);
+  const direct = <R>(p: string, i: RequestInit) => directSearchFetch<R>(`${host}${p}`, i);
+  const route = proxyOnlyRoute(path, init);
+  if (route === 'proxy') return proxySearchFetch<T>(path, init);
+  if (route === 'direct') return direct<T>(path, init);
+  return splitMultiSearch<T>(path, init, route, direct);
 }
 
 /** The browser's instant-meilisearch client. `searchFetch` decides where each request goes. */

@@ -18,6 +18,11 @@ import type {
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import {
+  allBrowsingLevelsFlag,
+  effectiveBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_TIMEOUT_MS = 5_000;
@@ -43,9 +48,35 @@ export type SiteSearchViewer = {
   isModerator?: boolean | null;
   /** The most this request may be served; `undefined` where the site caps nothing. */
   browsingLevelCap?: number;
+  /**
+   * Where the site caps nothing: the signed-in viewer's own level, which collection covers and
+   * item images are capped to (a collection's level is its items' combined level, so the doc
+   * filter does not reach each picture). `undefined` for moderators and under a cap.
+   */
+  collectionImageLevel?: number;
   /** Model hits carry their civitai.com face instead of the civitai.red title. */
   showSfwFace: boolean;
 };
+
+/**
+ * `SiteSearchViewer.collectionImageLevel`: the signed-in, non-moderator viewer's own level where the
+ * site caps nothing, and `undefined` where it would change nothing (a viewer on every level).
+ */
+export function collectionImageLevelFor({
+  browsingLevelCap,
+  signedIn,
+  isModerator,
+  viewerBrowsingLevel,
+}: {
+  browsingLevelCap: number | undefined;
+  signedIn: boolean;
+  isModerator: boolean | null | undefined;
+  viewerBrowsingLevel: number;
+}) {
+  if (browsingLevelCap !== undefined || !signedIn || isModerator) return undefined;
+  const level = effectiveBrowsingCeiling(allBrowsingLevelsFlag, viewerBrowsingLevel);
+  return Flags.hasFlag(level, allBrowsingLevelsFlag) ? undefined : level;
+}
 
 /** A refusal the site-search endpoint sends as-is, so its message must be safe to show. */
 export class SiteSearchError extends Error {
@@ -250,13 +281,14 @@ function shapeCollectionHit(
  */
 export function hitsNeedShaping(
   indexUid: string | undefined,
-  viewer: Pick<SiteSearchViewer, 'browsingLevelCap'>
+  viewer: Pick<SiteSearchViewer, 'browsingLevelCap' | 'collectionImageLevel'>
 ) {
   if (indexUid === MODELS_SEARCH_INDEX) return true;
+  if (indexUid === COLLECTIONS_SEARCH_INDEX)
+    return viewer.browsingLevelCap !== undefined || viewer.collectionImageLevel !== undefined;
   if (
     indexUid === COMICS_SEARCH_INDEX ||
     indexUid === BOUNTIES_SEARCH_INDEX ||
-    indexUid === COLLECTIONS_SEARCH_INDEX ||
     indexUid === ARTICLES_SEARCH_INDEX ||
     indexUid === USERS_SEARCH_INDEX
   )
@@ -307,7 +339,10 @@ const AVATAR_INDEXES = [
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!hitsNeedShaping(indexUid, viewer)) return hits;
   const cap = viewer.browsingLevelCap;
-  if (!Array.isArray(hits)) return cap === undefined ? hits : [];
+  const capped =
+    cap !== undefined ||
+    (indexUid === COLLECTIONS_SEARCH_INDEX && viewer.collectionImageLevel !== undefined);
+  if (!Array.isArray(hits)) return capped ? [] : hits;
   if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
     return shapeIndexHits(indexUid, hits, viewer);
   const shaped = shapeIndexHits(indexUid, hits, viewer);
@@ -324,7 +359,9 @@ function shapeIndexHits(indexUid: string | undefined, hits: unknown, viewer: Sit
   if (indexUid === BOUNTIES_SEARCH_INDEX)
     return hits.map((hit: BountyHit) => shapeBountyHit(hit, viewer.browsingLevelCap));
   if (indexUid === COLLECTIONS_SEARCH_INDEX)
-    return hits.map((hit: CollectionHit) => shapeCollectionHit(hit, viewer.browsingLevelCap));
+    return hits.map((hit: CollectionHit) =>
+      shapeCollectionHit(hit, viewer.browsingLevelCap ?? viewer.collectionImageLevel)
+    );
   return hits;
 }
 
