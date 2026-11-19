@@ -523,7 +523,7 @@ function rawMetadataAssignment(sql: string): string | null {
     if (sql[i] === '$' && sql[i + 1] === '{') i = interpolationEnd(sql, i + 2);
     else if (sql[i] === '(') depth++, i++;
     else if (sql[i] === ')') depth--, i++;
-    else if (depth === 0 && (sql[i] === ',' || /^\s+WHERE\b/i.test(sql.slice(i, i + 20))))
+    else if (depth === 0 && (sql[i] === ',' || /^\s+(WHERE|FROM)\b/i.test(sql.slice(i, i + 20))))
       return sql.slice(start, i).trim();
     else i++;
   }

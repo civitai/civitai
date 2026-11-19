@@ -170,6 +170,7 @@ function edit(cat: FixtureCatalog, title: string) {
 
 const ALL_LEVELS = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
 const UP_TO_R = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R;
+const UP_TO_X = UP_TO_R | NsfwLevel.X;
 
 /** The site's verification, faked: each token is a user with saved browsing settings. */
 const TOKENS: Record<
@@ -188,6 +189,12 @@ const TOKENS: Record<
   'r-token': {
     subject: 'user:2/client:a',
     user: { showNsfw: true, browsingLevel: UP_TO_R },
+    expiresAt: () => null,
+  },
+  // R and X in the saved level, XXX not.
+  'rx-token': {
+    subject: 'user:9/client:a',
+    user: { showNsfw: true, browsingLevel: UP_TO_X },
     expiresAt: () => null,
   },
   // Another user who may read exactly what `r-token`'s may.
@@ -1183,6 +1190,10 @@ describe('appContentRating: the listing’s rating when known, else the block’
     ['unrated', 'g', 'g'],
     ['R', 'g', 'R'],
     ['pg', null, 'pg'],
+    // `xxx` is a known rating: the listing's wins, and is never replaced by the block's.
+    ['xxx', 'x', 'xxx'],
+    ['XXX', 'pg', 'XXX'],
+    [null, 'xxx', 'xxx'],
     // Neither known: the first one set, else null; both fail closed (`audienceAdmits`).
     ['unrated', '', 'unrated'],
     ['', 'pg-13', 'pg-13'],
@@ -1190,6 +1201,118 @@ describe('appContentRating: the listing’s rating when known, else the block’
     [null, null, null],
   ])('listing %j, block %j: %j', (listing, block, published) => {
     expect(rated(listing, block)).toBe(published);
+  });
+});
+
+const LEVEL = {
+  PG: NsfwLevel.PG | NsfwLevel.PG13,
+  R: NsfwLevel.R,
+  X: NsfwLevel.X,
+  XXX: NsfwLevel.XXX,
+};
+const showing = (browsingLevel: number) => audienceForUser({ showNsfw: true, browsingLevel });
+/** Every audience a token can have, by name; `held` is an all-levels user from a held region. */
+const AUDIENCES = {
+  anonymous: ANONYMOUS_AUDIENCE,
+  m: showing(LEVEL.PG),
+  mr: showing(LEVEL.PG | LEVEL.R),
+  mx: showing(LEVEL.PG | LEVEL.X),
+  mrx: showing(LEVEL.PG | LEVEL.R | LEVEL.X),
+  'm+xxx': showing(LEVEL.PG | LEVEL.XXX),
+  'mr+xxx': showing(LEVEL.PG | LEVEL.R | LEVEL.XXX),
+  'mx+xxx': showing(LEVEL.PG | LEVEL.X | LEVEL.XXX),
+  'mrx+xxx': showing(LEVEL.PG | LEVEL.R | LEVEL.X | LEVEL.XXX),
+  held: audienceForUser({ showNsfw: true, browsingLevel: ALL_LEVELS }, { regionRestricted: true }),
+};
+type AudienceName = keyof typeof AUDIENCES;
+const AUDIENCE_NAMES = Object.keys(AUDIENCES) as AudienceName[];
+
+describe('🔴 audienceAdmits: xxx reaches only an audience whose level includes XXX', () => {
+  it('each audience is keyed by the mature ratings it may read', () => {
+    expect(Object.fromEntries(AUDIENCE_NAMES.map((n) => [n, AUDIENCES[n].key]))).toEqual({
+      anonymous: 'm',
+      m: 'm',
+      mr: 'mr',
+      mx: 'mx',
+      mrx: 'mrx',
+      'm+xxx': 'm+xxx',
+      'mr+xxx': 'mr+xxx',
+      'mx+xxx': 'mx+xxx',
+      'mrx+xxx': 'mrx+xxx',
+      held: 'm',
+    });
+  });
+
+  it.each<[string | null, AudienceName[]]>([
+    ['g', AUDIENCE_NAMES],
+    ['pg13', AUDIENCE_NAMES],
+    ['r', ['mr', 'mrx', 'mr+xxx', 'mrx+xxx']],
+    ['x', ['mx', 'mrx', 'mx+xxx', 'mrx+xxx']],
+    ['xxx', ['m+xxx', 'mr+xxx', 'mx+xxx', 'mrx+xxx']],
+    ['XXX', ['m+xxx', 'mr+xxx', 'mx+xxx', 'mrx+xxx']],
+    // Not trimmed, as the site does not trim: an unknown rating, which fails closed to an
+    // audience that may read every mature rating.
+    [' xxx ', ['mrx+xxx']],
+    ['unrated', ['mrx+xxx']],
+    [null, ['mrx+xxx']],
+  ])('rating %j is admitted to exactly %j', (rating, admitted) => {
+    expect(AUDIENCE_NAMES.filter((n) => audienceAdmits(AUDIENCES[n], rating))).toEqual(admitted);
+  });
+});
+
+describe('🔴 an xxx-rated app reaches only a subscription whose level includes XXX', () => {
+  const named = (schema: string) =>
+    schema === APPS ? `"urn":"${APP_URN}"` : schema === RELEASES ? RELEASE_URN : DOC;
+
+  it.each<[string, string | null, string, boolean]>([
+    // [schema, token, listing rating, sent]
+    [APPS, 'x-token', 'xxx', true],
+    [APPS, 'rx-token', 'xxx', false],
+    [APPS, 'x-off-token', 'xxx', false],
+    [APPS, null, 'xxx', false],
+    [RELEASES, 'x-token', 'xxx', true],
+    [RELEASES, 'rx-token', 'xxx', false],
+    [NOTES, 'x-token', 'XXX', true],
+    [NOTES, 'rx-token', 'XXX', false],
+    // Positive control: an x-rated app reaches the R+X token on every stream.
+    [APPS, 'rx-token', 'x', true],
+    [RELEASES, 'rx-token', 'x', true],
+    [NOTES, 'rx-token', 'x', true],
+  ])('%s, token %s, app rated %s: sent = %s', async (schema, token, rating, sent) => {
+    const port = await httpServer(source({ rating, blockRating: 'x' }).adapter);
+    const res = await get(port, q(schema), token ? bearer(token) : {});
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+    expect(res.text.includes(named(schema))).toBe(sent);
+  });
+
+  it('a listing rated xxx over a block rated x is published as xxx', async () => {
+    const port = await httpServer(source({ rating: 'xxx', blockRating: 'x' }).adapter);
+    const res = await get(port, q(APPS), bearer('x-token'));
+    expect(res.text).toContain('"contentRating":"xxx"');
+  });
+
+  it('the schema stream: an R+X token gets the x app’s collection schema, never the xxx one’s', async () => {
+    const apps = () => [listedApp('sun-notes', 'x'), listedApp('moon-notes', 'xxx')];
+    const port = await httpServer(catalogSource(apps));
+    const rx = await get(port, q(SCHEMAS), bearer('rx-token'));
+    expect(upsertedUrns(rx.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('sun-notes')].sort()
+    );
+    expect(rx.text).not.toContain('moon-notes');
+    const all = await get(port, q(SCHEMAS), bearer('x-token'));
+    expect(upsertedUrns(all.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('moon-notes'), notesSchemaOf('sun-notes')].sort()
+    );
+  });
+
+  it('an all-levels token from a region held to SFW is sent no xxx app', async () => {
+    const port = await httpServer(source({ rating: 'xxx' }).adapter, {
+      regionRestricted: (origin) => origin.headers['cf-ipcountry'] === 'ZZ',
+    });
+    const res = await get(port, q(APPS), { ...bearer('x-token'), 'cf-ipcountry': 'ZZ' });
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(['live']);
   });
 });
 
@@ -1249,10 +1372,15 @@ const zzRestricted: ServeOptions['regionRestricted'] = (origin) =>
 describe('🔴 from a region the site restricts to SFW, a token is sent no mature-rated app', () => {
   it('the SFW rule narrows an X user to what anonymous reads', () => {
     const user = { showNsfw: true, browsingLevel: ALL_LEVELS };
-    expect(audienceForUser(user).key).toBe('mrx');
+    expect(audienceForUser(user).key).toBe('mrx+xxx');
     expect(audienceForUser(user, { regionRestricted: true }).key).toBe('m');
     expect(audienceForUser(user, { regionRestricted: true }).key).toBe(ANONYMOUS_AUDIENCE.key);
-    expect(audienceForUser(user, { regionRestricted: false }).key).toBe('mrx');
+    expect(audienceForUser(user, { regionRestricted: true }).allowed).toEqual({
+      r: false,
+      x: false,
+      xxx: false,
+    });
+    expect(audienceForUser(user, { regionRestricted: false }).key).toBe('mrx+xxx');
   });
 
   it.each([
