@@ -20,7 +20,7 @@ const IMAGES_PER_REINDEX = 500;
 /**
  * After images are newly restricted: for the mature ones, which the restriction hides, queue every
  * search document that shows them and take them out of the image queues (cached thumbnails, rating
- * pools), 500 images at a time. Never throws, and logs counts only: the flags are already committed.
+ * pools), in batches. Never throws, and logs counts only: the flags are already committed.
  */
 export async function reindexRestrictedImages(
   { imageIds, matureImageIds }: Pick<FlagResult, 'imageIds' | 'matureImageIds'>,

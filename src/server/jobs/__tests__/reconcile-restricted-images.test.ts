@@ -293,6 +293,31 @@ describe('reconcile-restricted-images search reindex', () => {
     expect(collectionUpdates()).toEqual([77, 77]);
   });
 
+  it('retries a failed image queue removal once', async () => {
+    chunkImageIds = [[501]];
+    executeRaw.mockResolvedValue(1);
+    const flag = queryRaw.getMockImplementation()!;
+    let failed = false;
+    queryRaw.mockImplementation((...call: unknown[]) => {
+      if (sqlOf(call).includes("'parentId'") && !failed) {
+        failed = true;
+        return Promise.reject(new Error('db blip'));
+      }
+      return flag(...call);
+    });
+
+    await run();
+
+    expect(thumbnailRefreshes()).toEqual([[501], [501]]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.some(
+          ([entry]) => (entry as { message?: string }).message === 'Image queue removal failed'
+        )
+    ).toBe(false);
+  });
+
   it('keeps a restricted image the restriction does not hide in the image queues', async () => {
     chunkImageIds = [[501, 502]];
     notMature = new Set([502]);

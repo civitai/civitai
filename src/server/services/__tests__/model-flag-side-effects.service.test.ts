@@ -508,7 +508,7 @@ describe('privateModelFromTraining — the sfwOnly it forces on', () => {
 });
 
 describe('applyModelFlagSideEffects — sfwOnly alone', () => {
-  it('still re-syncs the images of a minor model', async () => {
+  it('still re-syncs the images of a held model', async () => {
     await applyModelFlagSideEffects({
       before: { ...baseBefore, minor: true },
       after: { ...baseAfter, minor: true, sfwOnly: true },

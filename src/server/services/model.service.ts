@@ -2809,7 +2809,7 @@ export async function applyModelFlagSideEffects({
 
   let modelVersionIds: number[] | undefined;
 
-  // Images carry minor/poi, not sfwOnly; a minor model always re-syncs (the value guard makes it a no-op).
+  // The image rows don't carry sfwOnly; a held model always re-syncs them (the value guard makes it a no-op).
   const syncImageFlags = after.minor !== before.minor || poiChanged || after.minor;
   if (minorChanged || poiChanged) {
     modelVersionIds = (
