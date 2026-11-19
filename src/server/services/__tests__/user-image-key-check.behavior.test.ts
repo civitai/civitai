@@ -64,6 +64,7 @@ describe('the User.image upload-key constraint', () => {
 
   it('validates after it is added, and refuses to run without it', async () => {
     await expect(pg.exec(VALIDATE)).rejects.toThrow(/apply 20261119180000 first/);
+    await pg.exec('ROLLBACK');
     await setImage(1, 'https://avatars.githubusercontent.com/u/1?v=4');
     await pg.exec(ADD);
     await pg.exec(VALIDATE);
