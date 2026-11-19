@@ -345,7 +345,9 @@ async function unpackVideo(file: ClaimedFinal, probeVideo: typeof probeVideoDime
     new GetObjectCommand({ Bucket: await getBucket(), Key: file.s3Key })
   );
   if (!object.Body || !object.ETag) throw new Error('Video read returned no body or ETag');
-  const original = Buffer.from(await object.Body.transformToByteArray());
+  // A view over the bytes read, not a copy: one video's size in memory, not two.
+  const read = await object.Body.transformToByteArray();
+  const original = Buffer.from(read.buffer, read.byteOffset, read.byteLength);
   if (sniffEntry(original.subarray(0, 16)) !== 'video')
     throw new ZipRejectedError(VIDEO_UNREADABLE);
   // The header's length is the writer's claim; the samples are what plays. Both are measured.

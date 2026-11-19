@@ -2,16 +2,21 @@
  * Every length a video file states or implies, read from the bytes themselves: the header fields a
  * writer sets, and the length the samples or blocks actually span. A file whose header claims less
  * than its stream holds shows up as a disagreement between the two.
+ *
+ * The bytes are the seller's, and players differ in which copy of a field they honour, so anything
+ * that could make a player show what this does not measure is refused rather than guessed at:
+ * a repeated field, a second video track, a track time scale, bytes past the container, more than
+ * one edit, embedded attachments or cover art.
  */
 
-/** Parsing seller bytes: past this many boxes or elements, or this long, the file is refused. */
+/** Parsing seller bytes: past this many boxes, elements or table entries, or this long, refuse. */
 const MAX_VISITS = 1_000_000;
 const MAX_PARSE_MS = 2_000;
 let visits = 0;
 let deadline = 0;
-const visit = () => {
-  if (++visits > MAX_VISITS || (visits % 4096 === 0 && Date.now() > deadline))
-    throw new Malformed();
+const visit = (n = 1) => {
+  visits += n;
+  if (visits > MAX_VISITS || Date.now() > deadline) throw new Malformed();
 };
 
 /**
@@ -22,9 +27,14 @@ export function readVideoLengths(bytes: Uint8Array): number[] | null {
   visits = 0;
   deadline = Date.now() + MAX_PARSE_MS;
   try {
-    if (fourcc(bytes, 4) === 'ftyp') return mp4Lengths(bytes);
-    if (u32(bytes, 0) === EBML.header) return matroskaLengths(bytes);
-    return null;
+    const lengths =
+      fourcc(bytes, 4) === 'ftyp'
+        ? mp4Lengths(bytes)
+        : u32(bytes, 0) === EBML.header
+        ? matroskaLengths(bytes)
+        : null;
+    // A NaN or infinite field would slip through every comparison made with it.
+    return lengths?.length && lengths.every((s) => Number.isFinite(s) && s >= 0) ? lengths : null;
   } catch {
     return null;
   }
@@ -36,6 +46,7 @@ const u32 = (b: Uint8Array, o: number) => {
   if (o < 0 || o + 4 > b.length) throw new Malformed();
   return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
 };
+const i32 = (b: Uint8Array, o: number) => u32(b, o) | 0;
 const u64 = (b: Uint8Array, o: number) => u32(b, o) * 2 ** 32 + u32(b, o + 4);
 const fourcc = (b: Uint8Array, o: number) =>
   o + 4 > b.length ? '' : String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
@@ -58,72 +69,127 @@ function boxes(b: Uint8Array, start: number, end: number): Box[] {
     out.push({ type: fourcc(b, offset + 4), body: offset + header, end: offset + size });
     offset += size;
   }
+  if (offset !== end) throw new Malformed();
   return out;
 }
 
-const child = (b: Uint8Array, box: Box | undefined, type: string) =>
-  box && boxes(b, box.body, box.end).find((c) => c.type === type);
+/** A parent's children by type; a type read here that appears twice is refused. */
+function children(b: Uint8Array, box: Box | undefined) {
+  const byType = new Map<string, Box[]>();
+  if (box)
+    for (const c of boxes(b, box.body, box.end)) {
+      const list = byType.get(c.type);
+      if (list) list.push(c);
+      else byType.set(c.type, [c]);
+    }
+  return {
+    one(type: string) {
+      const found = byType.get(type);
+      if (found && found.length > 1) throw new Malformed();
+      return found?.[0];
+    },
+    all: (type: string) => byType.get(type) ?? [],
+    has: (type: string) => byType.has(type),
+  };
+}
+
+/** A full box's table: `count` entries of `size` bytes from `at`, all inside the box. */
+function table(b: Uint8Array, box: Box, at: number, size: number) {
+  const count = u32(b, at);
+  if (at + 4 + count * size > box.end) throw new Malformed();
+  visit(count);
+  return { count, start: at + 4 };
+}
 
 /** mvhd and mdhd share a layout: version, then (32 or 64 bit) times, timescale, duration. */
 function timescaleAndDuration(b: Uint8Array, box: Box) {
-  return b[box.body] === 1
+  const v1 = b[box.body] === 1;
+  if (box.body + (v1 ? 32 : 20) > box.end) throw new Malformed();
+  return v1
     ? { timescale: u32(b, box.body + 20), duration: u64(b, box.body + 24) }
     : { timescale: u32(b, box.body + 12), duration: u32(b, box.body + 16) };
 }
 
 function mp4Lengths(b: Uint8Array): number[] | null {
-  const top = boxes(b, 0, b.length);
+  const top = children(b, { type: '', body: 0, end: b.length });
   // A fragmented file keeps its samples outside the sample table, where it cannot be summed.
-  if (top.some((box) => box.type === 'moof')) return null;
-  const moov = top.find((box) => box.type === 'moov');
-  const mvhd = child(b, moov, 'mvhd');
-  if (!moov || !mvhd || child(b, moov, 'mvex')) return null;
+  if (top.has('moof')) return null;
+  const moovBox = top.one('moov');
+  if (!moovBox) return null;
+  // Cover art is a picture a player shows that the scan never sees.
+  if (Buffer.from(b.subarray(moovBox.body, moovBox.end)).includes('covr')) return null;
+  const moov = children(b, moovBox);
+  const mvhd = moov.one('mvhd');
+  if (!mvhd || moov.has('mvex')) return null;
   const movie = timescaleAndDuration(b, mvhd);
   if (!movie.timescale) return null;
   const lengths = [movie.duration / movie.timescale];
 
-  const traks = boxes(b, moov.body, moov.end).filter((box) => box.type === 'trak');
+  const traks = moov.all('trak');
   if (!traks.length) return null;
-  for (const trak of traks) {
-    const tkhd = child(b, trak, 'tkhd');
-    if (tkhd) {
-      const duration = b[tkhd.body] === 1 ? u64(b, tkhd.body + 28) : u32(b, tkhd.body + 20);
-      lengths.push(duration / movie.timescale);
-    }
-    const elst = child(b, child(b, trak, 'edts'), 'elst');
+  let videoTracks = 0;
+  for (const trakBox of traks) {
+    const trak = children(b, trakBox);
+    const tkhd = trak.one('tkhd');
+    if (!tkhd) return null;
+    const tv1 = b[tkhd.body] === 1;
+    if (tkhd.body + (tv1 ? 36 : 24) > tkhd.end) return null;
+    lengths.push((tv1 ? u64(b, tkhd.body + 28) : u32(b, tkhd.body + 20)) / movie.timescale);
+
+    const elst = children(b, trak.one('edts')).one('elst');
     if (elst) {
       const v1 = b[elst.body] === 1;
-      const count = u32(b, elst.body + 4);
+      const entrySize = v1 ? 20 : 12;
+      const { count, start } = table(b, elst, elst.body + 4, entrySize);
       let sum = 0;
-      if (count > MAX_VISITS) return null;
+      let mediaEdits = 0;
       for (let i = 0; i < count; i++) {
-        const entry = elst.body + 8 + i * (v1 ? 20 : 12);
+        const entry = start + i * entrySize;
         sum += v1 ? u64(b, entry) : u32(b, entry);
+        const empty = v1
+          ? u32(b, entry + 8) === 0xffffffff && u32(b, entry + 12) === 0xffffffff
+          : i32(b, entry + 4) === -1;
+        if (!empty) mediaEdits++;
       }
+      // Two edits can show one stretch of the media twice and never another.
+      if (mediaEdits > 1) return null;
       lengths.push(sum / movie.timescale);
     }
-    const mdia = child(b, trak, 'mdia');
-    const mdhd = child(b, mdia, 'mdhd');
-    const stbl = child(b, child(b, mdia, 'minf'), 'stbl');
-    const stts = child(b, stbl, 'stts');
-    const stsz = child(b, stbl, 'stsz');
+
+    const mdia = children(b, trak.one('mdia'));
+    const hdlr = mdia.one('hdlr');
+    if (hdlr && fourcc(b, hdlr.body + 8) === 'vide') videoTracks++;
+    const mdhd = mdia.one('mdhd');
+    const stbl = children(b, children(b, mdia.one('minf')).one('stbl'));
+    const stts = stbl.one('stts');
+    const stsz = stbl.one('stsz');
     if (!mdhd || !stts || !stsz) return null;
     const media = timescaleAndDuration(b, mdhd);
     if (!media.timescale) return null;
     lengths.push(media.duration / media.timescale);
-    const entries = u32(b, stts.body + 4);
-    if (entries > MAX_VISITS) return null;
+    const timing = table(b, stts, stts.body + 4, 8);
     let samples = 0;
     let ticks = 0;
-    for (let i = 0; i < entries; i++) {
-      const count = u32(b, stts.body + 8 + i * 8);
+    for (let i = 0; i < timing.count; i++) {
+      const count = u32(b, timing.start + i * 8);
       samples += count;
-      ticks += count * u32(b, stts.body + 12 + i * 8);
+      ticks += count * u32(b, timing.start + i * 8 + 4);
     }
     // Samples the timing table does not cover would still be played.
-    if (samples !== u32(b, stsz.body + 8)) return null;
+    if (stsz.body + 12 > stsz.end || samples !== u32(b, stsz.body + 8)) return null;
+    // A composition offset can show a sample well after the timing table ends.
+    const ctts = stbl.one('ctts');
+    if (ctts) {
+      const offsets = table(b, ctts, ctts.body + 4, 8);
+      for (let i = 0; i < offsets.count; i++) {
+        const offset = Math.abs(i32(b, offsets.start + i * 8 + 4));
+        if (offset > media.timescale) return null;
+      }
+    }
     lengths.push(ticks / media.timescale);
   }
+  // Which of two video tracks a player or the scan picks is not this code's to decide.
+  if (videoTracks > 1) return null;
   return lengths;
 }
 // #endregion
@@ -135,6 +201,11 @@ const EBML = {
   info: 0x1549a966,
   timecodeScale: 0x2ad7b1,
   duration: 0x4489,
+  tracks: 0x1654ae6b,
+  trackEntry: 0xae,
+  trackType: 0x83,
+  trackTimecodeScale: 0x23314f,
+  attachments: 0x1941a469,
   cluster: 0x1f43b675,
   timecode: 0xe7,
   simpleBlock: 0xa3,
@@ -146,10 +217,10 @@ const EBML = {
 const SEGMENT_CHILDREN = new Set([
   EBML.info,
   EBML.cluster,
+  EBML.tracks,
+  EBML.attachments,
   0x114d9b74, // SeekHead
-  0x1654ae6b, // Tracks
   0x1c53bb6b, // Cues
-  0x1941a469, // Attachments
   0x1043a770, // Chapters
   0x1254c367, // Tags
 ]);
@@ -185,7 +256,21 @@ function element(b: Uint8Array, offset: number): Element {
   return { id: id.value, body, end: size.unknown ? undefined : body + size.value };
 }
 
+/** The sized children of a sized element, each inside it. */
+function sized(b: Uint8Array, start: number, end: number) {
+  const out: { id: number; body: number; end: number }[] = [];
+  for (let o = start; o < end; ) {
+    const el = element(b, o);
+    // A child running past its parent would hide the siblings it covers.
+    if (el.end === undefined || el.end > end) throw new Malformed();
+    out.push({ id: el.id, body: el.body, end: el.end });
+    o = el.end;
+  }
+  return out;
+}
+
 const uint = (b: Uint8Array, start: number, end: number) => {
+  if (end - start > 8) throw new Malformed();
   let value = 0;
   for (let i = start; i < end; i++) value = value * 256 + b[i];
   return value;
@@ -207,62 +292,89 @@ function blockOffset(b: Uint8Array, body: number) {
   return raw & 0x8000 ? raw - 0x10000 : raw;
 }
 
+function only<T extends { id: number }>(list: T[], id: number) {
+  const found = list.filter((el) => el.id === id);
+  if (found.length > 1) throw new Malformed();
+  return found[0];
+}
+
 function matroskaLengths(b: Uint8Array): number[] | null {
   const header = element(b, 0);
   if (header.end === undefined) return null;
   const segment = element(b, header.end);
   if (segment.id !== EBML.segment) return null;
-  const segmentEnd = segment.end ?? b.length;
+  // Bytes past the Segment (a second one, say) are something a player may show and this never read.
+  if (segment.end !== undefined && segment.end !== b.length) return null;
+  const segmentEnd = b.length;
 
-  let scale = 1_000_000;
+  let scale: number | undefined;
   let declared: number | undefined;
   let last: number | undefined;
+  let infos = 0;
+  let trackLists = 0;
   let offset = segment.body;
   while (offset < segmentEnd) {
     const el = element(b, offset);
-    if (el.id === EBML.info) {
-      if (el.end === undefined) return null;
-      for (let o = el.body; o < el.end; ) {
-        const field = element(b, o);
-        if (field.end === undefined) return null;
-        if (field.id === EBML.timecodeScale) scale = uint(b, field.body, field.end);
-        if (field.id === EBML.duration) declared = float(b, field.body, field.end);
-        o = field.end;
-      }
-      offset = el.end;
-    } else if (el.id === EBML.cluster) {
-      let base = 0;
+    if (el.id === EBML.cluster) {
       let o = el.body;
       const end = el.end ?? segmentEnd;
+      let base: number | undefined;
       while (o < end) {
         const part = element(b, o);
         if (el.end === undefined && SEGMENT_CHILDREN.has(part.id)) break;
-        if (part.end === undefined) return null;
-        if (part.id === EBML.timecode) base = uint(b, part.body, part.end);
-        else if (part.id === EBML.simpleBlock)
+        if (part.end === undefined || part.end > end) return null;
+        if (part.id === EBML.timecode) {
+          if (base !== undefined) return null;
+          base = uint(b, part.body, part.end);
+        } else if (part.id === EBML.simpleBlock) {
+          if (base === undefined) return null;
           last = Math.max(last ?? -Infinity, base + blockOffset(b, part.body));
-        else if (part.id === EBML.blockGroup) {
-          let at: number | undefined;
-          let duration = 0;
-          for (let g = part.body; g < part.end; ) {
-            const inner = element(b, g);
-            if (inner.end === undefined) return null;
-            if (inner.id === EBML.block) at = base + blockOffset(b, inner.body);
-            if (inner.id === EBML.blockDuration) duration = uint(b, inner.body, inner.end);
-            g = inner.end;
-          }
-          if (at !== undefined) last = Math.max(last ?? -Infinity, at + duration);
+        } else if (part.id === EBML.blockGroup) {
+          if (base === undefined) return null;
+          const group = sized(b, part.body, part.end);
+          const block = only(group, EBML.block);
+          const duration = only(group, EBML.blockDuration);
+          if (block)
+            last = Math.max(
+              last ?? -Infinity,
+              base +
+                blockOffset(b, block.body) +
+                (duration ? uint(b, duration.body, duration.end) : 0)
+            );
         }
         o = part.end;
       }
       offset = o;
-    } else {
-      if (el.end === undefined) return null;
-      offset = el.end;
+      continue;
     }
+    if (el.end === undefined || el.end > segmentEnd) return null;
+    if (el.id === EBML.attachments) return null;
+    if (el.id === EBML.info) {
+      if (++infos > 1) return null;
+      const fields = sized(b, el.body, el.end);
+      const scaleField = only(fields, EBML.timecodeScale);
+      const durationField = only(fields, EBML.duration);
+      if (scaleField) scale = uint(b, scaleField.body, scaleField.end);
+      if (durationField) declared = float(b, durationField.body, durationField.end);
+    } else if (el.id === EBML.tracks) {
+      if (++trackLists > 1) return null;
+      let video = 0;
+      for (const entry of sized(b, el.body, el.end)) {
+        if (entry.id !== EBML.trackEntry) continue;
+        const fields = sized(b, entry.body, entry.end);
+        const type = only(fields, EBML.trackType);
+        if (type && uint(b, type.body, type.end) === 1) video++;
+        // A track time scale stretches every block time on that track.
+        const trackScale = only(fields, EBML.trackTimecodeScale);
+        if (trackScale && float(b, trackScale.body, trackScale.end) !== 1) return null;
+      }
+      if (video > 1) return null;
+    }
+    offset = el.end;
   }
-  if (last === undefined || !scale) return null;
-  const seconds = (ticks: number) => (ticks * scale) / 1e9;
+  const ticksToNs = scale ?? 1_000_000;
+  if (last === undefined || !ticksToNs) return null;
+  const seconds = (ticks: number) => (ticks * ticksToNs) / 1e9;
   return declared === undefined ? [seconds(last)] : [seconds(declared), seconds(last)];
 }
 // #endregion

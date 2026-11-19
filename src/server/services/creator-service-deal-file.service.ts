@@ -1231,7 +1231,7 @@ export async function resolveServiceDealFileDownload({
   const role: ServiceDealAccessRole =
     row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
   const bucket = await getBucket();
-  if (isFinalVideoName(row.fileName)) {
+  if (row.kind === 'Final' && isFinalVideoName(row.fileName)) {
     // A video is served only as the version its scan copy was made from, and only where its rating
     // may be shown. One never stamped (refused, or not scanned yet) goes only to dispute review.
     const disputeReview = isModerator && !!moderatorFetch;

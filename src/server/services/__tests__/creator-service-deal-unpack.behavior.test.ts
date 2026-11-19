@@ -2117,6 +2117,33 @@ describe('a video Final', () => {
     expect(await asModerator(31, true)).toMatchObject({ fileName: 'clip.mp4' });
   });
 
+  it('gives a video not yet rated only to dispute review', async () => {
+    const { fileId } = await videoFinal(4);
+    s3.send.mockResolvedValue({ ETag: '"v1"', VersionId: 'ver1' });
+    const asModerator = (moderatorFetch: boolean) =>
+      files.resolveServiceDealFileDownload({
+        fileId,
+        userId: 99,
+        isModerator: true,
+        moderatorFetch,
+        servableLevels: 31,
+      });
+    expect(await asModerator(false)).toBeNull();
+    expect(await asModerator(true)).toMatchObject({ versionId: 'ver1' });
+  });
+
+  it.each([
+    [11, null],
+    [11.2, SERVICE_FINAL_VIDEO_LENGTH_UNCLEAR],
+  ])(
+    'allows a second between stated and real length: %s s of samples under a 10 s header',
+    async (seconds, failReason) => {
+      probe.video.mockResolvedValue({ width: 640, height: 360, duration: 10 });
+      const { fileId } = await videoFinal(4, mp4Clip({ seconds, headerSeconds: 10 }));
+      expect((await fileRow(fileId)).failReason).toBe(failReason);
+    }
+  );
+
   it('reads a missing scanned version as a mismatch, and any other store failure as no answer', async () => {
     const { dealId, fileId } = await videoFinal(4);
     await judged(fileId, 4);

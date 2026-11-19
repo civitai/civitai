@@ -915,6 +915,22 @@ describe('who can download what', () => {
     ).toMatchObject({ key: DELIVERY_KEY });
   });
 
+  it('serves a video preview as before: only video Finals carry the scanned-version gate', async () => {
+    const dealId = await accepted('Video');
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.mp4',
+      mimeType: 'video/mp4',
+      size: 500,
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET status = 'Ready', "scanStatus" = 'Passed', "malwareScanStatus" = 'Passed' WHERE id = $1`,
+      [fileId]
+    );
+    expect(await download(fileId, SELLER)).toMatchObject({ fileName: 'p.mp4' });
+    expect(await download(fileId, MOD, true)).toMatchObject({ fileName: 'p.mp4' });
+  });
+
   it('never gives the buyer a zip that has no built archive, even a Passed one', async () => {
     const { dealId, finalId } = await delivered('Passed');
     await complete(dealId);

@@ -139,16 +139,34 @@ const words = (...values: number[]) => {
 export const mp4Clip = ({
   seconds = 10,
   headerSeconds = seconds,
-}: { seconds?: number; headerSeconds?: number } = {}) => {
+  editSeconds,
+  mvex = false,
+  largeMdat = false,
+}: {
+  seconds?: number;
+  headerSeconds?: number;
+  /** Adds an edit list of one segment this long. */
+  editSeconds?: number;
+  /** Marks the movie as fragmented. */
+  mvex?: boolean;
+  /** Writes the mdat with a 64-bit size. */
+  largeMdat?: boolean;
+} = {}) => {
   const claimed = Math.round(headerSeconds * 1000);
+  const edits =
+    editSeconds === undefined
+      ? []
+      : [box('edts', box('elst', words(0, 1, Math.round(editSeconds * 1000), 0, 0x10000)))];
   return Buffer.concat([
     box('ftyp', Buffer.from('isom', 'latin1'), words(0x200), Buffer.from('isomiso2mp41', 'latin1')),
     box(
       'moov',
       box('mvhd', words(0, 0, 0, 1000, claimed), Buffer.alloc(80)),
+      ...(mvex ? [box('mvex')] : []),
       box(
         'trak',
         box('tkhd', words(0, 0, 0, 1, 0, claimed), Buffer.alloc(60)),
+        ...edits,
         box(
           'mdia',
           box('mdhd', words(0, 0, 0, 1000, claimed, 0)),
@@ -163,7 +181,9 @@ export const mp4Clip = ({
         )
       )
     ),
-    box('mdat', Buffer.alloc(4)),
+    largeMdat
+      ? Buffer.concat([words(1), Buffer.from('mdat', 'latin1'), words(0, 20), Buffer.alloc(4)])
+      : box('mdat', Buffer.alloc(4)),
   ]);
 };
 export { box as mp4Box, words as mp4Words };
