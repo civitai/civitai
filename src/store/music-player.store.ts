@@ -547,9 +547,28 @@ export function createMusicPlayerStore({
           recentlyPlayed: s.recentlyPlayed,
         }),
         version: PREFERENCES_VERSION,
+        // Storage is the browser's to edit: take only the persisted keys, and of recently played
+        // only distinct positive integer ids.
+        merge: (persisted, current) => {
+          const saved = (persisted ?? {}) as Partial<PlayerData>;
+          return {
+            ...current,
+            showTimedComments:
+              typeof saved.showTimedComments === 'boolean'
+                ? saved.showTimedComments
+                : current.showTimedComments,
+            recentlyPlayed: storedSongIds(saved.recentlyPlayed),
+          };
+        },
       }
     )
   );
+}
+
+function storedSongIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value.filter((id): id is number => Number.isInteger(id) && id > 0);
+  return [...new Set(ids)].slice(0, RECENTLY_PLAYED_MAX);
 }
 
 /** The global player's state. Exactly one `<audio>` element plays it: `MusicPlayerAudio`. */

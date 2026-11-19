@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MusicTrack } from '~/store/music-player.store';
-import {
-  createMusicPlayerStore,
-  MUSIC_PLAYER_PREFERENCES_KEY,
-} from '~/store/music-player.store';
+import { createMusicPlayerStore, MUSIC_PLAYER_PREFERENCES_KEY } from '~/store/music-player.store';
 
 const track = (id: number, durationSec = 200): MusicTrack => ({
   id,
@@ -592,8 +589,9 @@ describe('timed comments on the waveform', () => {
     store.getState().toggleTimedComments();
     expect(store.getState().showTimedComments).toBe(false);
     expect(
-      createMusicPlayerStore({ storage: memory({ [MUSIC_PLAYER_PREFERENCES_KEY]: 'maybe' }) }).getState()
-        .showTimedComments
+      createMusicPlayerStore({
+        storage: memory({ [MUSIC_PLAYER_PREFERENCES_KEY]: 'maybe' }),
+      }).getState().showTimedComments
     ).toBe(true);
   });
 
@@ -637,5 +635,25 @@ describe('recently played', () => {
     store.getState().playTrack(b);
     store.getState().close();
     expect(store.getState().recentlyPlayed).toEqual([2]);
+  });
+  it.each([
+    ['garbage entries', [3, '7', -1, 0, 2.5, 3, null, 8, 'x', { id: 1 }, 9], [3, 8, 9]],
+    [
+      'too many',
+      Array.from({ length: 20 }, (_, i) => i + 1),
+      Array.from({ length: 12 }, (_, i) => i + 1),
+    ],
+    ['not a list', 'oops', []],
+    ['an object', { 0: 4 }, []],
+  ])('keeps only valid song ids from storage holding %s', (_, stored, expected) => {
+    const storage = memory();
+    storage.setItem(
+      MUSIC_PLAYER_PREFERENCES_KEY,
+      JSON.stringify({ state: { showTimedComments: false, recentlyPlayed: stored }, version: 1 })
+    );
+    const store = createMusicPlayerStore({ storage });
+    expect(store.getState().recentlyPlayed).toEqual(expected);
+    // The rest of the stored preferences still load.
+    expect(store.getState().showTimedComments).toBe(false);
   });
 });
