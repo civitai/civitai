@@ -145,6 +145,8 @@ describe('release-app.mjs typechecks only the app it releases', () => {
     const res = runRelease(work, 'patch');
 
     expect(res.status).not.toBe(0);
+    // Pins the failure to the typecheck, not some other early exit (a pull error, no pnpm).
+    expect(res.stderr).toContain('Command failed: pnpm --dir apps/moderator run typecheck');
     expect(versionOf(work)).toBe('0.0.26');
     expect(git(work, ['rev-parse', 'HEAD']).trim()).toBe(before);
     expect(git(work, ['tag', '-l', 'moderator-v0.0.27']).trim()).toBe('');

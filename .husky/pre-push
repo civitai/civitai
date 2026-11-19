@@ -12,8 +12,8 @@ fi
 
 echo "Running the root typecheck"
 
-# `-p tsconfig.json` (the root project) also skips the apps/* typecheck, since an argument narrows
-# the run; each app's release typechecks only that app (scripts/release-app.mjs).
+# `-p tsconfig.json` (the root project) is what skips the apps/* typecheck: any tsc argument
+# narrows the run (scripts/typecheck-apps-gate.mjs).
 #
 # The exit code has to be read and re-raised. `sh` without `set -e` runs the next
 # line regardless, so an unconditional "Typecheck successful" echo became the
