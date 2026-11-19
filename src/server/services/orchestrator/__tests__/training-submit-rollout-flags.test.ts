@@ -34,6 +34,8 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 import { createTrainingWorkflow } from '~/server/services/orchestrator/training/training.orch';
 import { isAiToolkitMandatory, isAudioTrainingBaseType, trainingModelInfo } from '~/utils/training';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { getUserSettings } from '~/server/services/user.service';
+import { GENERATION_LICENSE_TERMS } from '~/shared/constants/generation-license.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -215,7 +217,26 @@ describe('createTrainingWorkflow rollout flags', () => {
       code: 'FORBIDDEN',
       message: expect.stringMatching(/licence terms before training/),
     });
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('submits a MiniMax H3 Image run once its licence is accepted', async () => {
+    const info = trainingModelInfo.minimaxh3image;
+    givenVersion({
+      baseModel: 'minimaxh3image',
+      baseModelType: info.type,
+      params: aiToolkitParams(info.aiToolkit!.ecosystem),
+    });
+    const [terms] = GENERATION_LICENSE_TERMS;
+    vi.mocked(getUserSettings).mockResolvedValueOnce({
+      generationLicenseAcceptances: {
+        [terms.key]: { version: terms.version, acceptedAt: new Date().toISOString() },
+      },
+    } as never);
+    await submitWith({});
+    expect(getUserSettings).toHaveBeenCalledWith(7);
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('submits a MiniMax H3 run while the flag is on', async () => {

@@ -512,8 +512,10 @@ export const createTrainingWorkflow = async ({
     features
   );
   if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
-  if (trainingParams.engine === 'ai-toolkit')
-    await assertTrainingLicenseAccepted({ ecosystem: trainingParams.ecosystem, userId });
+  // The licence binds the weights, whichever engine trains them.
+  const paramsEcosystem = 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined;
+  for (const ecosystem of new Set([paramsEcosystem, catalogEntry?.aiToolkit?.ecosystem]))
+    await assertTrainingLicenseAccepted({ ecosystem, userId });
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })

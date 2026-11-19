@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as UserService from '~/server/services/user.service';
 
@@ -18,9 +18,13 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 }));
 const gate = vi.hoisted(() => ({ allow: vi.fn() }));
 const getUserSettings = vi.hoisted(() => vi.fn(async (_userId: number) => ({} as unknown)));
+const patchUserSettings = vi.hoisted(() =>
+  vi.fn(async (_userId: number, _patch: { mergeInto: Record<string, object> }) => undefined)
+);
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   getUserSettings,
+  patchUserSettings,
 }));
 vi.mock('~/server/utils/training-studio-access', () => ({ allowTrainingStudio: gate.allow }));
 // The auth wrapper is the shared one; here it only supplies the caller. Errors go through the real
@@ -34,10 +38,12 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/training-studio/check-text';
+import licenseHandler from '~/pages/api/training-studio/license';
+import { assertTrainingLicenseAccepted } from '~/server/services/generation-license.service';
 import { getTrainingLicenseTerms } from '~/shared/constants/generation-license.constants';
 
-async function call(body: unknown) {
-  const req = { method: 'POST', body };
+async function call(body: unknown, method = 'POST', endpoint: unknown = handler) {
+  const req = { method, body };
   const res = {
     statusCode: 200,
     body: undefined as unknown,
@@ -54,7 +60,7 @@ async function call(body: unknown) {
       this.headers[name] = value;
     },
   };
-  await (handler as unknown as (req: unknown, r: typeof res) => Promise<unknown>)(req, res);
+  await (endpoint as (req: unknown, r: typeof res) => Promise<unknown>)(req, res);
   return res;
 }
 
@@ -151,5 +157,45 @@ describe('POST /api/training-studio/check-text', () => {
     const res = await call({ licenseEcosystem: 'minimaxh3image' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ ok: true });
+  });
+});
+
+// The Studio's Accept: what it records is what the training submit checks, so Start unblocks.
+describe('/api/training-studio/license', () => {
+  let settings: Record<string, Record<string, unknown>> = {};
+  const license = (method: 'GET' | 'POST', body?: unknown) => call(body, method, licenseHandler);
+  beforeEach(() => {
+    settings = {};
+    gate.allow.mockReset().mockResolvedValue(true);
+    getUserSettings.mockImplementation(async () => settings);
+    patchUserSettings.mockClear().mockImplementation(async (_userId, { mergeInto }) => {
+      for (const [key, value] of Object.entries(mergeInto))
+        settings[key] = { ...settings[key], ...value };
+    });
+  });
+  afterEach(() => {
+    getUserSettings.mockImplementation(async () => ({}));
+  });
+
+  it('records an acceptance the training submit then honours', async () => {
+    await expect(
+      assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3image', userId: 7 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect((await license('GET')).body).toEqual({ pending: ['minimaxh3image'] });
+
+    const res = await license('POST', { ecosystem: 'minimaxh3image' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+
+    expect((await license('GET')).body).toEqual({ pending: [] });
+    await expect(
+      assertTrainingLicenseAccepted({ ecosystem: 'minimaxh3image', userId: 7 })
+    ).resolves.toBeUndefined();
+  });
+
+  it('refuses a model with no licence, recording nothing', async () => {
+    const res = await license('POST', { ecosystem: 'sdxl' });
+    expect(res.statusCode).toBe(400);
+    expect(patchUserSettings).not.toHaveBeenCalled();
   });
 });

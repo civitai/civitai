@@ -16606,7 +16606,7 @@ async function assertBlockTrainingLicensesAccepted(
     '~/server/services/blocks/block-training-model-check'
   );
   const collected = collectTrainingStepModels(steps);
-  if ('error' in collected) return;
+  if ('error' in collected) throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
   const { assertTrainingLicenseAccepted } = await import(
     '~/server/services/generation-license.service'
   );

@@ -132,11 +132,14 @@ describe('training licence acceptance', () => {
   });
 
   // A catalog entry missing from its licence's training ecosystems would train unasked.
-  it.each(
-    Object.entries(trainingModelInfo).filter(([, info]) =>
-      getGenerationLicenseTerms(getEcosystem(info.baseModel)?.key)
-    )
-  )('%s trains under its base model licence', (_, info) => {
+  const licensedEntries = Object.entries(trainingModelInfo).filter(([, info]) =>
+    getGenerationLicenseTerms(getEcosystem(info.baseModel)?.key)
+  );
+  // Without this the rows below can filter down to none and pass.
+  it('finds the licensed catalog entries', () => {
+    expect(licensedEntries.map(([key]) => key)).toContain('minimaxh3image');
+  });
+  it.each(licensedEntries)('%s trains under its base model licence', (_, info) => {
     expect(
       getGenerationLicenseTerms(getEcosystem(info.baseModel)?.key)!.trainingEcosystems
     ).toContain(info.aiToolkit?.ecosystem);

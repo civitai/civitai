@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   catalogRate: vi.fn(async () => ({ allowed: true })),
   buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
   trainingStatus: vi.fn(),
+  userSettings: vi.fn(async (): Promise<Record<string, unknown>> => ({})),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -70,6 +71,7 @@ vi.mock('~/server/services/training.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
+  getUserSettings: () => h.userSettings(),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(async () => null),
@@ -93,6 +95,7 @@ import { blocksRouter } from '../blocks.router';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { GENERATION_LICENSE_TERMS } from '~/shared/constants/generation-license.constants';
 
 const VIEWER = 42;
 const NOT_A_STRING = 'a training step’s triggerWord must be a literal string';
@@ -213,6 +216,7 @@ beforeEach(() => {
   installRedis();
   h.authorize.mockImplementation(async () => claims());
   h.audit.mockImplementation(async () => undefined);
+  h.userSettings.mockImplementation(async () => ({}));
   // The shared training check refuses exactly one word, so a mixed body shows which ran.
   h.check.mockImplementation(async ({ triggerWord }) => {
     if (triggerWord === 'badword') throw new Error(REFUSED);
@@ -469,5 +473,30 @@ describe('the base model of a training step an app names itself', () => {
   it('control: a step with no training `$type` never reads the training status', async () => {
     await estimate(stepBody(fluxDev, 'wdTagging')).catch(() => undefined);
     expect(h.trainingStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('the base model licence of a pass-through `kind:step` training step', () => {
+  const h3Image = (ecosystem: string) => ({
+    engine: 'ai-toolkit',
+    ecosystem,
+    triggerWord: 'tw',
+  });
+  const NOT_ACCEPTED = /Accept the MiniMax-H3-Image licence terms before training/;
+
+  it('refuses the submit before any orchestrator call while the licence is not accepted', async () => {
+    await expect(submit(stepBody(h3Image('minimaxh3image')))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(NOT_ACCEPTED),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('matches the ecosystem however it is cased', async () => {
+    await expect(submit(stepBody(h3Image('MiniMaxH3Image')))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(NOT_ACCEPTED),
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 });
