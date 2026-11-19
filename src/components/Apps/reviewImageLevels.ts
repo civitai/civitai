@@ -3,15 +3,10 @@ import type { ListingAssetLevels } from '~/shared/utils/listing-rating-display';
 /**
  * A moderator re-rate applied to the review page's CACHED reads, by image id.
  *
- * 🔴 WHY PATCH THE CACHE INSTEAD OF REFETCHING. Both reads (`appListings.getAssets`,
- * `appListings.getListingPreviewForReview`) take image levels from the READ REPLICA, while the
- * re-rate writes the primary. A refetch issued the moment the write returns can therefore read
- * the OLD level back, leaving the approve warning up and the picker snapped back to the old
- * rating. The level the server just wrote is known exactly (the moderator branch writes the level
- * it was given), so it is applied to the cached answers directly, and the queries are only
- * marked stale, so the next mount re-reads them once the replica has caught up.
- *
- * Pure and generic over the payload, so the node-env `unit` project pins the patch.
+ * 🔴 WHY PATCH THE CACHE INSTEAD OF REFETCHING. Both reads take image levels from the READ
+ * REPLICA, so a refetch the moment the write returns can read the OLD level back. The level the
+ * server wrote is known exactly, so it is applied to the cached answers, and the queries are only
+ * marked stale for the next mount.
  */
 
 type LevelImage = { imageId: number; nsfwLevel: number };
