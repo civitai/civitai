@@ -78,4 +78,23 @@ describe('search index :: a delete whose task fails', () => {
     await processor().processQueues({ processDeletes: true, processUpdates: true }, {} as never);
     expect(actions()).toEqual([SearchIndexUpdateQueueAction.Delete]);
   });
+
+  it('goes back as a Delete only from updateSync() when the call does not rebuild the id', async () => {
+    await processor().updateSync([
+      { id: ID, action: SearchIndexUpdateQueueAction.Delete },
+      { id: ID + 1, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    expect(requeued.flat()).toEqual([{ id: ID, action: SearchIndexUpdateQueueAction.Delete }]);
+  });
+
+  it('goes back as a Delete and an Update from updateSync() when the same call rebuilds it', async () => {
+    await processor().updateSync([
+      { id: ID, action: SearchIndexUpdateQueueAction.Delete },
+      { id: ID, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    expect(actions()).toEqual([
+      SearchIndexUpdateQueueAction.Delete,
+      SearchIndexUpdateQueueAction.Update,
+    ]);
+  });
 });
