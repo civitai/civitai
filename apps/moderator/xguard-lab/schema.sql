@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- XGuard label lab: standalone Postgres schema.
 --
 -- Deliberately has NO foreign keys into the Civitai database. userId and
@@ -52,24 +53,37 @@ CREATE TABLE IF NOT EXISTS sample (
 CREATE INDEX IF NOT EXISTS sample_batch_idx ON sample (batch);
 CREATE INDEX IF NOT EXISTS sample_prompt_hash_idx ON sample (prompt_hash);
 
--- A blind batch (source 'named') is reviewed without hints, so its rows carry no owner, scores or
--- date, and no other rows may join it. Enforced here so every writer is bound, not only the
--- endpoint that creates blind batches.
-ALTER TABLE sample DROP CONSTRAINT IF EXISTS sample_blind_rows_carry_no_hints;
-ALTER TABLE sample ADD CONSTRAINT sample_blind_rows_carry_no_hints CHECK (
-  source <> 'named' OR (user_id IS NULL AND live_scores IS NULL AND prompt_created_at IS NULL)
-);
+-- A blind batch (source 'named') is reviewed without hints: its rows carry no owner, scores or
+-- date, it holds no plain rows, and it is written by one transaction, so a later load cannot sit in
+-- a separate, revealing block of ids. Enforced here so every writer is bound.
+DO $$
+BEGIN
+  -- Added only when absent: dropping first would leave it off if re-adding failed.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sample_blind_rows_carry_no_hints') THEN
+    ALTER TABLE sample ADD CONSTRAINT sample_blind_rows_carry_no_hints CHECK (
+      source <> 'named' OR (user_id IS NULL AND live_scores IS NULL AND prompt_created_at IS NULL)
+    );
+  END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION sample_keep_batch_mode() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  -- Serialises writers to one batch until commit, so two loads cannot both pass the check.
-  PERFORM pg_advisory_xact_lock(hashtext(NEW.batch));
+  -- Serialises writers to one batch until commit, so two loads cannot both pass the checks.
+  PERFORM pg_advisory_xact_lock(hashtext('xguard-sample:' || NEW.batch));
   IF EXISTS (
     SELECT 1 FROM sample
-     WHERE batch = NEW.batch
+     WHERE batch = NEW.batch AND id <> NEW.id
        AND (source = 'named') <> (NEW.source = 'named')
   ) THEN
     RAISE EXCEPTION 'batch "%" mixes blind and plain rows', NEW.batch
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.source = 'named' AND EXISTS (
+    SELECT 1 FROM sample
+     WHERE batch = NEW.batch AND id <> NEW.id
+       AND xmin <> pg_current_xact_id()::xid
+  ) THEN
+    RAISE EXCEPTION 'blind batch "%" was already loaded', NEW.batch
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;

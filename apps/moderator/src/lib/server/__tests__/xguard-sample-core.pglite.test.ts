@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
+import { executableSchemaSql } from './abuse-detection-pglite.harness';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LAB_SCHEMA = readFileSync(join(HERE, '../../../../xguard-lab/schema.sql'), 'utf8');
@@ -35,7 +36,7 @@ let pg: PGlite;
 
 beforeEach(async () => {
   pg = await freshPglite();
-  await pg.exec(LAB_SCHEMA);
+  await pg.exec(executableSchemaSql(LAB_SCHEMA));
   pgHandle.current = pg;
   vi.stubGlobal(
     'fetch',

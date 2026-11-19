@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { Kysely, sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
-import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.harness';
 import type { LabDB } from '../xguard-lab';
 import {
   buildNamedSampleQueries,
@@ -39,7 +39,7 @@ let db: Kysely<LabDB>;
 
 beforeEach(async () => {
   pg = await freshPglite();
-  await pg.exec(LAB_SCHEMA);
+  await pg.exec(executableSchemaSql(LAB_SCHEMA));
   db = new Kysely<LabDB>({ dialect: pgliteDialect(pg) });
 });
 
@@ -151,27 +151,6 @@ describe('importNamedSamples', () => {
 
     expect(again).toMatchObject({ inserted: 0, duplicates: 1 });
     expect(await rows()).toHaveLength(1);
-  });
-
-  it.each([
-    ['a non-numeric generated hash', { generated: ['1) OR (1=1'] }],
-    ['a non-numeric refused hash', { refused: [{ hash: "1'", date: '2026-11-15' }] }],
-    ['a malformed refused date', { refused: [{ hash: '1', date: "2026-11-15' OR '1" }] }],
-  ])('refuses %s before querying anything', async (_name, part) => {
-    const query = fakeClickhouse();
-    await expect(
-      importNamedSamples({ batch: 'review-1', ...part }, { query, db })
-    ).rejects.toThrow();
-    expect(query).not.toHaveBeenCalled();
-  });
-
-  it('refuses a set larger than the cap before querying anything', async () => {
-    const query = fakeClickhouse();
-    const generated = Array.from({ length: 501 }, (_, i) => String(i));
-    await expect(
-      importNamedSamples({ batch: 'review-1', generated }, { query, db })
-    ).rejects.toThrow();
-    expect(query).not.toHaveBeenCalled();
   });
 
   it('blind: strips every field that could reveal where a row came from', async () => {
@@ -313,7 +292,11 @@ describe('importNamedSamples', () => {
         })),
       },
     ],
+    ['a non-numeric generated hash', { generated: ['1) OR (1=1'] }],
+    ['a non-numeric refused hash', { refused: [{ hash: "1'", date: '2026-11-15' }] }],
+    ['a malformed refused date', { refused: [{ hash: '1', date: "2026-11-15' OR '1" }] }],
     ['a hash with a leading zero', { generated: ['0123'] }],
+    ['a 19-digit hash above the Int64 maximum', { generated: ['9999999999999999999'] }],
     ['negative zero', { generated: ['-0'] }],
     ['a hash wider than Int64', { generated: ['12345678901234567890'] }],
     ['a fractional seed', { generated: ['1'], blind: { seed: 1.5 } }],
@@ -338,13 +321,14 @@ describe('importNamedSamples', () => {
 const flat = (s: string | null) => s?.replace(/\s+/g, ' ').trim();
 
 describe('lab schema: blind batches', () => {
-  const insert = (batch: string, source: string, extra = '') =>
-    pg.exec(
-      `INSERT INTO sample (prompt_hash, source, batch, positive_prompt${
-        extra ? ', user_id, live_scores' : ''
-      })
-       VALUES (${Math.floor(Math.random() * 1e9)}, '${source}', '${batch}', 'x'${extra})`
+  let next = 0;
+  const insert = (batch: string, source: string, extra = '') => {
+    const [col, value] = extra ? extra.split(/=(.*)/s) : [];
+    return pg.exec(
+      `INSERT INTO sample (prompt_hash, source, batch, positive_prompt${col ? `, ${col}` : ''})
+       VALUES (${++next}, '${source}', '${batch}', 'x'${col ? `, ${value}` : ''})`
     );
+  };
 
   it('refuses a plain row into a blind batch, from any writer', async () => {
     await insert('b', 'named');
@@ -356,20 +340,48 @@ describe('lab schema: blind batches', () => {
     await expect(insert('p', 'named')).rejects.toThrow(/mixes blind and plain rows/);
   });
 
-  it('refuses a blind row that carries an owner or scores', async () => {
-    await expect(insert('b', 'named', `, 1, '{"CR":0.1}'`)).rejects.toThrow(
-      /sample_blind_rows_carry_no_hints/
-    );
+  it('refuses a second blind load, so each blind batch is one shuffled block', async () => {
+    await insert('b', 'named');
+    await expect(insert('b', 'named')).rejects.toThrow(/was already loaded/);
   });
 
-  it('still accepts owner and scores on plain rows', async () => {
-    await insert('p', 'xguardPromptResults', `, 1, '{"CR":0.1}'`);
-    await insert('p', 'prohibitedRequests', `, 2, '{"CR":0.2}'`);
-    const { rows } = await pg.query(`SELECT 1 FROM sample WHERE batch = 'p'`);
+  it('accepts a blind batch written in one statement', async () => {
+    await pg.exec(`INSERT INTO sample (prompt_hash, source, batch, positive_prompt)
+      VALUES (1, 'named', 'b', 'x'), (2, 'named', 'b', 'y')`);
+    const { rows } = await pg.query(`SELECT 1 FROM sample WHERE batch = 'b'`);
     expect(rows).toHaveLength(2);
+  });
+
+  it('lets a lone row be renamed without counting itself as a clash', async () => {
+    await insert('p', 'xguardPromptResults');
+    await pg.exec(`UPDATE sample SET source = 'named' WHERE batch = 'p'`);
+    const { rows } = await pg.query(`SELECT source FROM sample WHERE batch = 'p'`);
+    expect(rows).toEqual([{ source: 'named' }]);
+  });
+
+  it.each([
+    ['an owner', 'user_id=1'],
+    ['scores', `live_scores='{"CR":0.1}'`],
+    ['a date', `prompt_created_at='2026-11-15T00:00:00Z'`],
+  ])('refuses a blind row that carries %s', async (_name, extra) => {
+    await expect(insert('b', 'named', extra)).rejects.toThrow(/sample_blind_rows_carry_no_hints/);
+  });
+
+  it('still accepts owner, scores and date on plain rows', async () => {
+    await insert('p', 'xguardPromptResults', 'user_id=1');
+    await insert('p', 'prohibitedRequests', `live_scores='{"CR":0.2}'`);
+    await insert('p', 'xguardPromptResults', `prompt_created_at='2026-11-15T00:00:00Z'`);
+    const { rows } = await pg.query(`SELECT 1 FROM sample WHERE batch = 'p'`);
+    expect(rows).toHaveLength(3);
+  });
+
+  it('can be re-applied to a database that already has it', async () => {
+    await expect(pg.exec(executableSchemaSql(LAB_SCHEMA))).resolves.toBeDefined();
   });
 });
 
+// Pinned as whole statements: the fake ClickHouse never runs them, and the refused lookup once failed
+// live because an outer alias named like a column was substituted into its WHERE.
 describe('buildNamedSampleQueries', () => {
   it('filters refused rows by day and hash inside a subquery, then groups by hash', () => {
     const { refused } = buildNamedSampleQueries([], ['7', '-8'], ['2026-11-15', '2026-11-16']);

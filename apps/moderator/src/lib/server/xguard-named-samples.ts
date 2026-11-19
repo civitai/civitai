@@ -6,6 +6,11 @@ export const MAX_REFUSED_DAYS = 31;
 
 /** An Int64 written the way ClickHouse's toString writes it, so a found row matches its request. */
 export const INT64_PATTERN = /^(0|-?[1-9]\d{0,18})$/;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const isInt64 = (s: string) =>
+  INT64_PATTERN.test(s) && BigInt(s) >= INT64_MIN && BigInt(s) <= INT64_MAX;
+
 export const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export type NamedSampleRequest = {
@@ -64,9 +69,9 @@ function validate(req: NamedSampleRequest) {
   if (generated.length + refused.length > MAX_NAMED_SAMPLES) {
     fail(`at most ${MAX_NAMED_SAMPLES} samples per call`);
   }
-  for (const hash of generated) if (!INT64_PATTERN.test(hash)) fail(`invalid hash "${hash}"`);
+  for (const hash of generated) if (!isInt64(hash)) fail(`invalid hash "${hash}"`);
   for (const { hash, date } of req.refused ?? []) {
-    if (!INT64_PATTERN.test(hash)) fail(`invalid hash "${hash}"`);
+    if (!isInt64(hash)) fail(`invalid hash "${hash}"`);
     if (!DAY_PATTERN.test(date)) fail(`invalid date "${date}"`);
   }
   // A hash given with several days is looked up on all of them.
