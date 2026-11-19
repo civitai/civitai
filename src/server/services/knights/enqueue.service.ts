@@ -47,7 +47,9 @@ export type EnqueueOptions = {
    * Refuse images with no post. Intake passes it: an image rarely gains a post after its scan,
    * while drafts and scheduled posts often publish later, so those still queue. A post scheduled
    * to publish after the item would close unvoted (`knightsLatestStageEnd`) is refused too
-   * (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still queue.
+   * (`publishes-after-expiry`): Knights could never serve it. Drafts have no date and still queue;
+   * the Knights tick closes a scan sample still on a draft 24h later (`unpublished-draft`), and
+   * nothing re-queues it.
    */
   requirePost?: boolean;
 };

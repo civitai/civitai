@@ -412,6 +412,8 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
   // Training Studio's Manage tags find-and-replace row.
   trainingStudioTagFindReplace: {
     availability: ['mod'],
@@ -582,6 +584,8 @@ const featureFlags = createFeatureFlags({
   // Image search by the model versions an image used. Off until the image collection's
   // modelVersionIds payload is backfilled and indexed: an unindexed filter scans every point.
   imageSearchResources: { availability: [], fliptKey: 'image-search-resources' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.

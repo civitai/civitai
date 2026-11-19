@@ -227,14 +227,14 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
   ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
-  // accept, but phased — permission hooks
-  ['hook on a private collection', priv(hook()), true, true],
-  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true, true],
-  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true, true],
-  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true, true],
-  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true, true],
-  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true, true],
-  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true, true],
+  // accept — permission hooks (the `hooks` feature is on in production)
+  ['hook on a private collection', priv(hook()), true],
+  ['hook on shared own, with a schema', shared({ schema: CARD, ...hook() }), true],
+  ['hook on write none', shared({ write: 'none', counters: ['plays'], ...hook() }), true],
+  ['hook .mjs, timeoutMs 1', priv(hook({ file: 'a.mjs', timeoutMs: 1 })), true],
+  ['hook timeoutMs 500', priv(hook({ timeoutMs: 500 })), true],
+  ['hook file of 200 chars', priv(hook({ file: `${'a'.repeat(197)}.js` })), true],
+  ['hook file with dots and dashes', priv(hook({ file: 'src/a.b/c-d_e.js' })), true],
   // reject — containers
   ['storage null', null, false],
   ['storage array', [], false],
