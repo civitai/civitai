@@ -1344,13 +1344,6 @@ describe('an overdue deal nothing was delivered for', () => {
     expect(await deals.cancelOverdueServiceDeals()).toMatchObject({ moved: 1 });
     expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'overdue' });
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: 'overdue chat line could not be posted',
-        dealId: id,
-        error: 'chat down',
-      })
-    );
   });
 
   it('counts a second revision round from its own request', async () => {

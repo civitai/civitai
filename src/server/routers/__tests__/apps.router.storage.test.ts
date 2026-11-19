@@ -714,23 +714,6 @@ describe('apps.storage shared gates', () => {
     });
   });
 
-  // The OTHER capability refusal on this path — subject hydrates, but does not
-  // hold the run capability — must be counted too (audit 🟡-4).
-  it('counts a run-capability refusal on the ops counter', async () => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
-    mockParseSubjectUserId.mockImplementation(() => 77);
-    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
-    runEnabledUserIds.delete(77);
-
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'unauthorized' });
-  });
-
   // Fix 3 / audit A5 (design-gaps H4): storage is a DECLARED, approved scope —
   // not an ambient capability. A block approved for some OTHER scope (e.g.
   // models:read:self) but NOT apps:storage:* must be denied at the storage

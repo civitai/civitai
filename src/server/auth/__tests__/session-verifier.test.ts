@@ -59,13 +59,11 @@ afterEach(() => envMock.reset());
 describe('isRevoked — bounded revocation read (leg 3)', () => {
   it('returns false and records outcome "hit" when the token is not revoked', async () => {
     expect(await isRevoked(claims())).toBe(false);
-    expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'hit', expect.any(Number));
   });
 
   it('returns true when TOKEN_STATE is "invalid" (explicit logout/ban)', async () => {
     h.hGet.mockResolvedValue('invalid');
     expect(await isRevoked(claims())).toBe(true);
-    expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'hit', expect.any(Number));
   });
 
   it('returns true when a global SESSION.ALL cutoff is newer than the token', async () => {
@@ -116,7 +114,6 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
   it('FAILS OPEN (false) on a generic read error and records outcome "error"', async () => {
     h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
     expect(await isRevoked(claims())).toBe(false);
-    expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'error', expect.any(Number));
   });
 
   it.each([

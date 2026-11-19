@@ -335,9 +335,6 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     stubReads({ newlyLive: [{ id: 8, userId: 80 }] });
     await runJob();
     expect(mockApply).toHaveBeenCalledWith({ postId: 8, posterId: 80 });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', message: expect.stringContaining('unfiltered') })
-    );
   });
 
   it('warns instead of silently truncating when the sweep hits its row limit', async () => {

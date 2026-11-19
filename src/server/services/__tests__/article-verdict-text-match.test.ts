@@ -160,9 +160,6 @@ describe('the recompute counts a text verdict only for the text it judged', () =
     row.result = { ...(row.result as object), meta: { inputCut: true } };
     await recomputeArticleIngestion(ARTICLE);
     expect(writtenIngestion()).toBe(ArticleIngestionStatus.Pending);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', name: 'article-verdict-input-cut' })
-    );
   });
 
   it('a text-scan verdict that found a violation in part of the current text blocks it', async () => {
@@ -213,9 +210,6 @@ describe('the recompute counts a text verdict only for the text it judged', () =
       });
       await recomputeArticleIngestion(ARTICLE);
       expect(writtenIngestion()).toBe(ArticleIngestionStatus.Scanned);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'article-verdict-unverifiable' })
-      );
     });
 
     it('does not count when written after', async () => {

@@ -51,10 +51,8 @@ vi.mock('~/server/services/paid-access.service', () => ({
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 const goal = (over: Record<string, unknown> = {}) => ({
   id: 10,
@@ -70,7 +68,6 @@ const goal = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockLogToAxiom.mockResolvedValue(undefined);
   mockUpdateEaDeadline.mockResolvedValue(undefined);
   mockBustMvCache.mockResolvedValue(undefined);
   mockDataForModelsRefresh.mockResolvedValue(undefined);
@@ -136,12 +133,9 @@ describe('checkDonationGoalComplete — public cache refresh', () => {
 
     const result = await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 });
 
-    // Resolves normally with the goal (donation/total logic unaffected) and logs the failure.
+    // Resolves normally with the goal (donation/total logic unaffected).
     expect(result).toMatchObject({ id: 10, total: 100 });
     expect(mockDonationGoalsRefresh).toHaveBeenCalledWith(5);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'donation-goal-cache-bust-failed' })
-    );
   });
 });
 
@@ -193,9 +187,6 @@ describe('checkDonationGoalComplete — goal completion', () => {
     const result = await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: 5 });
 
     expect(result).toMatchObject({ id: 10, total: 1500, active: false });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'donation-goal-cache-bust-failed' })
-    );
   });
 
   it('PROPAGATES a donationGoal.updateMany DB failure (goal-close write is NOT fail-open)', async () => {

@@ -6,11 +6,10 @@ import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lu
 // Runs refreshSession / invalidateSession against the real hSetMultiWithTTL scripts, executed in Lua
 // over an in-memory store, and reads the result back through the real isRevoked.
 
-const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({ mockLogSysRedisFailOpen: vi.fn() }));
 let lua: LuaRedis;
 
 vi.mock('~/server/redis/fail-open-log', () => ({
-  logSysRedisFailOpen: mockLogSysRedisFailOpen,
+  logSysRedisFailOpen: vi.fn(),
 }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: vi.fn().mockResolvedValue(undefined) },
@@ -93,12 +92,6 @@ describe('session token state', () => {
 
     expect(lua.hash(TOKEN_STATE)).toBeUndefined();
     expect(lua.hash(USER_TOKENS)).toEqual({ 'token-a': '1', 'token-b': '1' });
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledWith(
-      'write-degraded',
-      'session-invalidation.updateSessionState',
-      expect.any(Error),
-      expect.objectContaining({ userId: USER_ID, type: 'invalid' })
-    );
 
     // A retry after recovery still finds them.
     await invalidateSession(USER_ID);

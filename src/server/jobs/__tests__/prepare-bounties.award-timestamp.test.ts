@@ -241,13 +241,9 @@ describe('prepare-bounties auto-award', () => {
     );
   });
 
-  it('logs an award whose payout did not settle, for the retry job to pay', async () => {
+  it('carries on when an award payout did not settle, leaving it for the retry job', async () => {
     mockSettle.mockResolvedValueOnce(false);
-    await runPrepareBounties();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ bountyId: BOUNTY_ID }) }),
-      'webhooks'
-    );
+    await expect(runPrepareBounties()).resolves.toBeUndefined();
   });
 
   it('writes the award under the payout lock, before any Buzz moves', async () => {

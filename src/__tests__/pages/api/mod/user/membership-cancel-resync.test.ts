@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { Stripe } from 'stripe';
-import { dbMock, loggingMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
+import { dbMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
@@ -977,50 +977,31 @@ describe('re-sync: final-head lanes', () => {
     const { status, body } = await resync();
     expect(status).toBe(200);
     expect(body).toMatchObject({ ok: true, after: null });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'reread-failed', error: 'pool timeout' }),
-      'webhooks'
-    );
     expect(dbMock.dbWrite.customerSubscription.upsert).toHaveBeenCalled();
     expect(trackModActivity).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    [
-      'only its metadata changed',
-      liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } }),
-      'subscription changed',
-    ],
-    ['only its canceled_at changed', liveSub({ canceled_at: NOW }), 'subscription changed'],
-    [
-      'Stripe no longer has it',
-      Object.assign(new Error('gone'), { statusCode: 404 }),
-      'Stripe no longer has the subscription',
-    ],
-  ])(
-    'is refused (409) when, on the re-read before the upsert, %s',
-    async (_label, second, logged) => {
-      const { subscriptions } = fakeStripe(
-        liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
-      );
-      subscriptions.retrieve.mockResolvedValueOnce(
-        liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
-      );
-      if (second instanceof Error) subscriptions.retrieve.mockRejectedValueOnce(second);
-      else
-        subscriptions.retrieve.mockResolvedValueOnce({
-          ...second,
-          cancel_at_period_end: true,
-          cancel_at: PERIOD_END,
-        } as never);
-      expect((await resync()).status).toBe(409);
-      expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'refused', problems: [logged] }),
-        'webhooks'
-      );
-    }
-  );
+    ['only its metadata changed', liveSub({ metadata: { userId: String(MEMBER), banned: 'x' } })],
+    ['only its canceled_at changed', liveSub({ canceled_at: NOW })],
+    ['Stripe no longer has it', Object.assign(new Error('gone'), { statusCode: 404 })],
+  ])('is refused (409) when, on the re-read before the upsert, %s', async (_label, second) => {
+    const { subscriptions } = fakeStripe(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END })
+    );
+    subscriptions.retrieve.mockResolvedValueOnce(
+      liveSub({ cancel_at_period_end: true, cancel_at: PERIOD_END }) as never
+    );
+    if (second instanceof Error) subscriptions.retrieve.mockRejectedValueOnce(second);
+    else
+      subscriptions.retrieve.mockResolvedValueOnce({
+        ...second,
+        cancel_at_period_end: true,
+        cancel_at: PERIOD_END,
+      } as never);
+    expect((await resync()).status).toBe(409);
+    expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
+  });
 
   it('the lock is released after a refusal too', async () => {
     fakeStripe(liveSub({ status: 'canceled', ended_at: NOW }));

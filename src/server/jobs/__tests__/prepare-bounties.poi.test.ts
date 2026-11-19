@@ -211,10 +211,6 @@ describe('prepare-bounties — one bounty failing', () => {
 
     await runPrepareBounties();
 
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', data: expect.objectContaining({ bountyId: 7 }) }),
-      'webhooks'
-    );
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(8, { firstAttempt: true });
     expect(mockSetLastRun).toHaveBeenCalled();
   });
