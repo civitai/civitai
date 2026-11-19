@@ -57,7 +57,8 @@ compared nothing.
 **Parity** counts, per arm against the reference, `bytesEqual` (identical bytes), `jsonEqual`
 (identical parsed JSON, key order ignored) and `valueEqual` (identical after each superjson envelope
 is decoded as the client decodes it: an undefined member written as `null` plus an `["undefined"]`
-annotation equals an omitted one; other annotations compared as sets). `examples` are the decoded
+annotation equals an omitted member with the same annotation; the annotation sets, undefined
+included, compared as sets). `examples` are the decoded
 diffs' paths. `valueEqual` is the one that says whether the client sees the same response.
 
 Latency is compared only over the requests every arm answered 200 in that round (`commonOk`): a

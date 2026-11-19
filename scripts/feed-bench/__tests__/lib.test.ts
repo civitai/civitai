@@ -272,24 +272,18 @@ describe('compareBodies (parity)', () => {
 });
 
 describe('compareBodies: decoded (superjson) parity', () => {
-  // One arm writes an undefined member as `null` + an ["undefined"] annotation (superjson.serialize),
-  // the other omits the member. Both decode to the same object under superjson.deserialize.
+  // The Node arm writes an undefined member as `null` + an ["undefined"] annotation
+  // (superjson.serialize); feed-go's writer omits the member and writes the same annotation. Both
+  // decode to the same object under superjson.deserialize.
   const nodeShape =
     '{"result":{"data":{"json":{"a":1,"tags":null},"meta":{"values":{"tags":["undefined"]}}}}}';
-  const goShape = '{"result":{"data":{"json":{"a":1}}}}';
+  const goShape = '{"result":{"data":{"json":{"a":1},"meta":{"values":{"tags":["undefined"]}}}}}';
 
-  it('null + undefined annotation vs omitted: raw unequal, valueEqual true, and the pair tallies as value-equal with no example (kills: no decode, raw-diff examples)', () => {
+  it('null + undefined annotation vs omitted + the same annotation: raw unequal, valueEqual true, and the pair tallies as value-equal with no example (kills: no decode, raw-diff examples)', () => {
     expect(lib.compareBodies(nodeShape, goShape)).toEqual({
       bytesEqual: false,
       jsonEqual: false,
-      diffs: [
-        { path: '$.result.data.json.tags', a: null, b: undefined },
-        {
-          path: '$.result.data.meta',
-          a: { values: { tags: ['undefined'] } },
-          b: undefined,
-        },
-      ],
+      diffs: [{ path: '$.result.data.json.tags', a: null, b: undefined }],
       valueEqual: true,
       valueDiffs: [],
     });
@@ -315,7 +309,7 @@ describe('compareBodies: decoded (superjson) parity', () => {
   it('a literal null with NO annotation vs omitted is still a diff, at its path (kills: every null treated as undefined)', () => {
     const node =
       '{"result":{"data":{"json":{"a":1,"review":null,"tags":null},"meta":{"values":{"review":["undefined"]}}}}}';
-    const go = '{"result":{"data":{"json":{"a":1}}}}';
+    const go = '{"result":{"data":{"json":{"a":1},"meta":{"values":{"review":["undefined"]}}}}}';
     const r = lib.compareBodies(node, go);
     expect(r.valueEqual).toBe(false);
     expect(r.valueDiffs).toEqual([{ path: '$.result.data.json.tags', a: null, b: undefined }]);
@@ -334,7 +328,8 @@ describe('compareBodies: decoded (superjson) parity', () => {
   it('a real value difference is still reported when undefined annotations are present (kills: annotations short-circuit the compare)', () => {
     const node =
       '{"result":{"data":{"json":{"a":1,"tags":null,"items":[{"id":8}]},"meta":{"values":{"tags":["undefined"]}}}}}';
-    const go = '{"result":{"data":{"json":{"a":2,"items":[{"id":9}]}}}}';
+    const go =
+      '{"result":{"data":{"json":{"a":2,"items":[{"id":9}]},"meta":{"values":{"tags":["undefined"]}}}}}';
     expect(lib.compareBodies(node, go).valueDiffs).toEqual([
       { path: '$.result.data.json.a', a: 1, b: 2 },
       { path: '$.result.data.json.items[0].id', a: 8, b: 9 },
@@ -345,7 +340,7 @@ describe('compareBodies: decoded (superjson) parity', () => {
     const node =
       '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2,"thumbnailUrl":null}]}]},"meta":{"values":{"items.0.images.1.thumbnailUrl":["undefined"]}}}}}';
     const go =
-      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2}]}]}}}}';
+      '{"result":{"data":{"json":{"items":[{"images":[{"id":1,"thumbnailUrl":"u1"},{"id":2}]}]},"meta":{"values":{"items.0.images.1.thumbnailUrl":["undefined"]}}}}}';
     const r = lib.compareBodies(node, go);
     expect(r.jsonEqual).toBe(false);
     expect(r.valueEqual).toBe(true);
@@ -360,14 +355,29 @@ describe('compareBodies: decoded (superjson) parity', () => {
     expect(lib.compareBodies(node, go).valueDiffs).toEqual([
       { path: '$.result.data.json.items[0].images[0].thumbnailUrl', a: undefined, b: 'u1' },
       { path: '$.result.data.json.items[0].images[1].thumbnailUrl', a: null, b: undefined },
+      {
+        path: '$.result.data.meta.values["items.0.images.0.thumbnailUrl"]',
+        a: ['undefined'],
+        b: undefined,
+      },
     ]);
   });
 
   it('an escaped dot in an annotation path names one key (kills: split on every dot)', () => {
     const node =
       '{"result":{"data":{"json":{"a.b":null},"meta":{"values":{"a\\\\.b":["undefined"]}}}}}';
-    const go = '{"result":{"data":{"json":{}}}}';
+    const go = '{"result":{"data":{"json":{},"meta":{"values":{"a\\\\.b":["undefined"]}}}}}';
     expect(lib.compareBodies(node, go).valueDiffs).toEqual([]);
+  });
+
+  it('an undefined annotation on one side only is a diff at its meta path, though the values agree (kills: undefined annotations left out of the set compare)', () => {
+    const a = '{"result":{"data":{"json":{"x":1,"a":null},"meta":{"values":{"a":["undefined"]}}}}}';
+    const b = '{"result":{"data":{"json":{"x":1}}}}';
+    const r = lib.compareBodies(a, b);
+    expect(r.valueEqual).toBe(false);
+    expect(r.valueDiffs).toEqual([
+      { path: '$.result.data.meta.values["a"]', a: ['undefined'], b: undefined },
+    ]);
   });
 
   it('a Date annotation on one side only is a diff; referentialEqualities is ignored (kills: annotation sets not compared)', () => {

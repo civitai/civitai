@@ -303,14 +303,14 @@ function isSuperjsonEnvelope(v) {
 /**
  * Decode one superjson envelope the way `superjson.deserialize` treats its `["undefined"]`
  * annotations: every annotated path is set to `undefined` (its setDeep assigns the parent's key
- * whether or not the json carried it). Returns the decoded value and the OTHER annotations
- * (path -> the annotation as JSON), which are left un-applied: a Date stays its ISO string, and the
- * annotation sets are compared separately. `meta.referentialEqualities` (object identity after
+ * whether or not the json carried it). Returns the decoded value and EVERY annotation (path -> the
+ * annotation as JSON), compared separately as sets. Only the undefined ones are applied: a Date stays
+ * its ISO string. `meta.referentialEqualities` (object identity after
  * decode, never a value) and any other `meta` key are ignored.
  */
 function decodeSuperjson(env) {
   let value = env.json;
-  const others = {};
+  const annotations = {};
   const values = env.meta && env.meta.values;
   const entries = Array.isArray(values)
     ? [['', values]] // a root-level annotation (`["undefined"]`) is not a path map
@@ -319,10 +319,8 @@ function decodeSuperjson(env) {
       : [];
   for (const [path, ann] of entries) {
     if (!Array.isArray(ann) || ann.length === 0) continue;
-    if (ann[0] !== 'undefined') {
-      others[path] = JSON.stringify(ann);
-      continue;
-    }
+    annotations[path] = JSON.stringify(ann);
+    if (ann[0] !== 'undefined') continue;
     if (path === '') {
       value = undefined;
       continue;
@@ -340,13 +338,13 @@ function decodeSuperjson(env) {
       parent[last] = undefined;
     }
   }
-  return { value, others };
+  return { value, annotations };
 }
 
 /**
  * Decode every tRPC result in a parsed body (one `{result: {data}}`, or a batch: an array of them)
  * whose `data` is a superjson envelope, in place: `data` becomes `{json: <decoded>}`, so a decoded
- * path reads like its raw one. Returns the non-undefined annotations per result, keyed by the
+ * path reads like its raw one. Returns every annotation per result, keyed by the
  * result's path (`$.result.data` or `$[i].result.data`).
  */
 function decodeTrpcBody(body) {
@@ -355,16 +353,20 @@ function decodeTrpcBody(body) {
     if (!isPlainObject(r) || !isPlainObject(r.result)) return;
     const data = r.result.data;
     if (!isSuperjsonEnvelope(data)) return;
-    const { value, others } = decodeSuperjson(data);
-    r.result.data = { json: value };
-    annotations[`${prefix}.result.data`] = others;
+    const decoded = decodeSuperjson(data);
+    r.result.data = { json: decoded.value };
+    annotations[`${prefix}.result.data`] = decoded.annotations;
   };
   if (Array.isArray(body)) body.forEach((r, i) => one(r, `$[${i}]`));
   else one(body, '$');
   return annotations;
 }
 
-/** The non-undefined annotation sets of two decoded bodies, compared as sets per result. */
+/**
+ * The annotation sets (`meta.values`) of two decoded bodies, compared as sets per result, undefined
+ * annotations included: one present on one side only is a diff (as feed-go's shadow comparator
+ * reports it), even where the decoded values agree.
+ */
 function diffAnnotations(annA, annB, out, max) {
   const results = new Set([...Object.keys(annA), ...Object.keys(annB)]);
   for (const prefix of [...results].sort()) {
@@ -390,10 +392,11 @@ function diffAnnotations(annA, annB, out, max) {
  *    not), and the first `maxDiffs` differing paths (`$.result.data.json.items[0].postId`);
  *  - `valueEqual` / `valueDiffs`: the same after each tRPC result's superjson envelope is decoded as
  *    the client decodes it (`decodeSuperjson`) — what the client renders. The Node app writes an
- *    undefined member as `null` plus an `["undefined"]` annotation in `meta.values`; a writer that
- *    omits the member decodes to the same object, so only the raw compare differs there. A key absent
- *    on one side and undefined on the other is equal; a literal `null` with no annotation against an
- *    absent key is still a diff. The other annotations (Date, …) are compared as sets.
+ *    undefined member as `null` plus an `["undefined"]` annotation in `meta.values`; feed-go's writer
+ *    omits the member and writes the same annotation. Both decode to the same object, so only the
+ *    raw compare differs there. A key absent on one side and undefined on the other is equal in the
+ *    value walk; a literal `null` with no annotation against an absent key is still a diff. The
+ *    annotation sets (undefined, Date, …) are compared as sets: one on one side only is a diff.
  * A body that is not JSON compares unequal at `$` (all three equal only if the bytes are).
  *
  * The decoding is done here, not by the `superjson` package: this harness has no dependencies
