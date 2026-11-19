@@ -1284,8 +1284,8 @@ export default function ModelDetailsV2({
                               key="add-to-showcase"
                               entityType="Model"
                               entityId={model.id}
-                              // Sections hold only the caller's own models; a moderator here keeps
-                              // the top-showcase add.
+                              // Sections take only the caller's own published, unarchived models;
+                              // otherwise (a moderator, a draft) it keeps the top-showcase add.
                               offerSections={
                                 isCreator && model.status === ModelStatus.Published && !model.mode
                               }

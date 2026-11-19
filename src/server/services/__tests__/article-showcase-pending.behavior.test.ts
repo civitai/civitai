@@ -82,6 +82,8 @@ beforeEach(() => {
 
 // The section feed's input (CustomShowcaseSection.tsx ArticleShowcase).
 const sectionFeed = async (viewerId?: number) => {
+  rows = [];
+  let ran = false;
   await getArticles({
     ids: [PENDING, SCANNED],
     username: 'author',
@@ -92,7 +94,9 @@ const sectionFeed = async (viewerId?: number) => {
     sessionUser: viewerId ? { id: viewerId } : undefined,
   } as Parameters<typeof getArticles>[0]).catch((e: Error) => {
     if (e.message !== 'query ran') throw e;
+    ran = true;
   });
+  expect(ran).toBe(true);
   return rows.map((r) => r.id).sort();
 };
 
@@ -108,7 +112,10 @@ describe('a showcase section of articles', () => {
 
   it('shows it to a visitor once scanned', async () => {
     await pg.exec(`UPDATE "Article" SET ingestion = 'Scanned' WHERE id = ${PENDING}`);
-    expect(await sectionFeed(VISITOR)).toEqual([PENDING, SCANNED]);
-    await pg.exec(`UPDATE "Article" SET ingestion = 'Pending' WHERE id = ${PENDING}`);
+    try {
+      expect(await sectionFeed(VISITOR)).toEqual([PENDING, SCANNED]);
+    } finally {
+      await pg.exec(`UPDATE "Article" SET ingestion = 'Pending' WHERE id = ${PENDING}`);
+    }
   });
 });

@@ -3,6 +3,7 @@ import { IconHeart } from '@tabler/icons-react';
 import { openAddToShowcaseModal } from '~/components/Dialog/triggers/add-to-showcase';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { ShowcaseSectionType } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -79,7 +80,7 @@ export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = tr
   );
 }
 
-export type ShowcaseEntityType = 'Model' | 'Image' | 'Article';
+export type ShowcaseEntityType = ShowcaseSectionType;
 type Props = {
   entityType: ShowcaseEntityType;
   entityId: number;

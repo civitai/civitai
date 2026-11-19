@@ -140,7 +140,6 @@ describe('Add to Showcase on a model', () => {
     expect(state.addToTop).not.toHaveBeenCalled();
   });
 
-  // The model page passes false for a moderator on someone else's model.
   test('without offerSections, it adds to the top showcase even with a Models section', async () => {
     state.user = profileWith([section('m', [1], 'Model')]);
     renderMenuItem('Model', false);
