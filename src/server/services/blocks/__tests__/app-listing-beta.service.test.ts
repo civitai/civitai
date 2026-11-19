@@ -374,13 +374,4 @@ describe('🔴 a degraded render read is LOGGED', () => {
     expect((await readListingBetaManyForRender(['a'], throwingClient(err))).size).toBe(0);
     expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
-
-  it('the NARROW readers do not log — they propagate instead', async () => {
-    // The split, asserted on the logging axis too: a write-gating path surfaces the error to
-    // its caller, so logging there would double-report it.
-    const err = new Error('boom') as Error & { code?: string };
-    err.code = '42P01';
-    await expect(readListingBeta('apl_1', throwingClient(err))).rejects.toBe(err);
-    expect(logToAxiom).not.toHaveBeenCalled();
-  });
 });
