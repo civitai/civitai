@@ -122,6 +122,11 @@ describe('getModelVersionHandler, version and model status', () => {
       { versionStatus: 'UnpublishedViolation', modelStatus: 'UnpublishedViolation' },
     ],
     ['a deleted version', { versionStatus: 'Deleted', modelStatus: 'Deleted' }],
+    ['a scheduled version', { versionStatus: 'Scheduled', modelStatus: 'Published' }],
+    [
+      'an unpublished version of a published model',
+      { versionStatus: 'Unpublished', modelStatus: 'Published' },
+    ],
   ] as const;
 
   it.each(NOT_PUBLIC)(
@@ -172,6 +177,17 @@ describe('getModelVersionForEditHandler, the editor read', () => {
 
   it('serves the owner their draft on a session', async () => {
     expect(await edit({})).toBe('served');
+  });
+
+  it('serves a moderator who is not the owner', async () => {
+    const outcome = await getModelVersionForEditHandler({
+      input: { id: 100 },
+      ctx: { user: VIEWERS.moderator, features: {} },
+    } as never).then(
+      () => 'resolved',
+      (e: unknown) => (e === STOP || (e as Error)?.cause === STOP ? 'served' : String(e))
+    );
+    expect(outcome).toBe('served');
   });
 
   it('refuses the owner on a scoped key', async () => {

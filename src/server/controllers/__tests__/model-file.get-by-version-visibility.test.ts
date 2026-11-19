@@ -30,10 +30,20 @@ const FILES = [
   { id: 3, name: 'data.zip', type: 'Training Data', visibility: 'Private' },
 ].map((file) => ({ ...file, modelVersionId: VERSION, metadata: {}, hashes: [] }));
 
-function arrange({ versionStatus = 'Published', modelStatus = 'Published', poi = false } = {}) {
+function arrange({
+  versionStatus = 'Published',
+  modelStatus = 'Published',
+  poi = false,
+  publishedAt = versionStatus === 'Published' ? new Date(0) : null,
+}: {
+  versionStatus?: string;
+  modelStatus?: string;
+  poi?: boolean;
+  publishedAt?: Date | null;
+} = {}) {
   dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
     status: versionStatus,
-    publishedAt: versionStatus === 'Published' ? new Date(0) : null,
+    publishedAt,
     model: { userId: OWNER, status: modelStatus, poi },
   } as never);
   dbMock.dbRead.modelFile.findMany.mockResolvedValue(structuredClone(FILES) as never);
@@ -72,13 +82,25 @@ describe('modelFile.getByVersionId', () => {
       { versionStatus: 'UnpublishedViolation', modelStatus: 'UnpublishedViolation' },
     ],
     ['a version of a poi model', { poi: true }],
-  ])('lists nothing of %s to another user, and everything to its owner', async (_, state) => {
-    arrange(state);
-    expect(await fileNames('other')).toBe('none');
-    expect(await fileNames('owner')).toEqual([
-      'public.safetensors',
-      'private.safetensors',
-      'data.zip',
-    ]);
-  });
+    ['a deleted version', { versionStatus: 'Deleted', modelStatus: 'Deleted' }],
+    ['a version of an unpublished model', { modelStatus: 'Unpublished' }],
+    ['a draft version of a published model', { versionStatus: 'Draft', modelStatus: 'Published' }],
+    ['a version scheduled to publish later', { publishedAt: new Date(Date.now() + 86_400_000) }],
+  ])(
+    'lists nothing of %s to another user, and everything to its owner and a moderator',
+    async (_, state) => {
+      arrange(state);
+      expect(await fileNames('other')).toBe('none');
+      expect(await fileNames('moderator')).toEqual([
+        'public.safetensors',
+        'private.safetensors',
+        'data.zip',
+      ]);
+      expect(await fileNames('owner')).toEqual([
+        'public.safetensors',
+        'private.safetensors',
+        'data.zip',
+      ]);
+    }
+  );
 });

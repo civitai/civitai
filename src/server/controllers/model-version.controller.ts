@@ -388,9 +388,13 @@ const loadModelVersion = async ({
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
-      >,
+      // Training data keeps its own public view (the router's strip); other non-Public files are the
+      // owner's and moderators'.
+      files: (isOwnerOrMod || !version.files
+        ? version.files
+        : version.files.filter(
+            (file) => file.visibility === 'Public' || file.type === 'Training Data'
+          )) as unknown as Array<Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }>,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
       linkedComponents,
