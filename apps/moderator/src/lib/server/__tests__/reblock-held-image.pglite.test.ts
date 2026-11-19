@@ -421,6 +421,7 @@ describe('a verdict on a report of an image a moderator already removed', () => 
     expect(await row(MOD_REMOVED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
     expect(reportsMovedTo('Actioned')).toEqual([report(MOD_REMOVED)]);
     expect(reportsMovedTo('Unactioned')).toEqual([]);
+    expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ noReward: false }));
     expect(result).toMatchObject({
       success: true,
       closedReportIds: [report(MOD_REMOVED)],
@@ -433,6 +434,7 @@ describe('a verdict on a report of an image a moderator already removed', () => 
 
     expect(await row(GRACE)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
     expect(reportsMovedTo('Actioned')).toEqual([report(GRACE)]);
+    expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ noReward: true }));
     expect(unaction).toMatchObject({ success: true, closedReportIds: [report(GRACE)] });
   });
 
@@ -520,6 +522,43 @@ describe('a verdict on a report of an image a moderator already removed', () => 
       expect(result).toMatchObject({ notMoved: expect.stringContaining(`#${report(HELD)}`) });
     }
   );
+
+  describe('an image an automated moderation rule blocked', () => {
+    const RULE_BLOCKED = 70;
+    beforeEach(async () => {
+      await db.query(
+        `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash", "metadata") VALUES
+          ($1, 7, NULL, 'moderated', 'Blocked', 32, 110, '{"ruleId": 5, "ruleReason": "r"}')`,
+        [RULE_BLOCKED]
+      );
+      await db.query(`INSERT INTO "ImageReport" ("imageId", "reportId") VALUES ($1, $2)`, [
+        RULE_BLOCKED,
+        report(RULE_BLOCKED),
+      ]);
+    });
+
+    it('Unaction restores it, as a rule false positive, and unactions the report', async () => {
+      await verdict('accept', RULE_BLOCKED);
+
+      expect(await row(RULE_BLOCKED)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+      expect(reportsMovedTo('Unactioned')).toEqual([report(RULE_BLOCKED)]);
+    });
+
+    it('Remove writes a real block: the owner notice and a TOS blocklist entry', async () => {
+      const result = await imageQueueActions.block(
+        event({
+          imageId: String(RULE_BLOCKED),
+          reportId: String(report(RULE_BLOCKED)),
+          violationType: 'other',
+        })
+      );
+
+      expect(result).not.toHaveProperty('alreadyRemoved');
+      expect(notifiedImages()).toEqual([`/images/${RULE_BLOCKED}`]);
+      expect(blocklistReasons()).toEqual({ '110': 'TOS' });
+      expect(reportsMovedTo('Actioned')).toEqual([report(RULE_BLOCKED)]);
+    });
+  });
 
   it('Accept with no report posted, as the review queues post it, still restores it (control)', async () => {
     await imageQueueActions.accept(event({ imageId: String(MOD_REMOVED) }));

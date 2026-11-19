@@ -289,10 +289,12 @@ export const imageQueueActions = {
       });
     } catch (e) {
       if (e instanceof ModeratorRemovedImageError && reportId) {
+        // A grace block is the owner's account deletion, not a ruling that upheld the report.
         await setReportStatus({
           id: reportId,
           status: ReportStatus.Actioned,
           userId: locals.user.id,
+          noReward: e.graceBlock,
         });
         return {
           success: true,
@@ -519,6 +521,7 @@ export const imageQueueActions = {
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const refused: number[] = [];
     const removed: number[] = [];
+    const graceBlocked = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
@@ -531,6 +534,7 @@ export const imageQueueActions = {
         }).catch((e) => {
           if (e instanceof ModeratorRemovedImageError) {
             removed.push(imageId);
+            if (e.graceBlock) graceBlocked.add(imageId);
             return undefined;
           }
           if (!(e instanceof RemovedImageNotRestorableError)) throw e;
@@ -542,9 +546,15 @@ export const imageQueueActions = {
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
     const reportsByImage = removed.length ? await reportIdsByImage(reportIds) : new Map();
     const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
+    const unpaid = new Set([...graceBlocked].flatMap((id) => reportsByImage.get(id) ?? []));
     await Promise.all(
       closedReportIds.map((id) =>
-        setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id })
+        setReportStatus({
+          id,
+          status: ReportStatus.Actioned,
+          userId: locals.user.id,
+          noReward: unpaid.has(id),
+        })
       )
     );
     const notice = {

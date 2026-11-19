@@ -72,8 +72,9 @@ const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 const ACCOUNT_DELETION_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
 
 /** Removed by a moderator, or under an account-deletion grace block, which a report verdict does not lift
- *  either. Never NULL, so `NOT` of it is safe. */
-const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED})`;
+ *  either. Not a block by an automated moderation rule (`metadata.ruleId`): a report review is where a rule's
+ *  false positive is restored. Never NULL, so `NOT` of it is safe. */
+const REMOVED_BY_MODERATOR = sql<boolean>`("ingestion" = 'Blocked' AND "blockedFor" IS NOT DISTINCT FROM ${BLOCKED_REASON_MODERATED} AND ("metadata" -> 'ruleId') IS NULL)`;
 /** `isModerationBlocked` as a condition: a grace block is not one. Remove still blocks a grace-blocked image,
  *  which strips its breadcrumbs, so a later account restore cannot put it back. */
 const MODERATION_BLOCKED = sql<boolean>`(${REMOVED_BY_MODERATOR} AND ("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NULL)`;
@@ -159,7 +160,8 @@ export class RemovedImageNotRestorableError extends Error {
 
 /** A verdict on a report refused to restore an image a moderator already removed. */
 export class ModeratorRemovedImageError extends Error {
-  constructor(readonly imageId: number) {
+  /** `graceBlock`: blocked because its owner's account is being deleted, not by a moderator's ruling. */
+  constructor(readonly imageId: number, readonly graceBlock = false) {
     super(`Image ${imageId} was already removed by a moderator`);
   }
 }
@@ -263,13 +265,17 @@ export async function acceptImage({
     if (keepModeratorRemoved) {
       const removed = await dbWrite
         .selectFrom('Image')
-        .select('id')
+        .select(
+          sql<boolean>`("metadata" -> ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text) IS NOT NULL`.as(
+            'graceBlock'
+          )
+        )
         .where('id', '=', imageId)
         .where(
           sql<boolean>`${REMOVED_BY_MODERATOR} AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
         )
         .executeTakeFirst();
-      if (removed) throw new ModeratorRemovedImageError(imageId);
+      if (removed) throw new ModeratorRemovedImageError(imageId, removed.graceBlock);
     }
     throw new RemovedImageNotRestorableError(imageId);
   }
