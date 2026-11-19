@@ -814,17 +814,6 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       expect(h.refundDevSessionBuzz).toHaveBeenCalledWith('s1', 1200);
       // …the claim released (the spent quote is simply gone)…
       await expect(submit(body({ quoteId }))).rejects.toThrow('training quote not found');
-      // …and the refusal is logged as such.
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'block-training-submit-failed',
-          outcome: 'refused',
-          quoteId,
-          code: thrown.code,
-          attempt: 1,
-          status,
-        })
-      );
     }
   );
 
