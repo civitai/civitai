@@ -106,7 +106,7 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER, "image" TEXT);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -351,7 +351,7 @@ describe("a moderator's image delete in one transaction", () => {
 
     await deleteImages([1], MODERATOR);
 
-    const { transactions, matching } = connectionsOf(/from "User"/);
+    const { transactions, matching } = connectionsOf(/from "User"/i);
     expect(matching.length).toBeGreaterThan(0);
     expect(new Set(matching)).toEqual(new Set([transactions[0]]));
   });

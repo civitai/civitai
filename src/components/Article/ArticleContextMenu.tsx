@@ -39,6 +39,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import { moderatorArticleLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 
 const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
   ssr: false,
@@ -180,6 +181,9 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         />
         {currentUser && (isOwner || isModerator) && (
           <>
+            {isOwner && article.status === ArticleStatus.Published && (
+              <AddToShowcaseMenuItem entityType="Article" entityId={article.id} />
+            )}
             {isOwner && article.coverImage && !atDetailsPage && (
               <AddArtFrameMenuItem
                 entityType={CosmeticEntity.Article}

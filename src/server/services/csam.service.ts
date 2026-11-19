@@ -30,7 +30,7 @@ import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { isProd } from '~/env/other';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
-import { bulkAddBlockedImages } from '~/server/services/image.service';
+import { bulkAddBlockedImages, logCsamBlocklistNoHash } from '~/server/services/image.service';
 import { csamSendClaimCutoff } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -301,8 +301,12 @@ export async function createCsamReport({
   if (writeBlocklist && imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
       where: { id: { in: imageIds } },
-      select: { pHash: true },
+      select: { id: true, pHash: true },
     });
+    logCsamBlocklistNoHash(
+      affectedImages.filter((img) => !img.pHash).map((img) => img.id),
+      'csam-report-create'
+    );
 
     await bulkAddBlockedImages({
       data: affectedImages

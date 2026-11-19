@@ -335,3 +335,43 @@ describe('a legacy avatar image', () => {
     expect(mockUpdateUserById.mock.calls[1][0].data.image).toBeNull();
   });
 });
+
+describe('the legacy avatar image on a save', () => {
+  const OLD_KEY = '3f6e2a10-9b4c-4d7e-8a21-6c0b5d9e1f42';
+  const staleKey = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${OLD_KEY}/width=96`;
+  const holding = (image: string | null) =>
+    mockGetUserById.mockResolvedValue({
+      profilePictureId: CURRENT_PICTURE_ID,
+      profilePicture: { userId: CALLER_ID },
+      image,
+    });
+  const written = () => mockUpdateUserById.mock.calls[0][0].data as { image?: unknown };
+  beforeEach(() =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }])
+    )
+  );
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  it('🔴 is cleared when a new picture replaces an upload key it still holds', async () => {
+    holding(staleKey);
+    await saveProfilePicture();
+    expect(written()).toMatchObject({ image: null });
+  });
+
+  it('keeps an external avatar url when a new picture is saved (control)', async () => {
+    holding('https://avatars.githubusercontent.com/u/1?v=4');
+    await saveProfilePicture();
+    expect(written().image).toBeUndefined();
+  });
+
+  it('🔴 is left out of the write when re-sent unchanged, so a clear committed since the read stands', async () => {
+    const external = 'https://avatars.githubusercontent.com/u/1?v=4';
+    holding(external);
+    await updateUserHandler({
+      ctx: { user: { id: CALLER_ID } },
+      input: { id: CALLER_ID, image: external },
+    } as never);
+    expect(written().image).toBeUndefined();
+  });
+});
