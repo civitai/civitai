@@ -59,7 +59,7 @@ async function sendStats(db: Kysely<DB>, userId: number) {
 /**
  * Tells every player about the items in `before` that have since left the stage they were open at: they drop out of the
  * buffers holding them. The voters of an item that is now final get their stats, since settling it paid or dropped their gold
- * and XP. Best effort and never throws: a player who misses a signal is refused the vote (and told so), as before.
+ * and XP. Never throws: a player who misses a signal is refused the vote (and told so).
  */
 export async function announceMoves(db: Kysely<DB>, before: ItemStage[]) {
   try {

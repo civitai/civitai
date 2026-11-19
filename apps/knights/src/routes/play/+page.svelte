@@ -570,7 +570,7 @@
     if (!onScreen || !gone.has(onScreen.live) || tracker.has(onScreen.key)) return;
     // A refusal note must stay until the next judgment; it outranks this one.
     if (!sticky) tell(SETTLED_NOTICE);
-    // Without a decoded item to show, the dropped one stays up (a vote on it is refused, as before): falling back to the
+    // Without a decoded item to show, the dropped one stays up (a vote on it is refused): falling back to the
     // server's item would show one already judged, and the buffer head may not be decoded yet.
     const next = buffer.peek() ? buffer.next() : null;
     if (!next) {
