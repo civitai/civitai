@@ -132,6 +132,7 @@ import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-t
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { knightsPublishSampling } from '~/server/jobs/knights-publish-sampling';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
@@ -241,6 +242,7 @@ export const jobs: Job[] = [
   imageDeletes,
   retryUploadPromptScansJob,
   processScheduledPublishing,
+  knightsPublishSampling,
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,

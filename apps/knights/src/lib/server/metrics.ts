@@ -25,6 +25,7 @@ const ESCALATION_REASONS = [
   'unservable',
   'publishes-after-expiry',
   'unpublished-draft',
+  'image-unservable',
   'no-consensus-rerate',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
