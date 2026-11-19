@@ -93,7 +93,7 @@ describe('healCsamBlocklist', () => {
     expect(counts).toEqual({
       writes: true,
       candidates: 5,
-      missing: 1,
+      notCsamEver: 1,
       pgGap: 1,
       disabled: 1,
       otherReason: 1,
@@ -130,7 +130,9 @@ describe('healCsamBlocklist', () => {
     const counts = await healCsamBlocklist({ writes: false }, w.deps);
 
     expect([w.added, w.copied]).toEqual([[], []]);
-    expect(w.logged).toEqual([expect.objectContaining({ writes: false, missing: 1, healed: 0 })]);
+    expect(w.logged).toEqual([
+      expect.objectContaining({ writes: false, notCsamEver: 1, healed: 0 }),
+    ]);
     expect(counts.pgGap).toBe(2);
   });
 
@@ -281,7 +283,13 @@ describe('the job as scheduled, against its boundaries', () => {
   it('with the flag off, reads and counts but neither re-reads nor writes', async () => {
     const counts = await runCsamBlocklistSelfHeal();
 
-    expect(counts).toMatchObject({ writes: false, candidates: 1, missing: 1, sweep: 3, healed: 0 });
+    expect(counts).toMatchObject({
+      writes: false,
+      candidates: 1,
+      notCsamEver: 1,
+      sweep: 3,
+      healed: 0,
+    });
     expect(dbMock.dbWrite.$queryRawUnsafe).not.toHaveBeenCalled();
     expect(boundary.inserts).toEqual([]);
   });
@@ -305,13 +313,13 @@ describe('the job as scheduled, against its boundaries', () => {
 
   it("classifies with the readers' tie-break and reads a 0/1 disabled column", async () => {
     boundary.chRows = [{ hash: HASH, reason: 'CSAM', disabled: 1 }];
-    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 1, missing: 0 });
+    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 1, notCsamEver: 0 });
 
     boundary.chRows = [{ hash: HASH, reason: 'CSAM', disabled: 0 }];
-    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 0, missing: 0 });
+    expect(await runCsamBlocklistSelfHeal()).toMatchObject({ disabled: 0, notCsamEver: 0 });
 
     expect(boundary.chQueries[0]).toContain(NEWEST_BLOCKLIST_ROW_SQL);
-    expect(boundary.chQueries[0]).toContain(HASH);
+    expect(boundary.chQueries[0]).not.toContain(HASH);
   });
 
   it('with the flag on, writes only the Postgres copy of a live entry that lacks one', async () => {
@@ -325,6 +333,30 @@ describe('the job as scheduled, against its boundaries', () => {
     expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledWith(
       expect.stringContaining(`INSERT INTO "BlockedImage" (hash, reason) VALUES (${HASH}, 'CSAM')`)
     );
+  });
+
+  // Decision: no hash value travels to ClickHouse, not even as a bound parameter, so none can land in
+  // its query log or a request log. Don't "optimise" this into a WHERE hash IN (...) filter.
+  it('sends no hash value to ClickHouse, on the classification or the re-check', async () => {
+    boundary.flagOn = true;
+    boundary.chRows = [{ hash: '42', reason: 'TOS', disabled: false }];
+
+    const counts = await runCsamBlocklistSelfHeal();
+
+    expect(counts).toMatchObject({ notCsamEver: 1, healed: 1 });
+    expect(boundary.chQueries).toHaveLength(2);
+    for (const query of boundary.chQueries) {
+      expect(query).not.toContain(HASH);
+      // Restricted on the server, so ~2k rows come back rather than the whole table.
+      expect(query).toContain(
+        "WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM')"
+      );
+    }
+    // The heal insert carries the hash as row data in the body, never in its statement.
+    const [insert] = boundary.inserts as { table: string; format: string; values: unknown[] }[];
+    expect(insert).toMatchObject({ table: 'blocked_images', format: 'JSONEachRow' });
+    expect(insert.values).toEqual([{ hash: HASH, reason: 'CSAM' }]);
+    expect(JSON.stringify({ ...insert, values: undefined })).not.toContain(HASH);
   });
 
   it('keeps the hashes it looks up in Postgres out of the slow-query log', () => {

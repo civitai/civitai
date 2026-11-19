@@ -14,9 +14,10 @@ import { createJob } from './job';
 
 /**
  * Repairs the blocklist for images removed for CSAM that are listed on a CsamReport: adds the
- * entry of a hash with no blocklist row at all (a write lost, or a hash that only appeared after
- * the block), and the Postgres copy of a live entry that lacks one. Never re-adds a hash whose
- * newest row is disabled (an unblocklist), and never writes over a newer row of another reason.
+ * entry of a hash that has never had a CSAM row (a write lost, or a hash that only appeared after
+ * the block; the block itself would have written it over any other row), and the Postgres copy of
+ * a live entry that lacks one. Never re-adds a hash whose newest row is disabled (an unblocklist),
+ * and never writes over a newer row of another reason on a hash that had a CSAM row.
  * An account-wide removal's other images (`sweep`) are counted, never written.
  *
  * Writes only while the Flipt flag is on; off, unknown or unreachable, it logs counts only.
@@ -37,14 +38,14 @@ export const PG_CSAM_AMONG_SQL = `${REDACT_LOG_MARKER} SELECT hash::text AS hash
   WHERE reason = 'CSAM' AND hash = ANY($1::text[]::bigint[])`;
 
 export const HEAL_CAP = 500;
-const CH_CHUNK = 1000;
 
 type Row = { id: number; pHash: string };
 type Newest = { hash: string; reason: string; disabled: boolean };
 export type HealCounts = {
   writes: boolean;
   candidates: number;
-  missing: number;
+  /** Never had a CSAM row: no row at all, or only rows of other reasons. Healed. */
+  notCsamEver: number;
   pgGap: number;
   disabled: number;
   otherReason: number;
@@ -75,13 +76,13 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
     (hashes.length ? await deps.readNewest(hashes) : []).map((row) => [row.hash, row])
   );
 
-  const missing: string[] = [];
+  const notCsamEver: string[] = [];
   const liveCsam: string[] = [];
   let disabled = 0;
   let otherReason = 0;
   for (const hash of hashes) {
     const row = newest.get(hash);
-    if (!row) missing.push(hash);
+    if (!row) notCsamEver.push(hash);
     else if (row.disabled) disabled++;
     else if (row.reason === 'CSAM') liveCsam.push(hash);
     else otherReason++;
@@ -90,7 +91,7 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
   const pgGap = liveCsam.filter((hash) => !copied.has(hash));
 
   const queue = [
-    ...missing.map((hash) => ({ hash, copyOnly: false })),
+    ...notCsamEver.map((hash) => ({ hash, copyOnly: false })),
     ...pgGap.map((hash) => ({ hash, copyOnly: true })),
   ];
   const capped = queue.length > HEAL_CAP;
@@ -120,7 +121,7 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
   const counts: HealCounts = {
     writes,
     candidates: hashes.length,
-    missing: missing.length,
+    notCsamEver: notCsamEver.length,
     pgGap: pgGap.length,
     disabled,
     otherReason,
@@ -132,28 +133,29 @@ export async function healCsamBlocklist({ writes }: { writes: boolean }, deps: H
   return counts;
 }
 
+/**
+ * The newest row of every hash that has ever had a CSAM row, from a query whose text never
+ * changes: no hash value travels in the request, so none reaches a query log or a request log.
+ * Hashes with no CSAM row are absent, whether they have other rows or none.
+ */
+export const NEWEST_ROWS_SQL = `SELECT toString(hash) AS hash, tupleElement(newest, 1) AS reason,
+  tupleElement(newest, 2) AS disabled
+FROM (
+  SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest FROM blocked_images
+  WHERE hash IN (SELECT hash FROM blocked_images WHERE reason = 'CSAM') GROUP BY hash
+)`;
+
 async function readNewest(hashes: string[]): Promise<Newest[]> {
   if (!hashes.length) return [];
   const client = clickhouse;
   if (!client) throw new Error('blocked_images: no ClickHouse client');
-  const out: Newest[] = [];
-  for (let i = 0; i < hashes.length; i += CH_CHUNK) {
-    const chunk = hashes.slice(i, i + CH_CHUNK);
-    // Spliced, so each is checked to be an integer literal first.
-    if (chunk.some((hash) => !/^-?\d{1,19}$/.test(hash))) throw new Error('Bad int64');
-    const rows = await blocklistCall(() =>
-      client.$query<{ hash: string; reason: string; disabled: boolean | number }>(
-        `SELECT toString(hash) AS hash, tupleElement(newest, 1) AS reason,
-          tupleElement(newest, 2) AS disabled
-        FROM (
-          SELECT hash, ${NEWEST_BLOCKLIST_ROW_SQL} AS newest
-          FROM blocked_images WHERE hash IN (${chunk.join(',')}) GROUP BY hash
-        )`
-      )
-    );
-    for (const row of rows) out.push({ ...row, disabled: !!row.disabled });
-  }
-  return out;
+  const wanted = new Set(hashes);
+  const rows = await blocklistCall(() =>
+    client.$query<{ hash: string; reason: string; disabled: boolean | number }>(NEWEST_ROWS_SQL)
+  );
+  return rows
+    .filter((row) => wanted.has(row.hash))
+    .map((row) => ({ ...row, disabled: !!row.disabled }));
 }
 
 const deps: HealDeps = {
