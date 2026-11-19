@@ -69,7 +69,7 @@ export const MAX_REMIX_RESULT_DEPTH = 16;
  */
 export const REMIX_REPLAY_OVERHEAD_MS = 30;
 
-/** A remix call's share for its fresh WebAssembly instance (README: p99 36 ms). */
+/** A remix call's share for its fresh WebAssembly instance (measured in the README). */
 export const REMIX_INSTANCE_ALLOWANCE_MS = 50;
 
 /** A remix call's budget, before the backstop's margin. */

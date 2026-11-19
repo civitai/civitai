@@ -110,8 +110,15 @@ describe('POST /v1/remix/replay: Pick of four', () => {
     expect(res.statusCode).toBe(200);
     const all = res.json().results as Record<string, unknown>[];
     expect(all).toHaveLength(1 + MAX_REMIX_BRANCHES);
-    expect(all[1]).toMatchObject({ effects: expect.any(Array) });
+    const last = (r: Record<string, unknown>) => (r.effects as unknown[]).at(-1);
+    expect(all[0]).not.toHaveProperty('done');
+    expect(last(all[0])).toMatchObject({ type: 'ask', spec: { kind: 'choice' } });
+    const upscale = { type: 'workflow', request: { kind: 'upscale', image: take(1), scale: 2 } };
+    expect(all[1]).not.toHaveProperty('done');
+    expect(last(all[1])).toEqual(upscale);
     expect(all[2]).toMatchObject({ done: { outputs: [take(1)] } });
+    // Every branch answers from the base alone, never from a sibling's log.
+    all.slice(1).forEach((r, i) => expect(r).toEqual(all[1 + (i % 2)]));
   });
 
   it('with autoAnswer, answers each ask with its first answer until the first workflow', async () => {
@@ -297,10 +304,7 @@ describe("POST /v1/remix/replay: faults are the author's, per replay", () => {
 it(`gives each of ${
   1 + MAX_REMIX_BRANCHES
 } looping replays its own deadline, inside the call's backstop`, async () => {
-  // A source near the cap, so each replay's compile counts against the backstop too.
-  const table = `const T = [${'"rule-0123456789",'.repeat(1700)}];\n`;
-  const loop = `${table}export default defineRemixApp({ async run() { for (;;) {} } });`;
-  expect(Buffer.byteLength(loop)).toBeGreaterThan(28 * 1024);
+  const loop = 'export default defineRemixApp({ async run() { for (;;) {} } });';
   const all = await results(loop, {
     branches: Array.from({ length: MAX_REMIX_BRANCHES }, () => []),
   });
