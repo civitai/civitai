@@ -41,8 +41,8 @@ export async function promoteChallengeEntries(args: {
   const { collectionId, allowedNsfwLevel, modelVersionIds, challengeDate, reviewerId } = args;
   const hasModelVersionRestriction = modelVersionIds.length > 0;
 
-  // Entries admitted before the compatible-base-model rule, or by a moderator, are still checked
-  // here. Read first so the rule stays in one place (challenge-resource-compat), not re-said in SQL.
+  // Catches REVIEW entries that skipped the submit check (moderators, or submitted before it existed).
+  // Entries already ACCEPTED are caught in getJudgedEntries.
   let incompatibleIds: number[] = [];
   if (hasModelVersionRestriction) {
     const pending = await dbWrite.$queryRaw<{ imageId: number }[]>`

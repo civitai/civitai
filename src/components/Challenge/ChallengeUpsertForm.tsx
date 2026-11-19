@@ -727,7 +727,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           <InputModelVersionMultiSelect
             name="modelVersionIds"
             label="Eligible Models"
-            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all), on a checkpoint it is compatible with. Leave empty to allow any model."
+            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all), and the entry's checkpoint must be able to run it. Leave empty to allow any model."
             disabled={isActive || isReadOnly}
           />
         </Paper>

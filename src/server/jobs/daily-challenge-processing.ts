@@ -2321,11 +2321,12 @@ export async function getJudgedEntries(
   // Re-checked on the primary: the refund and participation payout read it there, so a ban the
   // replica has not seen yet must not let the same user be refunded and still place.
   const bannedIds = await getBannedUserIds(judgedRows.map((e) => e.userId));
-  // An entry accepted before the compatible-base-model rule shipped must not place either. One
-  // query for the whole field; the featured versions ride on every row.
+  // An entry accepted before the compatible-base-model rule existed must not place. Primary, like
+  // the ban re-check: the replica can lack image resource rows, and a missing row passes.
   const incompatible = await getIncompatibleEntryImageIds(
     judgedRows.map((e) => e.imageId),
-    judgedRows[0]?.featuredVersionIds ?? []
+    judgedRows[0]?.featuredVersionIds ?? [],
+    dbWrite
   );
   const userBestEntries = judgedRows
     .filter((e) => !bannedIds.has(e.userId) && !incompatible.has(e.imageId))

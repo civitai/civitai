@@ -12,8 +12,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
-// A Daily Challenge entry qualifies only if the featured resource can run on the entry's
-// checkpoint. The case that set the rule: a Pony LoRA listed on a Krea 2 Turbo run won a challenge.
+// A Daily Challenge entry qualifies only if the featured resource can run on the entry's checkpoint.
 
 describe('isFeaturedResourceCompatible', () => {
   it.each([
@@ -23,6 +22,10 @@ describe('isFeaturedResourceCompatible', () => {
     ['Illustrious', true],
   ])('a Pony LoRA on a %s checkpoint: %s', (checkpoint, expected) => {
     expect(isFeaturedResourceCompatible(checkpoint, 'Pony', 'LORA')).toBe(expected);
+  });
+
+  it('passes a type no cross-ecosystem rule describes', () => {
+    expect(isFeaturedResourceCompatible('Pony', 'SDXL 1.0', 'Controlnet')).toBe(true);
   });
 
   it('passes a base model the table does not know, or the catch-all Other', () => {
@@ -67,7 +70,7 @@ describe('isFeaturedResourceCompatible', () => {
         }
       }
     }
-    // A loop that compares nothing passes; this is the count it must not fall to.
+    // A loop that compares nothing passes. Floor set well below the current count.
     expect(compared).toBeGreaterThan(1000);
   });
 });
@@ -93,6 +96,15 @@ describe('findIncompatibleEntries', () => {
 
   it('passes when any one of several checkpoints is compatible', () => {
     const rows = [lora(1), checkpoint(1, 'Krea 2 Turbo'), checkpoint(1, 'Pony')];
+    expect(findIncompatibleEntries(rows).size).toBe(0);
+  });
+
+  it('passes when any one of several featured versions is compatible', () => {
+    const rows = [
+      lora(1),
+      { imageId: 1, baseModel: 'Krea 2', type: 'LORA' as const, isFeatured: true },
+      checkpoint(1, 'Krea 2 Turbo'),
+    ];
     expect(findIncompatibleEntries(rows).size).toBe(0);
   });
 

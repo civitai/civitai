@@ -15,8 +15,8 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
  * says no when the site does not generate with an ecosystem or model type (Krea 3 LoRAs, say),
  * which would refuse an off-site entry that is perfectly compatible.
  *
- * A base model the table does not know, or the catch-all 'Other', passes: the rule refuses only a
- * mismatch it can prove.
+ * A base model the table does not know, the catch-all 'Other', or a type no cross-ecosystem rule
+ * describes (ControlNet, Upscaler…) passes: the rule refuses only a mismatch it can prove.
  */
 export function isFeaturedResourceCompatible(
   checkpointBaseModel: string,
@@ -28,6 +28,7 @@ export function isFeaturedResourceCompatible(
   if (!checkpoint || !resource) return true;
   if (isOther(checkpoint.ecosystemId) || isOther(resource.ecosystemId)) return true;
   if (checkpoint.ecosystemId === resource.ecosystemId) return true;
+  if (!ruledModelTypes.has(resourceType)) return true;
 
   const rootId = getRootEcosystem(checkpoint.ecosystemId).id;
   return crossEcosystemRules.some(
@@ -38,6 +39,10 @@ export function isFeaturedResourceCompatible(
       (!rule.modelTypes || rule.modelTypes.includes(resourceType))
   );
 }
+
+// The cross-ecosystem rules list LoRA-family types, embeddings, VAEs and checkpoints; for any other
+// type they say nothing about compatibility, so they cannot prove a mismatch.
+const ruledModelTypes = new Set<ModelType>(crossEcosystemRules.flatMap((r) => r.modelTypes ?? []));
 
 function isOther(ecosystemId: number) {
   return ecosystemById.get(ecosystemId)?.key === 'Other';
@@ -51,11 +56,9 @@ export type EntryResourceRow = {
 };
 
 /**
- * The images whose featured resource cannot run on any of their checkpoints. An image passes when
- * it names no featured resource (the required-resource rule judges that), when a featured version
- * is itself a checkpoint, when no checkpoint was detected (an off-site run whose checkpoint is not
- * on Civitai), or when ANY featured version is compatible with ANY detected checkpoint (refiner and
- * upscale passes put more than one checkpoint in the metadata).
+ * Images whose featured resource fits none of their detected checkpoints. ANY featured version on
+ * ANY checkpoint is enough: refiner and upscale passes list several checkpoints. No checkpoint
+ * (an off-site run on one Civitai does not host) passes.
  */
 export function findIncompatibleEntries(rows: EntryResourceRow[]): Set<number> {
   const byImage = new Map<number, EntryResourceRow[]>();

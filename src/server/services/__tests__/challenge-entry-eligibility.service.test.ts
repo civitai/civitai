@@ -118,7 +118,7 @@ function wireImage({ detected = [], manual = [] }: { detected?: number[]; manual
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsFlipt.mockResolvedValue(false);
-  mockDbRead.$queryRaw.mockResolvedValue([]); // the base-model compatibility read
+  mockDbRead.$queryRaw.mockResolvedValue([]);
 });
 
 describe('checkImageEligibility model requirement', () => {
@@ -180,6 +180,19 @@ describe('checkImageEligibility model requirement', () => {
       eligible: false,
       reasons: ['Incompatible base model'],
     });
+  });
+
+  it('accepts the featured LoRA on a compatible checkpoint', async () => {
+    wireChallenge();
+    wireImage({ detected: [REQUIRED_VERSION_ID, 3147780] });
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+      { imageId: IMAGE_ID, baseModel: 'SDXL 1.0', type: 'Checkpoint', isFeatured: false },
+    ]);
+
+    const [result] = await checkImageEligibility(CHALLENGE_ID, [IMAGE_ID]);
+
+    expect(result).toEqual({ imageId: IMAGE_ID, eligible: true, reasons: [] });
   });
 
   it('skips the model check when the challenge requires no model', async () => {

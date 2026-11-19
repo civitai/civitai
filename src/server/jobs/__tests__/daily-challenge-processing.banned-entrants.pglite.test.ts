@@ -405,8 +405,8 @@ describe('model-restricted mature entries', () => {
   });
 });
 
-// The featured resource has to be able to run on the entry's checkpoint. Entries accepted before
-// that rule shipped are still in collections, so the judged field and promotion check it too.
+// The featured resource has to be able to run on the entry's checkpoint. Promotion checks REVIEW
+// entries; the judged field also drops entries ACCEPTED before the rule existed.
 describe('entries whose featured resource cannot run on their checkpoint', () => {
   const JUDGE_COLLECTION = 400;
   const PROMOTE_COLLECTION = 401;

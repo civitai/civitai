@@ -194,6 +194,27 @@ describe('contest entry resource gate (Task 11)', () => {
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 
+  it('lets a featured LoRA through on a compatible checkpoint and reaches the charge step', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
+    mockDbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"ImageResourceNew"')
+        ? [
+            { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+            { imageId: IMAGE_ID, baseModel: 'SDXL 1.0', type: 'Checkpoint', isFeatured: false },
+          ]
+        : []) as never);
+
+    await validateContestCollectionEntry({
+      collectionId: COLLECTION_ID,
+      userId: USER_ID,
+      canAccessUserChallenges: true,
+      imageIds: [IMAGE_ID],
+      metadata: {},
+    });
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts an image that has one of the required versions and reaches the charge step', async () => {
     wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
     mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
