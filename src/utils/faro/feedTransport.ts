@@ -31,15 +31,12 @@ import type { AppRouter } from '~/server/routers';
 export const FEED_TRANSPORT_SAMPLE_RATES: ReadonlyMap<string, number> = new Map([
   ['image.getImagesAsPostsInfinite', 1],
   ['model.getAll', 1],
-  // The highest-volume feed: one request in ten, on both arms.
   ['image.getInfinite', 0.1],
 ]);
 
 /**
- * Whether this request is recorded. A rate of 1 (or more) records every request without consulting
- * `random`; below 1 it is recorded when `random() < rate` (`random` in `[0, 1)`, as `Math.random`,
- * so the chance is exactly `rate`; a draw equal to the rate is out). A throwing `random` records
- * nothing.
+ * Strict `<` with `random` in `[0, 1)`, so the chance is exactly `rate`. Rate 1 skips the draw; a
+ * throwing `random` records nothing.
  */
 export function feedTransportSampledIn(rate: number, random: () => number): boolean {
   if (rate >= 1) return true;
