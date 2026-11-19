@@ -3,7 +3,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 redisMock.redis.packed.set.mockImplementation(async () => undefined);
 redisMock.redis.set.mockImplementation(async () => undefined);
-redisMock.redis.scanIterator.mockImplementation(async function* () {});
+redisMock.redis.scanIterator.mockImplementation(async function* () {
+  // no cached keys to scan
+});
 const mockDbRead = dbMock.dbRead;
 
 // getAppDetail builds liveUrl from `env.APPS_DOMAIN` via a dynamic import of
