@@ -16,6 +16,24 @@ const IMAGES_PER_REINDEX = 500;
  */
 export async function reindexRestrictedImages(imageIds: number[], source: string) {
   if (!imageIds.length) return;
+  try {
+    await reindexInBatches(imageIds, source);
+  } catch (error) {
+    logToAxiom(
+      {
+        name: 'restricted-images',
+        type: 'error',
+        message: 'Search reindex failed',
+        source,
+        images: imageIds.length,
+        error: (error as Error).message,
+      },
+      'webhooks'
+    );
+  }
+}
+
+async function reindexInBatches(imageIds: number[], source: string) {
   // Call-site imports: both modules reach this one through image.service.
   const [{ queueImageSearchIndexUpdate }, { queueDocumentsForImages }] = await Promise.all([
     import('~/server/services/image.service'),
@@ -124,7 +142,8 @@ export async function flagImagesOnRestrictedVersions({
   try {
     const restricted = await getRestrictedModelVersionIds(dbWrite, modelVersionIds);
     const result = await flagRestrictedImages(dbWrite, { modelVersionIds: restricted, imageIds });
-    await reindexRestrictedImages(result.imageIds, 'resource-write');
+    // Not awaited: a large version merge flags many images, and the reindex never throws.
+    void reindexRestrictedImages(result.imageIds, 'resource-write');
     return result;
   } catch (error) {
     logToAxiom(

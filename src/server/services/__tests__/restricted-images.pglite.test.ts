@@ -193,13 +193,16 @@ describe('flagImagesOnRestrictedVersions', () => {
   it('takes the images it flags out of the image queues', async () => {
     dbMock.dbWrite.$queryRaw.mockClear();
     await flagImagesOnRestrictedVersions({ modelVersionIds: [RESTRICTED_VERSION], imageIds: [1] });
-    const thumbnailRefresh = dbMock.dbWrite.$queryRaw.mock.calls.find((call) =>
-      (call[0] as unknown as string[]).join('').includes("'parentId'")
-    );
-    const values = (thumbnailRefresh ?? [])
-      .slice(1)
-      .flatMap((v) => ((v as { values?: unknown[] })?.values ?? [v]) as unknown[]);
-    expect(values).toContain(1);
+    // Not awaited by the write path, so wait for the queue removal it starts.
+    await vi.waitFor(() => {
+      const thumbnailRefresh = dbMock.dbWrite.$queryRaw.mock.calls.find((call) =>
+        (call[0] as unknown as string[]).join('').includes("'parentId'")
+      );
+      const values = (thumbnailRefresh ?? [])
+        .slice(1)
+        .flatMap((v) => ((v as { values?: unknown[] })?.values ?? [v]) as unknown[]);
+      expect(values).toContain(1);
+    });
   });
 
   it('leaves images alone when none of the versions are restricted', async () => {
