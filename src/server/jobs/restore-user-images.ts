@@ -5,6 +5,7 @@ import {
   readPendingImageRestores,
   unblockAccountDeletionImages,
 } from '~/server/services/account-deletion-images';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { createJob } from './job';
 
 /**
@@ -22,56 +23,83 @@ async function isRestored(userId: number) {
   return row?.restored ?? false;
 }
 
+async function filterRestored(userIds: number[]) {
+  if (!userIds.length) return [];
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT u.id FROM "User" u WHERE u.id = ANY(${userIds}) AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL
+  `;
+  const restored = new Set(rows.map((r) => r.id));
+  return userIds.filter((id) => restored.has(id));
+}
+
 /**
  * Undoes the grace block `remove-deleted-user-images` wrote, off a worklist `restoreUser` names
  * rather than one this job discovers: the breadcrumb has no supporting index on ~120M `Image`
  * rows and a filtered `User` scan measures ~1.7s, which a cron this frequent would pay on every
  * tick to learn that nobody was restored. An empty set costs one SMEMBERS and no query at all.
+ *
+ * `refreshPictures` runs once, after the loop, for the accounts that had images unblocked, drained
+ * or threw. The grace block cleared any `User.image` naming one of their images; the refresh puts it
+ * back once that picture is servable again (`restoreClearedUserImages`).
  */
+export async function runRestoreUserImages(
+  refreshPictures: (userIds: number[]) => Promise<unknown> = refreshProfilePicturesForUsersLazy
+) {
+  const pending = await readPendingImageRestores();
+  if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, dropped: 0 };
+
+  let unblocked = 0;
+  let finished = 0;
+  let dropped = 0;
+  const refreshed: number[] = [];
+  const drained: number[] = [];
+
+  for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
+    // Re-deletion or a ban is terminal for this entry, not a state to wait out: the grace block is
+    // once more correct. `restoreUser` re-queues a re-deleted account it restores again; a ban
+    // leaves the images hidden after an unban too, until a moderator unblocks them
+    // (`handleUnblockImages`).
+    if (!(await isRestored(userId))) {
+      await clearPendingImageRestore(userId);
+      dropped++;
+      continue;
+    }
+
+    try {
+      const result = await unblockAccountDeletionImages(userId);
+      unblocked += result.unblocked;
+      if (result.unblocked > 0 || result.drained) refreshed.push(userId);
+      // Dropped only once the reversal ran out of rows to claim: a pass cut short by its batch
+      // ceiling has to be reached again next tick.
+      if (result.drained) drained.push(userId);
+    } catch (error) {
+      // Batches before the throw may have committed; the refresh does nothing where none did.
+      refreshed.push(userId);
+      // Caught per account so one that cannot be reversed doesn't strand the rest behind it.
+      logToAxiom({
+        type: 'error',
+        name: 'restore-user-images',
+        message: (error as Error)?.message,
+        error: safeError(error),
+        userId,
+      });
+    }
+  }
+
+  // Before the worklist entries are cleared, so a run cut short in between refreshes them next tick.
+  const stillRestored = await filterRestored(refreshed);
+  if (stillRestored.length) await refreshPictures(stillRestored);
+  for (const userId of drained) {
+    await clearPendingImageRestore(userId);
+    finished++;
+  }
+
+  return { pending: pending.length, finished, unblocked, dropped };
+}
+
 export const restoreUserImages = createJob(
   'restore-user-images',
   '*/2 * * * *',
-  async () => {
-    const pending = await readPendingImageRestores();
-    if (!pending.length) return { pending: 0, finished: 0, unblocked: 0, dropped: 0 };
-
-    let unblocked = 0;
-    let finished = 0;
-    let dropped = 0;
-
-    for (const userId of pending.slice(0, RESTORE_USERS_PER_RUN)) {
-      // Re-deletion or a ban is terminal for this entry, not a state to wait out: the grace block is
-      // once more correct. `restoreUser` re-queues a re-deleted account it restores again; a ban
-      // leaves the images hidden after an unban too, until a moderator unblocks them
-      // (`handleUnblockImages`).
-      if (!(await isRestored(userId))) {
-        await clearPendingImageRestore(userId);
-        dropped++;
-        continue;
-      }
-
-      try {
-        const result = await unblockAccountDeletionImages(userId);
-        unblocked += result.unblocked;
-        // Dropped only once the reversal ran out of rows to claim: a pass cut short by its batch
-        // ceiling has to be reached again next tick.
-        if (result.drained) {
-          await clearPendingImageRestore(userId);
-          finished++;
-        }
-      } catch (error) {
-        // Caught per account so one that cannot be reversed doesn't strand the rest behind it.
-        logToAxiom({
-          type: 'error',
-          name: 'restore-user-images',
-          message: (error as Error)?.message,
-          error: safeError(error),
-          userId,
-        });
-      }
-    }
-
-    return { pending: pending.length, finished, unblocked, dropped };
-  },
+  () => runRestoreUserImages(),
   { lockExpiration: 30 * 60, dedicated: true }
 );

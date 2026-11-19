@@ -14,6 +14,14 @@ describe('registryUrn', () => {
     ],
     [{ kind: 'runtime', name: 'iframe', major: 1 }, 'urn:apps.civitai.com:runtime/iframe@1'],
     [
+      { kind: 'service', name: 'app-search', major: 1 },
+      'urn:apps.civitai.com:service/app-search@1',
+    ],
+    [
+      { kind: 'service', name: 'app-search', major: 12 },
+      'urn:apps.civitai.com:service/app-search@12',
+    ],
+    [
       { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: '01J:Ab.c-9' },
       'urn:apps.civitai.com:pixel-garden/seed_packs/01J:Ab.c-9',
     ],
@@ -38,8 +46,41 @@ describe('registryUrn', () => {
     { kind: 'app', slug: 'a'.repeat(65) },
     { kind: 'collection-schema', slug: 'pixel-garden', collection: 'c'.repeat(33), major: 1 },
     { kind: 'release', slug: 'pixel-garden', version: '1'.repeat(65) },
+    { kind: 'service', name: 'app/search', major: 1 },
+    { kind: 'service', name: 'app@search', major: 1 },
+    { kind: 'service', name: 'app:search', major: 1 },
+    { kind: 'service', name: 'App-Search', major: 1 },
+    { kind: 'service', name: '', major: 1 },
+    { kind: 'service', name: 's'.repeat(65), major: 1 },
+    { kind: 'service', name: 'app-search', major: 0 },
+    { kind: 'service', name: 'app-search', major: 1.5 },
+    { kind: 'service', name: 'app-search', major: -1 },
   ] as const)('refuses %o', (ref) => {
     expect(() => registryUrn(ref)).toThrow(/registry urn: invalid/);
+  });
+});
+
+describe('service URNs', () => {
+  // A document of an app slugged `service` is `service/{collection}/{key}`: three segments, where a
+  // service URN has two, so neither can spell the other.
+  const segments = (urn: string) => urn.slice('urn:apps.civitai.com:'.length).split('/');
+
+  it('has two segments where a document has three', () => {
+    const service = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    const doc = registryUrn({
+      kind: 'document',
+      slug: 'service',
+      collection: 'app_search',
+      key: '1',
+    });
+    expect(segments(service)).toEqual(['service', 'app-search@1']);
+    expect(segments(doc)).toEqual(['service', 'app_search', '1']);
+  });
+
+  it('is not read as a collection schema, and is in the namespace', () => {
+    const urn = registryUrn({ kind: 'service', name: 'app-search', major: 1 });
+    expect(parseCollectionSchemaUrn(urn)).toBeNull();
+    expect(urnNamespace(urn)).toBe('apps.civitai.com');
   });
 });
 
