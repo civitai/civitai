@@ -24,6 +24,7 @@ import type { Principal } from '~/server/registry-adapter/auth';
 import { audienceAdmits } from '~/server/registry-adapter/audience';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import { regionHeaders } from '~/server/registry-adapter/request-origin';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 /** The ratings the service answers for, in its order (apps/content-policy-go policy.Ratings). */
 export const POLICY_RATINGS = ['g', 'pg', 'pg13', 'r', 'x', 'xxx'] as const;
@@ -185,7 +186,9 @@ export function createPolicyShadow(opts: {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        // The repo's outbound deadline (`outbound-fetch-timeouts-off` can drop it; the comparison is
+        // never awaited by the subscription, so even without one it cannot hold a stream).
+        signal: fetchTimeoutSignal(timeoutMs),
       });
       const answer: unknown = await res.json();
       if (!res.ok || !isAnswer(answer) || answer.fallback) return count('error');
