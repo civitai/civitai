@@ -109,7 +109,8 @@ describe('queueScanSampleForKnights', () => {
   it('draws each image once from its id, so a repeated scan of the same image decides the same way', async () => {
     configured({ enabled: true, sfwRate: 0, nsfwRate: 0.5 });
     const ids = Array.from({ length: 40 }, (_, i) => 2000 + i);
-    for (const imageId of [...ids, ...ids]) await queueScanSampleForKnights({ imageId, nsfw: true });
+    for (const imageId of [...ids, ...ids])
+      await queueScanSampleForKnights({ imageId, nsfw: true });
 
     const picked = ids.filter((id) => knightsSampleDraw(id) < 0.5);
     expect(picked.length).toBeGreaterThan(5);

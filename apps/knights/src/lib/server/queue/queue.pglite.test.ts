@@ -2007,8 +2007,11 @@ describe('closeUnservableItems', () => {
   it('closes an open item whose image became blocked, held, flagged or unrated on a live post, votes set aside, at the next tick', async () => {
     await fiveKnights();
     const exp = async (userId: number) =>
-      (await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [userId]))
-        .rows[0].exp;
+      (
+        await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [
+          userId,
+        ])
+      ).rows[0].exp;
     const unservable: Record<string, string> = {
       70: `"nsfwLevel"=32`,
       71: `ingestion='Blocked'`,
