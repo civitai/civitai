@@ -31,7 +31,16 @@ are not found, and no music nav entry, chip or tab shows).
 
 Playing a song from a list starts it with `playFromList` and the list's songs loaded at that moment,
 in display order, so Up next shows the ones after it as "Next from <name>". A page loaded afterwards
-is not added.
+is not added. A post's songs wrap: playing its last song puts the earlier ones in Up next.
+
+Locally, without `FEED_SERVICE_URL`, "All music" falls back to the Postgres feed, which has no index
+for the media type: on a large dev database a period wider than Week can run into the feed's
+statement timeout, past the client's 8 s abort, so the feed retries forever. Keep the period at Week
+when testing locally.
+
+With Repeat all on and Up next played out, the panel lists under "Repeating" the songs that play
+again after the current one. A cover with too little colour (a grey one) gives no accent: the player
+then uses the Civitai primary, so Shuffle and Repeat read as on.
 
 | Played from                                        | Up next name                       |
 | -------------------------------------------------- | ---------------------------------- |
