@@ -35,5 +35,7 @@ and the page reads its data again after each vote.
 
 ## Failure
 
-Every send is best effort with a 3-second timeout and is logged, never thrown into a vote or the tick. A missed drop means the
+Every send is best effort with a 3-second timeout, never thrown into a vote or the tick. A failure logs an Axiom event
+(`knights-live-update-failed` for a send, `knights-live-token-failed` for an access token the service would not mint,
+`knights-live-announce-failed` when the moved items could not be read). A missed drop means the
 vote is refused as before; a missed stats signal means the stats move on the next page read.

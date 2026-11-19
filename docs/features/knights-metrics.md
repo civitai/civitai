@@ -29,7 +29,8 @@ some inside a transaction, so a transaction that rolls back after that point can
 | `knights_tick_item_failures_total`      | `step`: writeback, moderator_ruled, payout, yesno, reset, buzz_grant                                                                                                                    | Items that failed inside a tick step and wait for the next tick (the tick still answers 200)                                                                                                                                                                                  |
 
 Joins, rank-ups and career resets also log one Axiom event each (`knights-player-joined`, `knights-rank-up`,
-`knights-career-reset`, with its trigger), and `handleError` logs `knights-unhandled-error`.
+`knights-career-reset`, with its trigger), and `handleError` logs `knights-unhandled-error`. Live-update failures log
+`knights-live-update-failed`, `knights-live-token-failed` and `knights-live-announce-failed` ([live updates](knights-live-updates.md)).
 
 Gauges are read by SQL on scrape, one snapshot shared by all of them and cached 60s per process, with a 5s statement
 timeout. When the read fails, `knights_db_up` is 0, labelled gauges are absent and unlabelled ones are NaN; a scrape
