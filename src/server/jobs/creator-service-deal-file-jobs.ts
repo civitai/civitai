@@ -7,8 +7,10 @@ import {
   settleMalwareScans,
   unpackFinals,
 } from '~/server/services/creator-service-deal-unpack.service';
+import { markExpiredDealFiles } from '~/server/services/creator-service-deal-file-retention';
 import {
   deleteScanCopies,
+  dropRemovedPreviewCopies,
   publishPreviews,
   purgeRemovedFiles,
   settlePreviewScans,
@@ -64,8 +66,22 @@ export const creatorServiceUnpackJob = createJob(
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
     jobContext.checkIfCanceled();
+    const retentionExpired = await markExpiredDealFiles();
+    jobContext.checkIfCanceled();
+    const previewCopiesDropped = await dropRemovedPreviewCopies();
+    jobContext.checkIfCanceled();
     const removedPurged = await purgeRemovedFiles();
-    return { unpacked, repacked, ...entries, ...scans, ...finals, copiesDeleted, removedPurged };
+    return {
+      unpacked,
+      repacked,
+      ...entries,
+      ...scans,
+      ...finals,
+      copiesDeleted,
+      retentionExpired,
+      previewCopiesDropped,
+      removedPurged,
+    };
   },
   { lockExpiration: 40 * 60 }
 );

@@ -478,6 +478,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  /** Turns on the deal-file retention sweep; off, or missing, it marks nothing for deletion. */
+  SERVICE_DEAL_FILE_RETENTION = 'service-deal-file-retention',
   // Variant: `log` | `enforce`; any other answer is off. Read by mini-epoch-caller.ts, which also
   // still handles an `enforce-anon` variant should the flag define one.
   MINI_EPOCH_CALLER_GATE = 'mini-epoch-caller-gate',
@@ -780,6 +782,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The off switch for the deal-file retention sweep, which deletes user files: a flip must reach
+  // the next run.
+  FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
   // Evaluated once per user in a pass over every user, each entity once a week: cached entries
