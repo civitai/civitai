@@ -70,8 +70,8 @@ type Query struct {
 	PostID int
 	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
 	UserID int
-	// Tags is the input's own `tags` inclusion list (image.getInfinite's tag scope), after
-	// enforceBlockedBrowsingTags stripped the blocked ones.
+	// Tags is the input's own `tags` inclusion list, after enforceBlockedBrowsingTags stripped the
+	// blocked ones.
 	Tags   []int
 	Sort   string
 	Period string
@@ -89,6 +89,10 @@ type Query struct {
 	// `generation`); Pending is `pending: true` (UNSUPPORTED_FLAGS, after `requiringMeta`).
 	HasPrioritizedUserIDs bool
 	Pending               bool
+	// Techniques is the input's `techniques` as sent; the positive ids are sent (after `tools`), in
+	// order and with repeats. Unlike `tags`, a list of only impossible ids is not refused: no
+	// `techniques` is sent.
+	Techniques []int
 	// Tools is the input's `tools` as sent; the positive ids are sent, in order and with repeats.
 	Tools []int
 	// BaseModels is the input's `baseModels` as sent; the non-empty names are sent, in order and with
@@ -367,6 +371,10 @@ func Map(q Query) (string, *Refusal) {
 	// `tools` after baseModels and before the post ids.
 	if tools := positive(q.Tools); len(tools) > 0 {
 		p.set("tools", join(tools))
+	}
+	// `techniques` right after `tools` (and before the unported `ids`).
+	if techniques := positive(q.Techniques); len(techniques) > 0 {
+		p.set("techniques", join(techniques))
 	}
 	if len(postIDs) > 0 {
 		p.set("postIds", join(uniq(postIDs)))

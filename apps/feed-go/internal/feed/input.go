@@ -58,6 +58,13 @@ type Input struct {
 	// Tools is `tools` as sent (order, duplicates, zero and negative ids kept): getAllImages keeps the
 	// images whose tool ids contain every one of them; the feed-service query sends the positive ones.
 	Tools []int
+	// Tags is `tags` (z.array(z.number())) as sent: the tag inclusion filter. enforceBlockedBrowsingTags
+	// strips the blocked ids first (only blocked ones: an empty page); getAllImages then keeps the
+	// images carrying any of the rest, and the feed-service query sends the positive ones.
+	Tags []int
+	// Techniques is `techniques` (z.number().array()) as sent: getAllImages keeps the images with an
+	// ImageTechnique row for any of them; the feed-service query sends the positive ones.
+	Techniques []int
 	// IncludeProfilePictures is `include` holding 'profilePictures'. The gallery handler adds it
 	// anyway; image.getInfinite hydrates profile pictures only when the client asked.
 	IncludeProfilePictures bool
@@ -94,7 +101,7 @@ var (
 		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "preCapBrowsingLevel",
 		"modelId", "modelVersionId", "model3dId", "types", "generation", "withMeta", "requiringMeta",
 		"remixOfId", "fromPlatform", "disablePoi", "disableMinor", "hideChallenges", "excludedTagIds",
-		"excludedUserIds", "include", "tools",
+		"excludedUserIds", "include", "tools", "tags", "techniques",
 	}
 	ignoredKeys = []string{
 		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
@@ -107,7 +114,7 @@ var (
 // the feed-service path, where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
-	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques",
+	"hubExcludedSources", "imageId", "reviewId", "skip", "ids",
 	"prioritizedUserIds", "reactions", "followed", "hidden", "newCreators", "includeBaseModel",
 	"pending", "pendingReviewOnly", "poiOnly", "minorOnly", "withTags", "jumpTo", "baseModels",
 	"notPublished", "scheduled", "publishedOnly",
@@ -217,7 +224,13 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	if in.ExcludedUserIDs, err = ints(m["excludedUserIds"]); err != nil {
 		return nil, err
 	}
-	if in.Tools, err = toolIDs(m["tools"]); err != nil {
+	if in.Tools, err = int4IDs(m["tools"], "tools"); err != nil {
+		return nil, err
+	}
+	if in.Tags, err = ints(m["tags"]); err != nil {
+		return nil, err
+	}
+	if in.Techniques, err = int4IDs(m["techniques"], "techniques"); err != nil {
 		return nil, err
 	}
 	if v, ok := m["include"]; ok && v != nil {
@@ -399,11 +412,13 @@ func stringList(v any, allowed map[string]bool) ([]string, error) {
 	return out, nil
 }
 
-// toolIDs reads `tools` (z.number().array()). Not a list, or an entry that is not a number, is the
-// schema's BAD_REQUEST (input-invalid). A number the schema accepts is kept as sent, except one that
-// is not an int4 (a fraction, or past the int4 range): Node binds it into `ARRAY[…]::integer[]`,
-// and what that cast does with it (round, or fail the query) is not reproduced here (input-tools).
-func toolIDs(v any) ([]int, error) {
+// int4IDs reads an id list the schema types z.number().array(): `tools` and `techniques` (key names
+// it). Not a list, or an entry that is not a number, is the schema's BAD_REQUEST (input-invalid). A
+// number the schema accepts is kept as sent, except one that is not an int4 (a fraction, or past the
+// int4 range): Node binds `tools` into `ARRAY[…]::integer[]` and each `techniques` entry as its own
+// parameter against an integer column, and what Postgres does with such a value (round, or fail the
+// query) is not reproduced here (`input-<key>`, detail not-int4).
+func int4IDs(v any, key string) ([]int, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -418,7 +433,7 @@ func toolIDs(v any) ([]int, error) {
 			return nil, fallback.Newf("input-invalid", "%v", e)
 		}
 		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
-			return nil, fallback.NewfSafe("input-tools", "not-int4", "tools: %v", e)
+			return nil, fallback.NewfSafe("input-"+key, "not-int4", "%s: %v", key, e)
 		}
 		out = append(out, int(f))
 	}

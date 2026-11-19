@@ -46,8 +46,8 @@ type ImagesQuery struct {
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
-	// TagIDs is the input's own `tags` inclusion filter (image.getInfinite): images carrying any of
-	// them. getAllImages marks that query personalized, so it is never cached.
+	// TagIDs is the input's own `tags` inclusion filter, after the blocked tags are stripped: images
+	// carrying any of them. getAllImages marks that query personalized, so it is never cached.
 	TagIDs []int
 	// IndexOrder is a post's own media (`postId` without `modelId`): ordered by `i."index"`, then
 	// `i."id"`, and paged on the index (getAllImagesUncaptured's post branch). The cursor column is
@@ -65,6 +65,9 @@ type ImagesQuery struct {
 	// Pending is the input's `pending`: no published-before-now clause, and for a moderator or a
 	// signed-in viewer the pending visibility in place of the reviewed one (then never cached).
 	Pending bool
+	// Techniques is the input's `techniques`: only images with an ImageTechnique row for any of these
+	// technique ids. Not personalized: the query keeps its cache policy.
+	Techniques []int
 	// Tools is the input's `tools`: only images whose ImageTool rows hold every one of these tool ids
 	// (an image with no tool row never matches). Not personalized: the query keeps its cache policy.
 	Tools []int
@@ -274,6 +277,16 @@ func (q *ImagesQuery) Build() Built {
       SELECT 1 FROM "ModelVersion" mv
       RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
       WHERE mv."baseModel" = ANY(`+a.add(q.BaseModels)+`::text[])
+    )`)
+	}
+
+	if len(q.Techniques) > 0 {
+		// getAllImagesUncaptured's `techniques` clause (it follows `tools` there): any of the ids (Node
+		// writes `IN (…)`, one bind per id; order and repeats change nothing).
+		and = append(and, `EXISTS (
+      SELECT 1
+      FROM "ImageTechnique" it
+      WHERE it."imageId" = i.id AND it."techniqueId" = ANY(`+a.add(q.Techniques)+`::int[])
     )`)
 	}
 
