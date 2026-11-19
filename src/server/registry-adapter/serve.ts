@@ -252,7 +252,7 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
-      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted, principal));
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).

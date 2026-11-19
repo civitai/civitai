@@ -470,7 +470,7 @@ export function createGrpcServer(
             regionRestricted: () => restricted(origin),
           });
           slot?.claim(principal.subject);
-          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted, principal));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),

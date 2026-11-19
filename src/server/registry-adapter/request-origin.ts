@@ -46,6 +46,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { NextApiRequest } from 'next';
 import type { RequestMeta } from '~/server/registry-adapter/protocol';
+import type { Principal } from '~/server/registry-adapter/auth';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import type { RegionBlockConfig, RegionInfo } from '~/server/utils/region-blocking';
 import {
@@ -176,14 +177,30 @@ export function regionLine(binding: 'http' | 'grpc', d: RegionDecision): string 
 
 /**
  * The line a subscription on `binding` logs as it starts: `origin`'s region decision, with the
- * SFW hold `restricted` actually applies (a binding's injected rule, when it has one).
+ * SFW hold `restricted` decides (a binding's injected rule, when it has one), then the audience
+ * decision for its token: `principal` (`anonymous`, `user` or `service`), the token's `client`
+ * (`client_id`) and `act` (`act.sub`, the relay that presented it), each `none` when absent, and
+ * the `audience` key it is streamed (`audience.ts`). A user or anonymous stream is held to SFW
+ * when `restricted` is true; a service stream (`SERVICE_AUDIENCE`) never is, so its `audience`
+ * is the one to read. No user id is logged.
  */
 export function subscriptionRegionLine(
   binding: 'http' | 'grpc',
   origin: RequestOrigin,
-  restricted: (origin: RequestOrigin) => boolean
+  restricted: (origin: RequestOrigin) => boolean,
+  principal: Pick<Principal, 'subject' | 'service' | 'clientId' | 'actor' | 'audience'>
 ): string {
-  return regionLine(binding, { ...describeRegion(origin), restricted: restricted(origin) });
+  const kind =
+    principal.service === true ? 'service' : principal.subject === null ? 'anonymous' : 'user';
+  // Client and relay ids are the hub's identifiers, within [A-Za-z0-9._:-]; anything else (a
+  // space would split the line's fields) is logged as `invalid`, never echoed.
+  const id = (v: string | null | undefined) =>
+    !v ? 'none' : /^[A-Za-z0-9._:-]{1,128}$/.test(v) ? v : 'invalid';
+  return (
+    regionLine(binding, { ...describeRegion(origin), restricted: restricted(origin) }) +
+    ` principal=${kind} client=${id(principal.clientId)} act=${id(principal.actor)}` +
+    ` audience=${principal.audience.key}`
+  );
 }
 
 /** The client address of `origin`, as the site keys a per-client limit on it. */

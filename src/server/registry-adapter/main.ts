@@ -26,6 +26,12 @@
  *   AUTH_JWT_ISSUER, AUTH_JWKS_URI the auth hub's issuer (default https://auth.civitai.com) and
  *                                  signing keys (default {issuer}/.well-known/jwks.json), for its
  *                                  exchanged access tokens (`auth.jwt.ts`)
+ *   REGISTRY_ADAPTER_SERVICE_CLIENTS
+ *                                  OAuth client ids (comma- or space-separated) whose service
+ *                                  tokens (a client as itself, no user) are accepted, each
+ *                                  reading every rating with no region hold (`audience.ts`).
+ *                                  Unset or empty (the default): none, and every service token
+ *                                  is invalid_token
  *   REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS, REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS_PER_TOKEN,
  *   REGISTRY_ADAPTER_MAX_SUBSCRIPTIONS_PER_ADDRESS
  *                                  caps on open subscriptions, over both bindings (`limits.ts`)
@@ -63,7 +69,10 @@ import {
   parseAppSearchUrl,
 } from '~/server/registry-adapter/entities';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
-import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
+import {
+  createCivitaiTokenVerifier,
+  parseServiceClients,
+} from '~/server/registry-adapter/auth.live';
 import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
@@ -114,10 +123,17 @@ function main() {
     loggedOpen = open;
     console.log(`registry-adapter: open subscriptions: ${open}`);
   }, 60_000).unref();
+  const serviceClients = parseServiceClients(process.env.REGISTRY_ADAPTER_SERVICE_CLIENTS);
+  console.log(
+    serviceClients.size === 0
+      ? 'registry-adapter: service clients: none (REGISTRY_ADAPTER_SERVICE_CLIENTS unset)'
+      : `registry-adapter: service clients: ${[...serviceClients].join(', ')}`
+  );
   const verifyToken = createCivitaiTokenVerifier({
     resource: resourceUrl,
     issuer,
     jwksUri: process.env.AUTH_JWKS_URI,
+    serviceClients,
   });
   if (!resourceUrl) {
     console.warn(
