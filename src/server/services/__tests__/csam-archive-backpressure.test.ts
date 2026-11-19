@@ -56,6 +56,7 @@ const v3 = vi.hoisted(() => ({
   tables: {} as Record<string, Record<string, unknown>[]>,
   // Makes a `kyselyRead` statement fail, as a statement timeout would.
   failWhen: undefined as ((table: string, eq: Record<string, unknown>) => boolean) | undefined,
+  served: [] as { table: string; eq: Record<string, unknown>; pool: string }[],
   calls: [] as {
     userId?: number;
     afterId?: number;
@@ -94,7 +95,12 @@ vi.mock('~/server/db/kyselyDb', () => {
   });
   // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
   // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
-  type MainState = { afterId?: number; take?: number; eq?: Record<string, number> };
+  type MainState = {
+    afterId?: number;
+    take?: number;
+    eq?: Record<string, number>;
+    pool?: 'readLong';
+  };
   const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
     select: () => mainQuery(table, state),
     distinct: () => mainQuery(table, state),
@@ -108,6 +114,7 @@ vi.mock('~/server/db/kyselyDb', () => {
       ),
     limit: (take: number) => mainQuery(table, { ...state, take }),
     execute: async () => {
+      v3.served.push({ table, eq: state.eq ?? {}, pool: state.pool ?? 'read' });
       if (v3.failWhen?.(table, state.eq ?? {}))
         throw Object.assign(new Error('canceling statement due to statement timeout'), {
           code: '57014',
@@ -121,7 +128,9 @@ vi.mock('~/server/db/kyselyDb', () => {
   return {
     kyselyV3Read: { selectFrom: () => query({}) },
     kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
-    kyselyReadLong: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: {
+      selectFrom: (table: string) => mainQuery(table, { pool: 'readLong' }),
+    },
   };
 });
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
@@ -318,6 +327,7 @@ import fsAsync from 'fs/promises';
 import type { ReadStream } from 'fs';
 import JSZip from 'jszip';
 import { logToAxiom } from '~/server/logging/client';
+import { env } from '~/env/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -1104,6 +1114,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     v3.calls = [];
     v3.tables = {};
     v3.failWhen = undefined;
+    v3.served = [];
   }
 
   /**
@@ -1319,9 +1330,38 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       passes: ['authorPass'],
       causes: ['57014'],
       count: 1,
-      pool: expect.stringMatching(/^(read|readLong)$/),
+      pool: 'read',
     });
     expect(JSON.stringify(warned)).not.toContain(String(report.userId));
+  });
+
+  it.each([
+    ['a distinct long replica', 'postgres://replica-long.invalid/db', 'readLong'],
+    ['no long replica', undefined, 'read'],
+    ['a long URL that is the primary', 'primary', 'read'],
+  ])('runs that pass on the long-read pool only with %s', async (_label, long, pool) => {
+    const mutable = env as Record<string, unknown>;
+    const saved = {
+      DATABASE_REPLICA_URL: mutable.DATABASE_REPLICA_URL,
+      DATABASE_REPLICA_LONG_URL: mutable.DATABASE_REPLICA_LONG_URL,
+    };
+    mutable.DATABASE_REPLICA_URL = 'postgres://replica.invalid/db';
+    mutable.DATABASE_REPLICA_LONG_URL = long === 'primary' ? mutable.DATABASE_URL : long;
+    try {
+      seedDb();
+      v3.tables = { ChatMessage: [{ id: 7, chatId: 9, userId: report.userId, content: 'mine' }] };
+      await archiveCsamDataForReport(report as never);
+    } finally {
+      Object.assign(mutable, saved);
+    }
+    const authorReads = v3.served.filter((s) => s.table === 'ChatMessage' && 'userId' in s.eq);
+    expect(authorReads).not.toHaveLength(0);
+    expect(new Set(authorReads.map((s) => s.pool))).toEqual(new Set([pool]));
+    // Every other read stays on the read pool (edits follow the messages they belong to).
+    const others = v3.served.filter(
+      (s) => !authorReads.includes(s) && s.table !== 'ChatMessageEdit'
+    );
+    expect(others.filter((s) => s.pool !== 'read')).toEqual([]);
   });
 
   it('fails the bundle when a read other than that pass fails', async () => {

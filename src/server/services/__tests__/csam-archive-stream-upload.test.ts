@@ -81,7 +81,12 @@ vi.mock('~/server/db/kyselyDb', () => {
   });
   // The other tables `userContentSections` reads, by table name. Filtering by owner is covered
   // against Postgres in csam-archive-user-content.behavior.test.ts; this serves rows as stored.
-  type MainState = { afterId?: number; take?: number; eq?: Record<string, number> };
+  type MainState = {
+    afterId?: number;
+    take?: number;
+    eq?: Record<string, number>;
+    pool?: 'readLong';
+  };
   const mainQuery = (table: string, state: MainState): Record<string, unknown> => ({
     select: () => mainQuery(table, state),
     distinct: () => mainQuery(table, state),
@@ -103,7 +108,9 @@ vi.mock('~/server/db/kyselyDb', () => {
   return {
     kyselyV3Read: { selectFrom: () => query({}) },
     kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
-    kyselyReadLong: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: {
+      selectFrom: (table: string) => mainQuery(table, { pool: 'readLong' }),
+    },
   };
 });
 vi.mock('~/env/other', async (importOriginal) => ({

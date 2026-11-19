@@ -537,7 +537,7 @@ describe('the pool for the author pass', () => {
 });
 
 describe('the author pass', () => {
-  it('runs on the pool it is given, and the member-chat pass on the read pool', async () => {
+  it('runs on the pool it is given', async () => {
     const authorQueries: string[] = [];
     const authorDb = new Kysely<DB>({ dialect: dialect(pg, authorQueries) });
     await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES (5, ${ME})`);
