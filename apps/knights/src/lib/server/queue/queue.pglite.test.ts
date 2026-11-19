@@ -284,13 +284,14 @@ describe('getFeed', () => {
 
   it('serves a bucket whose first item sits behind a whole scan round of another bucket', async () => {
     await player(1, 'Knight');
-    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round.
+    // One full first round of PG items ahead in serving order, so the X item is the first row of the second round. Every
+    // item shares a priority and enqueue time, so only the id puts the X item after the round's last row.
     for (let n = 0; n < STAGE_SCAN_FIRST_ROUND; n++) {
       await image(1000 + n, 1);
       await item(1000 + n, { priority: 1 });
     }
     await image(5000, 8);
-    const x = await item(5000, { priority: 2 });
+    const x = await item(5000, { priority: 1 });
 
     const served = (await getFeed(db, 1))?.items.map((i) => i.id) ?? [];
     expect(served).toContain(x);
