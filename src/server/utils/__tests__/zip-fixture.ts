@@ -20,6 +20,14 @@ export type FixtureEntry = {
   declaredCompressedSize?: number;
   /** Name written in the local header; differs from the directory name. */
   localName?: string;
+  /** Flags, method and extra field written in the local header in place of the directory's. */
+  localFlags?: number;
+  localMethod?: number;
+  localExtra?: Buffer;
+  /** Extra field written in the directory entry. */
+  centralExtra?: Buffer;
+  /** Bytes written after the entry's data that no header accounts for. */
+  after?: Buffer;
 };
 
 export type FixtureOptions = {
@@ -58,16 +66,17 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
     const header = Buffer.concat([
       u32(0x04034b50),
       u16(20),
-      u16(flags),
-      u16(methodCode),
+      u16(entry.localFlags ?? flags),
+      u16(entry.localMethod ?? methodCode),
       u16(0),
       u16(0x21),
       u32(crc),
       u32(compressedSize),
       u32(size),
       u16(localName.byteLength),
-      u16(0),
+      u16(entry.localExtra?.byteLength ?? 0),
       localName,
+      entry.localExtra ?? Buffer.alloc(0),
     ]);
     central.push(
       Buffer.concat([
@@ -83,17 +92,19 @@ export function buildZip(entries: FixtureEntry[], options: FixtureOptions = {}) 
         u32(compressedSize),
         u32(size),
         u16(name.byteLength),
-        u16(0),
+        u16(entry.centralExtra?.byteLength ?? 0),
         u16(0),
         u16(0),
         u16(0),
         u32(entry.externalAttributes ?? 0),
         u32(offset),
         name,
+        entry.centralExtra ?? Buffer.alloc(0),
       ])
     );
-    local.push(header, body);
-    offset += header.byteLength + body.byteLength;
+    const after = entry.after ?? Buffer.alloc(0);
+    local.push(header, body, after);
+    offset += header.byteLength + body.byteLength + after.byteLength;
   }
   const directory = Buffer.concat(central);
   return Buffer.concat([

@@ -23,7 +23,7 @@ import {
   id3TagLength,
   listZipPaths,
   MAX_ID3_TAGS,
-  readEntryHeads,
+  everyEntryHead,
   sniffEntry,
   SNIFF_BYTES,
   ZipRejectedError,
@@ -304,8 +304,11 @@ async function isTorchArchive(file: ClaimedFinal) {
   )
     return false;
   // Unzipped, every entry is a file of its own: none may be something a player or extractor opens.
-  const heads = await readEntryHeads(source, TORCH_MAX_ENTRIES);
-  return heads.every(({ head }) => !['video', 'archive'].includes(sniffEntry(head)));
+  return everyEntryHead(
+    source,
+    TORCH_MAX_ENTRIES,
+    (head) => !['video', 'archive'].includes(sniffEntry(head))
+  );
 }
 
 /** The Final's first bytes past any leading ID3v2 tags, which a player skips to play what follows. */
@@ -340,10 +343,10 @@ const isModelName = (name: string) =>
   (SERVICE_ZIP_MODEL_EXTENSIONS as readonly string[]).includes(fileExtension(name));
 
 /**
- * A Final that is not an archive or an image is judged by its first bytes, not its name: an image
- * or a video called notes.txt is still one. A model file may begin with almost anything (a
- * checkpoint is often a zip), so for one only a picture or a video is refused. Returns whether it
- * is an image.
+ * A Final that is not an archive is judged by its first bytes past any ID3 tags, not its name: an
+ * image or a video called notes.txt is still one. A Final named as a model or audio file must also
+ * begin like that format, and a zip under a model name must be in torch's layout. Returns whether
+ * it is an image.
  */
 async function isImageByContent(file: ClaimedFinal) {
   const head = await readHead(file);

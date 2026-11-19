@@ -283,40 +283,48 @@ const tsStream = (size: number) =>
   Buffer.concat(
     [0, 1, 2, 3].map(() => Buffer.concat([Buffer.from([0x47]), Buffer.alloc(size - 1)]))
   );
-/** An ID3v2.4 tag with a `body`-byte body (its size syncsafe, 7 bits a byte). */
-const id3Tag = (body: number) =>
+/** An ID3v2.4 tag with a `body`-byte body (its size syncsafe, 7 bits a byte), and a footer if asked. */
+const id3Tag = (body: number, footer = false) =>
   Buffer.concat([
     Buffer.from('ID3', 'latin1'),
     Buffer.from([
       4,
       0,
-      0,
+      footer ? 0x10 : 0,
       (body >> 21) & 0x7f,
       (body >> 14) & 0x7f,
       (body >> 7) & 0x7f,
       body & 0x7f,
     ]),
     Buffer.alloc(body),
+    footer ? Buffer.concat([Buffer.from('3DI', 'latin1'), Buffer.alloc(7)]) : Buffer.alloc(0),
   ]);
 const MP3_FRAME = () => Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(600)]);
 const PICKLE = () => Buffer.from([0x80, 0x02, 0x7d, 0x71, 0x00, 0x2e]);
+type TorchEntry = [path: string, data: Buffer, method?: 'store' | 'deflate'];
 /**
  * A checkpoint in torch's zip layout under `root`, plus `entries` under the root and `others` at
- * the paths given. `localNames` gives an entry a different name in its local header.
+ * the paths given, stored unless an entry says otherwise. `overrides` sets header fields of the
+ * entry at a path.
  */
 const torchZip = (
-  entries: [string, Buffer][],
+  entries: TorchEntry[],
   root = 'weights',
-  others: [string, Buffer][] = [],
-  localNames: Record<string, string> = {}
+  others: TorchEntry[] = [],
+  overrides: Record<string, Partial<FixtureEntry>> = {}
 ) =>
   buildZip(
     [
-      [`${root}/data.pkl`, PICKLE()] as [string, Buffer],
-      [`${root}/version`, Buffer.from('3\n')] as [string, Buffer],
-      ...entries.map(([path, data]) => [`${root}/${path}`, data] as [string, Buffer]),
+      [`${root}/data.pkl`, PICKLE()] as TorchEntry,
+      [`${root}/version`, Buffer.from('3\n')] as TorchEntry,
+      ...entries.map(([path, data, method]): TorchEntry => [`${root}/${path}`, data, method]),
       ...others,
-    ].map(([name, data]) => ({ name, data, method: 'store' as const, localName: localNames[name] }))
+    ].map(([name, data, method]) => ({
+      name,
+      data,
+      method: method ?? 'store',
+      ...overrides[name],
+    }))
   );
 
 const zipFinal = (dealId: number, items: FixtureEntry[]) =>
@@ -899,6 +907,7 @@ describe('video by any other name', () => {
     ['weights.pt', torchZip([['.data/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
     ['weights.pt', torchZip([['code/clip.mp4', Buffer.alloc(8)]]), /\.pt model/],
     ['weights.pt', torchZip([['data/0', MP4_BYTES()]]), /\.pt model/],
+    ['weights.pt', torchZip([['data/0', MP4_BYTES(), 'deflate']]), /\.pt model/],
     [
       'weights.pth',
       // Past the first KiB, so only reading the entry finds it.
@@ -916,9 +925,68 @@ describe('video by any other name', () => {
     [
       'weights.pt',
       torchZip([['data/0', Buffer.alloc(64)]], 'weights', [], {
-        'weights/data/0': 'weights/clip.mp4',
+        'weights/data/0': { localName: 'weights/clip.mp4' },
       }),
-      /named differently/,
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localMethod: 8 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { localFlags: 0x800 },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': {
+          localExtra: Buffer.concat([
+            Buffer.from([0x75, 0x70, 5, 0, 1, 0, 0, 0, 0]),
+            Buffer.from('x'),
+          ]),
+        },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': {
+          centralExtra: Buffer.concat([
+            Buffer.from([0x75, 0x70, 5, 0, 1, 0, 0, 0, 0]),
+            Buffer.from('x'),
+          ]),
+        },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { after: MP4_BYTES() },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/version': { after: MP4_BYTES() },
+      }),
+      /described differently/,
+    ],
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/data/0': { flags: 1 },
+      }),
+      /Password/,
     ],
   ])('refuses %s that is not that format', async (name, content, reason) => {
     expect((await refused(name, content)).failReason).toMatch(reason);
@@ -963,6 +1031,15 @@ describe('video by any other name', () => {
     bytes[188] = 0x47;
     return bytes;
   };
+  /** Three packets of a transport stream: one short of what is taken as one. */
+  const threeSyncs = () =>
+    Buffer.concat([tsStream(188).subarray(0, 3 * 188), Buffer.alloc(600, 0x11)]);
+  /** Sync bytes every `gap` bytes, a spacing no transport stream uses. */
+  const spacedSyncs = (gap: number) => {
+    const bytes = Buffer.alloc(1200, 0x11);
+    for (let at = 0; at < bytes.length; at += gap) bytes[at] = 0x47;
+    return bytes;
+  };
   it.each([
     ['weights.safetensors', iconLike()],
     ['notes.txt', twoSyncs()],
@@ -980,6 +1057,19 @@ describe('video by any other name', () => {
     ['song.mp3', MP3_FRAME()],
     ['song.mp3', Buffer.concat([id3Tag(300), MP3_FRAME()])],
     ['song.mp3', Buffer.concat([id3Tag(100_000), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([id3Tag(300, true), MP3_FRAME()])],
+    ['song.mp3', Buffer.concat([...Array(8).fill(id3Tag(10)), MP3_FRAME()])],
+    ['notes.txt', threeSyncs()],
+    ['song.mp3', Buffer.concat([MP3_FRAME(), spacedSyncs(100)])],
+    ['weights.pth', torchZip([['data/0', Buffer.alloc(64, 3), 'deflate']])],
+    // A data descriptor after an entry's data is the only gap an archive may have.
+    [
+      'weights.pt',
+      torchZip([['data/0', Buffer.alloc(4096, 3)]], 'weights', [], {
+        'weights/version': { flags: 0x08, after: Buffer.alloc(16) },
+        'weights/data/0': { flags: 0x08, after: Buffer.alloc(12) },
+      }),
+    ],
     ['song.wav', Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1'), Buffer.alloc(600)])],
     ['song.wav', Buffer.concat([Buffer.from('RF64\0\0\0\0WAVEds64', 'latin1'), Buffer.alloc(600)])],
     ['song.flac', Buffer.concat([Buffer.from('fLaC', 'latin1'), Buffer.alloc(600)])],

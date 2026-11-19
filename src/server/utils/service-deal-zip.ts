@@ -64,6 +64,9 @@ export const s3ZipSource = (
       .then((response) => {
         const body = response.Body as Readable | undefined;
         if (!body) throw new Error('Empty object body');
+        // A reader that stops early destroys `out`; the body must go too, or its socket stays held.
+        if (out.destroyed) return body.destroy();
+        out.once('close', () => body.destroy());
         body.on('error', (error) => out.destroy(error));
         body.pipe(out);
       })
@@ -381,70 +384,123 @@ export async function listZipPaths(source: ZipSource, max: number) {
 }
 
 const ENTRY_HEAD_READS = 8;
+const DATA_DESCRIPTOR = 0x08;
+const UNICODE_PATH_FIELD = 0x7075;
+/** A data descriptor's possible lengths: with or without its signature, 32- or 64-bit sizes. */
+const DESCRIPTOR_LENGTHS = [12, 16, 20, 24];
+
+const hasExtraField = (extra: Buffer, id: number) => {
+  for (let at = 0; at + 4 <= extra.length; at += 4 + extra.readUInt16LE(at + 2))
+    if (extra.readUInt16LE(at) === id) return true;
+  return false;
+};
 
 /**
- * Each file entry's path and first bytes (past any ID3v2 tags), for an archive that is delivered
- * as it is rather than unpacked. Refuses one whose local header names a file other than its
- * directory does: an extractor that streams the archive goes by the local name.
+ * Whether every file entry's first bytes (past any ID3v2 tags) pass `accept`, for an archive that
+ * is delivered as it is rather than unpacked. Refuses an archive whose local headers say anything
+ * other than its directory does, or whose entries do not fill it end to end: an extractor that
+ * streams the archive goes by the local headers, and could find an entry the directory hides.
  */
-export async function readEntryHeads(source: ZipSource, max: number) {
+export async function everyEntryHead(
+  source: ZipSource,
+  max: number,
+  accept: (head: Buffer) => boolean
+) {
   const zipfile = await openArchive(source);
+  // yauzl keeps where the directory starts as its read cursor until the first entry is read.
+  const directoryStart = (zipfile as unknown as { readEntryCursor: number }).readEntryCursor;
+  const mismatch = () =>
+    new ZipRejectedError('A file in the archive is described differently in its headers.');
   try {
-    const files = (await directoryOf(zipfile, max)).filter(
-      (entry) => !entry.fileName.endsWith('/')
-    );
+    const entries = await directoryOf(zipfile, max);
     let failed = false;
     const limit = pLimit(ENTRY_HEAD_READS);
-    return await Promise.all(
-      files.map((entry) =>
-        limit(async () => {
-          // The first refusal settles it; the reads still queued would only find the archive closed.
-          if (failed) return null as never;
-          if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8)
-            throw new ZipRejectedError('This is not a valid .zip file.');
-          const local = await zipfile.readLocalFileHeaderPromise(entry).catch(() => {
-            throw new ZipRejectedError('This is not a valid .zip file.');
-          });
-          if (!local.fileName.equals(entry.fileNameRaw))
-            throw new ZipRejectedError(
-              'A file in the archive is named differently in its headers.'
-            );
-          // The callback form: yauzl 3.4's promise form of this call opens the entry by its header again.
-          const stream = await new Promise<Readable>((resolve, reject) =>
-            zipfile.openReadStreamLowLevel(
-              local.fileDataStart,
-              entry.compressedSize,
-              0,
-              entry.compressedSize,
-              entry.compressionMethod === 8,
-              null,
-              (error, readable) =>
-                error
-                  ? reject(new ZipRejectedError('This is not a valid .zip file.'))
-                  : resolve(readable)
-            )
+    const reads = entries.map((entry) =>
+      limit(async () => {
+        // The first refusal settles it; the reads still queued would only find the archive closed.
+        if (failed) return null;
+        if (entry.isEncrypted())
+          throw new ZipRejectedError('Password-protected archives cannot be delivered.');
+        if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8)
+          throw new ZipRejectedError(
+            'The archive uses a compression method that is not supported.'
           );
-          const head = new SniffedHead();
-          try {
-            for await (const chunk of stream as AsyncIterable<Buffer>) if (head.push(chunk)) break;
-          } catch (error) {
-            if (((error as { code?: string })?.code ?? '').startsWith('Z_'))
-              throw new ZipRejectedError('The archive is damaged.');
-            throw error;
-          } finally {
-            stream.destroy();
-          }
-          return { path: entry.fileName, head: head.bytes() };
-        }).catch((error) => {
-          failed = true;
+        const local = await zipfile.readLocalFileHeaderPromise(entry).catch(() => {
+          throw new ZipRejectedError('This is not a valid .zip file.');
+        });
+        if (
+          !local.fileName.equals(entry.fileNameRaw) ||
+          local.compressionMethod !== entry.compressionMethod ||
+          local.generalPurposeBitFlag !== entry.generalPurposeBitFlag ||
+          hasExtraField(local.extraField, UNICODE_PATH_FIELD) ||
+          entry.extraFields.some(({ id }) => id === UNICODE_PATH_FIELD)
+        )
+          throw mismatch();
+        const span = {
+          start: entry.relativeOffsetOfLocalHeader,
+          end: local.fileDataStart + entry.compressedSize,
+          descriptor: (entry.generalPurposeBitFlag & DATA_DESCRIPTOR) !== 0,
+        };
+        if (entry.fileName.endsWith('/')) return span;
+        // The callback form: yauzl 3.4's promise form of this call opens the entry by its header again.
+        const stream = await new Promise<Readable>((resolve, reject) =>
+          zipfile.openReadStreamLowLevel(
+            local.fileDataStart,
+            entry.compressedSize,
+            0,
+            entry.compressedSize,
+            entry.compressionMethod === 8,
+            null,
+            (error, readable) =>
+              error
+                ? reject(new ZipRejectedError('This is not a valid .zip file.'))
+                : resolve(readable)
+          )
+        );
+        const head = new SniffedHead();
+        try {
+          for await (const chunk of stream as AsyncIterable<Buffer>) if (head.push(chunk)) break;
+        } catch (error) {
+          if (((error as { code?: string })?.code ?? '').startsWith('Z_'))
+            throw new ZipRejectedError('The archive is damaged.');
           throw error;
-        })
-      )
+        } finally {
+          stream.destroy();
+        }
+        if (!accept(head.bytes())) throw new EntryNotAccepted();
+        return span;
+      }).catch((error) => {
+        failed = true;
+        throw error;
+      })
     );
+    let spans;
+    try {
+      spans = await Promise.all(reads);
+    } catch (error) {
+      if (error instanceof EntryNotAccepted) return false;
+      throw error;
+    }
+    // Entry after entry from the first byte to the directory, each followed by nothing but its
+    // data descriptor, if it has one.
+    let at = 0;
+    let previousDescriptor = false;
+    for (const span of spans.filter((s) => s !== null).sort((a, b) => a.start - b.start)) {
+      const gap = span.start - at;
+      if (gap !== 0 && !(at > 0 && previousDescriptor && DESCRIPTOR_LENGTHS.includes(gap)))
+        throw mismatch();
+      at = span.end;
+      previousDescriptor = span.descriptor;
+    }
+    const tail = directoryStart - at;
+    if (tail !== 0 && !(previousDescriptor && DESCRIPTOR_LENGTHS.includes(tail))) throw mismatch();
+    return true;
   } finally {
     zipfile.close();
   }
 }
+
+class EntryNotAccepted extends Error {}
 
 /**
  * Opens the archive and reads its directory, refusing it on anything the headers already show.
