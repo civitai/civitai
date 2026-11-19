@@ -1,7 +1,7 @@
 import type { ExpressionBuilder, Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
-import { gradeKnightsVotes } from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_ESCALATION_REASONS,
@@ -44,6 +44,8 @@ export type InquisitorItem = {
   escalationReason: KnightsEscalationReason | null;
   source: string;
   currentLevel: number;
+  /** The image's level when the item reached the Inquisitors; null on items escalated before it was recorded. */
+  escalatedFromLevel: number | null;
   locked: boolean;
   hasBlockMarker: boolean;
   blockedFor: string | null;
@@ -161,6 +163,9 @@ export async function getInquisitorQueue(
       'img.nsfwLevelLocked as locked',
       'img.ingestion',
       'img.blockedFor',
+      sql<number | null>`(i.meta ->> ${sql.lit(ESCALATED_FROM_LEVEL_META_KEY)})::int`.as(
+        'escalatedFromLevel'
+      ),
     ])
     .orderBy('i.priority', 'asc')
     .orderBy('i.createdAt', 'asc')

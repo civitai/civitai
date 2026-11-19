@@ -12,6 +12,7 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
+import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
   minorContentNotRestrictedWhere,
@@ -327,6 +328,15 @@ END)`;
  */
 export const graceBlockedSql = Prisma.sql`("ingestion" = 'Blocked'::"ImageIngestionStatus"
   AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL)`;
+
+/**
+ * `needsReview` for a row a moderator lifts (an unblock or an approved appeal): the review an
+ * account-deletion grace block recorded, when lifting does not settle it, else none.
+ */
+export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
+  WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${REVIEWS_KEPT_WHEN_LIFTED}::text[])
+  THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+END)`;
 
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>

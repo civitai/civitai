@@ -641,6 +641,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-grace-marker-strip',
     sites: 1,
   },
+  'src/server/services/report.service.ts#settleResolvedAppeals': {
+    decision: 'raw-grace-marker-strip',
+    sites: 1,
+  },
   'src/server/services/user.service.ts#blockBannedUserImages': {
     decision: 'raw-grace-marker-strip',
     sites: 1,
