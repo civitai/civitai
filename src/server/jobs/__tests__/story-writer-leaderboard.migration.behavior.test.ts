@@ -39,7 +39,7 @@ const SCHEMA = `
     id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp,
     nsfw boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL, ingestion text NOT NULL,
     "tosViolation" boolean NOT NULL, unlisted boolean NOT NULL, availability text NOT NULL,
-    "systemCategoryId" int
+    "systemCategoryId" int, "updatedAt" timestamp NOT NULL DEFAULT now()
   );
   CREATE TABLE "TagsOnArticle" ("articleId" int NOT NULL, "tagId" int NOT NULL);
   CREATE TABLE "ArticleMetric" (
@@ -200,12 +200,18 @@ describe('story-writer leaderboard after its migrations', () => {
 
 describe('article category backfill selection', () => {
   const db = { pg: null as unknown as PGlite };
-  const select = async (afterId: number, limit: number, includeMature = false) =>
+  const select = async (
+    afterId: number,
+    limit: number,
+    includeMature = false,
+    publishedBefore = new Date()
+  ) =>
     (
       await db.pg.query<{ id: number }>(ARTICLE_CATEGORY_BACKFILL_SQL, [
         afterId,
         limit,
         includeMature,
+        publishedBefore,
       ])
     ).rows.map((r) => r.id);
 
@@ -218,6 +224,9 @@ describe('article category backfill selection', () => {
       { id: 19, userId: 27, tag: NEWS, systemCategory: null },
     ]);
     await db.pg.exec(MIGRATION + SWITCH + COUNT_MATURE);
+    await db.pg.exec(
+      `UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE "publishedAt" < now()`
+    );
   });
 
   afterAll(async () => {
@@ -228,6 +237,15 @@ describe('article category backfill selection', () => {
     expect(await select(0, 100)).toEqual([1, 2, 3, 19]);
     expect(await select(0, 2)).toEqual([1, 2]);
     expect(await select(2, 2)).toEqual([3, 19]);
+  });
+
+  it('selects only articles published and last edited before the given time', async () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15, 19]);
+    expect(await select(0, 100, true, hoursAgo(48))).toEqual([]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = now() WHERE id = 19`);
+    expect(await select(0, 100, true, hoursAgo(12))).toEqual([1, 2, 3, 4, 15]);
+    await db.pg.exec(`UPDATE "Article" SET "updatedAt" = "publishedAt" WHERE id = 19`);
   });
 
   it('selects R+ articles too only when asked, and never unrated ones', async () => {
@@ -250,7 +268,11 @@ describe('article category backfill selection', () => {
     const backfill = ARTICLE_CATEGORY_BACKFILL_SQL.split(/^WHERE$/m)[1].split('ORDER BY')[0];
     expect(
       conditions(backfill).filter(
-        (c) => !c.includes('systemCategoryId') && c !== 'a.id > $1' && !c.includes('$3')
+        (c) =>
+          !c.includes('systemCategoryId') &&
+          c !== 'a.id > $1' &&
+          !c.includes('$3') &&
+          !c.includes('$4')
       )
     ).toEqual(conditions(board).filter((c) => !c.startsWith('am.'))); // the metric join, not eligibility
   });
