@@ -18,6 +18,7 @@ import {
   type DailyChallengeDetails,
   type ChallengeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { getIncompatibleEntryImageIds } from '~/server/games/daily-challenge/challenge-resource-compat';
 function selectPayableUsers(qualifierIds: number[], excludeUserIds: number[]): number[] {
   const exclude = new Set(excludeUserIds);
   const seen = new Set<number>();
@@ -40,6 +41,25 @@ export async function promoteChallengeEntries(args: {
   const { collectionId, allowedNsfwLevel, modelVersionIds, challengeDate, reviewerId } = args;
   const hasModelVersionRestriction = modelVersionIds.length > 0;
 
+  // Entries admitted before the compatible-base-model rule, or by a moderator, are still checked
+  // here. Read first so the rule stays in one place (challenge-resource-compat), not re-said in SQL.
+  let incompatibleIds: number[] = [];
+  if (hasModelVersionRestriction) {
+    const pending = await dbWrite.$queryRaw<{ imageId: number }[]>`
+      SELECT "imageId" FROM "CollectionItem"
+      WHERE "collectionId" = ${collectionId} AND status = 'REVIEW' AND "imageId" IS NOT NULL
+    `;
+    const incompatible = await getIncompatibleEntryImageIds(
+      pending.map((p) => p.imageId),
+      modelVersionIds,
+      dbWrite
+    );
+    incompatibleIds = [...incompatible];
+  }
+  const compatibleSql = incompatibleIds.length
+    ? Prisma.sql`AND i.id <> ALL(${incompatibleIds})`
+    : Prisma.empty;
+
   return dbWrite.$executeRaw`
     WITH source AS (
       SELECT
@@ -47,7 +67,7 @@ export async function promoteChallengeEntries(args: {
         (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 AND ${imageNotRestrictedSql()} as "isSafe",
         ${
           hasModelVersionRestriction
-            ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${modelVersionIds}) AND ir."imageId" = i.id AND ir.detected IS TRUE)`
+            ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${modelVersionIds}) AND ir."imageId" = i.id AND ir.detected IS TRUE) ${compatibleSql}`
             : Prisma.sql`true`
         } as "hasResource",
         i."createdAt" >= ${challengeDate} as "isRecent"

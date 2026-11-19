@@ -33,6 +33,7 @@ import {
   refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import { getIncompatibleEntryImageIds } from '~/server/games/daily-challenge/challenge-resource-compat';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -2299,12 +2300,14 @@ export async function getJudgedEntries(
   // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
   // A ban leaves the user's entries ACCEPTED in the collection, so banned entrants are dropped
   // here. Read at query time: a ban lifted before completion makes them eligible again.
-  const judgedRows = await dbRead.$queryRaw<JudgedEntry[]>`
+  const judgedRows = await dbRead.$queryRaw<(JudgedEntry & { featuredVersionIds?: number[] })[]>`
     SELECT
       ci."imageId",
       i."userId",
       u."username",
-      ci.note
+      ci.note,
+      (SELECT c."modelVersionIds" FROM "Challenge" c WHERE c."collectionId" = ${collectionId} LIMIT 1)
+        AS "featuredVersionIds"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -2318,7 +2321,15 @@ export async function getJudgedEntries(
   // Re-checked on the primary: the refund and participation payout read it there, so a ban the
   // replica has not seen yet must not let the same user be refunded and still place.
   const bannedIds = await getBannedUserIds(judgedRows.map((e) => e.userId));
-  const userBestEntries = judgedRows.filter((e) => !bannedIds.has(e.userId));
+  // An entry accepted before the compatible-base-model rule shipped must not place either. One
+  // query for the whole field; the featured versions ride on every row.
+  const incompatible = await getIncompatibleEntryImageIds(
+    judgedRows.map((e) => e.imageId),
+    judgedRows[0]?.featuredVersionIds ?? []
+  );
+  const userBestEntries = judgedRows
+    .filter((e) => !bannedIds.has(e.userId) && !incompatible.has(e.imageId))
+    .map(({ featuredVersionIds: _, ...entry }) => entry);
   log('Users with judged entries:', userBestEntries.length);
   if (!userBestEntries.length) {
     return [];

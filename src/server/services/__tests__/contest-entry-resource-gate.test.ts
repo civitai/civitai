@@ -169,6 +169,31 @@ describe('contest entry resource gate (Task 11)', () => {
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });
 
+  it('rejects an image whose featured LoRA cannot run on its checkpoint, before charging', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
+    mockDbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"ImageResourceNew"')
+        ? [
+            { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+            { imageId: IMAGE_ID, baseModel: 'Krea 2 Turbo', type: 'Checkpoint', isFeatured: false },
+          ]
+        : []) as never);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).rejects.toThrow(
+      "This image's checkpoint isn't compatible with the challenge's featured resource"
+    );
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
   it('accepts an image that has one of the required versions and reaches the charge step', async () => {
     wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
     mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);

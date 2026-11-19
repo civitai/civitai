@@ -118,6 +118,7 @@ function wireImage({ detected = [], manual = [] }: { detected?: number[]; manual
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsFlipt.mockResolvedValue(false);
+  mockDbRead.$queryRaw.mockResolvedValue([]); // the base-model compatibility read
 });
 
 describe('checkImageEligibility model requirement', () => {
@@ -162,6 +163,23 @@ describe('checkImageEligibility model requirement', () => {
     const [sql] = mockDbRead.$queryRawUnsafe.mock.calls[0];
     expect(sql).toContain('ir.detected IS TRUE');
     expect(sql).toContain('ir.detected IS NOT TRUE');
+  });
+
+  it('reports "Incompatible base model" when the featured LoRA cannot run on the checkpoint', async () => {
+    wireChallenge();
+    wireImage({ detected: [REQUIRED_VERSION_ID, 3147780] });
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+      { imageId: IMAGE_ID, baseModel: 'Krea 2 Turbo', type: 'Checkpoint', isFeatured: false },
+    ]);
+
+    const [result] = await checkImageEligibility(CHALLENGE_ID, [IMAGE_ID]);
+
+    expect(result).toEqual({
+      imageId: IMAGE_ID,
+      eligible: false,
+      reasons: ['Incompatible base model'],
+    });
   });
 
   it('skips the model check when the challenge requires no model', async () => {
