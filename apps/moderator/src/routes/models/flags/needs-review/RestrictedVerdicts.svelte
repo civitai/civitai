@@ -25,8 +25,8 @@
     rows: RestrictedVerdictRow[];
     total: number;
     civitaiUrl: string;
-    /** Opens the panel. Otherwise it stays one line: it sits in the queue column's fixed-height
-     *  header, and opened with dozens of leads it once left the queue list under it 0px tall. */
+    /** Opens the panel. Otherwise it stays one line, since it sits in the queue column's
+     *  fixed-height header above the queue list. */
     queueEmpty?: boolean;
   } = $props();
 
@@ -97,7 +97,7 @@
         {expanded ? 'Hide' : 'Show'}<span class="sr-only"> leads</span>
       </button>
     </div>
-    {#if !expanded && Object.keys(errors).length}
+    {#if !expanded && rows.some((row) => errors[row.modelId])}
       <p class="m-0 mt-1 text-xs text-red-5" role="alert">A ruling failed: show the leads to see it.</p>
     {/if}
     {#if expanded}

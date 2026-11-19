@@ -14,9 +14,9 @@ import type { RestrictedVerdictRow } from '$lib/minor-flags/restricted-verdicts'
 (globalThis as Record<string, unknown>).__panelLib = { comFace, format, restrictedVerdicts };
 
 /**
- * The panel sits in the Needs review queue column's fixed-height header: drawn open with dozens of
- * leads it took the whole column and left the queue list 0px tall. Server-rendered here (this config
- * has no Svelte plugin), with the UI components it imports swapped for plain stand-ins.
+ * The panel sits in the Needs review queue column's fixed-height header. This config has no Svelte
+ * plugin, so it is compiled here, for the server (rendered to a string) and the client (mounted, to
+ * click), with the UI components it imports swapped for plain stand-ins.
  */
 const require = createRequire(import.meta.url);
 const SVELTE = path.dirname(require.resolve('svelte/package.json'));
@@ -38,6 +38,14 @@ const STUBS: Record<string, string> = {
   ConfirmButton: PASS,
   ComFaceCard: PASS,
   MetaChip: PASS,
+  // Holds queueEmpty in state, so a test can flip it after mount as a ruling's reload would.
+  Harness: `<script>
+  import Panel from './Panel.js';
+  let { control, ...rest } = $props();
+  let queueEmpty = $state(false);
+  control.setQueueEmpty = (value) => (queueEmpty = value);
+</script>
+<Panel {...rest} {queueEmpty} />`,
 };
 const IMPORTS: [RegExp, string][] = [
   [/import \{ enhance \} from '\$app\/forms';/, 'const enhance = () => {};'],
@@ -82,11 +90,13 @@ function emit(name: string, source: string, generate: 'server' | 'client') {
 
 let Panel: unknown;
 let ClientPanel: unknown;
+let Harness: unknown;
 let render: (c: unknown, o: { props: unknown }) => { body: string };
 
 beforeAll(async () => {
   for (const generate of ['server', 'client'] as const)
-    for (const [name, source] of Object.entries(STUBS)) emit(name, source, generate);
+    for (const [name, source] of Object.entries(STUBS))
+      if (name !== 'Harness') emit(name, source, generate);
   let panel = readFileSync(
     path.resolve(import.meta.dirname, '../RestrictedVerdicts.svelte'),
     'utf8'
@@ -102,6 +112,10 @@ beforeAll(async () => {
       .default;
   Panel = await load('server');
   ClientPanel = await load('client');
+  emit('Harness', STUBS.Harness, 'client');
+  Harness = (
+    await import(/* @vite-ignore */ pathToFileURL(path.join(work, 'client', 'Harness.js')).href)
+  ).default;
   ({ render } = await import(/* @vite-ignore */ serverEntry('svelte/server')));
 });
 
@@ -178,6 +192,23 @@ describe('the restricted-verdict panel above the Needs review queue', () => {
     toggle.click();
     flushSync();
     expect(leads()).toHaveLength(0);
+    unmount(app);
+  });
+
+  it('opens itself when the queue under it empties', async () => {
+    const { mount, unmount, flushSync } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    document.body.innerHTML = '';
+    const control: { setQueueEmpty?: (value: boolean) => void } = {};
+    const app = mount(Harness, {
+      target: document.body,
+      props: { rows: LEADS, total: LEADS.length, civitaiUrl: 'https://civitai.com', control },
+    });
+    const leads = () => document.querySelectorAll('section[aria-label="Scan rated NSFW"] ul > li');
+
+    expect(leads()).toHaveLength(0);
+    control.setQueueEmpty!(true);
+    flushSync();
+    expect(leads()).toHaveLength(61);
     unmount(app);
   });
 });
