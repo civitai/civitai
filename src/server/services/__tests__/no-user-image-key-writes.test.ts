@@ -79,6 +79,19 @@ describe('writes of User.image', () => {
     expect(imageWrites('updateUserById({ id, data: { ...data, image, username } })')).toHaveLength(
       1
     );
+    expect(
+      imageWrites(`db.updateTable('User as u').set({ image: url }).where('u.id', '=', 1)`)
+    ).toHaveLength(1);
+    expect(
+      imageWrites(
+        `db.updateTable('User as u').set((eb) => ({ image: eb.ref('x') })).where('u.id', '=', 1)`
+      )
+    ).toHaveLength(1);
+    expect(
+      imageWrites(
+        `db.updateTable('User as u').set((eb) => ({ image: null })).where('u.id', '=', 1)`
+      )
+    ).toEqual([]);
   });
 
   it('passes a write that only empties it, and writes of other columns (control)', () => {
