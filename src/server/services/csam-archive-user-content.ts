@@ -52,12 +52,16 @@ export async function* flattenPages<T>(
 }
 
 type Db = Kysely<DB>;
-/** `incomplete` collects the names of passes that failed soft; see `chatMessages`. */
+/**
+ * `incomplete` collects the passes that failed soft, and `authorDb` runs the slow author pass; see
+ * `chatMessages`.
+ */
 type Reader = (
   db: Db,
   userId: number,
   pageSize?: number,
-  incomplete?: Map<string, string>
+  incomplete?: Map<string, string>,
+  authorDb?: Db
 ) => AsyncIterable<unknown>;
 
 /**
@@ -134,7 +138,8 @@ export const userContentReaders: { name: string; rows: Reader }[] = [
   },
   {
     name: 'chatMessages',
-    rows: (db, userId, pageSize, incomplete) => chatMessages(db, userId, pageSize, incomplete),
+    rows: (db, userId, pageSize, incomplete, authorDb) =>
+      chatMessages(db, userId, pageSize, incomplete, authorDb),
   },
   {
     name: 'profile',
@@ -321,7 +326,8 @@ async function* chatMessages(
   db: Db,
   userId: number,
   pageSize?: number,
-  incomplete?: Map<string, string>
+  incomplete?: Map<string, string>,
+  authorDb: Db = db
 ) {
   const memberships = await db
     .selectFrom('ChatMember')
@@ -350,12 +356,12 @@ async function* chatMessages(
   // losing every other section to it is the worse outcome. Rows already yielded stay.
   try {
     yield* withEdits(
-      db,
+      authorDb,
       userId,
       outsideChats(
         inMemberChat,
         scanPagesById(({ afterId, take }) => {
-          let q = db
+          let q = authorDb
             .selectFrom('ChatMessage')
             .select(CHAT_MESSAGE_COLUMNS)
             .where('userId', '=', userId)
@@ -372,6 +378,22 @@ async function* chatMessages(
     const err = e as { code?: unknown; name?: unknown };
     incomplete.set('authorPass', String(err.code ?? err.name ?? 'unknown'));
   }
+}
+
+/**
+ * The pool for the author pass: the long-read pool only when it is a replica, else the read pool.
+ * The long-read pool is the primary when the read replica URL is the primary's, or when no long
+ * replica URL is set.
+ */
+export function authorPassPool(urls: {
+  databaseUrl: string;
+  replicaUrl?: string;
+  replicaLongUrl?: string;
+}): 'readLong' | 'read' {
+  const { databaseUrl, replicaUrl, replicaLongUrl } = urls;
+  return replicaUrl !== databaseUrl && !!replicaLongUrl && replicaLongUrl !== databaseUrl
+    ? 'readLong'
+    : 'read';
 }
 
 /**

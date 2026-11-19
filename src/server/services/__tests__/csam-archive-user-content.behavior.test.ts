@@ -9,7 +9,7 @@ import {
   type Dialect,
 } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { userContentReaders } from '~/server/services/csam-archive-user-content';
+import { authorPassPool, userContentReaders } from '~/server/services/csam-archive-user-content';
 
 /**
  * The text sections of a report archive, read against a Postgres stand-in: each holds the reported
@@ -26,10 +26,10 @@ const PAGE = 2;
 /** Every statement the readers send, so a test can see a section was paged rather than read whole. */
 const queries: string[] = [];
 
-const dialect = (pg: PGlite): Dialect => {
+const dialect = (pg: PGlite, sink: string[] = queries): Dialect => {
   const connection: DatabaseConnection = {
     async executeQuery(compiled) {
-      queries.push(compiled.sql);
+      sink.push(compiled.sql);
       const result = await pg.query(compiled.sql, compiled.parameters as unknown[]);
       return { rows: result.rows as never[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },
@@ -512,5 +512,49 @@ describe('the archive text sections', () => {
       const rows = await read('chatMessages', ME);
       expect(rows.map((r) => [r.chatId, r.id, r.isReportedUser])).toEqual([[7, 2, true]]);
     });
+  });
+});
+
+describe('the pool for the author pass', () => {
+  const primary = 'postgres://primary.invalid/db';
+  const replica = 'postgres://replica.invalid/db';
+  const replicaLong = 'postgres://replica-long.invalid/db';
+
+  it('is the long-read pool only when that pool is a replica', () => {
+    expect(
+      authorPassPool({ databaseUrl: primary, replicaUrl: replica, replicaLongUrl: replicaLong })
+    ).toBe('readLong');
+    // Long URL equal to the primary's, or unset: the long-read pool would be the primary.
+    expect(
+      authorPassPool({ databaseUrl: primary, replicaUrl: replica, replicaLongUrl: primary })
+    ).toBe('read');
+    expect(authorPassPool({ databaseUrl: primary, replicaUrl: replica })).toBe('read');
+    // A read replica URL equal to the primary's makes every pool the primary's.
+    expect(
+      authorPassPool({ databaseUrl: primary, replicaUrl: primary, replicaLongUrl: replicaLong })
+    ).toBe('read');
+  });
+});
+
+describe('the author pass', () => {
+  it('runs on the pool it is given, and the member-chat pass on the read pool', async () => {
+    const authorQueries: string[] = [];
+    const authorDb = new Kysely<DB>({ dialect: dialect(pg, authorQueries) });
+    await pg.exec(`INSERT INTO "ChatMember" ("chatId", "userId") VALUES (5, ${ME})`);
+    await pg.query(
+      `INSERT INTO "ChatMessage" (id, "chatId", "userId", content, secret) VALUES
+         (1, 5, $1, 'member chat', 'x'), (2, 8, $1, 'elsewhere', 'x')`,
+      [ME]
+    );
+    const reader = userContentReaders.find((r) => r.name === 'chatMessages')!;
+    const sent = queries.length;
+    const rows: Record<string, unknown>[] = [];
+    for await (const row of reader.rows(db, ME, PAGE, new Map(), authorDb))
+      rows.push(row as Record<string, unknown>);
+
+    expect(rows.map((r) => r.id)).toEqual([1, 2]);
+    const byAuthor = (q: string) => q.includes('from "ChatMessage"') && q.includes('"userId" =');
+    expect(authorQueries.filter(byAuthor)).not.toHaveLength(0);
+    expect(queries.slice(sent).filter(byAuthor)).toHaveLength(0);
   });
 });

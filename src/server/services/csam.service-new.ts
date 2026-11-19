@@ -1,7 +1,7 @@
 import type { ReadableStream as WebReadableStream } from 'stream/web';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyRead, kyselyV3Read } from '~/server/db/kyselyDb';
+import { kyselyRead, kyselyReadLong, kyselyV3Read } from '~/server/db/kyselyDb';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
@@ -63,6 +63,7 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import {
+  authorPassPool,
   flattenPages,
   scanPagesById,
   userContentReaders,
@@ -2296,6 +2297,13 @@ const userCommentRows = (userId: number) =>
     })
   );
 
+const archiveAuthorPassPool = () =>
+  authorPassPool({
+    databaseUrl: env.DATABASE_URL,
+    replicaUrl: env.DATABASE_REPLICA_URL,
+    replicaLongUrl: env.DATABASE_REPLICA_LONG_URL,
+  });
+
 /** The reported user's own content, written to `data.json` under `name` after `images`. Comments are not held, so this archive may be their only copy. */
 export const userContentSections: {
   name: string;
@@ -2305,7 +2313,13 @@ export const userContentSections: {
   ...userContentReaders.map(({ name, rows }) => ({
     name,
     rows: (userId: number, incomplete?: Map<string, string>) =>
-      rows(kyselyRead, userId, undefined, incomplete),
+      rows(
+        kyselyRead,
+        userId,
+        undefined,
+        incomplete,
+        archiveAuthorPassPool() === 'readLong' ? kyselyReadLong : kyselyRead
+      ),
   })),
 ];
 
@@ -2910,6 +2924,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           passes: [...incomplete.keys()],
           causes: [...incomplete.values()],
           count: incomplete.size,
+          pool: archiveAuthorPassPool(),
         },
       });
 

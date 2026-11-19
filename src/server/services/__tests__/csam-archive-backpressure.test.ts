@@ -121,6 +121,7 @@ vi.mock('~/server/db/kyselyDb', () => {
   return {
     kyselyV3Read: { selectFrom: () => query({}) },
     kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: { selectFrom: (table: string) => mainQuery(table, {}) },
   };
 });
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
@@ -1314,7 +1315,12 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
       .mock.calls.map(([p]) => p as Record<string, unknown>)
       .filter((p) => p.subType === 'archive-section-incomplete');
     expect(warned).toHaveLength(1);
-    expect(warned[0].payload).toEqual({ passes: ['authorPass'], causes: ['57014'], count: 1 });
+    expect(warned[0].payload).toEqual({
+      passes: ['authorPass'],
+      causes: ['57014'],
+      count: 1,
+      pool: expect.stringMatching(/^(read|readLong)$/),
+    });
     expect(JSON.stringify(warned)).not.toContain(String(report.userId));
   });
 

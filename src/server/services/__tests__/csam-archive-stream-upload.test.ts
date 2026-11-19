@@ -103,6 +103,7 @@ vi.mock('~/server/db/kyselyDb', () => {
   return {
     kyselyV3Read: { selectFrom: () => query({}) },
     kyselyRead: { selectFrom: (table: string) => mainQuery(table, {}) },
+    kyselyReadLong: { selectFrom: (table: string) => mainQuery(table, {}) },
   };
 });
 vi.mock('~/env/other', async (importOriginal) => ({
