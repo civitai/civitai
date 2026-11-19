@@ -269,6 +269,15 @@ func (q *ImagesQuery) Build() Built {
       HAVING array_agg(it."toolId" ORDER BY it."toolId") @> `+a.add(q.Tools)+`::integer[]
     )`)
 	}
+	if len(q.Techniques) > 0 {
+		// getAllImagesUncaptured's `techniques` clause (it follows `tools` there): any of the ids (Node
+		// writes `IN (…)`, one bind per id; order and repeats change nothing).
+		and = append(and, `EXISTS (
+      SELECT 1
+      FROM "ImageTechnique" it
+      WHERE it."imageId" = i.id AND it."techniqueId" = ANY(`+a.add(q.Techniques)+`::int[])
+    )`)
+	}
 	if len(q.BaseModels) > 0 {
 		// getAllImagesUncaptured's `baseModels` clause, in Node's clause order (it follows `tools` and
 		// `techniques` there), its RIGHT JOIN kept so the plan is Node's. The list is bound as sent
@@ -277,16 +286,6 @@ func (q *ImagesQuery) Build() Built {
       SELECT 1 FROM "ModelVersion" mv
       RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
       WHERE mv."baseModel" = ANY(`+a.add(q.BaseModels)+`::text[])
-    )`)
-	}
-
-	if len(q.Techniques) > 0 {
-		// getAllImagesUncaptured's `techniques` clause (it follows `tools` there): any of the ids (Node
-		// writes `IN (…)`, one bind per id; order and repeats change nothing).
-		and = append(and, `EXISTS (
-      SELECT 1
-      FROM "ImageTechnique" it
-      WHERE it."imageId" = i.id AND it."techniqueId" = ANY(`+a.add(q.Techniques)+`::int[])
     )`)
 	}
 
