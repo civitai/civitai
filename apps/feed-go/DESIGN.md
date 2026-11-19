@@ -522,10 +522,9 @@ That holds even when the app's deploy runs ahead of this service's.
   `similarTo` (`strippedURLKeys`): the keys of `imagesQueryParamSchema`, the images feeds' URL query,
   that `getInfiniteImagesSchema` lacks. The site merges that query into the filter-store input, so
   they arrive and zod strips them (the exception below). Also for `image.getInfinite` only, `useIndex`
-  and `search` (`strippedLegacyKeys`): sent by clients the site no longer ships (`useIndex` was the
-  client's index-or-database switch, removed when the server took that decision over), keys the
-  fallback log names under `input-unknown-key`; zod strips both, and nothing else in the
-  procedure's chain reads them, so they are ignored under the same exception. For REST, `token` (the API key, which then
+  and `search` (`strippedLegacyKeys`): sent by clients the site no longer ships, keys the fallback log
+  names under `input-unknown-key`; zod strips both and nothing else in the procedure's chain reads
+  them, so they are ignored under the same exception. For REST, `token` (the API key, which then
   falls back as `bearer-token`). Every other input key the web client sends is a schema key. Every
   query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
   which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
