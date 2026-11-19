@@ -18,34 +18,33 @@ vi.stubGlobal('fetch', fetchMock);
 
 import handler from '~/pages/api/og';
 
-// bounty id → its only image
+// bounty id → its images, in insert order
 const BLOCKED_FOR = 1;
 const UNRATED = 2;
 const CLEAN = 3;
+const TOS_VIOLATION = 4;
+const BLOCKED_THEN_CLEAN = 5;
 const rows = [
-  { id: 11, bountyId: BLOCKED_FOR, url: 'img-blocked', nsfwLevel: 1, blockedFor: 'tos' },
-  { id: 12, bountyId: UNRATED, url: 'img-unrated', nsfwLevel: 0, blockedFor: null },
-  { id: 13, bountyId: CLEAN, url: 'img-clean', nsfwLevel: 1, blockedFor: null },
+  { id: 11, bountyId: BLOCKED_FOR, url: 'img-blocked', blockedFor: 'tos' },
+  { id: 12, bountyId: UNRATED, url: 'img-unrated', nsfwLevel: 0 },
+  { id: 13, bountyId: CLEAN, url: 'img-clean' },
+  { id: 14, bountyId: TOS_VIOLATION, url: 'img-tos', tosViolation: true },
+  { id: 15, bountyId: BLOCKED_THEN_CLEAN, url: 'img-first-blocked', blockedFor: 'tos' },
+  { id: 16, bountyId: BLOCKED_THEN_CLEAN, url: 'img-second-clean' },
 ].map((r) => ({
-  ...r,
   userId: 5,
   type: 'image',
   width: 10,
   height: 10,
+  nsfwLevel: 1,
   ingestion: 'Scanned',
   needsReview: null,
+  blockedFor: null as string | null,
   tosViolation: false,
   minor: false,
   modelRestricted: false,
+  ...r,
 }));
-
-function matches(where: Record<string, unknown>, row: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([key, cond]) =>
-    cond !== null && typeof cond === 'object'
-      ? matches(cond as never, row[key] as never)
-      : row[key] === cond
-  );
-}
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -85,14 +84,6 @@ beforeAll(async () => {
   }
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
-  (
-    dbMock.dbRead.imageConnection.findFirst as unknown as ReturnType<typeof vi.fn>
-  ).mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-    const row = rows.find((r) =>
-      matches(where, { entityType: 'Bounty', entityId: r.bountyId, image: r } as never)
-    );
-    return row ? { image: row } : null;
-  });
 });
 
 beforeEach(() => {
@@ -121,10 +112,10 @@ const cardImage = async (bountyId: number) => {
     } as unknown as NextApiRequest,
     res
   );
-  const asked = fetchMock.mock.calls.map(([url]) => String(url));
-  return ['img-blocked', 'img-unrated', 'img-clean'].filter((u) =>
-    asked.some((a) => a.includes(u))
-  );
+  // A URL can name the image more than once.
+  return [
+    ...new Set(fetchMock.mock.calls.flatMap(([url]) => String(url).match(/img-[a-z-]+/g) ?? [])),
+  ];
 };
 
 describe('/api/og?type=bounty image', () => {
@@ -135,7 +126,12 @@ describe('/api/og?type=bounty image', () => {
   it.each([
     ['carries a block reason', BLOCKED_FOR],
     ['is unrated', UNRATED],
+    ['violates the ToS', TOS_VIOLATION],
   ])('shows no image that %s', async (_, bountyId) => {
     expect(await cardImage(bountyId)).toEqual([]);
+  });
+
+  it('passes over a blocked image to a servable one on the same bounty', async () => {
+    expect(await cardImage(BLOCKED_THEN_CLEAN)).toEqual(['img-second-clean']);
   });
 });

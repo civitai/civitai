@@ -249,7 +249,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
+  pullData: async ({ db, logger, indexName }, batch) => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -340,8 +340,9 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        -- No viewer: the images a signed-out visitor is served on the bounty page.
+        -- No viewer: the images a signed-out visitor is served on the bounty page, less ToS removals.
         WHERE ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+          AND i."tosViolation" IS NOT TRUE
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT
@@ -379,6 +380,11 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       FROM target t
       `;
     logger(`PullData :: Pulled bounties`);
+
+    // transformData leaves out a bounty with no servable image; remove any document it was
+    // indexed with while it had one, or that document keeps serving the old images.
+    const imageless = bounties.filter((b) => !b.images?.length).map((b) => b.id);
+    if (imageless.length) await onSearchIndexDocumentsCleanup({ indexName, ids: imageless });
 
     if (bounties.length === 0) {
       return {
