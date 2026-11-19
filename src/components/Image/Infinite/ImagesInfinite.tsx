@@ -24,6 +24,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { SongListNameProvider } from '~/components/Music/FeedSongList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
@@ -68,6 +69,10 @@ type ImagesInfiniteProps = {
   filters?: ImagesQueryParamSchema & Partial<Pick<GetInfiniteImagesInput, 'hubExcludedSources'>>;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
+  /** Draw the items as a plain list of these instead of the masonry grid. */
+  listItem?: React.ComponentType<{ data: ImageGetInfinite[number]; index: number }>;
+  /** What Up next calls the list a song in this feed plays from. */
+  songListName?: string;
   filterType?: 'images' | 'videos';
   showAds?: boolean;
   showEmptyCta?: boolean;
@@ -125,6 +130,8 @@ function ImagesFeed({
   filters: filterOverrides = {},
   showEof = false,
   renderItem: MasonryItem,
+  listItem: ListItem,
+  songListName,
   filterType = 'images',
   showAds,
   showEmptyCta,
@@ -342,27 +349,37 @@ function ImagesFeed({
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <ImagesProvider images={images} {...imageProviderProps}>
-            <MasonryColumnsVirtual
-              data={images}
-              imageDimensions={(data) => {
-                const width = data?.width ? data.width : 450;
-                const height = data?.height ? data.height : 450;
-                return { width, height };
-              }}
-              adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
-              maxItemHeight={600}
-              render={MasonryItem ?? ImagesCardMemoized}
-              itemId={(data) => data.id}
-              withAds={showAds}
-              spanLandscapeMaxHeight={getImagesSpanMaxHeight({
-                optedIn: landscapeSpan,
-                flagOn: features.masonryLandscapeSpan,
-                customCard: !!MasonryItem,
-              })}
-              hasMore={hasNextPage && !isRetrying}
-            />
-          </ImagesProvider>
+          <SongListNameProvider name={songListName}>
+            <ImagesProvider images={images} {...imageProviderProps}>
+              {ListItem ? (
+                <div className="flex flex-col">
+                  {images.map((image, index) => (
+                    <ListItem key={image.id} data={image} index={index} />
+                  ))}
+                </div>
+              ) : (
+                <MasonryColumnsVirtual
+                  data={images}
+                  imageDimensions={(data) => {
+                    const width = data?.width ? data.width : 450;
+                    const height = data?.height ? data.height : 450;
+                    return { width, height };
+                  }}
+                  adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
+                  maxItemHeight={600}
+                  render={MasonryItem ?? ImagesCardMemoized}
+                  itemId={(data) => data.id}
+                  withAds={showAds}
+                  spanLandscapeMaxHeight={getImagesSpanMaxHeight({
+                    optedIn: landscapeSpan,
+                    flagOn: features.masonryLandscapeSpan,
+                    customCard: !!MasonryItem,
+                  })}
+                  hasMore={hasNextPage && !isRetrying}
+                />
+              )}
+            </ImagesProvider>
+          </SongListNameProvider>
           {isRetrying ? (
             retryBanner
           ) : hasNextPage ? (

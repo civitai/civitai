@@ -37,6 +37,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
+import { SongCard } from '~/components/Music/SongCard';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -72,6 +73,9 @@ export function ImagesCard({
   height: number;
   width?: number;
 }) {
+  const features = useFeatureFlags();
+  if (features.music && data.type === MediaType.audio)
+    return <SongCard data={data} height={height} />;
   return (
     <HatTurfCardProvider>
       <ImagesCardContent data={data} height={height} width={width} />
