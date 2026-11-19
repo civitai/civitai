@@ -1,7 +1,9 @@
+import type * as BlockedImageHash from '~/server/services/blocked-image-hash';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { getIsImageBlocked } = vi.hoisted(() => ({ getIsImageBlocked: vi.fn(async () => true) }));
-vi.mock('~/server/services/blocked-image-hash', () => ({
+vi.mock('~/server/services/blocked-image-hash', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockedImageHash>()),
   getIsImageBlocked,
   canCheckBlockedImageHash: () => true,
 }));
