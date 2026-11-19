@@ -14,7 +14,9 @@ import { advanceBy, advanceUntil, fakeTimeouts } from '../../../test/fakeTimeout
  * O(N² log N) each.
  *
  * Pinned here: a burst — each report its own task, as `postMessage` delivers them — commits the
- * panel ONCE, and that render builds the frame labels ONCE, not once per row.
+ * panel ONCE, and that render's own label build runs ONCE, not once per row. The panel also hands
+ * those labels to `formatReviewConsoleLog` for the Copy log; a module-internal call is not seen
+ * by the spy, so that hand-off is NOT pinned here.
  *
  * The store module is spread and only `reviewConsoleFrameLabels` is wrapped in a spy, to count
  * the view's calls; every rule runs as written.

@@ -10,6 +10,7 @@ import {
 } from '~/components/Apps/ReviewConsole';
 import {
   createReviewConsoleStore,
+  REVIEW_CONSOLE_NOTIFY_MS,
   type ReviewConsoleFrame,
 } from '~/components/Apps/reviewConsoleStore';
 
@@ -186,6 +187,8 @@ describe('ReviewConsole — the old-SDK notice', () => {
       .toHaveTextContent('No errors reported.');
     expect(page.getByTestId('apps-review-console-sdk-too-old').elements()).toHaveLength(0);
     sdk.ready('1.0.3');
+    // Past the store's notification delay, so the panel has re-rendered with 1.0.3.
+    await new Promise((resolve) => setTimeout(resolve, REVIEW_CONSOLE_NOTIFY_MS * 3));
     expect(page.getByTestId('apps-review-console-sdk-too-old').elements()).toHaveLength(0);
   });
 

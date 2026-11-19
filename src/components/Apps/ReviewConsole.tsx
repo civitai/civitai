@@ -197,7 +197,7 @@ export function ReviewConsolePanel() {
   const state = useReviewConsoleState();
   const ordered = useMemo(() => orderReviewConsoleEntries(state.entries), [state.entries]);
   const frameLabels = useMemo(() => reviewConsoleFrameLabels(state.entries), [state.entries]);
-  const log = useMemo(() => formatReviewConsoleLog(state), [state]);
+  const log = useMemo(() => formatReviewConsoleLog(state, frameLabels), [state, frameLabels]);
   const { total } = reviewConsoleCounts(state.entries);
   const sdkNotice = reviewConsoleSdkNotice(state.sdk);
 

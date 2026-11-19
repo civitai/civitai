@@ -161,10 +161,13 @@ export function reviewConsoleEntryLabel(entry: Pick<ReviewConsoleEntry, 'fatal' 
  * The whole console as plain text, in display order: one line per entry — ISO time, label,
  * message — then its stack, indented. For a rejection note or a message to the author.
  */
-export function formatReviewConsoleLog(state: ReviewConsoleState): string {
+export function formatReviewConsoleLog(
+  state: ReviewConsoleState,
+  /** The view's own labels for `state.entries`, so one render builds them once. */
+  frames: ReadonlyMap<number, string> = reviewConsoleFrameLabels(state.entries)
+): string {
   const ordered = orderReviewConsoleEntries(state.entries);
   const sdk = state.sdk ? sdkPackageLabel(state.sdk) : 'not started';
-  const frames = reviewConsoleFrameLabels(state.entries);
   const lines = [
     `App console: ${ordered.length} error${ordered.length === 1 ? '' : 's'} (SDK: ${sdk})`,
   ];
@@ -200,11 +203,10 @@ export type ReviewConsoleFrame = {
  * One console for one page session. Each preview frame takes its own `openFrame()` sink, whose
  * `report` and `ready` are stable functions, so they can be handed to the host as props without
  * re-rendering it. `getState()` is current at once; subscribers hear of changes at most once per
- * `notifyMs`.
+ * `REVIEW_CONSOLE_NOTIFY_MS`.
  */
 export function createReviewConsoleStore(
-  maxEntries = REVIEW_CONSOLE_MAX_ENTRIES,
-  notifyMs = REVIEW_CONSOLE_NOTIFY_MS
+  maxEntries = REVIEW_CONSOLE_MAX_ENTRIES
 ): ReviewConsoleStore {
   let state: ReviewConsoleState = { entries: [], sdk: null };
   let nextId = 1;
@@ -217,7 +219,7 @@ export function createReviewConsoleStore(
   };
   const set = (next: ReviewConsoleState) => {
     state = next;
-    if (pending === null) pending = setTimeout(notify, notifyMs);
+    if (pending === null) pending = setTimeout(notify, REVIEW_CONSOLE_NOTIFY_MS);
   };
   return {
     getState: () => state,
