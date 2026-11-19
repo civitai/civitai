@@ -1,13 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-/**
- * GET /api/v1/models/[id] sends `images: []` on a version whose images were all left out
- * (the showcase filters run upstream, in getModelsWithVersions), never a missing key. The
- * version body goes through removeEmpty, which drops empty arrays, so `images` is set after it.
- * To whoever wants to fold it back into removeEmpty: the public docs promise this shape, and
- * /models and /model-versions/{id} already send it.
- */
+// Folding `images` back into removeEmpty turns these red: the public docs promise `images: []`.
 
 const { mockGetModelsWithVersions } = vi.hoisted(() => ({
   mockGetModelsWithVersions: vi.fn(),
@@ -22,8 +16,6 @@ vi.mock('~/server/services/model-version.service', () => ({
     `packed:caches:public-model-response:${id}:${browsingLevel}`,
 }));
 
-// Origin cache is disabled for this suite (IS_DATAPACKET false below), so these
-// are never exercised; stubbed only to keep the redis graph out of the suite.
 vi.mock('~/server/utils/cache-helpers', () => ({ fetchThroughCache: vi.fn() }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   withBlockScope: (handler: any) => (req: any, res: any) => handler(req, res),
@@ -46,14 +38,10 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
-// The serialized `name` is not the subject here; a per-file deterministic name
-// keeps the fixture readable while staying distinct per file.
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: ({ file }: any) => `${file.id}.safetensors`,
 }));
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
-// The listing rule is tested on PGlite (training-data-share.behavior.test.ts); here only that this
-// surface asks it with the request's host and applies the answer.
 vi.mock('~/server/services/training-data-restricted.service', () => ({
   trainingDataListing:
     async (
