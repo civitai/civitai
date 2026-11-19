@@ -38,7 +38,8 @@ parentPort.on('message', async ({ id, bytes, mimeType, context }) => {
       reader.free();
     }
   } catch (e) {
-    parentPort.postMessage({ id, error: String(e) });
+    // A trap can leave the instance broken: report the reader, not the file, so the worker is replaced.
+    parentPort.postMessage(e instanceof WebAssembly.RuntimeError ? { id, unavailable: String(e) } : { id, error: String(e) });
   }
 });
 `;
@@ -102,12 +103,10 @@ async function getWorker() {
         wasm: compiled,
       },
     });
-    w.on('message', (reply: WorkerReply & { unavailable?: string }) =>
-      settle(
-        reply.id,
-        reply.unavailable !== undefined ? new VerifyUnavailableError(reply.unavailable) : reply
-      )
-    );
+    w.on('message', (reply: WorkerReply & { unavailable?: string }) => {
+      if (reply.unavailable === undefined) settle(reply.id, reply);
+      else stopWorker(w, reply.unavailable);
+    });
     w.on('error', (e) => stopWorker(w, String(e)));
     w.on('exit', () => stopWorker(w, 'worker exited'));
     w.unref();
