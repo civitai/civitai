@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
-import { playSongFromList } from '~/components/MusicPlayer/PostSong';
+import { playSongFromList, postSongList } from '~/components/MusicPlayer/PostSong';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 
 const song = (id: number): SongImage => ({
@@ -16,7 +16,7 @@ const upNext = () => state().list.map((t) => t.id);
 afterEach(() => state().close());
 
 describe('playing a song on a post', () => {
-  const post = { name: 'Two songs', songs: [first, second], wrap: true };
+  const post = postSongList('Two songs', [first, second]);
 
   it('puts the songs after it in Up next', () => {
     playSongFromList(first, post);
@@ -32,7 +32,7 @@ describe('playing a song on a post', () => {
   });
 
   it('continues from the song after it, then from the top of the post', () => {
-    playSongFromList(second, { ...post, songs: [first, second, third] });
+    playSongFromList(second, postSongList('Two songs', [first, second, third]));
     expect(upNext()).toEqual([third.id, first.id]);
   });
 });

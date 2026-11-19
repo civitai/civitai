@@ -286,9 +286,6 @@ describe('shuffle and repeat', () => {
     const { get } = setup();
     get().playFromList({ name: 'artist', tracks: [a, b], index: 0 });
     get().cycleRepeat();
-    get().cycleRepeat();
-    get().cycleRepeat();
-    get().cycleRepeat();
     expect(get().repeat).toBe('all');
     get().next();
     expect(get().current?.id).toBe(b.id);
@@ -301,14 +298,19 @@ describe('shuffle and repeat', () => {
     expect(repeatingAfterUpNext(get())).toEqual([]);
   });
 
-  it('shows nothing repeating while Up next still has songs, or with repeat off', () => {
+  it('shows nothing repeating while Up next or the queue still has songs, or with repeat off', () => {
     const { get } = setup();
     get().playFromList({ name: 'artist', tracks: [a, b], index: 0 });
     get().cycleRepeat();
+    expect(get().repeat).toBe('all');
     expect(repeatingAfterUpNext(get())).toEqual([]);
-    get().cycleRepeat();
-    get().cycleRepeat();
     get().next();
+    get().addToUpNext(c);
+    expect(repeatingAfterUpNext(get())).toEqual([]);
+    get().removeFromUpNext(c.id);
+    expect(ids(repeatingAfterUpNext(get()))).toEqual([a.id, b.id]);
+    get().cycleRepeat();
+    get().cycleRepeat();
     expect(get().repeat).toBe('off');
     expect(repeatingAfterUpNext(get())).toEqual([]);
   });

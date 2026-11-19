@@ -27,6 +27,11 @@ export type SongImage = {
  */
 export type SongList = { name: string; songs: SongImage[]; wrap?: boolean };
 
+/** A post's songs as the list play is pressed in: few and closed, so Up next wraps. */
+export function postSongList(postTitle: string | null | undefined, songs: SongImage[]): SongList {
+  return { name: postTitle || 'this post', songs, wrap: true };
+}
+
 export function songTrack(image: SongImage): MusicTrack {
   const metadata = (image.metadata ?? {}) as { title?: string; duration?: number };
   return {
