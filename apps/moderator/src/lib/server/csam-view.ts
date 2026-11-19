@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
 import { heldImageSql } from '@civitai/shared/held-media';
-import { reportListedUrlSql } from '@civitai/shared/held-url';
+import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 import {
   retractedImageWhereSql,
   retractedSuspectSql,
@@ -22,7 +22,8 @@ export const coveredViewEnabled = () => env.CSAM_VIEW_COVERED_ENABLED === 'true'
 /** The answer for reported bytes, or when the read failed: the route answers as for a missing image. */
 export const COVERED_REFUSED = 'covered-refused';
 
-/** `null`: not eligible for the covered view, so the route answers as it does without it. */
+/** `null`: not eligible for the covered view. The routes answer it with the refusal 404, never by
+ *  the rules without it, so no answer tells reported from not eligible. */
 type Covered<T> = T | typeof COVERED_REFUSED | null;
 
 const isModeratorSql = (moderatorId: number) =>
@@ -73,10 +74,8 @@ export function getCoveredHeldMedia(imageId: number, moderatorId: number) {
       .select(listedSql.as('listed'))
       .where('i.id', '=', imageId)
       .where(sql<boolean>`${sql.raw(heldImageSql('i'))}`)
-      // An evidence hold, a legal one included, is never on the covered view.
-      .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = i.id)`
-      )
+      // Bytes under an evidence hold are never on the covered view.
+      .where(sql<boolean>`NOT ${sql.raw(evidenceHeldUrlSql('i."url"'))}`)
       .where(isModeratorSql(moderatorId))
       .executeTakeFirst()
   );

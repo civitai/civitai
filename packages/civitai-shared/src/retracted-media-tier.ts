@@ -1,5 +1,10 @@
 import { heldImageSql, heldUserSql, reviewSuspectImageSql } from './held-media';
-import { BAN_REASONS_ALWAYS_REMOVING_MEDIA, heldUrlSql, MINOR_UNPUBLISH_REASONS } from './held-url';
+import {
+  BAN_REASONS_ALWAYS_REMOVING_MEDIA,
+  evidenceHeldUrlSql,
+  heldUrlSql,
+  MINOR_UNPUBLISH_REASONS,
+} from './held-url';
 import { blockedForSignal, type BlockedForPatterns } from './review-batch';
 
 /**
@@ -17,8 +22,8 @@ export type RetractedTier = 'plain' | 'suspect';
 
 /** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
  *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. With `covered`, held media and held urls are eligible too, never an image under
- *  an evidence hold; the caller refuses reported bytes (`reportListedUrlSql`) itself. */
+ *  an evidence hold. With `covered`, held media and held urls are eligible too, never a url carrying
+ *  evidence-held bytes; the caller refuses reported bytes (`reportListedUrlSql`) itself. */
 export function retractedImageWhereSql(
   image: string,
   { cdnLeg = false, covered = false } = {}
@@ -39,8 +44,7 @@ ${
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
-  const evidenceHold = `EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${image}.id)`;
-  if (covered) return `(${eligible} AND NOT ${evidenceHold})`;
+  if (covered) return `(${eligible} AND NOT ${evidenceHeldUrlSql(`${image}."url"`)})`;
   return `(
     ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.

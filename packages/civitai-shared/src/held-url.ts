@@ -134,6 +134,26 @@ const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN 
   FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
 
 /**
+ * Whether the url `url` (a column reference) carries bytes under an evidence hold: an image row on
+ * it, or a moderator delete of one, is held. Bytes are per url, so a copy row is held with it.
+ */
+export function evidenceHeldUrlSql(url: string): string {
+  const u = sqlRef(url);
+  if (/^eh_/.test(u)) throw new Error(`Alias taken inside evidenceHeldUrlSql: ${u}`);
+  return `(
+    EXISTS (
+      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
+      WHERE eh_i.url = ${u}
+    )
+    OR EXISTS (
+      SELECT 1 FROM "EvidenceHoldImage" eh_h
+      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
+      WHERE eh_d.url = ${u}
+    )
+  )`;
+}
+
+/**
  * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete
  * on it is listed on any CsamReport, whatever the report's state, or an image row on it has the pHash
  * of a listed image. A copy under another url counts through its pHash only.
