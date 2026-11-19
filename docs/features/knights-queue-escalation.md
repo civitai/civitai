@@ -32,7 +32,7 @@ A rating item that leaves its stage without agreement (a split at the stage maxi
 - The item becomes `Resolved` with `reason = 'no-consensus-rerate'`, `resolvedFromLevel` the image's level, and the latest counted voter who gave the level as the write-back's actor. Every vote on it, at any stage, becomes `inconclusive`: no gold and no correct-answer XP, only the XP each vote earned when cast. Judgment history shows the player's own answer and no resolved level.
 - It is written back like any settled rating (below), so a moderator lock, a block or a moved level reroutes it the same way: a moderator's level grades the votes against it, a block or a moved level sends it to the Inquisitors with its votes pending again.
 
-A rating item never reaches the Inquisitors as `no-consensus` any more; another choice question still does. Each re-rate counts as `knights_escalations_total{reason="no-consensus-rerate"}`. The items already waiting as `no-consensus` before this rule are settled by hand with `apps/knights/scripts/backfill-no-consensus-rerate/` (`dry-run.sql`, then `apply.sql`), which leaves each one as this rule would.
+A rating item never reaches the Inquisitors as `no-consensus` any more; another choice question still does. Each re-rate counts as `knights_escalations_total{reason="no-consensus-rerate"}`.
 
 ## Items Knights can never serve
 
