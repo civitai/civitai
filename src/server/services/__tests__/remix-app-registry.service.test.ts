@@ -39,7 +39,7 @@ import {
   setRemixAppEnabled,
   submitUserRemixApp,
   reviewUserRemixApp,
-  remixSourceHash,
+  remixReviewHash,
   visibleRemixApps,
   type RemixAppRow,
 } from '~/server/services/remix-app-registry.service';
@@ -490,6 +490,21 @@ describe('user apps: submit, review and enable', () => {
     featuredOrder: 9,
   });
   const submission = { name: 'probe', title: 'Probe', icon: 'sparkles' as const, source: SOURCE };
+  const hashOf = (row: RemixAppRow) => remixReviewHash(row.manifest as never);
+
+  it('binds a review to the listing text the mod read, not only the code', async () => {
+    const retitled = userRow('submitted');
+    (retitled.manifest as { name: string }).name = 'Something else';
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(retitled as never);
+    await expect(
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(userRow('submitted')),
+        decision: 'approved',
+      })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
 
   it("creates the author's app disabled, awaiting review, on the safe engine only", async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
@@ -497,7 +512,7 @@ describe('user apps: submit, review and enable', () => {
 
     const result = await submitUserRemixApp({ ...submission, authorId: 7 });
 
-    expect(result).toEqual({ slug: 'u7-probe', version: 1, sha256: remixSourceHash(SOURCE) });
+    expect(result).toEqual({ slug: 'u7-probe', version: 1, sha256: hashOf(userRow('submitted')) });
     expect(dbMock.dbWrite.appBlock.create.mock.calls[0][0].data).toMatchObject({
       blockId: 'remix-u7-probe',
       status: 'remix_disabled',
@@ -549,7 +564,7 @@ describe('user apps: submit, review and enable', () => {
 
     await reviewUserRemixApp({
       slug: 'u7-probe',
-      sha256: remixSourceHash(SOURCE),
+      sha256: hashOf(row),
       decision: 'approved',
       mature: true,
     });
@@ -571,7 +586,7 @@ describe('user apps: submit, review and enable', () => {
     await expect(
       reviewUserRemixApp({
         slug: 'u7-probe',
-        sha256: remixSourceHash('other'),
+        sha256: hashOf(userRow('submitted', 'other')),
         decision: 'approved',
       })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -581,7 +596,7 @@ describe('user apps: submit, review and enable', () => {
     await expect(
       reviewUserRemixApp({
         slug: 'u7-probe',
-        sha256: remixSourceHash(SOURCE),
+        sha256: hashOf(userRow('submitted')),
         decision: 'rejected',
       })
     ).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -616,7 +631,12 @@ describe('user apps: submit, review and enable', () => {
     expect(row).not.toHaveProperty('input');
     expect(row).toMatchObject({
       slug: 'u7-probe',
-      user: { authorId: 7, review: 'submitted', source: SOURCE, sha256: remixSourceHash(SOURCE) },
+      user: {
+        authorId: 7,
+        review: 'submitted',
+        source: SOURCE,
+        sha256: hashOf(userRow('submitted')),
+      },
     });
   });
 });

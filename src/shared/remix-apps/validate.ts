@@ -6,6 +6,7 @@ import type {
 } from '~/shared/remix-apps/define';
 import { firstAnswer, mockResult } from '~/shared/remix-apps/mock-host';
 import {
+  REMIX_RUN_LIMITS,
   RemixReplayError,
   type RemixLogEntry,
   type RemixReplayOutcome,
@@ -77,6 +78,15 @@ export async function validateRemixApp(
     answers: RemixAnswer[],
     workflows: number
   ): Promise<RemixGraphNode> {
+    // The replayer refuses a run past the limit too; this holds whatever replayer is passed in.
+    if (log.length > REMIX_RUN_LIMITS.effects) {
+      paths++;
+      return stop({
+        kind: 'refused',
+        message: `More than ${REMIX_RUN_LIMITS.effects} steps`,
+        answers,
+      });
+    }
     const outcome: RemixReplayOutcome | RemixGraphNode = await outcomeOf(log, answers);
     if ('type' in outcome) {
       paths++;

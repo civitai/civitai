@@ -108,7 +108,8 @@ export function RemixAppsAdmin() {
     const slugs = rows.map((r) => r.slug);
     const [slug] = slugs.splice(index, 1);
     slugs.splice(index + by, 0, slug);
-    order.mutate({ slugs });
+    // User apps keep a place after every system app, not a stale one among them.
+    order.mutate({ slugs: [...slugs, ...submitted.map((r) => r.slug)] });
   };
 
   return (

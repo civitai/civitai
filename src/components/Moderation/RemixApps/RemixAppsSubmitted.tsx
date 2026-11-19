@@ -38,6 +38,9 @@ export function RemixAppsSubmitted({ rows }: { rows: SubmittedRow[] }) {
 
 function SubmittedApp({ row }: { row: SubmittedRow }) {
   const { user } = row;
+  // What the mod is reading: a refetch never swaps the code under them, and approval sends its hash.
+  const [seen, setSeen] = useState(user);
+  const changed = seen.sha256 !== user.sha256;
   const [mature, setMature] = useState(user.mature);
   const utils = trpc.useUtils();
   const onError = (error: { message: string }) =>
@@ -45,15 +48,14 @@ function SubmittedApp({ row }: { row: SubmittedRow }) {
   const onSuccess = () => utils.remixApp.admin.list.invalidate();
   const review = trpc.remixApp.admin.review.useMutation({ onSuccess, onError });
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess, onError });
-  // The hash of the source on screen, so an approval never lands on code the mod did not read.
   const decide = (decision: 'approved' | 'rejected') =>
-    review.mutate({ slug: row.slug, sha256: user.sha256, decision, mature });
+    review.mutate({ slug: row.slug, sha256: seen.sha256, decision, mature });
 
   return (
     <Stack gap="xs" className="rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4">
       <Group justify="space-between">
         <Group gap="xs">
-          <Title order={4}>{user.name}</Title>
+          <Title order={4}>{seen.name}</Title>
           <Badge color={REVIEW_COLOR[user.review]}>{user.review}</Badge>
           <Text size="sm" c="dimmed">
             {row.slug} · author {user.authorId}
@@ -66,12 +68,20 @@ function SubmittedApp({ row }: { row: SubmittedRow }) {
           onChange={(e) => setEnabled.mutate({ slug: row.slug, enabled: e.currentTarget.checked })}
         />
       </Group>
-      {user.description && <Text size="sm">{user.description}</Text>}
+      {changed && (
+        <Alert color="yellow">
+          The author changed this app after you opened it.{' '}
+          <Button size="compact-xs" variant="light" onClick={() => setSeen(user)}>
+            Show the new version
+          </Button>
+        </Alert>
+      )}
+      {seen.description && <Text size="sm">{seen.description}</Text>}
       <Code block className="max-h-96 overflow-auto">
-        {user.source}
+        {seen.source}
       </Code>
       <Text size="xs" c="dimmed">
-        sha256 {user.sha256}
+        sha256 {seen.sha256}
       </Text>
       <Group justify="space-between">
         <Checkbox

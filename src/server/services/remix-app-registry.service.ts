@@ -5,7 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
-import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
+import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -385,21 +385,41 @@ async function createRemixAppRow(
     where: { status: { in: REMIX_STATUSES } },
     _max: { featuredOrder: true },
   });
-  await dbWrite.appBlock.create({
-    data: {
-      ...fields,
-      id: remixAppBlockRowId(slug),
-      appId: REMIX_APPS_CLIENT_ID,
-      blockId: remixBlockId(slug),
-      status: REMIX_STATUS.disabled,
-      featuredOrder: (last._max.featuredOrder ?? -1) + 1,
-    },
-  });
+  try {
+    await dbWrite.appBlock.create({
+      data: {
+        ...fields,
+        id: remixAppBlockRowId(slug),
+        appId: REMIX_APPS_CLIENT_ID,
+        blockId: remixBlockId(slug),
+        status: REMIX_STATUS.disabled,
+        featuredOrder: (last._max.featuredOrder ?? -1) + 1,
+      },
+    });
+  } catch (error) {
+    // Two first saves of one slug at once: the second finds the row taken.
+    if (isPrismaUniqueViolation(error))
+      throw new TRPCError({ code: 'CONFLICT', message: 'That app was just created. Try again.' });
+    throw error;
+  }
 }
 
-/** What a mod approves: the hash of the exact source they read. */
-export const remixSourceHash = (source: string) =>
-  createHash('sha256').update(source).digest('hex');
+/** What a mod approves: a hash of exactly the code and the listing text they read. */
+export const remixReviewHash = (manifest: {
+  name: string;
+  description?: string;
+  remix: { icon: string; source: string };
+}) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([
+        manifest.name,
+        manifest.description ?? '',
+        manifest.remix.icon,
+        manifest.remix.source,
+      ])
+    )
+    .digest('hex');
 
 /**
  * Creates or replaces the author's app `u<authorId>-<name>`. Every submit, an edit of an approved
@@ -449,7 +469,7 @@ export async function submitUserRemixApp({
     });
   else await createRemixAppRow(slug, fields);
   await bumpRemixAppRegistry();
-  return { slug, version: runVersion, sha256: remixSourceHash(source) };
+  return { slug, version: runVersion, sha256: remixReviewHash({ ...manifest, remix: spec }) };
 }
 
 /**
@@ -483,7 +503,7 @@ export async function reviewUserRemixApp({
     message: 'The app changed after you opened it. Reload it and review it again.',
   });
   const { remix } = parsed.data;
-  if (remixSourceHash(remix.source) !== sha256) throw changed;
+  if (remixReviewHash({ ...parsed.data, remix }) !== sha256) throw changed;
 
   const matureEngine = decision === 'approved' && mature ? { mature: DEFAULT_ENGINE.mature } : {};
   const spec: RemixUserSpec = { ...remix, engine: { safe: remix.engine.safe, ...matureEngine } };
@@ -643,7 +663,7 @@ export async function listRemixAppsForAdmin() {
             review,
             mature: !!remix.engine.mature,
             source: remix.source,
-            sha256: remixSourceHash(remix.source),
+            sha256: remixReviewHash({ ...parsed.data, remix }),
           },
         };
       return {

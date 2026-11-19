@@ -132,4 +132,22 @@ describe('validateRemixApp', () => {
     expect(paths).toBe(32);
     expect(issues.map((i) => i.kind)).toEqual(['too-many-paths']);
   });
+
+  it('stops a path past the step limit, whatever the replayer allows', async () => {
+    let calls = 0;
+    // Bounded, so a missing cap fails as a wrong issue instead of a hang.
+    const endless = async () => {
+      if (++calls > 200) throw new Error('runaway');
+      return {
+        status: 'effect',
+        index: 0,
+        effect: { type: 'ask', spec: { kind: 'text', prompt: 'More?', maxLength: 5 } },
+      } as const;
+    };
+    const { issues, paths } = await validateRemixApp(endless as never);
+    expect(paths).toBe(1);
+    expect(issues).toEqual([
+      { kind: 'refused', message: expect.stringContaining('steps'), answers: expect.any(Array) },
+    ]);
+  });
 });
