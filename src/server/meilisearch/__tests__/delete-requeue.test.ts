@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeiliSearch } from 'meilisearch';
+import { MeiliSearchTimeOutError, type MeiliSearch } from 'meilisearch';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const queued = vi.hoisted(() => ({
   calls: [] as unknown[],
   deleteQueue: [] as number[],
   onQueue: (() => undefined) as () => unknown,
+  commits: 0,
 }));
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
   SearchIndexUpdate: {
@@ -14,7 +15,10 @@ vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
       queued.onQueue();
       return true;
     },
-    getQueue: async () => ({ content: queued.deleteQueue, commit: async () => undefined }),
+    getQueue: async () => ({
+      content: queued.deleteQueue,
+      commit: async () => void (queued.commits += 1),
+    }),
   },
 }));
 
@@ -37,6 +41,7 @@ beforeEach(() => {
   queued.calls = [];
   queued.deleteQueue = [];
   queued.onQueue = () => undefined;
+  queued.commits = 0;
 });
 
 describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
@@ -91,5 +96,42 @@ describe('onSearchIndexDocumentsCleanup when the delete task fails', () => {
       commit: async () => void order.push('commit'),
     });
     expect(order).toEqual(['commit', 'requeue']);
+  });
+
+  it('re-queues under the index it was deleting from', async () => {
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'comics',
+      ids: [1],
+      client: clientWhoseDeleteEnds('failed'),
+    });
+    expect(queued.calls).toMatchObject([{ indexName: 'comics' }]);
+  });
+
+  it('commits the Delete queue it drained, whether or not the delete succeeds', async () => {
+    queued.deleteQueue = [5];
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      client: clientWhoseDeleteEnds('failed'),
+    });
+    await onSearchIndexDocumentsCleanup({
+      indexName: 'idx',
+      client: clientWhoseDeleteEnds('succeeded'),
+    });
+    expect(queued.commits).toBe(2);
+  });
+
+  it('keeps waiting on the same client after a wait times out', async () => {
+    let waits = 0;
+    const client = {
+      getIndex: async () => ({ deleteDocuments: async () => ({ taskUid: 7 }) }),
+      waitForTasks: async () => {
+        waits += 1;
+        if (waits === 1) throw new MeiliSearchTimeOutError('slow');
+        return [{ uid: 7, status: 'succeeded', error: null }];
+      },
+    } as unknown as MeiliSearch;
+    await onSearchIndexDocumentsCleanup({ indexName: 'idx', ids: [1], client });
+    expect(waits).toBe(2);
+    expect(queued.calls).toEqual([]);
   });
 });

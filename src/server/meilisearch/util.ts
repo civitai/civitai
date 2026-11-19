@@ -102,11 +102,13 @@ const onSearchIndexDocumentsCleanup = async ({
   client?: MeiliSearch | null;
   /**
    * The checkout `ids` came from, when they came from one: committed before any re-queue, since an
-   * id re-queued before `commit()` can land in the bucket the commit deletes.
+   * id re-queued before `commit()` can land in the bucket the commit deletes. Always called once,
+   * even when there is no client or index to delete from.
    */
   commit?: () => Promise<unknown>;
 }) => {
   if (!client) {
+    await commit?.();
     return;
   }
 
@@ -117,6 +119,7 @@ const onSearchIndexDocumentsCleanup = async ({
 
     if (!index) {
       // If for some reason we don't get an index, abort the entire process
+      await commit?.();
       return;
     }
 
